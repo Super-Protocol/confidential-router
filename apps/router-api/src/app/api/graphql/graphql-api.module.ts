@@ -5,6 +5,10 @@ import { GraphQLModule } from '@nestjs/graphql';
 import type { Request } from 'express';
 import { AuthModule } from '../../auth/index.js';
 import { routerConfig } from '../../config.js';
+import { CatalogResolver } from './catalog/catalog.resolver.js';
+import { CatalogViewService } from './catalog/catalog-view.service.js';
+import { EvidenceResolver } from './catalog/evidence.resolver.js';
+import { JsonScalar } from './scalars/json.scalar.js';
 import { ViewerResolver } from './viewer/viewer.resolver.js';
 
 /**
@@ -33,6 +37,6 @@ import { ViewerResolver } from './viewer/viewer.resolver.js';
       }),
     }),
   ],
-  providers: [ViewerResolver],
+  providers: [ViewerResolver, CatalogResolver, EvidenceResolver, CatalogViewService, JsonScalar],
 })
 export class GraphQLApiModule {}

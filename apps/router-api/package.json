@@ -108,6 +108,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@confidential-router/attestation-fixtures": "workspace:*",
     "@nestjs/testing": "^11.1.6"
   }
 }
