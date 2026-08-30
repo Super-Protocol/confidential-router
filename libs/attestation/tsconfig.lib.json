@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "lib": ["es2022", "dom"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "vitest.config.mts",
+    "src/__tests__/**/*",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts"
+  ],
+  "references": [
+    {
+      "path": "../attestation-fixtures/tsconfig.lib.json"
+    }
+  ]
+}

@@ -42,8 +42,8 @@ apps/
   gatekeeper/            Go — attesting forward proxy: CLI + TUI, embedded OPA/Rego   ✅ scaffolded
   *-e2e/                 Playwright (UI) / vitest (API) / Go integration tests
 libs/
-  attestation/           TS verifier of the /.well-known/swarm-evidence contract
-  attestation-fixtures/  language-neutral conformance vectors shared by the TS and Go verifiers
+  attestation/           TS verifier of the /.well-known/swarm-evidence contract           ✅ scaffolded
+  attestation-fixtures/  language-neutral conformance vectors shared by the TS and Go verifiers ✅
   ui/                    shared React components + design tokens
   types/                 shared TS contracts (API DTOs, config schemas)              ✅ scaffolded
   nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json ✅

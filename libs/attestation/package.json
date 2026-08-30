@@ -1,0 +1,28 @@
+{
+  "name": "@confidential-router/attestation",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "@confidential-router/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "@peculiar/x509": "^1.12.3",
+    "jose": "^6.1.0",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@confidential-router/attestation-fixtures": "workspace:*"
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "version": "1",
+  "description": "Accepted encodings of a pinned evidenceDigest and their canonical form. `valid: false` means the parser must reject the input rather than normalise it.",
+  "canonicalFinalCharacters": "AEIMQUYcgkosw048",
+  "cases": [
+    {
+      "input": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "valid": true,
+      "canonical": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "note": "canonical form is idempotent"
+    },
+    {
+      "input": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs=",
+      "valid": true,
+      "canonical": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "note": "base64url padding is stripped"
+    },
+    {
+      "input": "  sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs  ",
+      "valid": true,
+      "canonical": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "note": "surrounding whitespace is trimmed"
+    },
+    {
+      "input": "c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6ab",
+      "valid": true,
+      "canonical": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "note": "bare lowercase hex"
+    },
+    {
+      "input": "C1E31DC829F754D528B15D0CC5FE8FD43F225865D5C9367F77EE6F116E10F6AB",
+      "valid": true,
+      "canonical": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "note": "bare uppercase hex"
+    },
+    {
+      "input": "sha256/c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6ab",
+      "valid": true,
+      "canonical": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "note": "prefixed hex"
+    },
+    {
+      "input": "",
+      "valid": false,
+      "note": "empty string"
+    },
+    {
+      "input": "sha256/",
+      "valid": false,
+      "note": "prefix only"
+    },
+    {
+      "input": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9q",
+      "valid": false,
+      "note": "42 characters is too short"
+    },
+    {
+      "input": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qsA",
+      "valid": false,
+      "note": "44 characters is too long"
+    },
+    {
+      "input": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qB",
+      "valid": false,
+      "note": "final character carries non-zero trailing bits"
+    },
+    {
+      "input": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+A",
+      "valid": false,
+      "note": "standard base64 alphabet is not base64url"
+    },
+    {
+      "input": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/A",
+      "valid": false,
+      "note": "standard base64 alphabet is not base64url"
+    },
+    {
+      "input": "c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6a",
+      "valid": false,
+      "note": "63 hex characters"
+    },
+    {
+      "input": "c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6abab",
+      "valid": false,
+      "note": "66 hex characters"
+    },
+    {
+      "input": "sha512/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "valid": false,
+      "note": "wrong hash algorithm prefix"
+    },
+    {
+      "input": "weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+      "valid": false,
+      "note": "bare base64url without the sha256/ prefix"
+    },
+    {
+      "input": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9q$",
+      "valid": false,
+      "note": "illegal character"
+    }
+  ]
+}

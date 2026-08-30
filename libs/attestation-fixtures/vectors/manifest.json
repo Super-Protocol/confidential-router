@@ -1,0 +1,809 @@
+{
+  "version": "1",
+  "description": "Conformance vectors for the /.well-known/swarm-evidence verifier. Every implementation (TypeScript libs/attestation, Go apps/gatekeeper/pkg/attestation) must reproduce every verdict.",
+  "generator": "libs/attestation-fixtures/tools/generate.ts",
+  "referenceNow": "2026-01-15T12:00:00.000Z",
+  "rootsFile": "roots.json",
+  "cases": [
+    {
+      "id": "valid-rsa-deployment",
+      "description": "RS256 DeploymentEvidence bundle over a valid chain, live observed TLS binding; rootCaTeeQuote is passed through unverified.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "DeploymentEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+          "kind": "DeploymentEvidence",
+          "evidenceDigest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+          "evidence": {
+            "version": 2,
+            "resources": [
+              {
+                "kind": "Deployment",
+                "name": "router-api",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "kind": "Deployment",
+                "name": "litellm",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "litellm",
+                    "image": "ghcr.io/berriai/litellm@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-rsa",
+        "rootCaTeeQuote": {
+          "format": "intel-tdx-quote-v5",
+          "data": "Y29uZmlkZW50aWFsLXJvdXRlci10ZXN0LXRkeC1xdW90ZQ"
+        }
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-rsa-deployment.json"
+      }
+    },
+    {
+      "id": "valid-rsa-control-plane",
+      "description": "RS256 ControlPlaneEvidence bundle over a valid chain, live observed TLS binding.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "ControlPlaneEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+          "kind": "ControlPlaneEvidence",
+          "topologyDigest": "sha256/6ypldnvbu9hV65tieh8b5abxzPntQ69Hp-fRLRYoRjY"
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-rsa"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-rsa-control-plane.json"
+      }
+    },
+    {
+      "id": "valid-rsa-kubernetes-control-plane",
+      "description": "RS256 KubernetesControlPlaneEvidence bundle over a valid chain, live observed TLS binding.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "KubernetesControlPlaneEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+          "kind": "KubernetesControlPlaneEvidence",
+          "rke2Version": "v1.30.4+rke2r1",
+          "installHash": "sha256/wd7lktQ-J3QomnjaIn8jmNyaX0W---OjSR7ZJYNSXcM",
+          "kubeSystemDigest": "sha256/nL95VadaaRiPfJbkUlQ7AFW4vsG0Myl53dXuROhec0s"
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-rsa"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-rsa-kubernetes-control-plane.json"
+      }
+    },
+    {
+      "id": "valid-ec-deployment",
+      "description": "ES256K DeploymentEvidence over a secp256k1 chain, live observed TLS binding.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-ec"
+        ],
+        "observedTlsFingerprint": "sha256/kaSfsK_ELJqBEFszox7TLeH2GmtTxfRLQexPcmZOED4",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "DeploymentEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/kaSfsK_ELJqBEFszox7TLeH2GmtTxfRLQexPcmZOED4",
+          "kind": "DeploymentEvidence",
+          "evidenceDigest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+          "evidence": {
+            "version": 2,
+            "resources": [
+              {
+                "kind": "Deployment",
+                "name": "router-api",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "kind": "Deployment",
+                "name": "litellm",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "litellm",
+                    "image": "ghcr.io/berriai/litellm@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-ec"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-ec-deployment.json"
+      }
+    },
+    {
+      "id": "valid-producer-asserted",
+      "description": "No observed fingerprint: the binding falls back to hashing bundle.tlsLeaf, which is an unrelated TLS leaf.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "DeploymentEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/Y0lxujh625qtK-gkvyPLwnKpDFGcp8KRfHgNCWcvr2U",
+          "kind": "DeploymentEvidence",
+          "evidenceDigest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+          "evidence": {
+            "version": 2,
+            "resources": [
+              {
+                "kind": "Deployment",
+                "name": "router-api",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "kind": "Deployment",
+                "name": "litellm",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "litellm",
+                    "image": "ghcr.io/berriai/litellm@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "channelBinding": "producer-asserted",
+        "matchedRoot": "confidential-router-test-root-rsa"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-producer-asserted.json"
+      }
+    },
+    {
+      "id": "valid-without-max-bundle-age",
+      "description": "maxBundleAge omitted disables the freshness stage entirely — a five-day-old bundle still verifies.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "expect": {
+        "ok": true,
+        "kind": "DeploymentEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-10T12:00:00.000Z",
+          "certFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+          "kind": "DeploymentEvidence",
+          "evidenceDigest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+          "evidence": {
+            "version": 2,
+            "resources": [
+              {
+                "kind": "Deployment",
+                "name": "router-api",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "kind": "Deployment",
+                "name": "litellm",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "litellm",
+                    "image": "ghcr.io/berriai/litellm@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-rsa"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-without-max-bundle-age.json"
+      }
+    },
+    {
+      "id": "fetch-http-503",
+      "description": "The evidence endpoint answers 503; nothing is parsed.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "response": {
+        "status": 503,
+        "bodyText": "service unavailable"
+      },
+      "expect": {
+        "ok": false,
+        "stage": "fetch",
+        "reasonContains": "unexpected status 503"
+      }
+    },
+    {
+      "id": "fetch-non-json-body",
+      "description": "A 200 response whose body is not JSON (a captive-portal style interception).",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "response": {
+        "status": 200,
+        "bodyText": "<html><body>not json</body></html>"
+      },
+      "expect": {
+        "ok": false,
+        "stage": "fetch",
+        "reasonContains": "failed to parse response body as JSON"
+      }
+    },
+    {
+      "id": "fetch-bundle-hostname-mismatch",
+      "description": "The bundle is valid but was published for another hostname — a replay onto a different host.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "fetch",
+        "reasonContains": "does not match request hostname"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/fetch-bundle-hostname-mismatch.json"
+      }
+    },
+    {
+      "id": "fetch-unsupported-version",
+      "description": "Unknown bundle version.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "fetch",
+        "reasonContains": "unsupported bundle version"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/fetch-unsupported-version.json"
+      }
+    },
+    {
+      "id": "fetch-unsupported-kind",
+      "description": "Unknown evidence kind.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "fetch",
+        "reasonContains": "unsupported bundle kind"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/fetch-unsupported-kind.json"
+      }
+    },
+    {
+      "id": "fetch-missing-jws",
+      "description": "Structurally incomplete bundle: no jws member.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "fetch",
+        "reasonContains": "missing jws"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/fetch-missing-jws.json"
+      }
+    },
+    {
+      "id": "cert-chain-expired-leaf",
+      "description": "The leaf certificate expired before `now`.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/0anIKL4BLO7KTk0QQ7qqQn0YrjTcp9EXzz79v3GMP6s",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "cert-chain",
+        "reasonContains": "has expired"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/cert-chain-expired-leaf.json"
+      }
+    },
+    {
+      "id": "cert-chain-issuer-mismatch",
+      "description": "The chain splices a leaf onto another cloud's intermediate.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "cert-chain",
+        "reasonContains": "issuer does not match"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/cert-chain-issuer-mismatch.json"
+      }
+    },
+    {
+      "id": "cert-chain-non-ca-intermediate",
+      "description": "The intermediate has the same subject and key as the real one but no BasicConstraints.cA.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "cert-chain",
+        "reasonContains": "is not a CA"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/cert-chain-non-ca-intermediate.json"
+      }
+    },
+    {
+      "id": "cert-chain-not-self-signed-root",
+      "description": "The chain stops at the intermediate and never reaches a self-signed root.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "cert-chain",
+        "reasonContains": "does not terminate at a self-signed root"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/cert-chain-not-self-signed-root.json"
+      }
+    },
+    {
+      "id": "untrusted-root-other-cloud",
+      "description": "A well-formed chain from a cloud whose root is not in the trust store.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/dFGdIS_aI2ZCYj01GGJq-xMEBX_1kn9DrilHdF6hwn8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "untrusted-root",
+        "reasonContains": "not in trusted store"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/untrusted-root-other-cloud.json"
+      }
+    },
+    {
+      "id": "untrusted-root-wrong-anchor",
+      "description": "The store holds a valid root — just not this chain’s. Trust is matched by fingerprint, not by parseability.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "other-cloud-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "untrusted-root",
+        "reasonContains": "not in trusted store"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/untrusted-root-wrong-anchor.json"
+      }
+    },
+    {
+      "id": "untrusted-root-empty-store",
+      "description": "An empty trust store denies everything.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "untrusted-root",
+        "reasonContains": "not in trusted store"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/untrusted-root-empty-store.json"
+      }
+    },
+    {
+      "id": "jws-bad-signature",
+      "description": "The JWS signature is bit-flipped; the chain itself is intact.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "jws",
+        "reasonContains": "signature verification failed"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/jws-bad-signature.json"
+      }
+    },
+    {
+      "id": "jws-unsupported-alg",
+      "description": "The protected header advertises an algorithm outside the allow-list.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "jws",
+        "reasonContains": "unsupported JWS alg"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/jws-unsupported-alg.json"
+      }
+    },
+    {
+      "id": "jws-payload-hostname-mismatch",
+      "description": "The signed payload names a different hostname than the one being verified.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "jws",
+        "reasonContains": "payload hostname"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/jws-payload-hostname-mismatch.json"
+      }
+    },
+    {
+      "id": "jws-payload-kind-mismatch",
+      "description": "The bundle envelope claims a different kind than the signed payload.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "jws",
+        "reasonContains": "does not match bundle kind"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/jws-payload-kind-mismatch.json"
+      }
+    },
+    {
+      "id": "jws-stale-bundle",
+      "description": "The payload is five days old against a 24h maxBundleAge.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "jws",
+        "reasonContains": "exceeds maxBundleAge"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/jws-stale-bundle.json"
+      }
+    },
+    {
+      "id": "jws-future-bundle",
+      "description": "The payload is dated 30 minutes ahead, past the 60s clock-skew tolerance.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "jws",
+        "reasonContains": "in the future"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/jws-future-bundle.json"
+      }
+    },
+    {
+      "id": "tls-fingerprint-observed-mismatch",
+      "description": "The observed TLS leaf is not the one the payload commits to — a TLS-terminating man in the middle.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "sha256/dFGdIS_aI2ZCYj01GGJq-xMEBX_1kn9DrilHdF6hwn8",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "tls-fingerprint",
+        "reasonContains": "does not match observed"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/tls-fingerprint-observed-mismatch.json"
+      }
+    },
+    {
+      "id": "tls-fingerprint-no-binding",
+      "description": "Neither an observed fingerprint nor bundle.tlsLeaf: the signature is unbound to any channel.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "tls-fingerprint",
+        "reasonContains": "no observed fingerprint and no tlsLeaf"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/tls-fingerprint-no-binding.json"
+      }
+    },
+    {
+      "id": "tls-fingerprint-producer-asserted-mismatch",
+      "description": "bundle.tlsLeaf is published but hashes to something other than payload.certFingerprint.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "tls-fingerprint",
+        "reasonContains": "does not match bundle.tlsLeaf fingerprint"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/tls-fingerprint-producer-asserted-mismatch.json"
+      }
+    },
+    {
+      "id": "tls-fingerprint-malformed-observed",
+      "description": "The caller supplied a fingerprint that is not sha256/<base64url>; rejected before anything is fetched.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-rsa"
+        ],
+        "observedTlsFingerprint": "deadbeef",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": false,
+        "stage": "tls-fingerprint",
+        "reasonContains": "must match sha256/<base64url>"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/tls-fingerprint-malformed-observed.json"
+      }
+    }
+  ]
+}
