@@ -169,6 +169,24 @@ describe('resolveConfigFile', () => {
   });
 });
 
+describe('the committed development seed', () => {
+  /**
+   * `conf/router.dev-seed.yaml` is what a developer boots the console against,
+   * and `catalog.service.spec.ts` projects it into the catalogue. It has to load
+   * through the same schema as any other config file.
+   */
+  it('loads through the runtime schema', async () => {
+    const { readFileSync } = await import('node:fs');
+    const raw = readFileSync(join(REPO_ROOT, 'apps/router-api/conf/router.dev-seed.yaml'), 'utf8');
+
+    const result = RouterConfigSchema.safeParse({ ...(parseYaml(raw) as object), auth: { secret: SECRET } });
+
+    expect(result.success ? null : result.error.issues).toBeNull();
+    expect(result.success && result.data.models).toHaveLength(8);
+    expect(result.success && result.data.endpoints).toHaveLength(3);
+  });
+});
+
 describe('the committed example configuration', () => {
   /**
    * `schemas/router-config.schema.json` is the contract; this schema is its

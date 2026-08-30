@@ -23,6 +23,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/completions` | required | legacy text completions, same streaming rules |
 | `POST /v1/embeddings` | optional | only if the model's `capabilities` include `embeddings` |
 | `GET /v1/generation?id=` | required | metering record of one generation (OpenRouter-style) |
+| `GET /v1/evidence/{endpoint}` | required | raw passthrough of the endpoint's latest published bundle; no key |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
@@ -81,6 +82,18 @@ chunks as they arrive from LiteLLM (no buffering); through the gatekeeper this i
 ```
 
 Only models within the key's scope are listed.
+
+### `GET /v1/evidence/{endpoint}`
+
+`{endpoint}` is an endpoint **name** or **hostname** from the router config. Returns the most recently
+issued `/.well-known/swarm-evidence` bundle this router has fetched for it, byte for byte as published
+(`schemas/swarm-evidence-bundle.schema.json`). `404` when the endpoint is unknown or has published
+nothing yet.
+
+Deliberately unauthenticated: the platform serves the same document publicly on the endpoint's own
+hostname, and a user comparing the two should not need an API key. Just as deliberately, the response is
+the bundle and nothing else — the router never validates a signature and never reports a verdict
+(ADR-002).
 
 ### `GET /v1/generation?id=gen-…`
 

@@ -1,0 +1,96 @@
+# Development seed — the 8 open-weight models of the design prototype across the
+# 3 confidential endpoints it shows.
+#
+#   CR_API_CONFIG_FILE=conf/router.dev-seed.yaml pnpm nx serve @confidential-router/router-api
+#
+# `conf/router.yaml` deliberately ships an empty catalogue (a laptop has nothing
+# to attest); this file exists so the console, the pricing math and the evidence
+# screens have something real to render without a cluster. Everything it does not
+# set falls back to the schema defaults — SQLite, an ephemeral auth secret, and
+# the rest.
+#
+# The endpoint hostnames are the production ones because the bundle a publisher
+# serves must name the host it is published for, and the console shows that name.
+# `evidenceUrl` points the poller at the local mock evidence publisher instead
+# (docker/docker-compose.dev.yml, SUP-84); with nothing listening there the
+# endpoints simply read "Not published", which is the honest state.
+version: 1
+
+backends:
+  litellm:
+    # docker/docker-compose.dev.yml's mock LiteLLM (SUP-84).
+    baseUrl: http://127.0.0.1:4000
+
+endpoints:
+  - name: llama-33-70b
+    hostname: llama-33-70b.tee.swarm.cloud
+    tee: Intel TDX + H100 CC
+    evidenceUrl: http://127.0.0.1:8081/llama-33-70b/.well-known/swarm-evidence
+  - name: qwen25-72b
+    hostname: qwen25-72b.tee.swarm.cloud
+    tee: AMD SEV-SNP
+    evidenceUrl: http://127.0.0.1:8081/qwen25-72b/.well-known/swarm-evidence
+  - name: deepseek-v3
+    hostname: deepseek-v3.tee.swarm.cloud
+    tee: Intel TDX + H100 CC
+    evidenceUrl: http://127.0.0.1:8081/deepseek-v3/.well-known/swarm-evidence
+
+# Prices are micro-USD per 1M tokens: $0.28 / 1M prompt tokens is 280000.
+models:
+  - id: meta/llama-3.3-70b-instruct:tdx
+    name: Llama 3.3 70B Instruct
+    litellmModel: vllm/llama-3.3-70b-instruct
+    endpoint: llama-33-70b
+    contextLength: 131072
+    capabilities: [chat, completions]
+    pricing: { promptPer1mMicros: 280000, completionPer1mMicros: 420000 }
+  - id: alibaba/qwen2.5-72b-instruct:snp
+    name: Qwen2.5 72B Instruct
+    litellmModel: vllm/qwen2.5-72b-instruct
+    endpoint: qwen25-72b
+    contextLength: 131072
+    pricing: { promptPer1mMicros: 240000, completionPer1mMicros: 360000 }
+  - id: deepseek/deepseek-v3:tdx
+    name: DeepSeek-V3
+    litellmModel: sglang/deepseek-v3
+    endpoint: deepseek-v3
+    contextLength: 65536
+    pricing: { promptPer1mMicros: 310000, completionPer1mMicros: 620000 }
+  - id: mistral/mixtral-8x22b:snp
+    name: Mixtral 8x22B Instruct
+    litellmModel: vllm/mixtral-8x22b-instruct
+    endpoint: qwen25-72b
+    contextLength: 65536
+    pricing: { promptPer1mMicros: 180000, completionPer1mMicros: 240000 }
+  - id: alibaba/qwen2.5-coder-32b:tdx
+    name: Qwen2.5-Coder 32B
+    litellmModel: vllm/qwen2.5-coder-32b-instruct
+    endpoint: llama-33-70b
+    contextLength: 32768
+    pricing: { promptPer1mMicros: 120000, completionPer1mMicros: 180000 }
+  - id: google/gemma-2-27b-it:tdx
+    name: Gemma 2 27B
+    litellmModel: vllm/gemma-2-27b-it
+    endpoint: llama-33-70b
+    contextLength: 8192
+    pricing: { promptPer1mMicros: 90000, completionPer1mMicros: 140000 }
+  - id: meta/llama-3.1-8b-instruct:snp
+    name: Llama 3.1 8B Instruct
+    litellmModel: vllm/llama-3.1-8b-instruct
+    endpoint: qwen25-72b
+    contextLength: 131072
+    pricing: { promptPer1mMicros: 30000, completionPer1mMicros: 50000 }
+  - id: microsoft/phi-4:tdx
+    name: Phi-4 14B
+    litellmModel: vllm/phi-4
+    endpoint: llama-33-70b
+    contextLength: 16384
+    pricing: { promptPer1mMicros: 60000, completionPer1mMicros: 90000 }
+
+evidence:
+  pollInterval: 5m
+  freshnessWindow: 24h
+
+log:
+  level: debug
+  pretty: true

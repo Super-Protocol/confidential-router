@@ -133,6 +133,41 @@ pointed at, which is exactly the portability this schema is built to avoid.
 schema the entities describe, on both databases — the PostgreSQL half runs when
 `CR_TEST_POSTGRES_URL` is set, which CI does.
 
+## Model catalogue and evidence
+
+`endpoints[]` and `models[]` in the config are the source of truth for both
+(ADR-002). At boot they are projected into the `endpoints` and `models` tables so
+a metered generation can take a foreign key on the model it used; an entry the
+config no longer lists is kept with `enabled = false` rather than deleted, so
+past generations still resolve. Nothing creates or edits either through the API.
+
+A development catalogue — the design prototype's eight open-weight models across
+three confidential endpoints — is committed as `conf/router.dev-seed.yaml`:
+
+```bash
+CR_API_CONFIG_FILE=conf/router.dev-seed.yaml pnpm nx serve router-api
+```
+
+Evidence is *retrieved*, never adjudicated. `EvidencePollerService` fetches
+`https://<hostname>/.well-known/swarm-evidence` for every endpoint every
+`evidence.pollInterval` (0 disables it), validates the bundle's shape, decodes
+the JWS payload **without verifying the signature**, and files an
+`EvidenceSnapshot`. Snapshots are idempotent on
+`(endpointId, evidenceDigest, certFingerprint, issuedAt)`, which is what makes
+the poller replica-safe without leader election.
+
+The console reads it back through `endpoints`, `evidenceSnapshots`,
+`evidenceDigestHistory`, `evidenceCoverage` and the `refreshEvidence` mutation
+("Fetch fresh quote"); `GET /v1/evidence/<name-or-hostname>` hands the raw bundle
+to tooling without a key, because the platform serves the same document
+publicly.
+
+What this service will never have is a verdict. Whether a bundle's signature is
+good, whether its chain terminates at a root you trust, whether the digest is the
+one you pinned — those are questions for the gatekeeper on the user's own
+machine. `test/evidence.e2e.spec.ts` introspects the GraphQL schema and fails the
+build if a field named `verified`, `trusted` or `valid` ever appears.
+
 ## Authentication
 
 Better Auth (ADR-004), mounted at `/auth/*`, sharing the one database. OAuth
@@ -171,10 +206,11 @@ src/
     db/                   entities, portable column presets, DataSource factory
     auth/                 Better Auth, guards, workspace scoping and provisioning
     api-keys/             minting, hashing and authentication of /v1 credentials
-    catalog/              router config -> models/endpoints projection and lookup
+    catalog/              config → endpoints/models projection, served from memory
+    evidence/             bundle retrieval, snapshots, poller, coverage, /v1/evidence
     metering/             pricing, token estimation, evidence coverage, the meter
     api/health            /health
-    api/graphql           Apollo code-first schema (`me`, API key CRUD)
+    api/graphql           Apollo code-first schema (`me`, API key CRUD, models, endpoints, evidence)
     api/v1                the OpenAI-compatible gateway
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs

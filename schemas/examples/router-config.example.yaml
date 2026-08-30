@@ -54,6 +54,36 @@ models:
     endpoint: deepseek-v3
     contextLength: 65536
     pricing: { promptPer1mMicros: 310000, completionPer1mMicros: 620000 }
+  - id: mistral/mixtral-8x22b:snp
+    name: Mixtral 8x22B Instruct
+    litellmModel: vllm/mixtral-8x22b-instruct
+    endpoint: qwen25-72b
+    contextLength: 65536
+    pricing: { promptPer1mMicros: 180000, completionPer1mMicros: 240000 }
+  - id: alibaba/qwen2.5-coder-32b:tdx
+    name: Qwen2.5-Coder 32B
+    litellmModel: vllm/qwen2.5-coder-32b-instruct
+    endpoint: llama-33-70b
+    contextLength: 32768
+    pricing: { promptPer1mMicros: 120000, completionPer1mMicros: 180000 }
+  - id: google/gemma-2-27b-it:tdx
+    name: Gemma 2 27B
+    litellmModel: vllm/gemma-2-27b-it
+    endpoint: llama-33-70b
+    contextLength: 8192
+    pricing: { promptPer1mMicros: 90000, completionPer1mMicros: 140000 }
+  - id: meta/llama-3.1-8b-instruct:snp
+    name: Llama 3.1 8B Instruct
+    litellmModel: vllm/llama-3.1-8b-instruct
+    endpoint: qwen25-72b
+    contextLength: 131072
+    pricing: { promptPer1mMicros: 30000, completionPer1mMicros: 50000 }
+  - id: microsoft/phi-4:tdx
+    name: Phi-4 14B
+    litellmModel: vllm/phi-4
+    endpoint: llama-33-70b
+    contextLength: 16384
+    pricing: { promptPer1mMicros: 60000, completionPer1mMicros: 90000 }
 
 evidence:
   pollInterval: 5m
