@@ -33,6 +33,21 @@ describe('evidence digest', () => {
     expect(evidenceDigestEquals(HEX, `${EVIDENCE_DIGEST_PREFIX}${BASE64URL}`)).toBe(true);
   });
 
+  it('rejects standard-base64 spelling — only base64url is canonical', () => {
+    const standardBase64 = BASE64URL.replace(/-/g, '+').replace(/_/g, '/');
+
+    expect(isEvidenceDigest(`${EVIDENCE_DIGEST_PREFIX}${standardBase64}`)).toBe(false);
+    expect(() => normalizeEvidenceDigest(`${EVIDENCE_DIGEST_PREFIX}${standardBase64}`)).toThrow(
+      InvalidEvidenceDigestError,
+    );
+  });
+
+  it('is idempotent — normalising a canonical digest returns it unchanged', () => {
+    const canonical = normalizeEvidenceDigest(HEX);
+
+    expect(normalizeEvidenceDigest(canonical)).toBe(canonical);
+  });
+
   it('rejects anything that is not a 32-byte digest', () => {
     for (const bad of ['', 'sha256/', 'sha256/short', 'deadbeef', `${EVIDENCE_DIGEST_PREFIX}${BASE64URL}extra`]) {
       expect(() => normalizeEvidenceDigest(bad)).toThrow(InvalidEvidenceDigestError);
