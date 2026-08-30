@@ -1,0 +1,12 @@
+Admitted: no — this was a policy-only run, so admission was never established
+Endpoint         llama-33-70b
+Bundle           $TMP/bundle.json
+Policy decision  DENY — the built-in pin policy (gatekeeper.default) denied
+
+Packages
+  POLICY      PACKAGE             RESULT
+  (built-in)  gatekeeper.default  DENY
+
+! POLICY-ONLY RUN: the JWS signature, the certificate chain and the bundle's freshness were NOT checked, so a policy allow here does not mean the gatekeeper would admit this endpoint
+
+! channel binding used the bundle's own certFingerprint, not an observed TLS leaf

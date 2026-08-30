@@ -61,9 +61,11 @@ type Config struct {
 	// directory.
 	Path string `yaml:"-"`
 
-	// Layers applied on top of the file by Load. They are kept apart from the
-	// decoded document so that rewriting the file (see Document) can never
-	// bake an environment or command-line override into it.
+	// Layers applied on top of the file by Load. They are held separately from
+	// the decoded fields so that [Config.Tuning] can resolve precedence without
+	// an override ever being written back into the document's own values.
+	// (Rewriting the file is a different code path entirely: [Document] parses
+	// the file again and never sees a Config.)
 	envOverlay  overlay
 	flagOverlay overlay
 }
