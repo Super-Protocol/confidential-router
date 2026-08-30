@@ -12,8 +12,15 @@ export const EVIDENCE_DIGEST_PREFIX = 'sha256/';
 
 export type EvidenceDigest = `sha256/${string}`;
 
-/** 32 bytes base64url-encoded, padding optional. */
-const BASE64URL_SHA256 = /^[A-Za-z0-9_-]{43}=?$/;
+/**
+ * 32 bytes base64url-encoded, padding optional.
+ *
+ * 43 base64url characters carry 258 bits, so the final character must have its two
+ * trailing bits clear — only `A E I M Q U Y c g k o s w 0 4 8` can end a 32-byte
+ * digest. Accepting the other 48 characters would admit up to four distinct
+ * spellings of the same bytes, and pins are compared as exact strings.
+ */
+const BASE64URL_SHA256 = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]=?$/;
 
 const HEX_SHA256 = /^[0-9a-fA-F]{64}$/;
 
@@ -49,7 +56,7 @@ export function normalizeEvidenceDigest(value: string): EvidenceDigest {
   throw new InvalidEvidenceDigestError(value);
 }
 
-/** Constant-time-ish equality on the canonical form; both sides are normalised first. */
+/** Equality on the canonical form; both sides are normalised first. */
 export function evidenceDigestEquals(a: string, b: string): boolean {
   return normalizeEvidenceDigest(a) === normalizeEvidenceDigest(b);
 }

@@ -4,6 +4,12 @@
   "files": [],
   "references": [
     {
+      "path": "./libs/attestation"
+    },
+    {
+      "path": "./libs/attestation-fixtures"
+    },
+    {
       "path": "./libs/types"
     }
   ]
