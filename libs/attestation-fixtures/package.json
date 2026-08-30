@@ -1,5 +1,5 @@
 {
-  "name": "@confidential-router/types",
+  "name": "@confidential-router/attestation-fixtures",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -15,7 +15,22 @@
       "default": "./dist/index.js"
     }
   },
+  "nx": {
+    "targets": {
+      "generate": {
+        "command": "node tools/generate.ts",
+        "options": {
+          "cwd": "{projectRoot}"
+        },
+        "cache": false
+      }
+    }
+  },
   "devDependencies": {
-    "@confidential-router/attestation-fixtures": "workspace:*"
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "@peculiar/webcrypto": "^1.5.0",
+    "@peculiar/x509": "^1.12.3",
+    "jose": "^6.1.0"
   }
 }

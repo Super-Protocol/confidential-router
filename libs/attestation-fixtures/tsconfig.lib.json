@@ -4,13 +4,14 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "declaration": true,
+    "emitDeclarationOnly": false,
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["vitest.config.mts", "src/**/*.spec.ts", "src/**/*.test.ts"],
-  "references": [
-    {
-      "path": "../attestation-fixtures/tsconfig.lib.json"
-    }
+  "exclude": [
+    "vitest.config.mts",
+    "tools/**/*",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts"
   ]
 }
