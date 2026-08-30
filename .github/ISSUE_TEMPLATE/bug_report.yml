@@ -1,0 +1,55 @@
+name: Bug report
+description: Something behaves differently from what the docs or code promise.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here — see [SECURITY.md](https://github.com/Super-Protocol/confidential-router/blob/main/SECURITY.md).
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - gatekeeper (Go proxy / CLI)
+        - router-api
+        - router-ui (console)
+        - libraries / shared types
+        - build, CI or tooling
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 'v0.3.1, or the commit SHA you built from'
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Include the exact error output. Redact API keys and hostnames you would rather not publish.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and architecture; Node/pnpm/Go versions if you built from source.

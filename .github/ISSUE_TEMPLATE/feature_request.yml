@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose new behaviour or a change to existing behaviour.
+labels: ['enhancement']
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - gatekeeper (Go proxy / CLI)
+        - router-api
+        - router-ui (console)
+        - libraries / shared types
+        - build, CI or tooling
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you cannot do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: checkboxes
+    id: trust-model
+    attributes:
+      label: Trust model
+      description: >
+        The router never learns whether, when, or by whom it was attested — it only publishes
+        evidence, and all verdicts are formed in the user's gatekeeper.
+      options:
+        - label: This proposal keeps that rule intact (or explains below why it must change).

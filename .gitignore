@@ -1,0 +1,60 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# compiled output
+dist
+tmp
+out-tsc
+/apps/gatekeeper/bin
+
+# dependencies
+node_modules
+.pnpm-store
+
+# Nx
+.nx/
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+*.launch
+.settings/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.cursor/
+
+# testing / coverage
+/coverage
+test-output
+playwright-report
+blob-report
+.playwright-mcp/
+
+# Next.js
+.next
+out
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Vite/Vitest timestamp artefacts
+vite.config.*.timestamp*
+vitest.config.*.timestamp*
+
+# logs
+npm-debug.log
+yarn-error.log
+*.log
+
+# local environment / secrets — never commit
+.env
+.env.local
+docker/.env
+
+# system files
+.DS_Store
+Thumbs.db
+
+# agent tooling
+.serena

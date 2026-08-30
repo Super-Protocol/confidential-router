@@ -1,0 +1,19 @@
+Confidential Router
+Copyright 2026 Super Protocol
+
+This product includes software developed at Super Protocol
+(https://superprotocol.com/).
+
+Portions of this repository are ported from Super-Protocol/swarm-cloud
+(https://github.com/Super-Protocol/swarm-cloud), which is licensed under the
+Business Source License 1.1. The port into this repository under the Apache
+License 2.0 was explicitly authorised by the copyright holder.
+
+Ported components:
+
+  * libs/nx-biome
+      from swarm-cloud `libs/nx-biome` — Nx inference plugin for Biome targets.
+
+Further ports (the `/.well-known/swarm-evidence` verifier from
+swarm-cloud `libs/swarm-attestation`, and the Rego evidence gate from
+swarm-cloud `apps/gatekeeper-proxy`) will be recorded here as they land.
