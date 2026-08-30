@@ -1,0 +1,64 @@
+# Dependabot rather than Renovate: it is native to GitHub and needs no app
+# installation on the organisation, so it works from the first push. If the
+# Renovate app is ever installed org-wide, swap this for a renovate.json.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'chore(deps)'
+      prefix-development: 'chore(deps-dev)'
+    groups:
+      # Nx and its plugins must move together or the workspace breaks.
+      nx:
+        patterns: ['nx', '@nx/*']
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      dev-tooling-minor-patch:
+        dependency-type: development
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: gomod
+    directory: /apps/gatekeeper
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      go-modules:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      timezone: Etc/UTC
+    labels: ['dependencies', 'ci']
+    commit-message:
+      prefix: 'chore(ci)'
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker-compose
+    directory: /docker
+    schedule:
+      interval: monthly
+      timezone: Etc/UTC
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'chore(deps)'

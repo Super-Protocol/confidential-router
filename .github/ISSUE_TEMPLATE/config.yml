@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Super-Protocol/confidential-router/security/advisories/new
+    about: Report privately. Please never file a public issue for a security problem.
+  - name: Question or idea
+    url: https://github.com/Super-Protocol/confidential-router/discussions
+    about: Ask a question or float an idea before it becomes a tracked issue.

@@ -1,0 +1,26 @@
+# Code owners are auto-requested for review on every PR that touches their paths.
+#
+# A code owner must have *write* access to this repository, otherwise GitHub
+# silently ignores the line. Today that is @anthrax63 only. Once a
+# `@Super-Protocol/confidential-router-maintainers` team exists and has been
+# granted write access, replace the owners below with that team.
+#
+# Later, more specific rules win — GitHub applies the last matching line only.
+
+*                               @anthrax63
+
+# Go gatekeeper — the attestation and admission path.
+/apps/gatekeeper/               @anthrax63
+
+# Toolchain, CI and release plumbing.
+/.github/                       @anthrax63
+/nx.json                        @anthrax63
+/package.json                   @anthrax63
+/pnpm-lock.yaml                 @anthrax63
+/pnpm-workspace.yaml            @anthrax63
+/tsconfig.base.json             @anthrax63
+/biome.json                     @anthrax63
+
+# Licensing and provenance of ported code.
+/LICENSE                        @anthrax63
+/NOTICE                         @anthrax63

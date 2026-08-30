@@ -1,0 +1,123 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+# Supersede in-flight runs when a PR is updated, so stale runs don't pile up
+# and occupy runners. Grouped per PR.
+concurrency:
+  group: pr-checks-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commitlint:
+    name: Commit convention
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # PRs are squash-merged, so the PR title becomes the commit subject on
+      # main. That title is what has to be a Conventional Commit.
+      - name: Lint the PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$PR_TITLE" | pnpm exec commitlint --verbose
+
+  nx:
+    name: Lint, typecheck, build & test (Nx)
+    runs-on: ubuntu-latest
+    # Hard ceiling for the job. Without it, GitHub's 360 min default lets a hung
+    # step spin for hours.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Determine Nx base/head
+        id: nx-shas
+        run: |
+          echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+
+      # `gatekeeper` is excluded here and owned by the `go` job below, which has
+      # the Go toolchain and golangci-lint installed.
+      - name: Lint, typecheck, build & test
+        run: |
+          pnpm nx affected -t lint typecheck build test \
+            --base="${{ steps.nx-shas.outputs.base }}" \
+            --head="${{ steps.nx-shas.outputs.head }}" \
+            --exclude=gatekeeper \
+            --parallel=3 \
+            --outputStyle=static
+
+      - name: Check formatting
+        run: pnpm format:check
+
+  go:
+    name: Go checks (gatekeeper)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/gatekeeper
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          # The module has no third-party dependencies yet, so there is no
+          # go.sum for setup-go to key its cache on. Flip this back on together
+          # with the first `require` block.
+          cache: false
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...
+
+      - name: go build
+        run: go build -o bin/gatekeeper ./cmd/gatekeeper
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.6.2
+          working-directory: apps/gatekeeper

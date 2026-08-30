@@ -1,0 +1,75 @@
+{
+  "name": "gatekeeper",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/gatekeeper",
+  "projectType": "application",
+  "tags": ["type:app", "lang:go"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum"
+      ],
+      "outputs": ["{projectRoot}/bin"],
+      "options": {
+        "command": "go build -o bin/gatekeeper ./cmd/gatekeeper",
+        "cwd": "apps/gatekeeper"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum"
+      ],
+      "options": {
+        "command": "go test ./...",
+        "cwd": "apps/gatekeeper"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum",
+        "{projectRoot}/.golangci.yml"
+      ],
+      "options": {
+        "commands": ["go vet ./...", "golangci-lint run"],
+        "cwd": "apps/gatekeeper",
+        "parallel": false
+      }
+    },
+    "lint-fix": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": ["gofmt -w .", "golangci-lint run --fix"],
+        "cwd": "apps/gatekeeper",
+        "parallel": false
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "go run ./cmd/gatekeeper",
+        "cwd": "apps/gatekeeper"
+      }
+    },
+    "tidy": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "go mod tidy",
+        "cwd": "apps/gatekeeper"
+      }
+    }
+  }
+}

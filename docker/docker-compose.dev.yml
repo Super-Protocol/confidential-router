@@ -1,0 +1,30 @@
+# Local development services for the Confidential Router.
+#
+#   pnpm dev:up     # docker compose -f docker/docker-compose.dev.yml up -d
+#   pnpm dev:down
+#
+# Credentials here are development defaults and are deliberately committed.
+# Never reuse them anywhere reachable from a network you do not control.
+name: confidential-router-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-router}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-router}
+      POSTGRES_DB: ${POSTGRES_DB:-router}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-router} -d ${POSTGRES_DB:-router}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

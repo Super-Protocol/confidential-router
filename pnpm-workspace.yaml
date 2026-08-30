@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'libs/*'
+autoInstallPeers: true
+strictPeerDependencies: false
+# Packages allowed to run install scripts. Keep this list explicit and short —
+# an unreviewed postinstall is arbitrary code execution on every clone and in CI.
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  nx: true
