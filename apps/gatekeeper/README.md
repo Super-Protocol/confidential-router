@@ -11,9 +11,9 @@ The router never learns whether, when, or by whom it was attested — it only
 ## Status
 
 The binary itself is still a skeleton — it only reports its build identity —
-but the trust layer underneath it is in place: configuration, the trust store
-and the embedded OPA policy engine (SUP-69). The verification pipeline
-(`pkg/attestation`, SUP-68) and the data plane (SUP-71) land next.
+but everything underneath it is in place: configuration, the trust store and
+the embedded OPA policy engine (SUP-69), and the verification pipeline
+(`pkg/attestation`, SUP-68). The data plane (SUP-71) lands next.
 
 ```bash
 pnpm nx run gatekeeper:build   # -> apps/gatekeeper/bin/gatekeeper
@@ -28,6 +28,7 @@ pnpm nx run gatekeeper:serve   # -> go run ./cmd/gatekeeper
 | ------------------------ | ----------------------------------------------------------------------- |
 | `cmd/gatekeeper/`        | CLI entry point. Thin — argument parsing and wiring only.                 |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
+| `pkg/attestation/`       | Verifier for `/.well-known/swarm-evidence`: fetch with observed TLS binding, chain, trusted root, JWS (RS256/ES256K), freshness. [Details](pkg/attestation/README.md). |
 | `pkg/config/`            | YAML configuration: load (defaults → file → env → flags), validate, and rewrite in place. |
 | `pkg/trust/`             | Trusted roots and per-endpoint pinned `evidenceDigest` values; digest parsing and normalisation. |
 | `pkg/policy/`            | Embedded OPA: the generated trust module, the built-in pin policy, user policies. |

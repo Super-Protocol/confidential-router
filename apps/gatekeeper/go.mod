@@ -3,6 +3,7 @@ module github.com/Super-Protocol/confidential-router/apps/gatekeeper
 go 1.24.6
 
 require (
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/open-policy-agent/opa v1.12.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -11,7 +12,6 @@ require (
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
