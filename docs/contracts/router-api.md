@@ -107,8 +107,12 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | 503 | `gatekeeper_error` | `attestation_failed` — emitted by the **gatekeeper**, never by the router |
 | 500 | `server_error` | `internal` |
 
-Rate limits are per API key (`requestsPerMinute`, `tokensPerMinute`, from key settings or workspace
-defaults).
+Rate limits are four minute buckets, checked on admission in this order: requests per key, requests per
+workspace, tokens per key, tokens per workspace. `requestsPerMinute` / `tokensPerMinute` come from the key
+where it sets them and from `rateLimits.*` otherwise; the workspace buckets always use `rateLimits.*`, so
+minting more keys does not buy a tenant more budget. Token cost is unknown until the model answers, so the
+token buckets are only checked for being empty on admission and debited with the real usage afterwards — a
+request may overshoot by its own size, never by more.
 
 ## Metering
 

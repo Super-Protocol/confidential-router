@@ -4,7 +4,8 @@ Served by `apps/router-api` at `/graphql` (Apollo, **code-first** NestJS resolve
 target the code-first types must produce; SUP-76 commits the generated `schema.graphql` and
 `apps/router-ui` runs GraphQL codegen against it (never edit generated client code by hand). Auth: session
 cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is `Micros` (string of integer
-micro-USD); IDs are UUIDs; times are ISO-8601 `DateTime`.
+micro-USD); a nullable `Micros` sent as `null` means *no limit*, never zero, and anything that is not a
+whole non-negative amount is a `400`, not a server error. IDs are UUIDs; times are ISO-8601 `DateTime`.
 
 Vocabulary rule (ADR-002): evidence fields say *published / fresh / stale* — there is no `verified`
 field anywhere in this schema.

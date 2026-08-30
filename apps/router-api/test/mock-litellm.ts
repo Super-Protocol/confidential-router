@@ -55,6 +55,19 @@ export const STREAM_CHUNKS: Record<string, unknown>[] = [
 
 export const STREAM_USAGE = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };
 
+/**
+ * Gap between the chunks of a normal stream.
+ *
+ * Deliberately not zero. With `setImmediate` alone a fast runner delivers every
+ * chunk inside the same millisecond, so the router measures a generation that
+ * took no time at all, `tokensPerSecond` is `null` for want of a denominator,
+ * and the e2e assertion on the recorded rate fails for reasons that have
+ * nothing to do with the router. A couple of milliseconds per chunk makes a
+ * streamed generation measurably longer than its first token without making the
+ * suite slow.
+ */
+const CHUNK_GAP_MS = 2;
+
 export const COMPLETION_BODY = {
   id: 'chatcmpl-upstream',
   object: 'chat.completion',
@@ -182,7 +195,7 @@ export class MockLiteLlm {
     // A backend that dies mid-stream, and one slow enough for a client to give
     // up on: the two ways a stream ends without a `[DONE]`.
     const dieAfter = model === 'mock/stream-abort' ? 2 : Number.POSITIVE_INFINITY;
-    const gapMs = model === 'mock/stream-slow' ? 60 : 0;
+    const gapMs = model === 'mock/stream-slow' ? 60 : CHUNK_GAP_MS;
     let index = 0;
     const pump = (): void => {
       if (index >= dieAfter) {
@@ -208,11 +221,7 @@ export class MockLiteLlm {
       next();
     };
     const next = (): void => {
-      if (gapMs > 0) {
-        setTimeout(pump, gapMs);
-      } else {
-        setImmediate(pump);
-      }
+      setTimeout(pump, gapMs);
     };
     pump();
   }

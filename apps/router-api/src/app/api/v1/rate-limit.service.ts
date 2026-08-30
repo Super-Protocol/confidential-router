@@ -14,7 +14,7 @@ export interface RateLimitGrant {
 
 /**
  * Applies the two budgets `/v1` enforces: requests per minute and tokens per
- * minute, each at two scopes.
+ * minute, each at two scopes — four buckets, all four consulted on admission.
  *
  * The key's own settings win where they are set, and the config's
  * `rateLimits.*` are the workspace default (`router-api.md` §Errors). The
@@ -45,15 +45,24 @@ export class RateLimitService {
       throw rateLimited('workspace', workspaceDecision);
     }
 
-    // The token bucket is only *checked* here: the cost is unknown until the
-    // model answers. A key whose token budget is already exhausted is refused
-    // before a single byte is forwarded.
-    const tokenDecision = await this.limiter.consume(`tok:key:${key.id}`, {
+    // The token buckets are only *checked* here: the cost is unknown until the
+    // model answers. A key — or a workspace — whose token budget is already
+    // exhausted is refused before a single byte is forwarded. Both scopes are
+    // checked for the same reason the request buckets are: `settle` debits both,
+    // so a bucket that is never consulted is a budget that can never refuse.
+    const keyTokens = await this.limiter.consume(`tok:key:${key.id}`, {
       cost: 0,
       limitPerMinute: this.tokenLimitFor(key),
     });
-    if (tokenDecision.remaining <= 0) {
-      throw rateLimited('API key token', { ...tokenDecision, allowed: false });
+    if (keyTokens.remaining <= 0) {
+      throw rateLimited('API key token', { ...keyTokens, allowed: false });
+    }
+    const workspaceTokens = await this.limiter.consume(`tok:ws:${key.workspaceId}`, {
+      cost: 0,
+      limitPerMinute: this.config.rateLimits.tokensPerMinute,
+    });
+    if (workspaceTokens.remaining <= 0) {
+      throw rateLimited('workspace token', { ...workspaceTokens, allowed: false });
     }
 
     return { headers: headersFor(tighter(keyDecision, workspaceDecision)) };
