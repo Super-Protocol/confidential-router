@@ -1,9 +1,9 @@
 # router-api
 
 The Confidential Router backend: an OpenAI-compatible `/v1` gateway plus the
-GraphQL API behind the console. This is the foundation — configuration,
-persistence, authentication, health — that the metering gateway (SUP-73) and the
-console (SUP-72) build on.
+GraphQL API behind the console. Configuration, persistence, authentication and
+health are the foundation; the metering gateway on top of them is what a client
+actually talks to.
 
 ## Quick start
 
@@ -15,6 +15,7 @@ That boots on SQLite with no configuration file and no environment variables:
 the schema defaults are a working development setup, migrations run at startup,
 and the database lands in `data/router-api.sqlite`. Then:
 
+- `http://localhost:3000/v1/*` — the OpenAI-compatible gateway
 - `http://localhost:3000/health` — liveness plus a real database round-trip
 - `http://localhost:3000/graphql` — Apollo, `{ me { id email } }`
 - `http://localhost:3000/docs` — Swagger UI for the REST surface
@@ -23,6 +24,53 @@ and the database lands in `data/router-api.sqlite`. Then:
 Sign in without configuring a mail provider: `POST /auth/sign-in/magic-link` with
 `{"email":"you@example.com","callbackURL":"/"}`, then open the link the log
 prints.
+
+## The `/v1` gateway
+
+The OpenAI API, with the router's own identity and meter attached. The contract
+is [`docs/contracts/router-api.md`](../../docs/contracts/router-api.md); the
+short version:
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H 'Authorization: Bearer sk-tee-v1-…' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"meta/llama-3.3-70b-instruct:tdx","messages":[{"role":"user","content":"hi"}],"stream":true}'
+```
+
+| Route | Notes |
+| --- | --- |
+| `POST /v1/chat/completions` | non-stream and SSE, forwarded chunk by chunk |
+| `POST /v1/completions` | legacy text completions |
+| `POST /v1/embeddings` | models whose `capabilities` include `embeddings` |
+| `GET /v1/models`, `GET /v1/models/{id}` | the key's slice of the catalogue |
+| `GET /v1/generation?id=gen-…` | what one request was metered at |
+
+What the gateway does to a request, in order: authenticate the key, resolve
+`model` against the router config, check the key's scope, the workspace's credit
+and the key's spend limit, charge the rate-limit budgets, mint a `gen-<ulid>`,
+forward to LiteLLM with `model` rewritten, and write one `Generation` row when
+it finishes — including when it fails. The response carries
+`X-Confidential-Router-Endpoint` (the hostname that served it) and
+`X-Confidential-Router-Generation-Id`; `usage` gains `cost_micros`, `endpoint`
+and `evidence_digest`.
+
+`evidence_digest` is the digest the platform had published for that endpoint at
+the time — **evidence coverage, never a verdict**. The router does not know
+whether it was verified; that happens in the user's gatekeeper (ADR-002).
+
+Prompts and completions are forwarded and never stored. `generations` has no
+column that could hold them, and `invariants.spec.ts` fails the build if one
+appears.
+
+Two seams are deliberate, both single providers:
+
+- `RATE_LIMITER` (`api/v1/v1.module.ts`) is an in-process token bucket, correct
+  for one replica. A Redis adapter replaces it without touching a caller.
+- `CREDITS_GATEWAY` (`metering/metering.module.ts`) reads
+  `workspaces.balanceMicros` and does not write the ledger — the append-only
+  `credit_transactions` writer is SUP-75's, and decrementing the cached balance
+  without it would break `data-model.md` invariant 3.
 
 ## Configuration
 
@@ -137,8 +185,13 @@ async me(@CurrentUser() user: SessionUser) { … }
 ```
 
 `SessionGuard` works for REST and GraphQL alike and accepts a session cookie and
-nothing else — `/v1/*` will authenticate with `Authorization: Bearer sk-tee-v1-…`
-through a separate guard, and the two are never interchangeable.
+nothing else. `/v1/*` authenticates with `Authorization: Bearer sk-tee-v1-…`
+through `ApiKeyGuard`, and the two are never interchangeable: a session cannot
+call the gateway and a key cannot mint another key.
+
+API keys are `sk-tee-v1-` plus 32 random bytes, base64url. Only `sha256(key)` and
+the first twelve characters reach the database; the plaintext is returned once,
+by `createApiKey`, and cannot be recovered.
 
 Every workspace-scoped read goes through `WorkspaceScopeService`, which is the
 single place tenancy is enforced.
@@ -152,10 +205,13 @@ src/
     config.ts             two-source loader + Zod schema
     db/                   entities, portable column presets, DataSource factory
     auth/                 Better Auth, guards, workspace scoping and provisioning
+    api-keys/             minting, hashing and authentication of /v1 credentials
     catalog/              config → endpoints/models projection, served from memory
     evidence/             bundle retrieval, snapshots, poller, coverage, /v1/evidence
+    metering/             pricing, token estimation, evidence coverage, the meter
     api/health            /health
-    api/graphql           Apollo code-first schema (`me`, models, endpoints, evidence)
+    api/graphql           Apollo code-first schema (`me`, API key CRUD, models, endpoints, evidence)
+    api/v1                the OpenAI-compatible gateway
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs
 test/                     supertest e2e against the real module graph
@@ -170,4 +226,8 @@ CR_TEST_POSTGRES_URL=postgres://… pnpm nx test router-api  # adds the PostgreS
 
 The e2e suites boot the real `AppModule` with the real middleware stack and swap
 only the mailer, so a CORS or Helmet difference between tests and production
-cannot hide.
+cannot hide. The gateway suites add a mock LiteLLM (`test/mock-litellm.ts`) whose
+behaviour — streaming, a crash, a 429, an over-long prompt, a dropped connection
+— is chosen by the `litellmModel` the router forwards, and
+`test/openai-sdk.e2e.spec.ts` drives a running router with the real `openai`
+client to check the "swap one base URL" promise end to end.

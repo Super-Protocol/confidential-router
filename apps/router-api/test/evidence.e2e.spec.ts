@@ -1,8 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { loadCaseBody, loadConformanceManifest } from '@confidential-router/attestation-fixtures';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -31,7 +28,6 @@ const bundle = loadCaseBody(
 let harness: Harness;
 let publisher: Server;
 let publisherRequests = 0;
-let dir: string;
 
 function server() {
   return harness.app.getHttpServer();
@@ -71,43 +67,50 @@ let workspaceId: string;
 
 beforeAll(async () => {
   const port = await startPublisher();
-  dir = mkdtempSync(join(tmpdir(), 'cr-evidence-e2e-'));
-  const configFile = join(dir, 'router.yaml');
-  writeFileSync(
-    configFile,
-    `version: 1
-endpoints:
-  - name: published
-    hostname: ${PUBLISHING}
-    tee: Intel TDX + H100 CC
-    evidenceUrl: http://127.0.0.1:${port}/published/.well-known/swarm-evidence
-  - name: silent
-    hostname: ${SILENT}
-    tee: AMD SEV-SNP
-    evidenceUrl: http://127.0.0.1:${port}/silent/.well-known/swarm-evidence
-models:
-  - id: meta/llama-3.3-70b-instruct:tdx
-    name: Llama 3.3 70B Instruct
-    litellmModel: vllm/llama-3.3-70b-instruct
-    endpoint: published
-    contextLength: 131072
-    pricing: { promptPer1mMicros: 280000, completionPer1mMicros: 420000 }
-  - id: alibaba/qwen2.5-72b-instruct:snp
-    name: Qwen2.5 72B Instruct
-    litellmModel: vllm/qwen2.5-72b-instruct
-    endpoint: silent
-    contextLength: 131072
-    pricing: { promptPer1mMicros: 240000, completionPer1mMicros: 360000 }
-`,
-  );
 
   harness = await createHarness({
-    CR_API_CONFIG_FILE: configFile,
-    // The suite drives the poller itself; a background timer would race it.
-    CR_API_EVIDENCE__POLL_INTERVAL: '0s',
-    // The fixtures are dated January 2026, so give the window enough room for
-    // them to still count as fresh whenever this suite runs.
-    CR_API_EVIDENCE__FRESHNESS_WINDOW: '87600h',
+    config: {
+      version: 1,
+      endpoints: [
+        {
+          name: 'published',
+          hostname: PUBLISHING,
+          tee: 'Intel TDX + H100 CC',
+          evidenceUrl: `http://127.0.0.1:${port}/published/.well-known/swarm-evidence`,
+        },
+        {
+          name: 'silent',
+          hostname: SILENT,
+          tee: 'AMD SEV-SNP',
+          evidenceUrl: `http://127.0.0.1:${port}/silent/.well-known/swarm-evidence`,
+        },
+      ],
+      models: [
+        {
+          id: 'meta/llama-3.3-70b-instruct:tdx',
+          name: 'Llama 3.3 70B Instruct',
+          litellmModel: 'vllm/llama-3.3-70b-instruct',
+          endpoint: 'published',
+          contextLength: 131072,
+          pricing: { promptPer1mMicros: 280000, completionPer1mMicros: 420000 },
+        },
+        {
+          id: 'alibaba/qwen2.5-72b-instruct:snp',
+          name: 'Qwen2.5 72B Instruct',
+          litellmModel: 'vllm/qwen2.5-72b-instruct',
+          endpoint: 'silent',
+          contextLength: 131072,
+          pricing: { promptPer1mMicros: 240000, completionPer1mMicros: 360000 },
+        },
+      ],
+      evidence: {
+        // The suite drives the poller itself; a background timer would race it.
+        pollInterval: '0s',
+        // The fixtures are dated January 2026, so give the window enough room
+        // for them to still count as fresh whenever this suite runs.
+        freshnessWindow: '87600h',
+      },
+    },
   });
 
   cookies = await signIn('evidence@example.com');
@@ -118,7 +121,6 @@ models:
 afterAll(async () => {
   await harness?.close();
   await new Promise<void>((resolve) => publisher?.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true });
 });
 
 describe('the evidence poller', () => {
