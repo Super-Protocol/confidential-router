@@ -1,0 +1,5 @@
+{
+  "exists": true,
+  "path": "$TMP/config.yaml",
+  "source": "--config"
+}
