@@ -25,16 +25,25 @@ database:
 
 backends:
   litellm:
-    # docker/docker-compose.dev.yml does not start LiteLLM yet; until SUP-73
-    # wires up /v1 nothing calls this.
+    # Every /v1 request is forwarded here. docker/docker-compose.dev.yml does
+    # not start LiteLLM yet, so a laptop answers 502 backend_unavailable until
+    # one is running on this address.
     baseUrl: http://127.0.0.1:4000
     connectTimeout: 5s
     readTimeout: 120s
 
-# The router hostnames the platform publishes evidence for (ADR-002). Empty in
-# development: there is nothing to attest on a laptop.
+# The router hostnames the platform publishes evidence for (ADR-002), and the
+# models they serve. Empty in development: there is nothing to attest on a
+# laptop, and /v1 answers model_not_found until a model is listed. See
+# schemas/examples/router-config.example.yaml for a populated catalogue.
 endpoints: []
 models: []
+
+# Default per-key budgets; a key may set lower ones of its own. Also applied
+# per workspace, so minting more keys does not multiply the tenant's budget.
+rateLimits:
+  requestsPerMinute: 600
+  tokensPerMinute: 2000000
 
 auth:
   baseUrl: http://localhost:3000
