@@ -16,7 +16,6 @@ var (
 	namePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	listenPattern   = regexp.MustCompile(`^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):([0-9]{1,5})$`)
 	upstreamPattern = regexp.MustCompile(`^https://[^/?#]+/?$`)
-	digestPattern   = regexp.MustCompile(`^(sha256/[A-Za-z0-9_-]{43}|sha256:[0-9a-fA-F]{64}|[0-9a-fA-F]{64})$`)
 	pemPattern      = regexp.MustCompile(`(?s)^-----BEGIN CERTIFICATE-----.+-----END CERTIFICATE-----\s*$`)
 	logLevels       = []string{"debug", "info", "warn", "error"}
 	logFormats      = []string{"text", "json"}
@@ -168,8 +167,13 @@ func (c *Config) validateEndpoints(p *problems) {
 		pinned := map[string]int{}
 		for j, digest := range ep.TrustedEvidence {
 			dpath := fmt.Sprintf("%s.trustedEvidence[%d]", path, j)
-			if !digestPattern.MatchString(digest) {
-				p.addf(dpath, "is not an evidenceDigest (expected sha256/<43 base64url chars>, sha256:<64 hex> or bare 64 hex), got %q", digest)
+			// The shape check is the shared parser's, not a regex of our own:
+			// a pin this file accepts has to be one pkg/attestation — and the
+			// TypeScript tooling — also reads as a digest.
+			if !IsEvidenceDigest(digest) {
+				p.addf(dpath,
+					"is not an evidenceDigest (expected sha256/<43 canonical base64url chars>, "+
+						"sha256/<64 hex>, sha256:<64 hex> or bare 64 hex), got %q", digest)
 				continue
 			}
 			if prev, dup := pinned[digest]; dup {

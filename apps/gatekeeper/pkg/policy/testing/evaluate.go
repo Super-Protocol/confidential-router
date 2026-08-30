@@ -10,8 +10,10 @@
 // let this through?" — is false no matter what the policies said. Callers must
 // report `Admitted`, never `Decision.Allow` on its own.
 //
-// Passing a Verify function (pkg/attestation's pipeline, SUP-68) makes the run
-// a real end-to-end check.
+// Passing a Verify function makes the run a real end-to-end check.
+// [NewVerifier] builds the default one: pkg/attestation's pipeline, the same
+// code the data plane runs. A bundle it rejects is never admitted, whatever the
+// Rego policies say about the payload.
 package testing
 
 import (
@@ -42,6 +44,11 @@ type Verified struct {
 	QuoteFormat            string
 	// Payload is the verified JWS payload.
 	Payload map[string]any
+	// Warnings names every guarantee this verification had to settle for — an
+	// offline run has no handshake to bind to, for instance. They are merged
+	// into [Result.Warnings], so a caller reports them without knowing which
+	// verifier produced them.
+	Warnings []string
 }
 
 // VerifyFunc runs the cryptographic pipeline (stages 1–6 of ADR-003 §1) over a
@@ -54,8 +61,9 @@ type Options struct {
 	// means: the endpoint whose upstream hostname matches the bundle, or the
 	// only configured endpoint.
 	Endpoint string
-	// Verify performs cryptographic verification. When nil the run is
-	// policy-only; see the package doc.
+	// Verify performs cryptographic verification. [NewVerifier] builds the
+	// default adapter over pkg/attestation; when nil the run is policy-only and
+	// nothing is ever admitted. See the package doc.
 	Verify VerifyFunc
 }
 
@@ -133,6 +141,9 @@ func Evaluate(ctx context.Context, bundleJSON []byte, cfg *config.Config, opts O
 	if opts.Verify != nil {
 		if verified, err = opts.Verify(ctx, bundleJSON, endpoint.Hostname); err != nil {
 			return nil, err
+		}
+		if verified != nil {
+			warnings = verified.Warnings
 		}
 	} else if verified, warnings, err = decodeUnverified(&b, store); err != nil {
 		return nil, err
