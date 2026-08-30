@@ -30,6 +30,20 @@ export function yamlConfiguration<T>(
   };
 }
 
+export interface EnvConfigurationOptions {
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Suffixes under the same prefix that are *not* configuration.
+   *
+   * A service invariably wants a few meta-variables in its own namespace —
+   * where to find the config file, what version it is — and without this each
+   * of them would be mapped into the config tree, where it either collides with
+   * a real key or is rejected by the schema. Compared case-insensitively
+   * against the raw suffix, so `VERSION` reserves `<PREFIX>_VERSION`.
+   */
+  reserved?: string[];
+}
+
 /**
  * Environment source. `<PREFIX>_A__B_C=x` sets `a.bC = "x"`: `__` separates
  * object levels, `_` inside a level is read as snake_case and camelised so env
@@ -38,7 +52,10 @@ export function yamlConfiguration<T>(
  * Values are left as strings — the schema decides what each one should become
  * (see `coercion.ts`).
  */
-export function envConfiguration<T>(prefix: string, env: NodeJS.ProcessEnv = process.env): ConfigurationLoader<T> {
+export function envConfiguration<T>(prefix: string, options: EnvConfigurationOptions = {}): ConfigurationLoader<T> {
+  const { env = process.env, reserved = [] } = options;
+  const reservedSuffixes = new Set(reserved.map((name) => name.toUpperCase()));
+
   return () => {
     const prefixWithSeparator = `${prefix}_`;
     const result: Record<string, unknown> = {};
@@ -47,8 +64,11 @@ export function envConfiguration<T>(prefix: string, env: NodeJS.ProcessEnv = pro
       if (!key.startsWith(prefixWithSeparator) || value === undefined) {
         continue;
       }
-      const path = key
-        .slice(prefixWithSeparator.length)
+      const suffix = key.slice(prefixWithSeparator.length);
+      if (reservedSuffixes.has(suffix.toUpperCase())) {
+        continue;
+      }
+      const path = suffix
         .split('__')
         .filter((segment) => segment !== '')
         .map(camelise);

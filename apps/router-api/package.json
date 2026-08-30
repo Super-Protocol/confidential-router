@@ -79,7 +79,6 @@
     "@apollo/server": "^5.5.1",
     "@as-integrations/express5": "^1.1.2",
     "@confidential-router/server-common": "workspace:*",
-    "@confidential-router/types": "workspace:*",
     "@nestjs/apollo": "^13.1.0",
     "@nestjs/common": "^11.1.6",
     "@nestjs/config": "^4.0.2",
