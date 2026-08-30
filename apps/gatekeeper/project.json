@@ -25,7 +25,8 @@
       "inputs": [
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
-        "{projectRoot}/go.sum"
+        "{projectRoot}/go.sum",
+        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*"
       ],
       "options": {
         "command": "go test ./...",
@@ -71,5 +72,6 @@
         "cwd": "apps/gatekeeper"
       }
     }
-  }
+  },
+  "implicitDependencies": ["@confidential-router/attestation-fixtures"]
 }
