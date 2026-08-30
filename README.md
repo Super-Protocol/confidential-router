@@ -39,14 +39,15 @@ the router.
 ```
 apps/
   router-api/            NestJS — config, TypeORM, auth, health, GraphQL           ✅ foundation
-  router-ui/             Next.js console
+  router-ui/             Next.js console — app shell, design tokens, auth pages   ✅ scaffolded
   gatekeeper/            Go — attesting forward proxy: CLI + TUI, embedded OPA/Rego   ✅ scaffolded
-  *-e2e/                 Playwright (UI) / vitest (API) / Go integration tests
+  router-ui-e2e/         Playwright smoke + axe accessibility suite for the console  ✅ scaffolded
+  *-e2e/                 vitest (API) / Go integration tests
 libs/
   attestation/           TS verifier of the /.well-known/swarm-evidence contract           ✅ scaffolded
   attestation-fixtures/  language-neutral conformance vectors shared by the TS and Go verifiers ✅
   server-common/         config loading (YAML + env + Zod) and structured logging     ✅
-  ui/                    shared React components + design tokens
+  ui/                    shared React components + design tokens                 ✅ scaffolded
   types/                 shared TS contracts (API DTOs, config schemas)              ✅ scaffolded
   nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json ✅
 docker/                  dev/demo compose stack
@@ -83,6 +84,8 @@ Per-target:
 pnpm nx run-many -t lint typecheck build test
 pnpm nx run gatekeeper:test         # go test ./...
 pnpm nx run router-api:migrate      # apply pending database migrations
+pnpm ui:dev                         # the console on http://localhost:3001
+pnpm nx run @confidential-router/router-ui-e2e:e2e   # Playwright smoke + axe audit
 pnpm nx affected -t lint build test # what CI runs on a PR
 pnpm nx graph
 ```

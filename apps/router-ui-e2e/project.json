@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "targets": {
+    "e2e": {
+      "dependsOn": ["@confidential-router/router-ui:build"]
+    },
+    "typecheck": {
+      "command": "tsc -p tsconfig.json",
+      "options": {
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "inputs": ["default", "^default", "{workspaceRoot}/tsconfig.base.json"]
+    }
+  }
+}

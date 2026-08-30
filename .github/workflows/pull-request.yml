@@ -152,6 +152,53 @@ jobs:
           CR_API_AUTH__SECRET: ci-secret-not-used-for-anything-real-32
         run: node dist/cli/run-migrations.js
 
+  e2e:
+    name: Console e2e (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Only the browser the suite actually uses; `--with-deps` pulls the shared
+      # libraries the headless build links against on a bare runner.
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # `nx affected` would skip the suite on a PR that only touches, say, the
+      # gatekeeper — which is the point. The `e2e` target builds the app first.
+      - name: Run the console e2e suite
+        run: |
+          pnpm nx affected -t e2e \
+            --base="${{ github.event.pull_request.base.sha }}" \
+            --head="${{ github.event.pull_request.head.sha }}" \
+            --outputStyle=static
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: |
+            apps/router-ui-e2e/playwright-report
+            test-output/playwright
+          retention-days: 7
+
+
   go:
     name: Go checks (gatekeeper)
     runs-on: ubuntu-latest

@@ -34,6 +34,10 @@ blob-report
 # Next.js
 .next
 out
+# Regenerated (and rewritten) by every `next build`; committing it means a dirty
+# worktree after each build, and its `.next/types` imports do not resolve until
+# one has run.
+next-env.d.ts
 
 # TypeScript incremental build info
 *.tsbuildinfo
