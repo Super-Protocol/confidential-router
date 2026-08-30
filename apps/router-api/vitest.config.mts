@@ -11,6 +11,7 @@ export default defineConfig({
   resolve: {
     conditions: ['@confidential-router/source'],
     alias: {
+      '@confidential-router/attestation-fixtures': `${repoRoot}/libs/attestation-fixtures/src/index.ts`,
       '@confidential-router/server-common': `${repoRoot}/libs/server-common/src/index.ts`,
     },
   },
