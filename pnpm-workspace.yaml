@@ -6,6 +6,10 @@ strictPeerDependencies: false
 # Packages allowed to run install scripts. Keep this list explicit and short —
 # an unreviewed postinstall is arbitrary code execution on every clone and in CI.
 allowBuilds:
+  '@apollo/protobufjs': false
   '@parcel/watcher': true
+  '@scarf/scarf': false
+  '@swc/core': true
+  better-sqlite3: true
   esbuild: true
   nx: true

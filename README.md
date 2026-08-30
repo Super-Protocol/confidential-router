@@ -5,9 +5,10 @@ TEE and publishes signed attestation evidence** — plus the **Gatekeeper**, a
 user-side attesting proxy that verifies that evidence before letting your
 traffic through.
 
-> **Status: bootstrap.** This repository currently contains the workspace,
-> toolchain and CI scaffolding only. The router API, console and gatekeeper
-> features land incrementally.
+> **Status: early.** The workspace, the architecture decision records and the
+> `router-api` foundation (configuration, database, authentication, health) are
+> in place. The OpenAI-compatible gateway, the console and the gatekeeper land
+> incrementally.
 
 ## The one architectural rule
 
@@ -37,13 +38,14 @@ the router.
 
 ```
 apps/
-  router-api/            NestJS — OpenAI-compatible REST (/v1/*) + GraphQL for the console
+  router-api/            NestJS — config, TypeORM, auth, health, GraphQL           ✅ foundation
   router-ui/             Next.js console
   gatekeeper/            Go — attesting forward proxy: CLI + TUI, embedded OPA/Rego   ✅ scaffolded
   *-e2e/                 Playwright (UI) / vitest (API) / Go integration tests
 libs/
   attestation/           TS verifier of the /.well-known/swarm-evidence contract           ✅ scaffolded
   attestation-fixtures/  language-neutral conformance vectors shared by the TS and Go verifiers ✅
+  server-common/         config loading (YAML + env + Zod) and structured logging     ✅
   ui/                    shared React components + design tokens
   types/                 shared TS contracts (API DTOs, config schemas)              ✅ scaffolded
   nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json ✅
@@ -66,11 +68,21 @@ pnpm dev:up                  # PostgreSQL 16 on :5432 (docker/docker-compose.dev
 pnpm dev:down
 ```
 
+Run the API — no configuration file, no environment variables, SQLite:
+
+```bash
+pnpm nx serve router-api     # http://localhost:3000/health, /graphql, /docs
+```
+
+See [`apps/router-api/README.md`](./apps/router-api/README.md) for configuration,
+migrations and the authentication flow.
+
 Per-target:
 
 ```bash
 pnpm nx run-many -t lint typecheck build test
 pnpm nx run gatekeeper:test         # go test ./...
+pnpm nx run router-api:migrate      # apply pending database migrations
 pnpm nx affected -t lint build test # what CI runs on a PR
 pnpm nx graph
 ```
@@ -85,6 +97,8 @@ pnpm nx graph
 | Biome          | 2.5     | formatter + linter; 2-space, width 120, single quotes               |
 | TypeScript     | 5.9     | `strict`, `nodenext`, project references                            |
 | Go             | 1.24    | `apps/gatekeeper`, wired into Nx via `nx:run-commands`              |
+| NestJS         | 11      | `apps/router-api`; Apollo code-first GraphQL, TypeORM 0.3           |
+| PostgreSQL     | 16      | production store; SQLite in development, tests and CI unit runs     |
 
 TypeScript path aliases use the `@confidential-router/*` scope and are declared
 once in `tsconfig.base.json`.

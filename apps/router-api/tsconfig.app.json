@@ -1,0 +1,37 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/tsconfig.app.tsbuildinfo",
+    "types": ["node"],
+    "target": "es2022",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "emitDeclarationOnly": false,
+    "declaration": false,
+    "declarationMap": false,
+    "composite": false,
+    "isolatedModules": false,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "dist",
+    "out-tsc",
+    "vitest.config.mts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts"
+  ],
+  "references": [
+    {
+      "path": "../../libs/server-common/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/types/tsconfig.lib.json"
+    }
+  ]
+}
