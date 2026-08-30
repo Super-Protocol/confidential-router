@@ -323,9 +323,17 @@ whatever the policies said, and every shortcut is listed in `Result.Warnings`.
 `testing.NewVerifier(cfg, opts)` builds the default adapter over
 `pkg/attestation`: the same chain → trusted root → JWS → freshness → channel
 binding pipeline the data plane runs. A bundle it rejects is never admitted,
-whatever the Rego policies said about the payload; weaker guarantees an offline
-run had to settle for — a producer-asserted channel binding, an unenforced
-`maxBundleAge` — come back in `Result.Warnings` rather than passing silently.
+whatever the Rego policies said about the payload. A bundle that binds to its
+own `tlsLeaf` is rejected too — the gatekeeper admits an observed binding only
+(ADR-003 §1), so an admitted verdict needs
+`VerifierOptions.ObservedTLSFingerprint` from a real handshake. What the run
+merely settled for, such as an unenforced `maxBundleAge`, comes back in
+`Result.Warnings` rather than passing silently.
+
+`gatekeeper policy test` itself stays policy-only by design (see
+`cli.verifyFuncFor`); the adapter is for callers that already hold an observed
+fingerprint, and `gatekeeper verify` (`pkg/verifier`) is the command that
+answers "would this be let through".
 
 `custom.tree_match(pattern, actual)` is available to policies: every key of
 `pattern` must be present in `actual` with an equal value, objects recurse, and

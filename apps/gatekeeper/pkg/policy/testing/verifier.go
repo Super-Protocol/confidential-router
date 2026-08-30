@@ -14,10 +14,13 @@ import (
 // VerifierOptions tunes the adapter [NewVerifier] builds.
 type VerifierOptions struct {
 	// ObservedTLSFingerprint binds the verdict to a TLS leaf the caller saw on
-	// its own handshake — the only binding the data plane accepts. Offline
-	// there is no handshake; leaving it empty lets the pipeline fall back to
-	// hashing the bundle's tlsLeaf, which is recorded as a warning because a
-	// producer-asserted binding proves nothing about the channel.
+	// its own handshake — the only binding the gatekeeper accepts (ADR-003 §1),
+	// and therefore required for an admitted verdict. Offline there is no
+	// handshake of our own; a caller that has one (`gatekeeper verify` does)
+	// passes its fingerprint here. Leaving it empty lets the pipeline fall back
+	// to hashing the bundle's own tlsLeaf, which proves nothing about the
+	// channel, so that outcome is reported as a denial rather than an
+	// admission.
 	ObservedTLSFingerprint string
 	// MaxBundleAge rejects bundles whose payload.issuedAt is older than this.
 	// Zero disables the freshness check — attestation.Params' own default, and
@@ -37,6 +40,11 @@ type VerifierOptions struct {
 // `pem`/`pemFile` is an error at construction rather than a denial per bundle.
 // A bundle that fails any stage comes back as an error naming the stage, so a
 // cryptographic failure can never be reported as a policy verdict.
+//
+// A bundle that passes every stage but binds to its own tlsLeaf is a denial
+// too: [Result.Admitted] means "the gatekeeper would let this through", and the
+// gatekeeper admits an observed binding only. Set
+// [VerifierOptions.ObservedTLSFingerprint] to get an admissible verdict.
 //
 // The returned function ignores its context: verification of an in-memory
 // bundle does no I/O, and the parameter exists for the callers that fetch.
@@ -82,21 +90,26 @@ func newVerified(result attestation.Result, opts VerifierOptions) (*Verified, er
 		return nil, fmt.Errorf("matched root fingerprint: %w", err)
 	}
 
-	var warnings []string
 	// The pipeline proved payload.certFingerprint matches whichever leaf it
-	// could reach. When that was the bundle's own tlsLeaf rather than an
-	// observed handshake, the binding is the producer's word — the policy input
-	// still spells it `observed`, so say so here.
-	bound := result.ObservedTLSFingerprint
-	if result.ChannelBinding != attestation.BindingObserved || bound == "" {
-		bound = result.Payload.Base().CertFingerprint
-		warnings = append(warnings,
-			"channel binding is producer-asserted (the bundle's own tlsLeaf), not a TLS leaf observed on a handshake")
+	// could reach. When that was the bundle's own tlsLeaf rather than a leaf
+	// seen on a handshake, the binding is the producer's word about itself:
+	// stages 1–6 held, but the gatekeeper would still not admit this endpoint,
+	// and the policy input has no way to say so — policy.BuildInput spells
+	// `channelBinding: observed` unconditionally. Reporting it as a denial is
+	// the only honest answer; passing it through as an admission would make
+	// `policy test` claim something the data plane never would.
+	if result.ChannelBinding != attestation.BindingObserved || result.ObservedTLSFingerprint == "" {
+		return nil, fmt.Errorf(
+			"%s: channel binding is producer-asserted (the bundle's own tlsLeaf was hashed); "+
+				"the gatekeeper admits an observed binding only — supply the TLS leaf fingerprint "+
+				"seen on a handshake with the endpoint", attestation.StageTLSFingerprint)
 	}
-	observed, err := trust.ParseDigest(bound)
+	observed, err := trust.ParseDigest(result.ObservedTLSFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("channel binding fingerprint: %w", err)
 	}
+
+	var warnings []string
 	if opts.MaxBundleAge <= 0 {
 		warnings = append(warnings,
 			"freshness was not enforced: maxBundleAge is 0, so a bundle of any age passes the jws stage")

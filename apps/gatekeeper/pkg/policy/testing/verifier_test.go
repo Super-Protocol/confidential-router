@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 	policytesting "github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/policy/testing"
 )
@@ -106,25 +107,59 @@ func TestVerifierDeniesAnUntrustedRoot(t *testing.T) {
 	}
 }
 
-// TestVerifierWarnsAboutAProducerAssertedBinding: with no handshake to observe,
-// the pipeline falls back to hashing the bundle's own tlsLeaf. That is a valid
-// verdict, but a weaker one, and `policy test` has to say so rather than let the
-// input document's `channelBinding: observed` stand unqualified.
-func TestVerifierWarnsAboutAProducerAssertedBinding(t *testing.T) {
+// TestVerifierDeniesAProducerAssertedBinding: with no handshake to observe, the
+// pipeline falls back to hashing the bundle's own tlsLeaf. Stages 1-6 hold, but
+// the gatekeeper admits an observed binding only (ADR-003 §1), and the policy
+// input spells `channelBinding: observed` unconditionally — so passing this
+// through as admitted would have `policy test` claim something the data plane
+// never would. The shared vectors call this bundle valid; being valid and being
+// admissible are different questions.
+func TestVerifierDeniesAProducerAssertedBinding(t *testing.T) {
 	cfgPath := writeConformanceConfig(t, trustedRootPEM(t))
+	bundlePath := conformanceBundle(t, "valid-producer-asserted")
 
-	result, err := policytesting.EvaluateFile(context.Background(),
-		conformanceBundle(t, "valid-producer-asserted"), cfgPath,
+	_, err := policytesting.EvaluateFile(context.Background(), bundlePath, cfgPath,
 		policytesting.Options{Verify: newFixtureVerifier(t, cfgPath, "")})
+	if err == nil {
+		t.Fatal("a producer-asserted binding was reported as an admission")
+	}
+	if !strings.Contains(err.Error(), "producer-asserted") ||
+		!strings.Contains(err.Error(), string(attestation.StageTLSFingerprint)) {
+		t.Errorf("err = %v, want it to name the stage and the weaker binding", err)
+	}
+
+	// The same bundle is admitted once the caller supplies the leaf it saw:
+	// what the pipeline rejected was the missing channel, not the evidence.
+	observed := producerAssertedLeafFingerprint(t, bundlePath)
+	result, err := policytesting.EvaluateFile(context.Background(), bundlePath, cfgPath,
+		policytesting.Options{Verify: newFixtureVerifier(t, cfgPath, observed)})
 	if err != nil {
-		t.Fatalf("EvaluateFile: %v", err)
+		t.Fatalf("EvaluateFile with an observed fingerprint: %v", err)
 	}
 	if !result.Admitted {
-		t.Fatalf("Admitted = false, want true (%s)", result.Decision.Reason)
+		t.Fatalf("Admitted = false, want true once the binding is observed (%s)", result.Decision.Reason)
 	}
-	if !strings.Contains(strings.Join(result.Warnings, "\n"), "producer-asserted") {
-		t.Errorf("warnings = %v, want one naming the weaker channel binding", result.Warnings)
+}
+
+// producerAssertedLeafFingerprint stands in for a handshake: it hashes the leaf
+// the bundle publishes, which is what a gatekeeper talking to this endpoint
+// would have observed.
+func producerAssertedLeafFingerprint(t *testing.T, bundlePath string) string {
+	t.Helper()
+	raw, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	var b struct {
+		CertFingerprint string `json:"certFingerprint"`
+	}
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.CertFingerprint == "" {
+		t.Fatalf("%s carries no certFingerprint", bundlePath)
+	}
+	return b.CertFingerprint
 }
 
 // TestVerifierWarnsWhenFreshnessIsNotEnforced: MaxBundleAge of 0 disables the
