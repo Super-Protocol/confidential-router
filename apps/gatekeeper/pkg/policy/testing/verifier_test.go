@@ -127,6 +127,40 @@ func TestVerifierWarnsAboutAProducerAssertedBinding(t *testing.T) {
 	}
 }
 
+// TestVerifierWarnsWhenFreshnessIsNotEnforced: MaxBundleAge of 0 disables the
+// freshness check, which is the right default for a bundle saved days ago but
+// also means a replayed bundle of any age passes. `policy test` has to say so —
+// silently skipping a stage is exactly what Result.Warnings exists to prevent.
+func TestVerifierWarnsWhenFreshnessIsNotEnforced(t *testing.T) {
+	cfgPath := writeConformanceConfig(t, trustedRootPEM(t))
+	bundlePath := conformanceBundle(t, "valid-rsa-deployment")
+
+	result, err := policytesting.EvaluateFile(context.Background(), bundlePath, cfgPath,
+		policytesting.Options{Verify: newFixtureVerifierWithMaxAge(t, cfgPath, fixtureObservedFP, 0)})
+	if err != nil {
+		t.Fatalf("EvaluateFile: %v", err)
+	}
+	if !result.Admitted {
+		t.Fatalf("Admitted = false, want true: a zero maxBundleAge disables the check, it does not deny (%s)",
+			result.Decision.Reason)
+	}
+	if !strings.Contains(strings.Join(result.Warnings, "\n"), "maxBundleAge") {
+		t.Errorf("warnings = %v, want one naming the unenforced freshness check", result.Warnings)
+	}
+
+	// The same bundle with the check switched on and the vectors' reference
+	// clock stays admitted and unqualified, so the warning tracks the setting
+	// and not the bundle.
+	enforced, err := policytesting.EvaluateFile(context.Background(), bundlePath, cfgPath,
+		policytesting.Options{Verify: newFixtureVerifier(t, cfgPath, fixtureObservedFP)})
+	if err != nil {
+		t.Fatalf("EvaluateFile with freshness enforced: %v", err)
+	}
+	if len(enforced.Warnings) != 0 {
+		t.Errorf("warnings = %v, want none once maxBundleAge is set", enforced.Warnings)
+	}
+}
+
 // TestNewVerifierRejectsAnUnreadableRoot fails at construction rather than once
 // per bundle, so a broken trust store is one clear error and not a stream of
 // denials.
@@ -160,6 +194,13 @@ func TestNewVerifierRequiresAConfig(t *testing.T) {
 // max age, so the verdicts here are the ones the manifest publishes.
 func newFixtureVerifier(t *testing.T, configPath, observed string) policytesting.VerifyFunc {
 	t.Helper()
+	return newFixtureVerifierWithMaxAge(t, configPath, observed, 24*time.Hour)
+}
+
+func newFixtureVerifierWithMaxAge(
+	t *testing.T, configPath, observed string, maxAge time.Duration,
+) policytesting.VerifyFunc {
+	t.Helper()
 	cfg, err := config.Load(config.Options{Path: configPath})
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -170,7 +211,7 @@ func newFixtureVerifier(t *testing.T, configPath, observed string) policytesting
 	}
 	verify, err := policytesting.NewVerifier(cfg, policytesting.VerifierOptions{
 		ObservedTLSFingerprint: observed,
-		MaxBundleAge:           24 * time.Hour,
+		MaxBundleAge:           maxAge,
 		Now:                    now,
 	})
 	if err != nil {

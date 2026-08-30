@@ -47,7 +47,7 @@ func ParseDigest(s string) (Digest, error) {
 	if err != nil {
 		return "", fmt.Errorf(
 			"%q is not a SHA-256 digest: expected %s<43 canonical base64url chars>, "+
-				"sha256:<64 hex chars> or bare hex", s, Prefix)
+				"%s<64 hex chars>, sha256:<64 hex chars> or bare hex", s, Prefix, Prefix)
 	}
 	return Digest(canonical), nil
 }
