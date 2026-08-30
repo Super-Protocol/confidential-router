@@ -1,0 +1,7 @@
+Wrote $TMP/config.yaml
+
+Next:
+  gatekeeper trust roots add <name> --pem-file <root.pem>
+  gatekeeper endpoint add <name> --listen 127.0.0.1:8443 --upstream https://<host>
+  gatekeeper endpoint trust add <name> --from-upstream
+  gatekeeper config validate

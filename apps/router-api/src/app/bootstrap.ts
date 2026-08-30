@@ -50,11 +50,13 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
       const allowed = config.server.validClientOrigins;
       // A request with no Origin is same-origin or a non-browser client; the
       // session cookie is `SameSite=Lax`, so it is not a CSRF vector.
-      if (!origin || allowed.includes('*') || allowed.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error(`Origin ${origin} is not allowed`));
+      const permitted = !origin || allowed.includes('*') || allowed.includes(origin);
+      // `callback(null, false)` and not `callback(error)`: refusing CORS means
+      // omitting `Access-Control-Allow-Origin` and letting the browser enforce
+      // it. Passing an Error instead sends the request down Express's error
+      // path, which answers 500 and logs at error level — a 500 and a log line
+      // per request for something that is not a server fault.
+      callback(null, permitted);
     },
   });
 
