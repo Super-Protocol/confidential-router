@@ -9,9 +9,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
+import ajvFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
+
+// ajv-formats is CommonJS; under `nodenext` the default import is `module.exports`, whose callable plugin lives on `.default`.
+const addFormats = ajvFormats.default;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCHEMAS_DIR = join(here, '..', '..', '..', '..', 'schemas');
