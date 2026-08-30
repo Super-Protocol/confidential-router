@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Super-Protocol/confidential-router/schemas/swarm-evidence-bundle.schema.json",
+  "title": "/.well-known/swarm-evidence bundle (v1)",
+  "description": "Shape of the attestation bundle the Swarm Cloud platform publishes for a router endpoint hostname. Mirrors swarm-cloud libs/swarm-attestation/src/types.ts (AttestationBundle) and its validateBundleShape(). The gatekeeper and the router's evidence poller validate shape against this schema; only the gatekeeper verifies signatures.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["version", "kind", "hostname", "issuedAt", "certFingerprint", "jws", "certChain"],
+  "properties": {
+    "version": { "const": "1" },
+    "kind": {
+      "type": "string",
+      "enum": ["DeploymentEvidence", "ControlPlaneEvidence", "KubernetesControlPlaneEvidence"],
+      "description": "Confidential Router endpoints publish DeploymentEvidence; the gatekeeper rejects the other kinds."
+    },
+    "hostname": { "type": "string", "minLength": 1, "description": "Must equal the hostname the bundle was fetched from." },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "certFingerprint": { "$ref": "#/$defs/fingerprint", "description": "sha256/<base64url> of the DER of the TLS leaf served on this host." },
+    "jws": { "$ref": "#/$defs/compactJws", "description": "Compact JWS (RS256 or ES256K) over the evidence payload, signed by the chain's leaf key." },
+    "certChain": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/pem" },
+      "description": "PEM certificates leaf → root; the terminal root must match a trusted root."
+    },
+    "rootCaTeeQuote": {
+      "type": "object",
+      "required": ["format", "data"],
+      "properties": {
+        "format": { "type": "string", "enum": ["intel-tdx-quote-v5", "amd-sev-snp-report"] },
+        "data": { "type": "string", "minLength": 1 },
+        "collateral": { "type": "object" }
+      }
+    },
+    "tlsLeaf": { "$ref": "#/$defs/pem", "description": "Optional leaf PEM for verifiers without channel access; the gatekeeper ignores it." }
+  },
+  "$defs": {
+    "fingerprint": { "type": "string", "pattern": "^sha256/[A-Za-z0-9_-]{43}$" },
+    "compactJws": { "type": "string", "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$" },
+    "pem": { "type": "string", "pattern": "^-----BEGIN CERTIFICATE-----[\\s\\S]+-----END CERTIFICATE-----\\s*$" },
+    "deploymentEvidencePayload": {
+      "description": "Decoded JWS payload for kind DeploymentEvidence (not part of the bundle document itself).",
+      "type": "object",
+      "required": ["version", "kind", "hostname", "issuedAt", "certFingerprint", "evidenceDigest"],
+      "properties": {
+        "version": { "const": "1" },
+        "kind": { "const": "DeploymentEvidence" },
+        "hostname": { "type": "string", "minLength": 1 },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "certFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "evidenceDigest": { "$ref": "#/$defs/fingerprint", "description": "sha256/<base64url> of the canonical snapshot JSON — the value users pin." },
+        "evidence": { "type": "object", "description": "Canonical deployment snapshot ({ version: 2, resources: [...] })." }
+      }
+    }
+  }
+}
