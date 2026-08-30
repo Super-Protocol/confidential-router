@@ -147,14 +147,68 @@ func TestTrustThisDeploymentRefusesAnUnverifiedEndpoint(t *testing.T) {
 	}
 }
 
-func TestAddTheUntrustedRootNeedsTheCertificate(t *testing.T) {
+func TestAddTheUntrustedRootNeedsAValidatedChain(t *testing.T) {
 	endpoint := confidentialEndpoint("llama-33-70b")
 	endpoint.Health = status.Broken
+	// A report from a chain that never validated carries no certificate to
+	// offer, however untrusted its terminus looked.
 	endpoint.Report.UntrustedRoot = "sha256/whatever"
 
 	m := press(t, newModel(t, newFakeSupervisor(endpoint), withStore(t)), "a")
-	if !m.flashError || !strings.Contains(m.flash, "did not present an untrusted root") {
+	if !m.flashError || !strings.Contains(m.flash, "did not present a root") {
 		t.Errorf("flash = %q (error=%v), want a refusal", m.flash, m.flashError)
+	}
+}
+
+func TestAddTheUntrustedRootTakesTwoPresses(t *testing.T) {
+	endpoint := confidentialEndpoint("llama-33-70b")
+	endpoint.Health = status.Broken
+	endpoint.Report.Verified, endpoint.Report.Admitted = false, false
+	endpoint.Report.Stage = "untrusted-root"
+	endpoint.Report.UntrustedRoot = untrustedRootFingerprint(t)
+	endpoint.Report.UntrustedRootPEM = untrustedRootPEM(t)
+
+	m := newModel(t, newFakeSupervisor(endpoint), withStore(t))
+	store := m.opts.Store
+	before := len(store.Roots())
+
+	// A trusted root is global, so one stray keystroke must not widen trust for
+	// every endpoint at once.
+	m = press(t, m, "a")
+	if !strings.Contains(m.flash, "press a again") {
+		t.Fatalf("flash = %q, want a confirmation prompt", m.flash)
+	}
+	if len(store.Roots()) != before {
+		t.Fatal("the first press already trusted the root")
+	}
+
+	m = press(t, m, "a")
+	if m.flashError {
+		t.Fatalf("flash = %q, want the root trusted", m.flash)
+	}
+	if len(store.Roots()) != before+1 {
+		t.Error("the second press did not trust the root")
+	}
+}
+
+func TestAnotherKeyCancelsTheRootConfirmation(t *testing.T) {
+	endpoint := confidentialEndpoint("llama-33-70b")
+	endpoint.Health = status.Broken
+	endpoint.Report.UntrustedRoot = untrustedRootFingerprint(t)
+	endpoint.Report.UntrustedRootPEM = untrustedRootPEM(t)
+
+	m := newModel(t, newFakeSupervisor(endpoint), withStore(t))
+	store := m.opts.Store
+	before := len(store.Roots())
+
+	m = press(t, m, "a")
+	m = press(t, m, "j") // anything else at all
+	m = press(t, m, "a") // back to asking, not doing
+	if !strings.Contains(m.flash, "press a again") {
+		t.Errorf("flash = %q, want the confirmation to have been cancelled", m.flash)
+	}
+	if len(store.Roots()) != before {
+		t.Error("a cancelled confirmation still trusted the root")
 	}
 }
 
@@ -246,5 +300,56 @@ func TestQuittingReleasesTheEventSubscription(t *testing.T) {
 	case <-ctx.Done():
 	default:
 		t.Error("quitting left the event subscription open")
+	}
+}
+
+func TestTrustThisDeploymentPinsTheVerifiedDigest(t *testing.T) {
+	endpoint := confidentialEndpoint("llama-33-70b")
+	endpoint.Report.Pinned = false
+	// The upstream has rolled since the verdict was formed: the published
+	// digest passed nothing, and the verified one is stale. Pinning either
+	// would be wrong.
+	endpoint.PublishedDigest = "sha256/aLtGm_goUTIOw2B3g25z08lP4QaDrSX2K3Wai-B4Fpc"
+
+	m := press(t, newModel(t, newFakeSupervisor(endpoint), withStore(t)), "t")
+	if !m.flashError || !strings.Contains(m.flash, "re-attest") {
+		t.Fatalf("flash = %q (error=%v), want a refusal pointing at re-attestation", m.flash, m.flashError)
+	}
+
+	// Once the two agree, the verified digest is what gets written.
+	endpoint.PublishedDigest = endpoint.Report.EvidenceDigest
+	m = newModel(t, newFakeSupervisor(endpoint), withStore(t))
+	store := m.opts.Store
+	m = press(t, m, "t")
+	if m.flashError {
+		t.Fatalf("flash = %q, want the digest pinned", m.flash)
+	}
+	ep, _ := store.Endpoint("llama-33-70b")
+	if len(ep.Pins) != 1 {
+		t.Fatalf("pins = %d, want the one already in the config (it is the same digest)", len(ep.Pins))
+	}
+}
+
+func TestTheDashboardArmsOneStreamReaderAtATime(t *testing.T) {
+	m := newModel(t, newFakeSupervisor(confidentialEndpoint("llama-33-70b")))
+
+	// A snapshot the dashboard asked for itself must not arm a second reader:
+	// one is already blocked on the stream, and every extra one would sit there
+	// for the life of the process.
+	_, cmd := m.Update(refreshedMsg(m.snapshot))
+	if cmd != nil {
+		t.Error("a self-requested snapshot armed another read of the event stream")
+	}
+
+	// And with no stream at all, nothing is armed — a receive from a nil
+	// channel never returns.
+	next, cmd := m.Update(snapshotMsg(m.snapshot))
+	if _, ok := next.(Model); !ok || cmd != nil {
+		t.Error("a snapshot armed a read with no subscription to read from")
+	}
+
+	withStream := update(m, subscribedMsg{events: make(chan status.Event)})
+	if _, cmd := withStream.Update(snapshotMsg(m.snapshot)); cmd == nil {
+		t.Error("a published snapshot did not re-arm the reader")
 	}
 }

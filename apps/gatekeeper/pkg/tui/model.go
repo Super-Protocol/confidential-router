@@ -48,6 +48,11 @@ type Model struct {
 	pane          pane
 	showHelp      bool
 
+	// pendingRoot is the endpoint whose untrusted root the next `a` will trust.
+	// Adding a trust anchor is the one action here that widens trust for every
+	// endpoint at once, so it takes two deliberate keystrokes rather than one.
+	pendingRoot string
+
 	// flash is the result of the last action, shown briefly in the status bar.
 	flash      string
 	flashError bool
@@ -96,8 +101,15 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.subscribe(), m.refresh())
 }
 
-// snapshotMsg carries a new full state of every endpoint.
+// snapshotMsg carries a new full state of every endpoint, published by the
+// event stream. Handling it re-arms the reader.
 type snapshotMsg status.Snapshot
+
+// refreshedMsg carries a snapshot the dashboard asked for itself. It is a
+// separate type precisely so that it does *not* arm another channel reader:
+// one reader is already blocked on the stream, and a second would sit there
+// for the life of the process.
+type refreshedMsg status.Snapshot
 
 // logMsg carries one line for the tail.
 type logMsg status.LogLine
@@ -132,8 +144,19 @@ type subscribedMsg struct {
 // the dashboard is populated the moment it opens.
 func (m Model) refresh() tea.Cmd {
 	return func() tea.Msg {
-		return snapshotMsg(m.opts.Supervisor.Snapshot(context.Background()))
+		return refreshedMsg(m.opts.Supervisor.Snapshot(context.Background()))
 	}
+}
+
+// listen arms one read of the event stream, or nothing when there is no stream
+// to read. Receiving from a nil channel blocks for ever, so an unguarded arm
+// would strand a command goroutine every time — before the subscription lands,
+// and after the supervisor stops publishing.
+func (m Model) listen() tea.Cmd {
+	if m.events == nil {
+		return nil
+	}
+	return waitForEvent(m.events)
 }
 
 // waitForEvent blocks on the stream for one event and re-arms itself.
@@ -168,18 +191,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case subscribedMsg:
 		m.events, m.cancel = msg.events, msg.cancel
-		return m, tea.Batch(waitForEvent(m.events), tick())
+		return m, tea.Batch(m.listen(), tick())
+
+	case refreshedMsg:
+		m.adopt(status.Snapshot(msg))
+		return m, nil
 
 	case snapshotMsg:
 		m.adopt(status.Snapshot(msg))
-		return m, waitForEvent(m.events)
+		return m, m.listen()
 
 	case logMsg:
 		m.logs = append(m.logs, status.LogLine(msg))
 		if len(m.logs) > maxLogLines {
 			m.logs = m.logs[len(m.logs)-maxLogLines:]
 		}
-		return m, waitForEvent(m.events)
+		return m, m.listen()
 
 	case eventsEndedMsg:
 		m.events = nil
@@ -233,8 +260,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.pinSelected()
 
 	case key.Matches(msg, m.keys.AddRoot):
-		return m, m.addRootSelected()
+		return m.addRoot()
 	}
+
+	// Any other key cancels a half-finished "trust this root": the confirmation
+	// has to be the very next thing the user does.
+	m.pendingRoot = ""
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
@@ -314,15 +345,27 @@ func (m Model) pinSelected() tea.Cmd {
 		switch {
 		case store == nil:
 			return flashMsg{text: "the configuration is not writable from here", isErr: true}
-		case ep.PublishedDigest == "":
-			return flashMsg{text: fmt.Sprintf("%s publishes no evidenceDigest yet", ep.Name), isErr: true}
 		case ep.Report == nil || !ep.Report.Verified:
 			return flashMsg{
 				text:  fmt.Sprintf("%s has not passed verification; its digest means nothing", ep.Name),
 				isErr: true,
 			}
+		case ep.Report.EvidenceDigest == "":
+			return flashMsg{text: fmt.Sprintf("%s published no evidenceDigest to pin", ep.Name), isErr: true}
+		case ep.PublishedDigest != "" && ep.PublishedDigest != ep.Report.EvidenceDigest:
+			// The upstream has rolled since the verdict was formed. Pinning
+			// either value would be wrong: the verified one is stale, and the
+			// published one has passed nothing.
+			return flashMsg{
+				text: fmt.Sprintf("%s has published a new deployment since it was last verified — "+
+					"press r to re-attest first", ep.Name),
+				isErr: true,
+			}
 		}
-		digest, err := trust.ParseDigest(ep.PublishedDigest)
+		// The verified digest, never the published one: only the former came
+		// out of a bundle whose chain, signature, freshness and channel
+		// binding were all checked.
+		digest, err := trust.ParseDigest(ep.Report.EvidenceDigest)
 		if err != nil {
 			return flashMsg{text: fmt.Sprintf("%s: %v", ep.Name, err), isErr: true}
 		}
@@ -337,35 +380,58 @@ func (m Model) pinSelected() tea.Cmd {
 	}
 }
 
-// addRootSelected is the desktop gatekeeper's "Add to trusted clouds": take the
-// root a failed chain terminated in and trust it.
-func (m Model) addRootSelected() tea.Cmd {
+// addRoot is the desktop gatekeeper's "Add to trusted clouds": take the root a
+// valid-but-unknown chain terminated in and trust it.
+//
+// It takes two presses. A trusted root is global — it is what every endpoint's
+// chain is matched against — so this is the only key here that can widen trust
+// beyond the endpoint under the cursor, and it should not be reachable by a
+// stray keystroke.
+func (m Model) addRoot() (tea.Model, tea.Cmd) {
 	ep, ok := m.selected()
 	if !ok {
-		return nil
+		m.pendingRoot = ""
+		return m, nil
 	}
+
+	switch {
+	case m.opts.Store == nil:
+		m.pendingRoot = ""
+		return m, flash("the configuration is not writable from here", true)
+	case ep.Report == nil || ep.Report.UntrustedRootPEM == "":
+		// The verifier offers a certificate only when the chain validated and
+		// the trust store was the one thing missing. Anything else — a chain
+		// whose links do not verify, a failed signature — leaves nothing here
+		// that it would be safe to trust.
+		m.pendingRoot = ""
+		return m, flash(fmt.Sprintf("%s did not present a root that can be trusted "+
+			"(only a valid chain ending in an unknown root can be)", ep.Name), true)
+	case m.pendingRoot != ep.Name:
+		m.pendingRoot = ep.Name
+		return m, flash(fmt.Sprintf("press a again to trust %s for EVERY endpoint",
+			short(ep.Report.UntrustedRoot)), false)
+	}
+
+	m.pendingRoot = ""
 	store := m.opts.Store
-	return func() tea.Msg {
-		switch {
-		case store == nil:
-			return flashMsg{text: "the configuration is not writable from here", isErr: true}
-		case ep.Report == nil || ep.Report.UntrustedRootPEM == "":
-			return flashMsg{
-				text:  fmt.Sprintf("%s did not present an untrusted root to add", ep.Name),
-				isErr: true,
-			}
-		}
+	name, pemBytes := ep.Name+"-root", []byte(ep.Report.UntrustedRootPEM)
+	return m, func() tea.Msg {
 		// The endpoint's own name is the only meaningful label available here;
 		// a user who wants a better one renames it in the config.
-		added, err := store.AddRoot(ep.Name+"-root", []byte(ep.Report.UntrustedRootPEM))
+		added, err := store.AddRoot(name, pemBytes)
 		if err != nil {
 			return flashMsg{text: fmt.Sprintf("adding root: %v", err), isErr: true}
 		}
 		if !added {
 			return flashMsg{text: "that root is already trusted"}
 		}
-		return flashMsg{text: fmt.Sprintf("trusted the root %s presented — press r to re-attest", ep.Name)}
+		return flashMsg{text: fmt.Sprintf("trusted the root %s presented — press r to re-attest", name)}
 	}
+}
+
+// flash reports an outcome without doing any work.
+func flash(text string, isErr bool) tea.Cmd {
+	return func() tea.Msg { return flashMsg{text: text, isErr: isErr} }
 }
 
 // adopt replaces the snapshot and rebuilds the table, keeping the cursor on the

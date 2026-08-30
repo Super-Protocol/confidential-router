@@ -297,7 +297,9 @@ func (d *Demo) Verify(_ context.Context, req VerifyRequest) (*Report, error) {
 			return demoReport(ep, d.scripted[i], d.now()), nil
 		}
 	}
-	return demoReport(Endpoint{Name: req.Endpoint, Upstream: "https://" + req.Hostname}, Confidential, d.now()), nil
+	// A host the demo config knows nothing about is denied. This is a
+	// status.Verifier: its answer to an unknown question must not be "yes".
+	return demoReport(Endpoint{Name: req.Endpoint, Upstream: "https://" + req.Hostname}, Broken, d.now()), nil
 }
 
 func levelFor(h Health) string {

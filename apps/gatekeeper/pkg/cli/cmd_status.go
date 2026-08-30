@@ -127,6 +127,9 @@ func until(now, then time.Time) string {
 
 // truncate shortens a reason to fit a table cell.
 func truncate(s string, limit int) string {
+	if limit <= 1 {
+		return ""
+	}
 	runes := []rune(s)
 	if len(runes) <= limit {
 		return s

@@ -187,3 +187,24 @@ func indentPEM(pem string) string {
 	}
 	return b.String()
 }
+
+// untrustedRootPEM is a certificate withStore does *not* trust — the one an
+// endpoint would have "presented" for the user to decide about.
+func untrustedRootPEM(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/other-root.pem")
+	if err != nil {
+		t.Fatalf("reading the untrusted root: %v", err)
+	}
+	return string(data)
+}
+
+// untrustedRootFingerprint is that certificate's SHA-256, as a report carries it.
+func untrustedRootFingerprint(t *testing.T) string {
+	t.Helper()
+	digest, err := trust.FingerprintPEM([]byte(untrustedRootPEM(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest.String()
+}

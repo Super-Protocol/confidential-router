@@ -67,8 +67,21 @@ func newRunCommand(g *globals) *cobra.Command {
 					"       (try `gatekeeper run --demo` to see the dashboard; see apps/gatekeeper/README.md)")
 		}
 
+		if drain <= 0 {
+			return failf(ExitUsage, "--drain-timeout must be greater than zero, got %s", drain)
+		}
+
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+
+		// Draining is deferred rather than tacked on at the end: a dashboard
+		// that fails mid-run must still close its listeners, and the drain gets
+		// a deadline of its own because by then the signal context is done.
+		defer func() {
+			drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drain)
+			defer cancel()
+			shutdown(drainCtx, cmd.ErrOrStderr(), supervisor, cfg)
+		}()
 
 		// The dashboard owns the terminal while it is up, so a reload writes
 		// nothing: the new configuration shows up in the next snapshot, and a
@@ -103,12 +116,6 @@ func newRunCommand(g *globals) *cobra.Command {
 		if err != nil && ctx.Err() == nil {
 			return err
 		}
-
-		// The signal context is already done here, so the drain gets a deadline
-		// of its own rather than inheriting a cancelled one.
-		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drain)
-		defer cancel()
-		shutdown(drainCtx, cmd.ErrOrStderr(), supervisor, cfg)
 		return nil
 	}
 	return cmd

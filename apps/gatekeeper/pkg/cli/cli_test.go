@@ -126,3 +126,20 @@ func TestConfigValidateJSONSeparatesInvalidFromIncomplete(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageHintsPointAtTheRightHelpPage(t *testing.T) {
+	h := configured(t)
+	cases := map[string]string{
+		"gatekeeper --help":               "bogus",
+		"gatekeeper endpoint list --help": "endpoint list --nonsense",
+	}
+	for want, line := range cases {
+		got := h.run(strings.Fields(line)...)
+		if got.code != cli.ExitUsage {
+			t.Errorf("%q: exit = %d, want %d", line, got.code, cli.ExitUsage)
+		}
+		if !strings.Contains(got.stderr, "Run '"+want+"' for usage.") {
+			t.Errorf("%q: stderr = %q, want a hint naming %q", line, got.stderr, want)
+		}
+	}
+}

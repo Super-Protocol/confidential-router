@@ -68,9 +68,19 @@ func verifyTargetAs(cmd *cobra.Command, g *globals, target, endpoint string) (*s
 	// A configured endpoint is named, not addressed: its upstream (and port) is
 	// the thing to fetch from, and its pins are what the verdict is about.
 	if store, storeErr := g.open(); storeErr == nil {
-		if ep, ok := store.Endpoint(target); ok {
-			req = status.VerifyRequest{Hostname: ep.Hostname, Port: ep.Port, Endpoint: ep.Name}
-		} else if endpoint != "" {
+		named, isName := store.Endpoint(target)
+		switch {
+		case isName && endpoint != "" && endpoint != target:
+			// Judging one endpoint's host by another's pins is a real thing to
+			// want, but it has to be spelled with a hostname: silently ignoring
+			// --endpoint would answer the opposite question.
+			return nil, failf(ExitUsage,
+				"%q is a configured endpoint, so --endpoint %q would be ignored; "+
+					"pass the hostname instead to judge it by another endpoint's pins",
+				target, endpoint)
+		case isName:
+			req = status.VerifyRequest{Hostname: named.Hostname, Port: named.Port, Endpoint: named.Name}
+		case endpoint != "":
 			if _, ok := store.Endpoint(endpoint); !ok {
 				return nil, failf(ExitUsage, "no endpoint named %q", endpoint)
 			}

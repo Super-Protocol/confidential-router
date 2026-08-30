@@ -319,3 +319,67 @@ func TestVerifyJudgesAnotherHostByAnEndpointsPins(t *testing.T) {
 			report.Verified, report.Pinned, report.Admitted, report.Denied())
 	}
 }
+
+func TestVerifyOnlyOffersARootFromAValidatedChain(t *testing.T) {
+	ca := newTestCA(t)
+	other := newForeignCA(t)
+
+	// A chain whose links do not verify: the "root" at the end of the array is
+	// whatever the server chose to put there. Offering it as a trust anchor
+	// would let one keystroke trust an attacker's CA for every endpoint, so the
+	// report must not carry it however the chain is spelled.
+	cases := map[string][]string{
+		"a chain that does not link":     {ca.leafPEM, other.rootPEM},
+		"an end-entity posing as a root": {ca.leafPEM, ca.leafPEM},
+		"a single unrelated certificate": {other.leafPEM},
+	}
+	for name, chain := range cases {
+		t.Run(name, func(t *testing.T) {
+			document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest, Chain: chain})
+			v := newVerifier(t, configWith(t, ca, []string{pinnedDigest}, ""), ca.fetcher(document, ca.leafFingerprint()))
+
+			report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Verified {
+				t.Fatalf("a malformed chain was accepted (stage %q)", report.Stage)
+			}
+			if report.Stage == "untrusted-root" {
+				t.Fatalf("stage = untrusted-root; this chain should not have got that far")
+			}
+			if report.UntrustedRootPEM != "" || report.UntrustedRoot != "" {
+				t.Errorf("the report offers a certificate from a chain that never validated: %q",
+					report.UntrustedRoot)
+			}
+			// The chain is still shown — that is what the operator has to read.
+			if len(report.Chain) == 0 {
+				t.Error("the report carries no chain to look at")
+			}
+		})
+	}
+}
+
+func TestVerifyDeniesAPayloadWithNothingToPin(t *testing.T) {
+	ca := newTestCA(t)
+	// A deployment bundle that publishes no evidenceDigest: sound
+	// cryptographically, impossible to pin.
+	document := ca.bundle(t, bundleOptions{EvidenceDigest: ""})
+	v := newVerifier(t, configWith(t, ca, []string{pinnedDigest}, ""), ca.fetcher(document, ca.leafFingerprint()))
+
+	report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+	if err != nil {
+		t.Fatalf("a bundle with nothing to pin came back as an error rather than a denial: %v", err)
+	}
+	if !report.Verified || report.Admitted {
+		t.Fatalf("verified=%v admitted=%v, want verified but denied", report.Verified, report.Admitted)
+	}
+	if report.Stage != "policy" || !strings.Contains(report.Reason, "evidenceDigest") {
+		t.Errorf("stage = %q reason = %q, want the denial explained", report.Stage, report.Reason)
+	}
+	// The whole point: the report survives, so `verify` still prints the chain,
+	// the root and the fingerprints.
+	if report.Root == "" || len(report.Chain) == 0 {
+		t.Error("the report was thrown away instead of being reported")
+	}
+}

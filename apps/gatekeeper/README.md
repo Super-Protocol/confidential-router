@@ -188,16 +188,20 @@ showing logs · 2 endpoint(s)
 | `↑`/`k`, `↓`/`j` | Move between endpoints; the detail pane follows. |
 | `s` | Start a stopped endpoint, stop a running one. |
 | `r` | Re-attest now, bypassing the verdict cache. |
-| `t` | Trust this deployment: pin the digest the endpoint publishes. |
-| `a` | Add the untrusted root a failed chain terminated in. |
+| `t` | Trust this deployment: pin the digest the last verification covered. |
+| `a` | Trust the root a valid-but-unknown chain ended in — twice, to confirm. |
 | `l` | Swap between the detail pane and the log tail. |
 | `?` | Expand the help. |
 | `q`, `esc`, `ctrl+c` | Quit. |
 
-`t` refuses on an endpoint that has not passed verification: the digest of an
-unverifiable bundle is not evidence of anything, and one keystroke is exactly
-where that distinction would otherwise be lost. `a` is the desktop gatekeeper's
-"Add to trusted clouds".
+Both writing keys are deliberately hard to misuse. `t` pins the digest the
+verification actually covered, refuses on an endpoint that has not passed
+verification, and refuses again if the upstream has published something new
+since — the digest of an unverified bundle is not evidence of anything. `a` is
+the desktop gatekeeper's "Add to trusted clouds", and it is offered only when
+the chain *validated* and the trust store was the single thing missing: on any
+earlier failure `certChain` is an unvalidated array whose last element nothing
+has checked. Because a root is global, `a` also takes two presses.
 
 The layout is responsive — columns are dropped as the terminal narrows, the
 lower pane is dropped before the endpoints table is — and the palette is
@@ -220,7 +224,7 @@ cannot drift from the code. What still needs a human at a terminal:
 5. `r` re-attests; the flash reports the outcome and clears after a few seconds.
 6. `t` and `a` report that the configuration is not writable — `--demo` hands
    the dashboard no trust store on purpose, because everything it would pin is
-   invented.
+   invented. Against a real gatekeeper, `a` asks for a second press first.
 7. `l` shows the log tail and the lines keep arriving; `?` expands the help
    without hiding the table.
 8. `q` leaves the terminal clean — no leftover alternate screen, cursor visible.

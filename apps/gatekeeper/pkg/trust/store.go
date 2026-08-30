@@ -18,6 +18,12 @@ import (
 // from an in-memory config rather than opened from a file.
 var ErrReadOnly = errors.New("trust store is read-only (no config file is attached)")
 
+// ErrPoisoned is returned once a failed edit could not be rolled back. The
+// in-memory document may still hold the rejected change, so writing it would
+// commit something the user was told had failed; the store refuses instead and
+// the caller re-opens it.
+var ErrPoisoned = errors.New("trust store holds an edit that could not be rolled back; reopen the configuration")
+
 // Root is one entry of the global trusted-root list, with its certificate
 // parsed and fingerprinted.
 type Root struct {
@@ -80,6 +86,8 @@ type Store struct {
 	mu    sync.RWMutex
 	doc   *config.Document
 	state *state
+	// poisoned is set when a rollback failed; see [ErrPoisoned].
+	poisoned error
 }
 
 // New builds a read-only store from an already loaded config. Certificates are
@@ -226,6 +234,9 @@ func (s *Store) AddRoot(name string, pemBytes []byte) (bool, error) {
 	if s.doc == nil {
 		return false, ErrReadOnly
 	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
 	for _, r := range s.state.roots {
 		if r.Fingerprint.Equal(fp) {
 			return false, nil
@@ -247,6 +258,9 @@ func (s *Store) RemoveRoot(name string) (bool, error) {
 	if s.doc == nil {
 		return false, ErrReadOnly
 	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
 	removed, err := s.doc.RemoveTrustedRoot(name)
 	if err != nil || !removed {
 		return false, err
@@ -265,6 +279,9 @@ func (s *Store) AddPin(endpoint string, d Digest) (bool, error) {
 	defer s.mu.Unlock()
 	if s.doc == nil {
 		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
 	}
 	ep, ok := s.endpointLocked(endpoint)
 	if !ok {
@@ -289,6 +306,9 @@ func (s *Store) RemovePin(endpoint string, d Digest) (bool, error) {
 	defer s.mu.Unlock()
 	if s.doc == nil {
 		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
 	}
 	ep, ok := s.endpointLocked(endpoint)
 	if !ok {
@@ -356,9 +376,16 @@ func (s *Store) resolve() (*state, error) {
 	return buildState(cfg)
 }
 
+// reload discards the edited document and reads the file again, so a rejected
+// change cannot linger and be written by the next successful save.
+//
+// When it cannot do that — the file has become unreadable, or what is on disk
+// no longer resolves — the document in hand is still the mutated one, and the
+// only safe thing left is to refuse every further write.
 func (s *Store) reload() {
 	doc, err := config.OpenDocument(s.doc.Path())
 	if err != nil {
+		s.poisoned = fmt.Errorf("%w: %w", ErrPoisoned, err)
 		return
 	}
 	previous := s.doc
@@ -366,6 +393,7 @@ func (s *Store) reload() {
 	resolved, err := s.resolve()
 	if err != nil {
 		s.doc = previous
+		s.poisoned = fmt.Errorf("%w: %w", ErrPoisoned, err)
 		return
 	}
 	s.state = resolved
@@ -505,6 +533,9 @@ func (s *Store) AddEndpoint(spec config.EndpointSpec) error {
 	if s.doc == nil {
 		return ErrReadOnly
 	}
+	if s.poisoned != nil {
+		return s.poisoned
+	}
 	if err := s.doc.AddEndpoint(spec); err != nil {
 		return err
 	}
@@ -518,6 +549,9 @@ func (s *Store) RemoveEndpoint(name string) (bool, error) {
 	defer s.mu.Unlock()
 	if s.doc == nil {
 		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
 	}
 	removed, err := s.doc.RemoveEndpoint(name)
 	if err != nil || !removed {

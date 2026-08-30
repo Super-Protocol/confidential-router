@@ -104,7 +104,7 @@ func Run(ctx context.Context, env Env, args []string) int {
 		fmt.Fprintln(env.Stderr, "gatekeeper: "+message)
 	}
 	if code == ExitUsage {
-		fmt.Fprintf(env.Stderr, "Run 'gatekeeper %s --help' for usage.\n", commandPath(root, args))
+		fmt.Fprintf(env.Stderr, "Run '%s --help' for usage.\n", commandPath(root, args))
 	}
 	return code
 }
@@ -159,12 +159,12 @@ func New(env *Env) *cobra.Command {
 }
 
 // commandPath resolves what the user actually typed, so the usage hint points
-// at the subcommand that rejected the arguments rather than at the root.
+// at the subcommand that rejected the arguments rather than at the root. An
+// unknown command resolves to the root, which is the right page for it.
 func commandPath(root *cobra.Command, args []string) string {
 	cmd, _, err := root.Find(args)
-	if err != nil || cmd == nil || cmd == root {
-		return ""
+	if err != nil || cmd == nil {
+		return root.CommandPath()
 	}
-	path := cmd.CommandPath()
-	return path[len("gatekeeper "):]
+	return cmd.CommandPath()
 }

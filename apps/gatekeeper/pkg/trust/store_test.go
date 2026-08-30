@@ -3,6 +3,7 @@ package trust_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -415,5 +416,54 @@ func TestStoreOpensAnUnfinishedConfig(t *testing.T) {
 	}
 	if _, err := store.AddRoot("prod", []byte(selfSignedPEM(t, "prod"))); err != nil {
 		t.Errorf("AddRoot on a fresh config: %v", err)
+	}
+}
+
+func TestStoreRefusesToWriteAfterAFailedRollback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path,
+		[]byte("version: 1\ntrustedRoots: []\nendpoints: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Make the save fail and the re-read fail with it: the document in hand
+	// still holds the rejected root, so the store has nothing clean to fall
+	// back to.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddRoot("evil", []byte(selfSignedPEM(t, "evil"))); err == nil {
+		t.Fatal("the write succeeded against a directory")
+	}
+
+	// Without this the rejected root would ride along on the next successful
+	// save — an edit the user was told had failed.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path,
+		[]byte("version: 1\ntrustedRoots: []\nendpoints: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.AddRoot("prod", []byte(selfSignedPEM(t, "prod")))
+	if !errors.Is(err, trust.ErrPoisoned) {
+		t.Fatalf("err = %v, want ErrPoisoned", err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "evil") {
+		t.Error("the rejected root reached the file after all")
+	}
+
+	// Re-opening is the way out.
+	if _, err := trust.Open(path); err != nil {
+		t.Errorf("reopening a clean config: %v", err)
 	}
 }

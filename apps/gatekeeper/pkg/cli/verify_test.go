@@ -207,3 +207,29 @@ func TestTrustAddFromUpstreamNeedsConfirmation(t *testing.T) {
 		t.Error("answering yes did not pin the digest")
 	}
 }
+
+func TestVerifyRefusesToIgnoreTheEndpointFlag(t *testing.T) {
+	h := configured(t)
+	h.mustRun("endpoint", "add", "staging",
+		"--listen", "127.0.0.1:8444", "--upstream", "https://staging.tee.swarm.cloud", "--trust", pinB)
+	h.env.Verifier = &fakeVerifier{report: admittedReport()}
+
+	// The positional argument is a configured endpoint, so --endpoint could
+	// only be ignored — and ignoring it would answer the opposite question.
+	got := h.run("verify", "llama-33-70b", "--endpoint", "staging")
+	if got.code != cli.ExitUsage {
+		t.Fatalf("exit = %d, want %d", got.code, cli.ExitUsage)
+	}
+	if !strings.Contains(got.stderr, "pass the hostname instead") {
+		t.Errorf("stderr = %q, want it to say what would work", got.stderr)
+	}
+
+	// Spelled with a hostname it is exactly the right thing to ask for.
+	verifier := &fakeVerifier{report: admittedReport()}
+	h.env.Verifier = verifier
+	h.mustRun("verify", "staging.tee.swarm.cloud", "--endpoint", "llama-33-70b")
+	want := status.VerifyRequest{Hostname: "staging.tee.swarm.cloud", Endpoint: "llama-33-70b"}
+	if len(verifier.requests) != 1 || verifier.requests[0] != want {
+		t.Errorf("request = %+v, want %+v", verifier.requests, want)
+	}
+}

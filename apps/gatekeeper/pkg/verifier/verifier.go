@@ -138,7 +138,10 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	})
 
 	report.ObservedTLSFingerprint = result.ObservedTLSFingerprint
-	v.describeBundle(report, fetched)
+	// The chain's terminus may be offered as a trust anchor only when the chain
+	// passed validation and the untrusted-root stage was the one that rejected
+	// it. Every other failure leaves `certChain` unvalidated.
+	v.describeBundle(report, fetched, result.Stage == attestation.StageUntrustedRoot)
 
 	if !result.OK {
 		report.Stage = string(result.Stage)
@@ -164,14 +167,23 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	if err != nil {
 		return nil, err
 	}
-	if deployment, ok := result.Deployment(); ok && deployment.EvidenceDigest != "" {
-		digest, parseErr := trust.ParseDigest(deployment.EvidenceDigest)
-		if parseErr != nil {
-			return nil, fmt.Errorf("verify: evidenceDigest: %w", parseErr)
-		}
-		report.EvidenceDigest = digest.String()
-		report.Pinned = configured && endpoint.IsPinned(digest)
+	deployment, isDeployment := result.Deployment()
+	if !isDeployment || deployment.EvidenceDigest == "" {
+		// A control-plane bundle, or a deployment one that published no digest:
+		// cryptographically sound, and impossible to pin, so it can never be
+		// admitted. That is a denial with a full report to look at, not an
+		// error that throws the report away.
+		report.Stage = "policy"
+		report.Reason = "the payload carries no evidenceDigest to pin (kind " + report.Kind +
+			"); only DeploymentEvidence can be admitted"
+		return report, nil
 	}
+	digest, err := trust.ParseDigest(deployment.EvidenceDigest)
+	if err != nil {
+		return nil, fmt.Errorf("verify: evidenceDigest: %w", err)
+	}
+	report.EvidenceDigest = digest.String()
+	report.Pinned = configured && endpoint.IsPinned(digest)
 
 	input, err := policy.BuildInput(policy.InputSource{
 		Endpoint:               report.Endpoint,
@@ -244,12 +256,13 @@ func (v *Verifier) trustedRoots() []attestation.TrustedRoot {
 }
 
 // describeBundle fills in what only the fetched document knows: the chain as
-// certificates a human can read, the quote's format, and — when the chain ends
-// somewhere untrusted — the root the dashboard can offer to add.
+// certificates a human can read, the quote's format, and — only when offerRoot
+// says the chain validated — the root the dashboard may offer to add.
 //
-// It is deliberately best-effort and runs before the verdict is known: a
-// rejected bundle is exactly the one whose chain the operator needs to see.
-func (v *Verifier) describeBundle(report *status.Report, fetched *attestation.FetchResult) {
+// Reading the chain is deliberately best-effort and unconditional: a rejected
+// bundle is exactly the one whose chain the operator needs to see. Offering one
+// of its certificates as a trust anchor is not, which is what offerRoot gates.
+func (v *Verifier) describeBundle(report *status.Report, fetched *attestation.FetchResult, offerRoot bool) {
 	if fetched == nil || len(fetched.Body) == 0 {
 		return
 	}
@@ -286,12 +299,25 @@ func (v *Verifier) describeBundle(report *status.Report, fetched *attestation.Fe
 
 		if isRoot {
 			report.RootFingerprint = fingerprint
-			if _, trusted := v.store.RootByFingerprint(trust.Digest(fingerprint)); !trusted {
+			// Offering this certificate for the user to trust is only safe once
+			// the chain has been *validated* and the single thing missing is
+			// membership of the trust store. Before that, `certChain` is an
+			// attacker-controlled array whose last element is not a root in any
+			// sense — nothing has checked that it is self-signed, that it is a
+			// CA, or that it issued anything below it. Trusting it would trust
+			// every future chain built under it, on every endpoint.
+			if offerRoot && !v.trusts(fingerprint) {
 				report.UntrustedRoot = fingerprint
 				report.UntrustedRootPEM = encoded
 			}
 		}
 	}
+}
+
+// trusts reports whether a fingerprint is already a trusted root.
+func (v *Verifier) trusts(fingerprint string) bool {
+	_, ok := v.store.RootByFingerprint(trust.Digest(fingerprint))
+	return ok
 }
 
 // payloadMap re-decodes the verified payload into the generic map the policy

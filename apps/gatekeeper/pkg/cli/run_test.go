@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -103,5 +104,36 @@ func TestRunDemoCannotWriteToTheRealConfig(t *testing.T) {
 	h.mustRun("run")
 	if handed.Store == nil {
 		t.Error("a real run was not given a writable trust store")
+	}
+}
+
+func TestRunRejectsANonPositiveDrainTimeout(t *testing.T) {
+	h := configured(t)
+	h.env.Supervisor = &fakeSupervisor{snapshot: liveSnapshot()}
+	h.env.RunDashboard = func(context.Context, cli.DashboardOptions) error { return nil }
+
+	// A zero deadline would make the drain context expire before it was used,
+	// so nothing would drain and the flag would look like it worked.
+	got := h.run("run", "--drain-timeout", "0")
+	if got.code != cli.ExitUsage {
+		t.Errorf("exit = %d, want %d (stderr: %s)", got.code, cli.ExitUsage, got.stderr)
+	}
+}
+
+func TestRunDrainsEvenWhenTheDashboardFails(t *testing.T) {
+	h := configured(t)
+	supervisor := &fakeSupervisor{snapshot: liveSnapshot()}
+	h.env.Supervisor = supervisor
+	h.env.RunDashboard = func(context.Context, cli.DashboardOptions) error {
+		return errors.New("the terminal went away")
+	}
+
+	got := h.run("run")
+	if got.code != cli.ExitError {
+		t.Fatalf("exit = %d, want the failure reported", got.code)
+	}
+	// Listeners must not be left bound because the UI fell over.
+	if len(supervisor.stopped) != 1 {
+		t.Errorf("stopped = %v, want every endpoint drained anyway", supervisor.stopped)
 	}
 }

@@ -140,10 +140,14 @@ func (ca *testCA) bundle(t *testing.T, opts bundleOptions) []byte {
 		"hostname":        opts.Hostname,
 		"issuedAt":        opts.IssuedAt.UTC().Format(time.RFC3339),
 		"certFingerprint": opts.CertFingerprint,
-		"evidenceDigest":  opts.EvidenceDigest,
 		"evidence": map[string]any{
 			"deployment": map[string]any{"containers": containers},
 		},
+	}
+	// An empty digest means "publish none at all", which is what a control-plane
+	// bundle looks like to the pin policy.
+	if opts.EvidenceDigest != "" {
+		payload["evidenceDigest"] = opts.EvidenceDigest
 	}
 
 	jws := ca.signJWS(t, payload)

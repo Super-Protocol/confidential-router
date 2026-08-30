@@ -147,3 +147,16 @@ func TestDemoEventsPublishSnapshots(t *testing.T) {
 		t.Errorf("snapshot=%v log=%v, want both kinds of event", sawSnapshot, sawLog)
 	}
 }
+
+func TestDemoDeniesAHostItDoesNotKnow(t *testing.T) {
+	demo := status.NewDemo(demoConfig(t))
+	report, err := demo.Verify(t.Context(), status.VerifyRequest{Hostname: "somewhere.else"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// It is a Verifier: its answer to a question it cannot answer must not be
+	// "admitted".
+	if report.Admitted || report.Verified {
+		t.Errorf("verified=%v admitted=%v, want an unknown host denied", report.Verified, report.Admitted)
+	}
+}
