@@ -326,6 +326,17 @@
           "minimum": 0,
           "default": 0
         },
+        "checkoutReturnUrl": {
+          "type": "string",
+          "format": "uri",
+          "default": "http://localhost:4200/credits",
+          "description": "Where the payment provider sends the browser back after a checkout."
+        },
+        "autoTopUpCooldown": {
+          "$ref": "#/$defs/duration",
+          "default": "1h",
+          "description": "Floor between two automatic top-ups of the same workspace."
+        },
         "stripe": {
           "type": "object",
           "additionalProperties": false,

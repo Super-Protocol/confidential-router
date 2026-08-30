@@ -196,6 +196,52 @@ by `createApiKey`, and cannot be recovered.
 Every workspace-scoped read goes through `WorkspaceScopeService`, which is the
 single place tenancy is enforced.
 
+## Billing
+
+Prepaid credits in integer micro-USD (ADR-005). `credit_transactions` is append-only and
+`workspaces.balanceMicros` is its cached sum; `LedgerService` is the only writer of either and keeps them
+equal in one transaction per entry. A repeated event cannot charge twice: every entry carries an
+`idempotencyKey` under a unique index, so a redelivered Stripe webhook or a retried debit returns the row
+that already exists.
+
+`MeteringModule` binds this under `CREDITS_GATEWAY`, so every generation the `/v1` gateway serves writes
+its `usage` row through the ledger, keyed on the generation id — a retried metering write cannot charge
+twice.
+
+A generation may overdraw: its cost is not known until it has been generated, and the *next* request is
+what gets refused (`402 insufficient_credits`). A refund may overdraw too — the provider has already moved
+the money, and a ledger that refused to record it would permanently disagree with the provider. An
+operator adjustment, whose amount is known and who has a human behind it, cannot take the balance below
+zero.
+
+The payment provider sits behind `PaymentProvider`:
+
+| `billing.stripe` | Provider | Top-up flow |
+| --- | --- | --- |
+| configured | `StripePaymentProvider` | Checkout Session → `POST /billing/stripe/webhook` (signature over the raw body) → ledger |
+| absent, outside production | `ManualPaymentProvider` | a signed link → `GET /billing/manual/complete` → ledger |
+| absent, in production | — | the boot fails: a link that mints credit must not run against real customers |
+
+The manual provider is what lets `nx serve` and the e2e suite exercise a complete top-up with no Stripe
+credentials and no network. Automatic top-up charges the card saved by the first checkout when the
+balance falls under `autoTopUpThresholdMicros`, at most once per `billing.autoTopUpCooldown`; the claim is
+written before the charge, so concurrent generations produce one charge and a declining card backs off
+instead of retrying per request.
+
+## Downloads
+
+Two things the console needs are files rather than GraphQL responses:
+
+- `GET /activity/generations.csv?workspaceId=…` — the generation log, session-authenticated, same filters
+  as the `generations` query.
+- `GET /exports/evidence.zip?token=…` — what the endpoints published for a period, as a zip with a
+  manifest. The token is minted by the `exportEvidence` mutation, signed with `auth.secret` and valid for
+  15 minutes: the export exists to be handed to an auditor, who has no console session. Membership is
+  re-checked when the link is followed.
+
+The archive contains no verdict. The router publishes evidence and never verifies it (ADR-002); whoever
+receives the zip verifies it with the gatekeeper.
+
 ## Layout
 
 ```
@@ -209,8 +255,11 @@ src/
     catalog/              config → endpoints/models projection, served from memory
     evidence/             bundle retrieval, snapshots, poller, coverage, /v1/evidence
     metering/             pricing, token estimation, evidence coverage, the meter
+    activity/             SQL aggregates, the generation log and its CSV
+    billing/              credits ledger, payment providers, automatic top-up
+    preferences/          console settings and the evidence export
     api/health            /health
-    api/graphql           Apollo code-first schema (`me`, API key CRUD, models, endpoints, evidence)
+    api/graphql           Apollo code-first schema (`me`, keys, catalogue, activity, credits, preferences)
     api/v1                the OpenAI-compatible gateway
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs
