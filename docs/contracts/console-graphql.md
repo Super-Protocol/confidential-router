@@ -36,6 +36,7 @@ type Endpoint {
 enum EvidenceState { PUBLISHED STALE NOT_PUBLISHED }
 type EvidenceSnapshot {
   id: ID!, endpointId: ID!, fetchedAt: DateTime!, issuedAt: DateTime!
+  quoteAgeSeconds: Int!                                              # now − issuedAt, for "issued 4 min ago"
   evidenceDigest: String!, evidenceDigestHex: String!, certFingerprint: String!
   quoteFormat: String                                                # rootCaTeeQuote.format, e.g. intel-tdx-quote-v5
   containerImages: [String!]!
@@ -53,11 +54,16 @@ type Model {
 enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS }
 type Pricing { promptPer1m: Micros!, completionPer1m: Micros! }
 
+type EvidenceDigestChange { evidenceDigest: String!, evidenceDigestHex: String!, firstIssuedAt: DateTime!, lastIssuedAt: DateTime!, snapshots: Int! }
+type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float! }
+
 extend type Query {
   models(tee: String): [Model!]!
   model(id: ID!): Model
   endpoints(workspaceId: ID!): [Endpoint!]!
   evidenceSnapshots(endpointId: ID!, first: Int = 20, after: String): EvidenceSnapshotConnection!
+  evidenceDigestHistory(endpointId: ID!, limit: Int = 20): [EvidenceDigestChange!]!   # when a pinned digest would have had to change
+  evidenceCoverage(workspaceId: ID!, from: DateTime!, to: DateTime!, endpointId: ID): EvidenceCoverage!
 }
 extend type Mutation { refreshEvidence(endpointId: ID!): EvidenceSnapshot }   # "Fetch fresh quote" — re-poll only
 

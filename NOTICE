@@ -24,6 +24,17 @@ Ported components:
       match, JWS, freshness and channel binding). See that library's README for
       the deviations from the source.
 
+  * libs/ui
+      from swarm-cloud `libs/ui` — the shadcn/ui primitives (upstream: shadcn/ui,
+      MIT) and the oklch design tokens in `src/styles/globals.css`. Per-file
+      headers record which files are verbatim and which deviate; the deviations
+      are also summarised in that library's README.
+
+  * apps/router-ui/src/components/app-shell.tsx
+      layout pattern from swarm-cloud
+      `apps/swarm-cloud-ui/src/components/app-shell.tsx` — sidebar plus
+      breadcrumb header. Reimplemented rather than copied; see the file header.
+
   * libs/attestation-fixtures/tools/generate.ts
       from swarm-cloud `libs/swarm-attestation/src/__tests__/fixtures.ts` — the
       test PKI and bundle builders, reworked to emit deterministic, language-neutral

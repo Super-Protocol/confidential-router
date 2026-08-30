@@ -7,6 +7,10 @@ import { ApiKeysModule } from '../../api-keys/api-keys.module.js';
 import { AuthModule } from '../../auth/index.js';
 import { routerConfig } from '../../config.js';
 import { ApiKeysResolver } from './api-keys/api-keys.resolver.js';
+import { CatalogResolver } from './catalog/catalog.resolver.js';
+import { CatalogViewService } from './catalog/catalog-view.service.js';
+import { EvidenceResolver } from './catalog/evidence.resolver.js';
+import { JsonScalar } from './scalars/json.scalar.js';
 import { ViewerResolver } from './viewer/viewer.resolver.js';
 
 /**
@@ -36,6 +40,6 @@ import { ViewerResolver } from './viewer/viewer.resolver.js';
       }),
     }),
   ],
-  providers: [ApiKeysResolver, ViewerResolver],
+  providers: [ApiKeysResolver, ViewerResolver, CatalogResolver, EvidenceResolver, CatalogViewService, JsonScalar],
 })
 export class GraphQLApiModule {}
