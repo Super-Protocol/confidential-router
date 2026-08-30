@@ -90,20 +90,49 @@ describe('expandEnvPlaceholders', () => {
 describe('envConfiguration', () => {
   it('maps __ to nesting and snake_case to camelCase', () => {
     const loaded = envConfiguration('CR_API', {
-      CR_API_SERVER__PORT: '4200',
-      CR_API_AUTH__GITHUB__CLIENT_ID: 'gh-id',
-      OTHER_SERVER__PORT: '1',
+      env: {
+        CR_API_SERVER__PORT: '4200',
+        CR_API_AUTH__GITHUB__CLIENT_ID: 'gh-id',
+        OTHER_SERVER__PORT: '1',
+      },
     })();
     expect(loaded).toEqual({ server: { port: '4200' }, auth: { github: { clientId: 'gh-id' } } });
   });
 
   it('leaves values as strings so the schema decides their type', () => {
-    const loaded = envConfiguration('CR_API', { CR_API_DATABASE__LOGGING: 'true' })() as Record<string, unknown>;
+    const loaded = envConfiguration('CR_API', { env: { CR_API_DATABASE__LOGGING: 'true' } })() as Record<
+      string,
+      unknown
+    >;
     expect(loaded.database).toEqual({ logging: 'true' });
   });
 
   it('ignores the bare prefix with nothing after it', () => {
-    expect(envConfiguration('CR_API', { CR_API_: 'x' })()).toEqual({});
+    expect(envConfiguration('CR_API', { env: { CR_API_: 'x' } })()).toEqual({});
+  });
+
+  it('skips reserved suffixes, so a meta-variable cannot collide with a config key', () => {
+    const loaded = envConfiguration('CR_API', {
+      env: { CR_API_VERSION: '1.2.3', CR_API_CONFIG_FILE: '/etc/app.yaml', CR_API_SERVER__PORT: '4200' },
+      reserved: ['VERSION', 'CONFIG_FILE'],
+    })();
+
+    expect(loaded).toEqual({ server: { port: '4200' } });
+  });
+
+  it('matches reserved suffixes case-insensitively', () => {
+    expect(envConfiguration('CR_API', { env: { CR_API_version: 'x' }, reserved: ['VERSION'] })()).toEqual({});
+  });
+
+  it('reserves only the exact suffix, not everything under it', () => {
+    // `CR_API_VERSION` is meta; `CR_API_VERSION__FOO` would be a config path and
+    // reserving the prefix wholesale would silently swallow it.
+    const loaded = envConfiguration('CR_API', {
+      env: { CR_API_VERSION__FOO: 'bar' },
+      reserved: ['VERSION'],
+    })();
+
+    expect(loaded).toEqual({ version: { foo: 'bar' } });
   });
 });
 
@@ -132,9 +161,11 @@ describe('validatedConfiguration', () => {
       [
         yamlConfiguration(path),
         envConfiguration('CR_API', {
-          CR_API_SERVER__PORT: '4300',
-          CR_API_SERVER__VALID_CLIENT_ORIGINS: 'https://b.example, https://c.example',
-          CR_API_DATABASE__LOGGING: 'true',
+          env: {
+            CR_API_SERVER__PORT: '4300',
+            CR_API_SERVER__VALID_CLIENT_ORIGINS: 'https://b.example, https://c.example',
+            CR_API_DATABASE__LOGGING: 'true',
+          },
         }),
       ],
       Schema,
@@ -147,13 +178,16 @@ describe('validatedConfiguration', () => {
   });
 
   it('applies schema defaults when no source supplies a value', () => {
-    const config = validatedConfiguration([envConfiguration('CR_API', { CR_API_DATABASE__URL: 'sqlite:a' })], Schema)();
+    const config = validatedConfiguration(
+      [envConfiguration('CR_API', { env: { CR_API_DATABASE__URL: 'sqlite:a' } })],
+      Schema,
+    )();
     expect(config.server).toEqual({ port: 3000, validClientOrigins: [] });
   });
 
   it('reports every invalid path in one error', () => {
     const loader = validatedConfiguration(
-      [envConfiguration('CR_API', { CR_API_SERVER__PORT: 'not-a-number' })],
+      [envConfiguration('CR_API', { env: { CR_API_SERVER__PORT: 'not-a-number' } })],
       Schema,
     );
     expect(loader).toThrow(ConfigurationValidationError);
@@ -170,7 +204,7 @@ describe('validatedConfiguration', () => {
   it('does not turn an all-digit secret into a number', () => {
     const schema = z.object({ auth: z.object({ secret: z.string() }) });
     const config = validatedConfiguration(
-      [envConfiguration('CR_API', { CR_API_AUTH__SECRET: '1234567890' })],
+      [envConfiguration('CR_API', { env: { CR_API_AUTH__SECRET: '1234567890' } })],
       schema,
     )();
     expect(config.auth.secret).toBe('1234567890');
