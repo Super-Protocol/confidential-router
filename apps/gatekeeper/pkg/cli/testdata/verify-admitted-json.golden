@@ -1,0 +1,45 @@
+{
+  "endpoint": "llama-33-70b",
+  "hostname": "llama-33-70b.tee.swarm.cloud",
+  "port": 443,
+  "checkedAt": "2026-08-30T11:59:30Z",
+  "verified": true,
+  "admitted": true,
+  "root": "swarm-cloud-prod",
+  "rootFingerprint": "sha256/4rDDqk4QaXWLKrWi1GJt1yqZaFoZmQGxU6HcvHAGdKQ",
+  "observedTlsFingerprint": "sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0",
+  "certFingerprint": "sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0",
+  "chain": [
+    {
+      "subject": "CN=llama-33-70b.tee.swarm.cloud",
+      "issuer": "",
+      "fingerprint": "sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0",
+      "notBefore": "0001-01-01T00:00:00Z",
+      "notAfter": "2026-10-29T12:00:00Z",
+      "root": false
+    },
+    {
+      "subject": "CN=swarm-cloud-prod-root",
+      "issuer": "",
+      "fingerprint": "sha256/4rDDqk4QaXWLKrWi1GJt1yqZaFoZmQGxU6HcvHAGdKQ",
+      "notBefore": "0001-01-01T00:00:00Z",
+      "notAfter": "2037-08-12T12:00:00Z",
+      "root": true
+    }
+  ],
+  "kind": "DeploymentEvidence",
+  "issuedAt": "2026-08-30T11:56:00Z",
+  "evidenceDigest": "sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490",
+  "pinned": true,
+  "images": [
+    "ghcr.io/super-protocol/sidecar@sha256:bbbb",
+    "ghcr.io/super-protocol/vllm@sha256:aaaa"
+  ],
+  "quoteFormat": "intel-tdx-quote-v5",
+  "policies": [
+    {
+      "package": "gatekeeper.default",
+      "allow": true
+    }
+  ]
+}

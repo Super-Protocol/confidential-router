@@ -1,0 +1,11 @@
+[
+  {
+    "name": "llama-33-70b",
+    "listen": "127.0.0.1:8443",
+    "upstream": "https://llama-33-70b.tee.swarm.cloud",
+    "failMode": "closed",
+    "trustedEvidence": [
+      "sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490"
+    ]
+  }
+]

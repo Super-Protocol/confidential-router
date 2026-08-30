@@ -1,0 +1,62 @@
+# Confidential Router — gatekeeper configuration.
+#
+# Schema: schemas/gatekeeper-config.schema.json
+# Model:  docs/adr/ADR-003-gatekeeper-trust-model.md
+#
+# This file is edited in place by the `gatekeeper trust` and `gatekeeper endpoint`
+# commands; your comments and formatting survive.
+version: 1
+# Trusted roots ("Trusted Clouds"). An endpoint's certificate chain must end in
+# one of these, matched by the SHA-256 of the root's DER. There is no built-in
+# trust: an empty list denies everything.
+#
+#   gatekeeper trust roots add swarm-cloud-prod --pem-file ./roots/prod.pem
+trustedRoots:
+  - name: swarm-cloud-prod
+    pem: |
+      -----BEGIN CERTIFICATE-----
+      MIIBtjCCAV2gAwIBAgIEShssPTAKBggqhkjOPQQDAjA5MR4wHAYDVQQDDBVzd2Fy
+      bS1jbG91ZC1wcm9kLXJvb3QxFzAVBgNVBAoMDlN1cGVyIFByb3RvY29sMB4XDTI2
+      MDgzMDE5MjYxM1oXDTQwMDUwODE5MjYxM1owOTEeMBwGA1UEAwwVc3dhcm0tY2xv
+      dWQtcHJvZC1yb290MRcwFQYDVQQKDA5TdXBlciBQcm90b2NvbDBZMBMGByqGSM49
+      AgEGCCqGSM49AwEHA0IABCvcGThCJ23sfZilKL77sKHzx+VAoGlsxqCOBXUVmnx6
+      Ns1iPDDjBsUb2k+/Ec9MxOhIy7z27aEJUZ20U3+2GAKjUzBRMB0GA1UdDgQWBBQf
+      Om6kbhNnwwst6+MMXs8v8QtVPzAfBgNVHSMEGDAWgBQfOm6kbhNnwwst6+MMXs8v
+      8QtVPzAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCICF1QPflgnVK
+      FRtP1WBpQyDarL7IBmhJWvprL+CqBndEAiBglWD+5NMRhq6NtJL1Z/T7/252PNF1
+      YdxUC6XjIllQnw==
+      -----END CERTIFICATE-----
+# Optional user policies (Rego v1). Every one of them is ANDed with the built-in
+# evidenceDigest pin policy, so a policy can narrow trust but never widen it.
+#
+# policies:
+#   - name: images-from-our-registry
+#     file: ./policies/images.rego
+
+# Inherited by every endpoint unless it overrides them.
+defaults:
+  failMode: closed
+  reattestInterval: 5m
+  verdictCacheTtl: 60s
+  maxBundleAge: 24h
+  initialTimeout: 15s
+# Local listeners, one per upstream you proxy to. Each needs at least one pinned
+# evidenceDigest — there is no trust-on-first-use.
+#
+#   gatekeeper endpoint add llama-33-70b \
+#     --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
+#   gatekeeper endpoint discover llama-33-70b     # review what it publishes
+#   gatekeeper endpoint trust add llama-33-70b --from-upstream
+endpoints:
+  - name: llama-33-70b
+    listen: 127.0.0.1:8443
+    upstream: https://llama-33-70b.tee.swarm.cloud
+    trustedEvidence:
+      - sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490
+log:
+  level: info
+  format: text
+
+# Local Prometheus endpoint, off unless set.
+# metrics:
+#   listen: 127.0.0.1:9464

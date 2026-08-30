@@ -207,6 +207,13 @@ func (d *Document) endpointNode(name string) (*yaml.Node, error) {
 func sectionOf(m *yaml.Node, key string) *yaml.Node {
 	if node, ok := mapGet(m, key); ok {
 		if node.Kind == yaml.SequenceNode {
+			// An empty `key: []` becomes a block list as soon as something is
+			// appended: the starter config `gatekeeper init` writes uses the
+			// flow form, and a root certificate rendered inside `[...]` would
+			// be unreadable.
+			if len(node.Content) == 0 {
+				node.Style = 0
+			}
 			return node
 		}
 		if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
@@ -318,4 +325,60 @@ func syncDir(dir string) error {
 		return err
 	}
 	return nil
+}
+
+// EndpointSpec is a new endpoint to append. It carries only the fields
+// `gatekeeper endpoint add` accepts; everything else inherits from `defaults`.
+type EndpointSpec struct {
+	Name     string
+	Listen   string
+	Upstream string
+	// FailMode is written only when set, so an endpoint that wants the global
+	// default does not freeze today's default into the file.
+	FailMode string
+	// TrustedEvidence is written as given. It may be empty: the endpoint is
+	// then pinned afterwards with `endpoint trust add`, and until it is,
+	// `config validate` reports the config as not ready.
+	TrustedEvidence []string
+}
+
+// AddEndpoint appends an endpoint. It reports an error if the name is taken —
+// replacing an endpoint has to be an explicit remove + add, since its pins
+// would otherwise be silently carried over or silently dropped.
+func (d *Document) AddEndpoint(spec EndpointSpec) error {
+	endpoints := d.section("endpoints")
+	if _, idx := findByName(endpoints, spec.Name); idx >= 0 {
+		return fmt.Errorf("endpoint %q already exists", spec.Name)
+	}
+
+	kv := []*yaml.Node{
+		scalar("name"), scalar(spec.Name),
+		scalar("listen"), scalar(spec.Listen),
+		scalar("upstream"), scalar(spec.Upstream),
+	}
+	if spec.FailMode != "" {
+		kv = append(kv, scalar("failMode"), scalar(spec.FailMode))
+	}
+	pins := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, digest := range spec.TrustedEvidence {
+		pins.Content = append(pins.Content, scalar(digest))
+	}
+	kv = append(kv, scalar("trustedEvidence"), pins)
+
+	endpoints.Content = append(endpoints.Content, mapping(kv...))
+	return nil
+}
+
+// RemoveEndpoint drops an endpoint by name and reports whether it was there.
+func (d *Document) RemoveEndpoint(name string) (bool, error) {
+	endpoints, ok := d.lookup("endpoints")
+	if !ok {
+		return false, nil
+	}
+	_, idx := findByName(endpoints, name)
+	if idx < 0 {
+		return false, nil
+	}
+	endpoints.Content = append(endpoints.Content[:idx], endpoints.Content[idx+1:]...)
+	return true, nil
 }
