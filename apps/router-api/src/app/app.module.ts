@@ -3,13 +3,16 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigType } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import pinoPretty from 'pino-pretty';
+import { ActivityModule } from './activity/index.js';
 import { GraphQLApiModule } from './api/graphql/graphql-api.module.js';
 import { RestApiModule } from './api/rest-api.module.js';
 import { AuthModule } from './auth/index.js';
+import { BillingModule } from './billing/index.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { routerConfig } from './config.js';
 import { DbModule } from './db/db.module.js';
 import { EvidenceModule } from './evidence/index.js';
+import { PreferencesModule } from './preferences/index.js';
 
 @Module({
   imports: [
@@ -33,6 +36,9 @@ import { EvidenceModule } from './evidence/index.js';
     AuthModule,
     CatalogModule,
     EvidenceModule,
+    BillingModule,
+    ActivityModule,
+    PreferencesModule,
     RestApiModule,
     GraphQLApiModule,
   ],

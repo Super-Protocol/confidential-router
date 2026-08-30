@@ -133,6 +133,14 @@ const BillingSchema = z
   .strictObject({
     minTopUpMicros: integerish().pipe(z.number().int().nonnegative()).prefault(5_000_000),
     allowOverdraftMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
+    /** Where Stripe (or the manual provider) sends the browser back after a checkout. */
+    checkoutReturnUrl: z.url().prefault('http://localhost:4200/credits'),
+    /**
+     * Floor between two automatic top-ups of the same workspace. A charge that
+     * fails, or a balance that stays under the threshold, must not turn into a
+     * charge per request (ADR-005 §4).
+     */
+    autoTopUpCooldown: durationMs('1h'),
     stripe: z
       .strictObject({
         secretKey: z.string().min(1),
