@@ -29,7 +29,7 @@ fixtures.
 | `fetch`           | The endpoint served a bundle of the documented shape, naming the host it was fetched from.             |
 | `cert-chain`      | Every certificate is inside its validity window; every issuer asserts `cA` (and `keyCertSign`, when it carries a KeyUsage) and respects its `pathLenConstraint`; each link's issuer name and signature check out; the chain terminates at a valid self-signed certificate. |
 | `untrusted-root`  | That terminal certificate's SHA-256 matches a root the caller configured.                              |
-| `jws`             | The compact JWS verifies under the chain's **leaf** key (RS256 or ES256K), and its payload agrees with the bundle on kind and hostname. |
+| `jws`             | The compact JWS verifies under the chain's **leaf** key — RS256 with a modulus of at least 2048 bits, or ES256K — and its payload agrees with the bundle on kind and hostname. |
 | `jws` (freshness) | `payload.issuedAt` is within `MaxBundleAge`, and no further into the future than `AllowedClockSkew` (60s). |
 | `tls-fingerprint` | `payload.certFingerprint` is the certificate the verifier actually saw on the wire.                    |
 
@@ -47,6 +47,11 @@ bundle arrived on; this way it cannot. The handshake itself is deliberately not
 checked against the system trust store — Swarm Cloud roots are not publicly
 trusted, and the chain plus the fingerprint binding are what decide trust.
 
+`rootCaTeeQuote` is carried as `json.RawMessage` on both the bundle and the
+result: the verifier has no opinion about it, and the quote-verifier hook
+ADR-003 §2 reserves needs the document exactly as the endpoint published it, not
+one reshaped by a struct that would drop members it does not know.
+
 **`internal/certparse` exists because `crypto/x509` cannot read these chains.**
 Swarm Cloud signs with secp256k1, a curve `x509.ParseCertificate` rejects
 outright — it fails before any field is readable. `certparse` reads the RFC 5280
@@ -61,6 +66,11 @@ It is slightly stricter than `crypto/x509` in two places, both of which can only
 rejected here: the outer `signatureAlgorithm` must equal the one inside the
 TBSCertificate (RFC 5280 4.1.1.2), and SHA-1 signatures are not in the accepted
 set.
+
+The RS256 modulus floor runs the other way — it exists to *stop* Go being more
+permissive. `rsa.VerifyPKCS1v15` accepts a 1024-bit key; jose, and so the
+TypeScript verifier, refuses RS256 below 2048 bits. Without the floor the two
+would disagree on a bundle signed by an undersized leaf.
 
 ## Conformance
 

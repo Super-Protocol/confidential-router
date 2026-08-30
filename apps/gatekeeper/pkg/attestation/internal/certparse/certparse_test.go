@@ -82,9 +82,15 @@ func TestParsePEMHandlesTheCurveCryptoX509Rejects(t *testing.T) {
 	t.Parallel()
 	cert := mint(t, caTemplate("K256 Root"), testca.Secp256k1, nil)
 
+	// Logged, not skipped: if a future Go release grows K-256 support the
+	// assertions below must still hold, and the log records that the fallback
+	// stopped being load-bearing.
 	if _, err := x509.ParseCertificate(cert.DER); err == nil {
-		t.Skip("this Go release parses secp256k1 certificates; the fallback is no longer load-bearing")
+		t.Log("this Go release parses secp256k1 certificates; the fallback is no longer load-bearing")
+	} else {
+		t.Logf("crypto/x509 refuses the certificate, as expected: %v", err)
 	}
+
 	parsed, err := certparse.ParsePEM(cert.PEM)
 	if err != nil {
 		t.Fatalf("ParsePEM: %v", err)

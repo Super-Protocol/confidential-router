@@ -24,8 +24,10 @@ func chainErrf(format string, args ...any) error {
 // x509.Certificate can parse the DER themselves — as long as the key is on a
 // curve crypto/x509 knows.
 type ParsedChain struct {
-	// LeafDER is the certificate the JWS is signed by and the TLS binding is
-	// compared against.
+	// LeafDER is the certificate whose key the bundle's JWS must verify under.
+	// It is not what the channel binding compares: that is the signed
+	// payload.certFingerprint against the leaf observed on the TLS handshake,
+	// which in production is a different (auto-SSL) certificate from this one.
 	LeafDER []byte
 	// RootDER is the terminal, self-signed certificate.
 	RootDER []byte

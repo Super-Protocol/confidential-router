@@ -21,6 +21,13 @@ const (
 	algES256K = "ES256K"
 )
 
+// minRSABits is the smallest RSA modulus RS256 is accepted with. rsa.VerifyPKCS1v15
+// will happily verify under a 1024-bit key; jose — and therefore the TypeScript
+// verifier — refuses anything below 2048, so without this floor the two would
+// disagree on a bundle signed by an undersized leaf. Erring towards the stricter
+// side keeps the verdicts identical and the weaker key rejected.
+const minRSABits = 2048
+
 // jwsError is any failure decoding or verifying the compact JWS.
 type jwsError struct{ msg string }
 
@@ -87,6 +94,9 @@ func verifyJWS(jws string, leaf *certparse.Certificate) (Payload, error) {
 func verifyRS256(signingInput, signature []byte, leaf *certparse.Certificate) error {
 	if leaf.KeyAlgorithm != certparse.KeyRSA {
 		return jwsErrf("JWS alg is RS256 but leaf certificate key is %s", leaf.KeyAlgorithm)
+	}
+	if bits := leaf.RSAPublicKey.N.BitLen(); bits < minRSABits {
+		return jwsErrf("RS256 requires an RSA key of at least %d bits, leaf has %d", minRSABits, bits)
 	}
 	sum := sha256.Sum256(signingInput)
 	if err := rsa.VerifyPKCS1v15(leaf.RSAPublicKey, crypto.SHA256, sum[:], signature); err != nil {

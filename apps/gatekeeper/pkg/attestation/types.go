@@ -27,25 +27,21 @@ func (k EvidenceKind) valid() bool {
 	}
 }
 
-// RootCaTeeQuote is the TEE quote over the root CA key. The verifier parses and
-// passes it through; validating it is a separate concern (ADR-003 §2 reserves a
-// quoteVerifier hook).
-type RootCaTeeQuote struct {
-	Format     string          `json:"format"`
-	Data       string          `json:"data"`
-	Collateral json.RawMessage `json:"collateral,omitempty"`
-}
-
 // Bundle is the document served at /.well-known/swarm-evidence.
 type Bundle struct {
-	Version         string          `json:"version"`
-	Kind            EvidenceKind    `json:"kind"`
-	Hostname        string          `json:"hostname"`
-	IssuedAt        string          `json:"issuedAt"`
-	CertFingerprint string          `json:"certFingerprint"`
-	JWS             string          `json:"jws"`
-	CertChain       []string        `json:"certChain"`
-	RootCaTeeQuote  *RootCaTeeQuote `json:"rootCaTeeQuote,omitempty"`
+	Version         string       `json:"version"`
+	Kind            EvidenceKind `json:"kind"`
+	Hostname        string       `json:"hostname"`
+	IssuedAt        string       `json:"issuedAt"`
+	CertFingerprint string       `json:"certFingerprint"`
+	JWS             string       `json:"jws"`
+	CertChain       []string     `json:"certChain"`
+	// RootCaTeeQuote is the TEE quote over the root CA key, kept as the bytes
+	// the endpoint published. The verifier does not validate it — ADR-003 §2
+	// reserves that hook — and decoding it into a struct here would drop
+	// members a future quote verifier needs and reject shapes the TypeScript
+	// verifier accepts. Callers that want a field unmarshal it themselves.
+	RootCaTeeQuote json.RawMessage `json:"rootCaTeeQuote,omitempty"`
 	// TLSLeaf lets verifiers without channel access bind the JWS to a concrete
 	// certificate. The gatekeeper observes its own handshake and ignores it
 	// (ADR-003 §1); the field exists so the producer-asserted fallback stays
@@ -169,10 +165,12 @@ type Result struct {
 	OK bool `json:"ok"`
 
 	// Set when OK.
-	Kind           EvidenceKind    `json:"kind,omitempty"`
-	Payload        Payload         `json:"-"`
-	MatchedRoot    MatchedRoot     `json:"matchedRoot,omitzero"`
-	RootCaTeeQuote *RootCaTeeQuote `json:"rootCaTeeQuote,omitempty"`
+	Kind        EvidenceKind `json:"kind,omitempty"`
+	Payload     Payload      `json:"-"`
+	MatchedRoot MatchedRoot  `json:"matchedRoot,omitzero"`
+	// RootCaTeeQuote is the bundle's quote, passed through verbatim; nil when
+	// the bundle carried none.
+	RootCaTeeQuote json.RawMessage `json:"rootCaTeeQuote,omitempty"`
 	ChannelBinding ChannelBinding  `json:"channelBinding,omitempty"`
 
 	// Set when not OK.

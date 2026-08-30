@@ -1,6 +1,8 @@
 package attestation
 
 import (
+	"crypto"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -109,22 +111,34 @@ func TestVerifyJWSRejectsMalformedInput(t *testing.T) {
 		return base64.RawURLEncoding.EncodeToString([]byte(raw)) + "." + segments[1] + "." + segments[2]
 	}
 
-	cases := map[string]string{
-		"two segments":         segments[0] + "." + segments[1],
-		"four segments":        valid + ".extra",
-		"header not base64url": "!!!." + segments[1] + "." + segments[2],
-		"header not JSON":      header("not json"),
-		"alg missing":          header(`{}`),
-		"alg unsupported":      header(`{"alg":"HS256"}`),
-		"payload not base64":   segments[0] + ".!!!." + segments[2],
-		"signature not base64": segments[0] + "." + segments[1] + ".!!!",
-		"signature truncated":  segments[0] + "." + segments[1] + "." + segments[2][:len(segments[2])-4],
+	// Every branch is asserted by its reason, not merely by failing: otherwise a
+	// case like "alg missing" could start passing through the base64 decoder and
+	// nothing here would notice.
+	cases := map[string]struct{ jws, want string }{
+		"two segments":  {segments[0] + "." + segments[1], "must have exactly 3 segments"},
+		"four segments": {valid + ".extra", "must have exactly 3 segments"},
+		// The TypeScript verifier reports both header failures the same way, so
+		// these two share a reason on purpose.
+		"header not base64url": {"!!!." + segments[1] + "." + segments[2], "failed to decode JWS protected header"},
+		"header not JSON":      {header("not json"), "failed to decode JWS protected header"},
+		"alg missing":          {header(`{}`), `unsupported JWS alg "<missing>"`},
+		"alg unsupported":      {header(`{"alg":"HS256"}`), `unsupported JWS alg "HS256"`},
+		"payload not base64":   {segments[0] + ".!!!." + segments[2], "failed to decode JWS segment"},
+		"signature not base64": {segments[0] + "." + segments[1] + ".!!!", "failed to decode JWS segment"},
+		"signature truncated": {
+			segments[0] + "." + segments[1] + "." + segments[2][:len(segments[2])-4],
+			"signature verification failed",
+		},
 	}
-	for name, jws := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := verifyJWS(jws, parsed); err == nil {
+			_, err := verifyJWS(tc.jws, parsed)
+			if err == nil {
 				t.Fatalf("verifyJWS accepted %s", name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %q, want it to mention %q", err, tc.want)
 			}
 		})
 	}
@@ -144,34 +158,121 @@ func TestVerifyJWSRejectsAlgorithmKeyMismatch(t *testing.T) {
 		t.Fatalf("sign ES256K: %v", err)
 	}
 
-	if _, err := verifyJWS(rsaJWS, k1Parsed); err == nil {
-		t.Error("an RS256 JWS verified against a secp256k1 leaf")
+	_, err = verifyJWS(rsaJWS, k1Parsed)
+	if err == nil || !strings.Contains(err.Error(), "JWS alg is RS256 but leaf certificate key is ECDSA(secp256k1)") {
+		t.Errorf("err = %v, want the RS256/secp256k1 mismatch to be named", err)
 	}
-	if _, err := verifyJWS(k1JWS, rsaParsed); err == nil {
-		t.Error("an ES256K JWS verified against an RSA leaf")
+	_, err = verifyJWS(k1JWS, rsaParsed)
+	if err == nil || !strings.Contains(err.Error(), "JWS alg is ES256K but leaf certificate key is not secp256k1") {
+		t.Errorf("err = %v, want the ES256K/RSA mismatch to be named", err)
 	}
+}
+
+// TestVerifyJWSRejectsUndersizedRSAKeys keeps the two verifiers on the same
+// verdict: jose refuses RS256 below a 2048-bit modulus, while
+// rsa.VerifyPKCS1v15 accepts a 1024-bit one, so without an explicit floor a
+// bundle signed by an undersized leaf would be denied by one and admitted by
+// the other.
+func TestVerifyJWSRejectsUndersizedRSAKeys(t *testing.T) {
+	t.Parallel()
+	key, err := testca.NewKeyOfSize(testca.RSA, 1024)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cert, err := testca.Issue(testca.Template{
+		CommonName: "small.example.com",
+		NotBefore:  time.Now().Add(-time.Hour),
+		NotAfter:   time.Now().Add(time.Hour),
+		MaxPathLen: -1,
+		KeyUsage:   x509.KeyUsageDigitalSignature,
+	}, key, nil)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	parsed, err := certparse.ParsePEM(cert.PEM)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	jws, err := cert.SignJWS(samplePayload(cert.Fingerprint()))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	// The signature itself is valid — only the key size is not.
+	if err := rsa.VerifyPKCS1v15(parsed.RSAPublicKey, crypto.SHA256,
+		signingInputDigest(t, jws), jwsSignature(t, jws)); err != nil {
+		t.Fatalf("the 1024-bit signature should be cryptographically valid: %v", err)
+	}
+
+	_, err = verifyJWS(jws, parsed)
+	if err == nil || !strings.Contains(err.Error(), "RS256 requires an RSA key of at least 2048 bits") {
+		t.Fatalf("err = %v, want the modulus floor to be enforced", err)
+	}
+}
+
+func signingInputDigest(t *testing.T, jws string) []byte {
+	t.Helper()
+	segments := strings.Split(jws, ".")
+	sum := sha256.Sum256([]byte(segments[0] + "." + segments[1]))
+	return sum[:]
+}
+
+func jwsSignature(t *testing.T, jws string) []byte {
+	t.Helper()
+	segments := strings.Split(jws, ".")
+	signature, err := base64.RawURLEncoding.DecodeString(segments[2])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	return signature
 }
 
 func TestVerifyJWSRejectsPayloadsThatAreNotEvidence(t *testing.T) {
 	t.Parallel()
 	cert, parsed := mintLeaf(t, testca.RSA)
 
-	for name, payload := range map[string]any{
-		"wrong version":          map[string]any{"version": "2", "kind": "DeploymentEvidence", "hostname": "h", "issuedAt": "t", "certFingerprint": "sha256/x"},
-		"unknown kind":           map[string]any{"version": "1", "kind": "Whatever", "hostname": "h", "issuedAt": "t", "certFingerprint": "sha256/x"},
-		"empty hostname":         map[string]any{"version": "1", "kind": "DeploymentEvidence", "hostname": "", "issuedAt": "t", "certFingerprint": "sha256/x"},
-		"missing issuedAt":       map[string]any{"version": "1", "kind": "DeploymentEvidence", "hostname": "h", "certFingerprint": "sha256/x"},
-		"unscheme'd fingerprint": map[string]any{"version": "1", "kind": "DeploymentEvidence", "hostname": "h", "issuedAt": "t", "certFingerprint": "deadbeef"},
-		"not an object":          []string{"nope"},
+	const notRecognised = "JWS payload is not a recognised evidence payload"
+	base := func(overrides map[string]any) map[string]any {
+		payload := map[string]any{
+			"version": "1", "kind": "DeploymentEvidence", "hostname": "h",
+			"issuedAt": "t", "certFingerprint": "sha256/x",
+		}
+		for key, value := range overrides {
+			if value == nil {
+				delete(payload, key)
+				continue
+			}
+			payload[key] = value
+		}
+		return payload
+	}
+
+	for name, tc := range map[string]struct {
+		payload any
+		want    string
+	}{
+		"wrong version":          {base(map[string]any{"version": "2"}), notRecognised},
+		"unknown kind":           {base(map[string]any{"kind": "Whatever"}), notRecognised},
+		"empty hostname":         {base(map[string]any{"hostname": ""}), notRecognised},
+		"missing issuedAt":       {base(map[string]any{"issuedAt": nil}), notRecognised},
+		"unscheme'd fingerprint": {base(map[string]any{"certFingerprint": "deadbeef"}), notRecognised},
+		// A payload that is valid JSON but not an object cannot even be decoded
+		// into the base struct, so it fails one step earlier.
+		"not an object": {[]string{"nope"}, "failed to parse JWS payload as JSON"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			jws, err := cert.SignJWS(payload)
+			jws, err := cert.SignJWS(tc.payload)
 			if err != nil {
 				t.Fatalf("sign: %v", err)
 			}
-			if _, err := verifyJWS(jws, parsed); err == nil {
+			_, err = verifyJWS(jws, parsed)
+			if err == nil {
 				t.Fatalf("verifyJWS accepted a payload with %s", name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %q, want it to mention %q", err, tc.want)
 			}
 		})
 	}
@@ -196,8 +297,9 @@ func TestVerifyJWSRejectsOutOfRangeES256KScalars(t *testing.T) {
 
 	jws := header + "." + base64.RawURLEncoding.EncodeToString(body) + "." +
 		base64.RawURLEncoding.EncodeToString(oversized)
-	if _, err := verifyJWS(jws, parsed); err == nil {
-		t.Fatal("verifyJWS accepted a signature whose scalars exceed the group order")
+	_, err = verifyJWS(jws, parsed)
+	if err == nil || !strings.Contains(err.Error(), "R is >= the group order") {
+		t.Fatalf("err = %v, want the out-of-range scalar to be named", err)
 	}
 }
 

@@ -304,20 +304,19 @@ func assertJSONEqual(t *testing.T, label string, got, want json.RawMessage) {
 	}
 }
 
-func assertQuote(t *testing.T, got *attestation.RootCaTeeQuote, want json.RawMessage) {
+// assertQuote compares the passed-through quote with what the vectors publish.
+// The verifier must hand back the bytes the endpoint served, so this is a
+// document comparison, not a struct one.
+func assertQuote(t *testing.T, got, want json.RawMessage) {
 	t.Helper()
 	if len(want) == 0 {
 		if got != nil {
-			t.Errorf("rootCaTeeQuote = %+v, want none", got)
+			t.Errorf("rootCaTeeQuote = %s, want none", got)
 		}
 		return
 	}
 	if got == nil {
 		t.Fatalf("rootCaTeeQuote is absent, want %s", want)
 	}
-	encoded, err := json.Marshal(got)
-	if err != nil {
-		t.Fatalf("marshal rootCaTeeQuote: %v", err)
-	}
-	assertJSONEqual(t, "rootCaTeeQuote", encoded, want)
+	assertJSONEqual(t, "rootCaTeeQuote", got, want)
 }

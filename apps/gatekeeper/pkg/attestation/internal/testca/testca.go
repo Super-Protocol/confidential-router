@@ -53,11 +53,21 @@ type Key struct {
 	Secp256k1 *secp256k1.PrivateKey
 }
 
+// DefaultRSABits is the modulus size NewKey mints, matching what the platform
+// issues.
+const DefaultRSABits = 2048
+
 // NewKey generates a fresh key pair of the requested algorithm.
 func NewKey(algorithm Algorithm) (*Key, error) {
+	return NewKeyOfSize(algorithm, DefaultRSABits)
+}
+
+// NewKeyOfSize is NewKey with an explicit RSA modulus size, for the tests that
+// need an undersized key. The size is ignored for secp256k1.
+func NewKeyOfSize(algorithm Algorithm, rsaBits int) (*Key, error) {
 	switch algorithm {
 	case RSA:
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		key, err := rsa.GenerateKey(rand.Reader, rsaBits)
 		if err != nil {
 			return nil, err
 		}

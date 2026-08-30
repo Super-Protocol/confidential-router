@@ -119,7 +119,11 @@ func VerifyBundle(document []byte, params Params) Result {
 		return errResult
 	}
 
-	chain, err := ValidateChain(bundle.CertChain, params.now())
+	// One clock read per verdict: the validity window and the freshness check
+	// must not disagree about when "now" was.
+	now := params.now()
+
+	chain, err := ValidateChain(bundle.CertChain, now)
 	if err != nil {
 		return fail(StageCertChain, "%v", err)
 	}
@@ -134,7 +138,7 @@ func VerifyBundle(document []byte, params Params) Result {
 		return errResult
 	}
 
-	if errResult, ok := checkFreshness(payload.Base().IssuedAt, params.MaxBundleAge, params.now()); !ok {
+	if errResult, ok := checkFreshness(payload.Base().IssuedAt, params.MaxBundleAge, now); !ok {
 		return errResult
 	}
 
@@ -217,10 +221,14 @@ func parseBundle(document []byte, expectedHostname string) (*Bundle, Result) {
 		CertChain:       certChain,
 	}
 
-	if raw, present := probe["rootCaTeeQuote"]; present && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &bundle.RootCaTeeQuote); err != nil {
+	if raw, present := probe["rootCaTeeQuote"]; present {
+		// `typeof x === "object" && x !== null` in the TypeScript verifier, so
+		// null is a malformed quote rather than an absent one, and the value is
+		// passed through without being reshaped.
+		if !isJSONObjectOrArray(raw) {
 			return nil, fail(StageFetch, "bundle rootCaTeeQuote is malformed")
 		}
+		bundle.RootCaTeeQuote = raw
 	}
 	if raw, present := probe["tlsLeaf"]; present {
 		if json.Unmarshal(raw, &bundle.TLSLeaf) != nil || bundle.TLSLeaf == "" {
@@ -309,6 +317,23 @@ func checkChannelBinding(payloadFingerprint, observedFingerprint, tlsLeafPEM str
 	}
 
 	return "", fail(StageTLSFingerprint, "no observed fingerprint and no tlsLeaf in bundle")
+}
+
+// isJSONObjectOrArray reports whether raw is a value JavaScript's `typeof`
+// calls an object and that is not null — the test the TypeScript verifier
+// applies to rootCaTeeQuote.
+func isJSONObjectOrArray(raw json.RawMessage) bool {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // jsonString reads a field that must be a JSON string.

@@ -135,12 +135,26 @@ func TestFetchHonoursContextCancellation(t *testing.T) {
 	}
 }
 
+// TestFetchRejectsMalformedHostnames asserts the reason, not just the failure:
+// a regression of the guard would otherwise still "pass" through a DNS or URL
+// error, and would quietly make this the one test that needs the network.
 func TestFetchRejectsMalformedHostnames(t *testing.T) {
 	t.Parallel()
-	for _, hostname := range []string{"", "https://host.example.com", "host.example.com:443"} {
-		if _, err := attestation.Fetch(context.Background(), hostname, attestation.FetchOptions{}); err == nil {
-			t.Errorf("Fetch(%q) succeeded, want a rejection", hostname)
-		}
+	for hostname, want := range map[string]string{
+		"":                         "hostname must be a non-empty string",
+		"https://host.example.com": "must be a bare host, without scheme or port",
+		"host.example.com:443":     "must be a bare host, without scheme or port",
+	} {
+		t.Run(hostname, func(t *testing.T) {
+			t.Parallel()
+			_, err := attestation.Fetch(context.Background(), hostname, attestation.FetchOptions{})
+			if err == nil {
+				t.Fatalf("Fetch(%q) succeeded, want a rejection", hostname)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %q, want it to mention %q", err, want)
+			}
+		})
 	}
 }
 
@@ -319,5 +333,49 @@ func TestVerifyHostnameCatchesARotatedCertificateAgainstAPin(t *testing.T) {
 	}
 	if result.ObservedTLSFingerprint != kit.rsaLeaf.Fingerprint() {
 		t.Errorf("observed fingerprint = %q, want the certificate actually served", result.ObservedTLSFingerprint)
+	}
+}
+
+// TestVerifyHostnameWithTheTLSLeafOutsideTheChain is the production shape: the
+// evidence chain is the platform's secp256k1 one, while the certificate on the
+// wire is a separate auto-SSL RSA leaf. The JWS is verified under the chain
+// leaf; the channel binding is against the observed one. The other live tests
+// serve the chain leaf as the TLS certificate, which cannot tell the two apart.
+func TestVerifyHostnameWithTheTLSLeafOutsideTheChain(t *testing.T) {
+	t.Parallel()
+	kit := testKitFor(t)
+	chain := []*testca.Cert{kit.k1Leaf, kit.k1Inter, kit.k1Root}
+
+	// tlsLeaf is an RSA certificate from an unrelated issuer — Go's TLS stack
+	// cannot serve a secp256k1 one, which is exactly why production separates
+	// the two.
+	tlsLeaf := kit.strayLeaf
+	bundle := buildBundle(t, localhost, chain, kit.k1Leaf, mustTime(t, "2026-08-30T10:05:00Z"),
+		func(p map[string]any) { p["certFingerprint"] = tlsLeaf.Fingerprint() },
+		func(b map[string]any) { b["certFingerprint"] = tlsLeaf.Fingerprint() })
+
+	server := tlsServerWithCert(t, tlsLeaf, document(t, bundle))
+	defer server.Close()
+
+	result := attestation.VerifyHostname(context.Background(), attestation.Params{
+		Hostname:     localhost,
+		TrustedRoots: []attestation.TrustedRoot{{Name: "swarm-cloud-test-k256", PEM: kit.k1Root.PEM}},
+		MaxBundleAge: 24 * time.Hour,
+		Now:          mustTime(t, testNow),
+		Fetch:        attestation.FetchOptions{Port: serverPort(t, server)},
+	})
+
+	if !result.OK {
+		t.Fatalf("verification failed at %q: %s", result.Stage, result.Reason)
+	}
+	if result.MatchedRoot.Fingerprint != kit.k1Root.Fingerprint() {
+		t.Errorf("matchedRoot = %q, want the secp256k1 root", result.MatchedRoot.Fingerprint)
+	}
+	if result.ObservedTLSFingerprint != tlsLeaf.Fingerprint() {
+		t.Errorf("observed fingerprint = %q, want the TLS leaf %q",
+			result.ObservedTLSFingerprint, tlsLeaf.Fingerprint())
+	}
+	if result.ObservedTLSFingerprint == kit.k1Leaf.Fingerprint() {
+		t.Error("the binding must be against the observed leaf, not the chain leaf")
 	}
 }

@@ -1,6 +1,8 @@
 package attestation_test
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +40,17 @@ func TestVerifyBundleRejectsMalformedEnvelopes(t *testing.T) {
 		"tlsLeaf empty":            {func(b map[string]any) { b["tlsLeaf"] = "" }, "tlsLeaf is malformed"},
 		"rootCaTeeQuote not an object": {
 			func(b map[string]any) { b["rootCaTeeQuote"] = "a quote" }, "rootCaTeeQuote is malformed",
+		},
+		// The TypeScript verifier tests `typeof x === "object" && x !== null`,
+		// so an explicit null is malformed rather than absent.
+		"rootCaTeeQuote null": {
+			func(b map[string]any) { b["rootCaTeeQuote"] = nil }, "rootCaTeeQuote is malformed",
+		},
+		"rootCaTeeQuote a number": {
+			func(b map[string]any) { b["rootCaTeeQuote"] = 42 }, "rootCaTeeQuote is malformed",
+		},
+		"rootCaTeeQuote a boolean": {
+			func(b map[string]any) { b["rootCaTeeQuote"] = true }, "rootCaTeeQuote is malformed",
 		},
 	}
 
@@ -251,5 +264,49 @@ func TestVerifyBundleAcceptsBothKeyAlgorithms(t *testing.T) {
 				t.Errorf("matchedRoot.Fingerprint = %q, want %q", result.MatchedRoot.Fingerprint, tc.root.Fingerprint())
 			}
 		})
+	}
+}
+
+// TestVerifyBundlePassesTheQuoteThroughVerbatim: ADR-003 §2 leaves quote
+// validation to a later hook, which needs the document exactly as published —
+// including members this verifier has no opinion about.
+func TestVerifyBundlePassesTheQuoteThroughVerbatim(t *testing.T) {
+	t.Parallel()
+	kit := testKitFor(t)
+	quote := map[string]any{
+		"format":             "intel-tdx-quote-v5",
+		"data":               "cXVvdGU",
+		"collateral":         map[string]any{"tcbInfoIssuerChain": "-----BEGIN CERTIFICATE-----"},
+		"someFutureMember":   []any{1.0, 2.0},
+		"anotherOneEntirely": "kept",
+	}
+	bundle := buildBundle(t, testHostname,
+		[]*testca.Cert{kit.rsaLeaf, kit.rsaInter, kit.rsaRoot}, kit.rsaLeaf,
+		mustTime(t, "2026-08-30T10:05:00Z"), nil,
+		func(b map[string]any) { b["rootCaTeeQuote"] = quote })
+
+	result := attestation.VerifyBundle(document(t, bundle), attestation.Params{
+		Hostname:               testHostname,
+		TrustedRoots:           []attestation.TrustedRoot{{Name: "root", PEM: kit.rsaRoot.PEM}},
+		ObservedTLSFingerprint: kit.rsaLeaf.Fingerprint(),
+		Now:                    mustTime(t, testNow),
+	})
+	if !result.OK {
+		t.Fatalf("verification failed at %q: %s", result.Stage, result.Reason)
+	}
+
+	var got, want map[string]any
+	if err := json.Unmarshal(result.RootCaTeeQuote, &got); err != nil {
+		t.Fatalf("passed-through quote is not an object: %v", err)
+	}
+	wantBytes, err := json.Marshal(quote)
+	if err != nil {
+		t.Fatalf("marshal quote: %v", err)
+	}
+	if err := json.Unmarshal(wantBytes, &want); err != nil {
+		t.Fatalf("marshal round-trip: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("quote = %s\nwant %s", result.RootCaTeeQuote, wantBytes)
 	}
 }
