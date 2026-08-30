@@ -3,10 +3,12 @@ import { ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 /**
  * A withdrawal the ledger refuses because it would take the balance below zero.
  *
- * Usage debits are exempt: a completion's length is not known before it is
- * generated, so ADR-005 §3 lets a single generation overdraw and blocks the
- * *next* request instead. Everything else — an operator adjustment, a refund —
- * has a known amount and must not be allowed to invent credit.
+ * Only operator adjustments reach this. Usage debits are exempt because a
+ * completion's length is not known before it is generated (ADR-005 §3), and
+ * refunds because the provider has already moved the money — in both cases the
+ * balance goes negative and the *next* request is what gets refused. An
+ * adjustment has a known amount and a human behind it, so refusing it surfaces
+ * the mistake to someone who can act on it.
  *
  * `402` rather than `409` because that is the status `/v1` already uses for
  * `insufficient_credits` (`docs/contracts/router-api.md`).

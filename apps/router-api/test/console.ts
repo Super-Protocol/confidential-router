@@ -2,7 +2,7 @@ import { getDataSourceToken } from '@nestjs/typeorm';
 import request from 'supertest';
 import type { DataSource } from 'typeorm';
 import { expect } from 'vitest';
-import { type Harness, pathOf } from './app-harness.js';
+import { type Harness, signIn as startSession } from './app-harness.js';
 
 /**
  * The console's own way in: sign in with a magic link, then talk GraphQL with the
@@ -18,15 +18,7 @@ export interface ConsoleSession {
 }
 
 export async function signIn(harness: Harness, email: string): Promise<ConsoleSession> {
-  await request(harness.app.getHttpServer())
-    .post('/auth/sign-in/magic-link')
-    .send({ email, callbackURL: '/' })
-    .expect((response) => expect(response.status).toBeLessThan(400));
-
-  const verify = await request(harness.app.getHttpServer()).get(pathOf(harness.mailer.last.url));
-  const raw = verify.headers['set-cookie'];
-  const cookies = Array.isArray(raw) ? raw : [raw].filter(Boolean);
-
+  const cookies = await startSession(harness, email);
   const session = { harness, cookies, email, workspaceId: '' };
   const me = await graphql(session, '{ me { workspaces { id } } }');
   return { ...session, workspaceId: me.data.me.workspaces[0].id };

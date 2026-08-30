@@ -122,6 +122,39 @@ describe('the negative-balance rule', () => {
     expect(await assertBalanceMatchesLedger()).toBe(-1_000_000);
   });
 
+  it('records a refund of credits that have already been spent', async () => {
+    // Stripe has already moved the money. Refusing the entry would leave the
+    // ledger disagreeing with the provider about a transfer that happened —
+    // and the webhook retrying a non-2xx for days.
+    await purchase(20_000_000);
+    await ledger.debitGeneration({ workspaceId, generationId: 'gen-spent', amountMicros: 19_000_000 });
+
+    const refund = await ledger.record({
+      workspaceId,
+      kind: 'refund',
+      amountMicros: -20_000_000,
+      reference: 'ch_1',
+      idempotencyKey: 'stripe:refund:ch_1:2000',
+    });
+
+    expect(refund.replayed).toBe(false);
+    expect(await assertBalanceMatchesLedger()).toBe(-19_000_000);
+  });
+
+  it('records a refund while the workspace is already overdrawn', async () => {
+    await purchase(5_000_000);
+    await ledger.debitGeneration({ workspaceId, generationId: 'gen-over', amountMicros: 6_000_000 });
+
+    await ledger.record({
+      workspaceId,
+      kind: 'refund',
+      amountMicros: -5_000_000,
+      idempotencyKey: 'stripe:refund:ch_2:500',
+    });
+
+    expect(await assertBalanceMatchesLedger()).toBe(-6_000_000);
+  });
+
   it('refuses an adjustment that would take the balance below zero', async () => {
     await purchase(5_000_000);
 

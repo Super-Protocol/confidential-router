@@ -1,24 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
+// Type-only: the token lives with the interface in `metering`, and importing it
+// for its value here would make the two modules depend on each other at runtime.
+import type { CreditsDebit, CreditsGateway } from '../metering/credits.gateway.js';
 import { AutoTopUpService } from './auto-top-up.service.js';
 import { type CreditsBalance, LedgerService } from './ledger.service.js';
 
-export interface CreditsDebit {
-  workspaceId: string;
-  generationId: string;
-  amountMicros: number;
-}
-
 /**
- * What the `/v1` gateway needs from billing: may this workspace spend, and here
- * is what it spent.
+ * The real accounting behind `/v1`'s credit questions.
  *
  * SUP-73 introduced this seam with a placeholder that read the balance and threw
  * the debit away, because writing `balanceMicros` without the matching ledger row
- * would break the invariant that the two agree. This is the real implementation:
- * binding it under `CREDITS_GATEWAY` is the whole of the swap.
+ * would break the invariant that the two agree. `MeteringModule` binds this class
+ * under `CREDITS_GATEWAY`, so a served generation now writes a `usage` row and
+ * moves the balance in one transaction.
  */
 @Injectable()
-export class LedgerCreditsGateway {
+export class LedgerCreditsGateway implements CreditsGateway {
   private readonly logger = new Logger(LedgerCreditsGateway.name);
 
   constructor(

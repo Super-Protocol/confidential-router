@@ -69,8 +69,19 @@ function ignore(): void {
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 200;
 
-/** Kinds whose amount is not known before the money is spent, so they may overdraw. */
-const MAY_OVERDRAW: ReadonlySet<CreditTransactionKind> = new Set<CreditTransactionKind>(['usage']);
+/**
+ * Kinds the ledger records even when they take the balance below zero.
+ *
+ * `usage` because a completion's length is not known before it is generated
+ * (ADR-005 §3). `refund` because the provider has *already* moved the money: the
+ * entry removes credit rather than inventing it, and refusing it would leave the
+ * ledger permanently disagreeing with the payment provider about a transfer that
+ * happened — while the webhook retried a non-2xx for days. A negative balance
+ * meaning "this workspace owes" is the honest state.
+ *
+ * `adjustment` is deliberately absent: an operator is present to read the error.
+ */
+const MAY_OVERDRAW: ReadonlySet<CreditTransactionKind> = new Set<CreditTransactionKind>(['usage', 'refund']);
 
 /**
  * The credits ledger: the single writer of `credit_transactions`, and the only

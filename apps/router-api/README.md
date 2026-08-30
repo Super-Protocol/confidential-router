@@ -204,9 +204,15 @@ equal in one transaction per entry. A repeated event cannot charge twice: every 
 `idempotencyKey` under a unique index, so a redelivered Stripe webhook or a retried debit returns the row
 that already exists.
 
-A generation may overdraw — its cost is not known until it has been generated — and the *next* request is
-what gets refused (`402 insufficient_credits`). An operator adjustment, whose amount *is* known, cannot
-take the balance below zero.
+`MeteringModule` binds this under `CREDITS_GATEWAY`, so every generation the `/v1` gateway serves writes
+its `usage` row through the ledger, keyed on the generation id — a retried metering write cannot charge
+twice.
+
+A generation may overdraw: its cost is not known until it has been generated, and the *next* request is
+what gets refused (`402 insufficient_credits`). A refund may overdraw too — the provider has already moved
+the money, and a ledger that refused to record it would permanently disagree with the provider. An
+operator adjustment, whose amount is known and who has a human behind it, cannot take the balance below
+zero.
 
 The payment provider sits behind `PaymentProvider`:
 

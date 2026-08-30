@@ -218,8 +218,10 @@ describe('the Stripe webhook', () => {
 
   beforeAll(async () => {
     stripeHarness = await createHarness({
-      CR_API_BILLING__STRIPE__SECRET_KEY: SECRET_KEY,
-      CR_API_BILLING__STRIPE__WEBHOOK_SECRET: WEBHOOK_SECRET,
+      env: {
+        CR_API_BILLING__STRIPE__SECRET_KEY: SECRET_KEY,
+        CR_API_BILLING__STRIPE__WEBHOOK_SECRET: WEBHOOK_SECRET,
+      },
     });
     stripeSession = await signIn(stripeHarness, 'stripe@example.com');
   }, 60_000);

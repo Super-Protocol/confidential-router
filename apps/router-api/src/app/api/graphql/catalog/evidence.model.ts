@@ -3,6 +3,7 @@ import { IsDate, IsOptional, IsString } from 'class-validator';
 import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { Coverage, DigestChange } from '../../../evidence/index.js';
 import { type EvidenceState, quoteAgeMs } from '../../../evidence/index.js';
+import { PageInfoModel } from '../common/page-info.model.js';
 import { JSONObject } from '../scalars/json.scalar.js';
 
 /** Runtime twin of the `EvidenceState` union, because GraphQL needs a value to register. */
@@ -116,15 +117,6 @@ export class EvidenceSnapshotModel {
       bundle: snapshot.bundle,
     };
   }
-}
-
-@ObjectType('PageInfo')
-export class PageInfoModel {
-  @Field(() => Boolean)
-  hasNextPage!: boolean;
-
-  @Field(() => String, { nullable: true })
-  endCursor!: string | null;
 }
 
 @ObjectType('EvidenceSnapshotEdge')
