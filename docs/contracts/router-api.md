@@ -10,7 +10,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
   params. Missing/invalid → `401 invalid_api_key`; revoked/expired → `401 api_key_revoked` /
   `api_key_expired`.
 - Key format: prefix `sk-tee-v1-` + 32 random bytes base64url. Stored as `sha256(key)` + first 12 chars
-  (`sk-tee-v1-4f7a…`) for display. Shown in full exactly once, at creation.
+  (`sk-tee-v1-4f`) for display. Shown in full exactly once, at creation.
 - Optional `X-Request-Id` (echoed) and `X-Confidential-Router-Generation-Id` (response) headers.
 
 ## Endpoints
