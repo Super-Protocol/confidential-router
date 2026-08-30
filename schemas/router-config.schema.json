@@ -38,6 +38,11 @@
             "format": "uri"
           },
           "default": []
+        },
+        "host": {
+          "type": "string",
+          "default": "0.0.0.0",
+          "description": "Interface to bind. 127.0.0.1 to keep the service off the network."
         }
       }
     },
@@ -59,6 +64,15 @@
           "type": "string",
           "minLength": 1,
           "description": "SQLite file path (dev/test)."
+        },
+        "migrationsRun": {
+          "type": "boolean",
+          "description": "Apply pending migrations at boot. Defaults to true on sqlite and false on postgres, where a deployment runs the migration job once instead of racing every replica."
+        },
+        "logging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log every SQL statement. Development only."
         }
       },
       "oneOf": [
@@ -290,6 +304,11 @@
               "type": "string"
             }
           }
+        },
+        "sessionMaxAge": {
+          "$ref": "#/$defs/duration",
+          "default": "720h",
+          "description": "Rolling session lifetime (ADR-004 \u00a74)."
         }
       }
     },
@@ -326,6 +345,57 @@
               "default": "usd"
             }
           }
+        }
+      }
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "fatal",
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace",
+            "silent"
+          ],
+          "default": "info"
+        },
+        "pretty": {
+          "type": "boolean",
+          "description": "Human-readable output. Defaults to true outside production."
+        }
+      }
+    },
+    "graphql": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "default": "/graphql"
+        },
+        "introspection": {
+          "type": "boolean",
+          "description": "Defaults to true outside production."
+        }
+      }
+    },
+    "swagger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Defaults to true outside production."
+        },
+        "path": {
+          "type": "string",
+          "default": "docs"
         }
       }
     }

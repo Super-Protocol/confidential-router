@@ -23,6 +23,7 @@
       "@confidential-router/attestation-fixtures": [
         "libs/attestation-fixtures/src/index.ts"
       ],
+      "@confidential-router/server-common": ["libs/server-common/src/index.ts"],
       "@confidential-router/types": ["libs/types/src/index.ts"]
     }
   }

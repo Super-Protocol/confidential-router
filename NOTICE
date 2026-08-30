@@ -14,6 +14,10 @@ Ported components:
   * libs/nx-biome
       from swarm-cloud `libs/nx-biome` — Nx inference plugin for Biome targets.
 
+  * libs/server-common
+      from swarm-cloud `libs/server-common` — YAML/environment configuration
+      loader and pino logging configuration.
+
   * libs/attestation
       from swarm-cloud `libs/swarm-attestation` — verifier of the
       `/.well-known/swarm-evidence` contract (certificate chain, trusted-root
