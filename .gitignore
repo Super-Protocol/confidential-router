@@ -58,3 +58,6 @@ Thumbs.db
 
 # agent tooling
 .serena
+
+# Local SQLite databases (apps/router-api default: data/router-api.sqlite)
+data/

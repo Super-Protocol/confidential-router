@@ -87,6 +87,71 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+  router-api-postgres:
+    name: router-api migrations (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # `nx affected` runs the unit and e2e suites on SQLite. This job is the one
+    # that proves the same migrations apply to the database production uses.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: router
+          POSTGRES_PASSWORD: router
+          POSTGRES_DB: router
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U router -d router"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CR_TEST_POSTGRES_URL: postgres://router:router@127.0.0.1:5432/router
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Asserts both that every migration applies and that the resulting schema
+      # is exactly the one the entities describe.
+      - name: Migration and schema-drift tests
+        run: pnpm exec vitest run --root apps/router-api src/app/db/migrations.spec.ts
+
+      - name: Build router-api
+        run: pnpm nx run @confidential-router/router-api:build
+
+      # The command a deployment actually runs, against a real database.
+      - name: Run the migration CLI
+        working-directory: apps/router-api
+        env:
+          CR_API_CONFIG_FILE: /nonexistent.yaml
+          CR_API_DATABASE__TYPE: postgres
+          CR_API_DATABASE__URL: postgres://router:router@127.0.0.1:5432/router
+          CR_API_AUTH__SECRET: ci-secret-not-used-for-anything-real-32
+        run: node dist/cli/run-migrations.js
+
+      - name: Re-run it, to prove it is idempotent
+        working-directory: apps/router-api
+        env:
+          CR_API_CONFIG_FILE: /nonexistent.yaml
+          CR_API_DATABASE__TYPE: postgres
+          CR_API_DATABASE__URL: postgres://router:router@127.0.0.1:5432/router
+          CR_API_AUTH__SECRET: ci-secret-not-used-for-anything-real-32
+        run: node dist/cli/run-migrations.js
+
   go:
     name: Go checks (gatekeeper)
     runs-on: ubuntu-latest

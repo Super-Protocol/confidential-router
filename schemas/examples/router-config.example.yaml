@@ -3,6 +3,7 @@ version: 1
 
 server:
   port: 3000
+  host: 0.0.0.0
   publicBaseUrl: https://console.tee.swarm.cloud
   validClientOrigins:
     - https://console.tee.swarm.cloud
@@ -10,6 +11,8 @@ server:
 database:
   type: postgres
   url: ${CR_API_DATABASE_URL}
+  # Migrations are applied once by the release job, not by every replica.
+  migrationsRun: false
 
 backends:
   litellm:
@@ -77,3 +80,14 @@ billing:
     secretKey: ${CR_API_STRIPE_SECRET_KEY}
     webhookSecret: ${CR_API_STRIPE_WEBHOOK_SECRET}
     currency: usd
+
+log:
+  level: info
+  pretty: false
+
+graphql:
+  path: /graphql
+  introspection: false
+
+swagger:
+  enabled: false

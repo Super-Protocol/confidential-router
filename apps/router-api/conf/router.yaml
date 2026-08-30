@@ -1,0 +1,59 @@
+# Development configuration for apps/router-api.
+#
+# Everything here is also the schema default, so deleting this file changes
+# nothing — `pnpm nx serve router-api` boots on SQLite either way. It exists to
+# show the shape; a deployment supplies its own file (see
+# schemas/examples/router-config.example.yaml) and overrides individual values
+# with CR_API_* environment variables.
+#
+# Full contract: schemas/router-config.schema.json
+version: 1
+
+server:
+  port: 3000
+  host: 0.0.0.0
+  publicBaseUrl: http://localhost:3000
+  validClientOrigins:
+    - http://localhost:4200
+
+database:
+  type: sqlite
+  file: data/router-api.sqlite
+  # SQLite runs migrations at boot; PostgreSQL deployments run
+  # `node dist/cli/run-migrations.js` once instead.
+  migrationsRun: true
+
+backends:
+  litellm:
+    # docker/docker-compose.dev.yml does not start LiteLLM yet; until SUP-73
+    # wires up /v1 nothing calls this.
+    baseUrl: http://127.0.0.1:4000
+    connectTimeout: 5s
+    readTimeout: 120s
+
+# The router hostnames the platform publishes evidence for (ADR-002). Empty in
+# development: there is nothing to attest on a laptop.
+endpoints: []
+models: []
+
+auth:
+  baseUrl: http://localhost:3000
+  # No secret here on purpose: outside production the process mints an ephemeral
+  # one and says so. Set CR_API_AUTH__SECRET for a stable dev session.
+  magicLink:
+    mailer: console
+    from: no-reply@confidential-router.local
+  # OAuth is optional in development; magic link alone is enough to sign in.
+  # github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
+
+log:
+  level: info
+  pretty: true
+
+graphql:
+  path: /graphql
+  introspection: true
+
+swagger:
+  enabled: true
+  path: docs

@@ -4,10 +4,16 @@
   "files": [],
   "references": [
     {
+      "path": "./apps/router-api"
+    },
+    {
       "path": "./libs/attestation"
     },
     {
       "path": "./libs/attestation-fixtures"
+    },
+    {
+      "path": "./libs/server-common"
     },
     {
       "path": "./libs/types"

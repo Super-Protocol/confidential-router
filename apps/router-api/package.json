@@ -1,0 +1,114 @@
+{
+  "name": "@confidential-router/router-api",
+  "version": "0.0.1",
+  "private": true,
+  "nx": {
+    "targets": {
+      "typecheck": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "^build"
+        ],
+        "cache": true,
+        "options": {
+          "commands": [
+            "tsc -p tsconfig.app.json --noEmit",
+            "tsc -p tsconfig.spec.json --noEmit"
+          ],
+          "cwd": "apps/router-api",
+          "parallel": false
+        }
+      },
+      "build": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "^build"
+        ],
+        "cache": true,
+        "outputs": [
+          "{projectRoot}/dist"
+        ],
+        "options": {
+          "command": "webpack-cli build",
+          "cwd": "apps/router-api",
+          "env": {
+            "NODE_ENV": "production"
+          }
+        },
+        "configurations": {
+          "development": {
+            "env": {
+              "NODE_ENV": "development"
+            }
+          }
+        }
+      },
+      "serve": {
+        "continuous": true,
+        "executor": "@nx/js:node",
+        "defaultConfiguration": "development",
+        "dependsOn": [
+          "build"
+        ],
+        "options": {
+          "buildTarget": "@confidential-router/router-api:build",
+          "runBuildTargetDependencies": false
+        },
+        "configurations": {
+          "development": {
+            "buildTarget": "@confidential-router/router-api:build:development"
+          },
+          "production": {
+            "buildTarget": "@confidential-router/router-api:build:production"
+          }
+        }
+      },
+      "migrate": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "build"
+        ],
+        "options": {
+          "command": "node dist/cli/run-migrations.js",
+          "cwd": "apps/router-api"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@apollo/server": "^5.5.1",
+    "@as-integrations/express5": "^1.1.2",
+    "@confidential-router/server-common": "workspace:*",
+    "@confidential-router/types": "workspace:*",
+    "@nestjs/apollo": "^13.1.0",
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/config": "^4.0.2",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/graphql": "^13.1.0",
+    "@nestjs/platform-express": "^11.1.6",
+    "@nestjs/swagger": "^11.2.5",
+    "@nestjs/typeorm": "^11.0.0",
+    "better-auth": "^1.7.2",
+    "better-sqlite3": "^12.4.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "graphql": "^16.14.2",
+    "helmet": "^8.3.0",
+    "js-yaml": "^4.1.0",
+    "nestjs-pino": "^4.6.1",
+    "pg": "^8.23.0",
+    "pino": "^9.14.0",
+    "pino-http": "^11.0.0",
+    "pino-pretty": "^13.1.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "tslib": "^2.8.1",
+    "typeorm": "^0.3.31",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.1.6"
+  }
+}
