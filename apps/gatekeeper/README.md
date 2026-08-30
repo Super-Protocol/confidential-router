@@ -10,7 +10,9 @@ The router never learns whether, when, or by whom it was attested — it only
 
 ## Status
 
-Bootstrap skeleton. Today the binary only reports its build identity:
+The verifier (`pkg/attestation`) is implemented and covered by conformance
+vectors. The CLI is still the bootstrap skeleton and only reports its build
+identity:
 
 ```bash
 pnpm nx run gatekeeper:build   # -> apps/gatekeeper/bin/gatekeeper
@@ -26,6 +28,7 @@ pnpm nx run gatekeeper:serve   # -> go run ./cmd/gatekeeper
 | `cmd/gatekeeper/`        | CLI entry point. Thin — argument parsing and wiring only.                 |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
 | `pkg/version/`           | Build identity, stamped by GoReleaser via `-ldflags`.                    |
+| `pkg/attestation/`       | Verifier for `/.well-known/swarm-evidence`: fetch with observed TLS binding, chain, trusted root, JWS (RS256/ES256K), freshness. [Details](pkg/attestation/README.md). |
 
 Keeping the verification pipeline, trust store and proxy in `pkg/` (never in
 `internal/`) is a deliberate constraint from the parent design: an Electron

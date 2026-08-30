@@ -3,7 +3,10 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/gatekeeper",
   "projectType": "application",
-  "tags": ["type:app", "lang:go"],
+  "tags": [
+    "type:app",
+    "lang:go"
+  ],
   "targets": {
     "build": {
       "executor": "nx:run-commands",
@@ -13,7 +16,9 @@
         "{projectRoot}/go.mod",
         "{projectRoot}/go.sum"
       ],
-      "outputs": ["{projectRoot}/bin"],
+      "outputs": [
+        "{projectRoot}/bin"
+      ],
       "options": {
         "command": "go build -o bin/gatekeeper ./cmd/gatekeeper",
         "cwd": "apps/gatekeeper"
@@ -25,7 +30,8 @@
       "inputs": [
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
-        "{projectRoot}/go.sum"
+        "{projectRoot}/go.sum",
+        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*"
       ],
       "options": {
         "command": "go test ./...",
@@ -42,7 +48,10 @@
         "{projectRoot}/.golangci.yml"
       ],
       "options": {
-        "commands": ["go vet ./...", "golangci-lint run"],
+        "commands": [
+          "go vet ./...",
+          "golangci-lint run"
+        ],
         "cwd": "apps/gatekeeper",
         "parallel": false
       }
@@ -51,7 +60,10 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "commands": ["gofmt -w .", "golangci-lint run --fix"],
+        "commands": [
+          "gofmt -w .",
+          "golangci-lint run --fix"
+        ],
         "cwd": "apps/gatekeeper",
         "parallel": false
       }
@@ -71,5 +83,8 @@
         "cwd": "apps/gatekeeper"
       }
     }
-  }
+  },
+  "implicitDependencies": [
+    "@confidential-router/attestation-fixtures"
+  ]
 }
