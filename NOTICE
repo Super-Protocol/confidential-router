@@ -18,6 +18,16 @@ Ported components:
       from swarm-cloud `libs/server-common` — YAML/environment configuration
       loader and pino logging configuration.
 
-Further ports (the `/.well-known/swarm-evidence` verifier from
-swarm-cloud `libs/swarm-attestation`, and the Rego evidence gate from
-swarm-cloud `apps/gatekeeper-proxy`) will be recorded here as they land.
+  * libs/attestation
+      from swarm-cloud `libs/swarm-attestation` — verifier of the
+      `/.well-known/swarm-evidence` contract (certificate chain, trusted-root
+      match, JWS, freshness and channel binding). See that library's README for
+      the deviations from the source.
+
+  * libs/attestation-fixtures/tools/generate.ts
+      from swarm-cloud `libs/swarm-attestation/src/__tests__/fixtures.ts` — the
+      test PKI and bundle builders, reworked to emit deterministic, language-neutral
+      conformance vectors.
+
+A further port (the Rego evidence gate from swarm-cloud `apps/gatekeeper-proxy`)
+will be recorded here as it lands.

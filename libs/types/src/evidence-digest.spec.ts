@@ -1,3 +1,4 @@
+import { loadEvidenceDigestVectors } from '@confidential-router/attestation-fixtures';
 import { describe, expect, it } from 'vitest';
 import {
   EVIDENCE_DIGEST_PREFIX,
@@ -53,4 +54,23 @@ describe('evidence digest', () => {
       expect(() => normalizeEvidenceDigest(bad)).toThrow(InvalidEvidenceDigestError);
     }
   });
+});
+
+/**
+ * The same vectors the Go pin loader in `apps/gatekeeper/pkg/config` is held to, so
+ * both implementations accept and reject exactly the same spellings.
+ */
+describe('evidence digest conformance vectors', () => {
+  const vectors = loadEvidenceDigestVectors();
+
+  it.each(vectors.cases.map((c) => [`${c.valid ? 'accepts' : 'rejects'} ${c.note}`, c] as const))(
+    '%s',
+    (_label, testCase) => {
+      if (testCase.valid) {
+        expect(normalizeEvidenceDigest(testCase.input)).toBe(testCase.canonical);
+      } else {
+        expect(() => normalizeEvidenceDigest(testCase.input)).toThrow(InvalidEvidenceDigestError);
+      }
+    },
+  );
 });

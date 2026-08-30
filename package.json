@@ -40,6 +40,7 @@
     "@nx/vitest": "23.1.2",
     "@nx/webpack": "23.1.2",
     "@nx/workspace": "23.1.2",
+    "@peculiar/webcrypto": "^1.7.1",
     "@playwright/test": "^1.62.1",
     "@swc/core": "^1.16.1",
     "@types/better-sqlite3": "^9.6.0",
@@ -70,7 +71,7 @@
     "zod": "^4.5.4"
   },
   "engines": {
-    "node": ">=22.11.0"
+    "node": ">=22.18.0"
   },
   "packageManager": "pnpm@11.24.0",
   "nx": {

@@ -167,10 +167,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          # The module has no third-party dependencies yet, so there is no
-          # go.sum for setup-go to key its cache on. Flip this back on together
-          # with the first `require` block.
-          cache: false
+          cache-dependency-path: apps/gatekeeper/go.sum
 
       - name: go vet
         run: go vet ./...

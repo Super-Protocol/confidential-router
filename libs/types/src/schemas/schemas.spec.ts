@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadCaseBody, loadConformanceManifest } from '@confidential-router/attestation-fixtures';
 import Ajv2020Module, { type ValidateFunction } from 'ajv/dist/2020.js';
 import ajvFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
@@ -184,5 +185,25 @@ describe('router-config rules', () => {
     const cfg = base();
     cfg.models[0].pricing.promptPer1mMicros = 0.28;
     expect(validate(cfg)).toBe(false);
+  });
+});
+
+/**
+ * The conformance vectors and the bundle schema describe the same wire document from
+ * two sides. If they disagree, either the schema is wrong or a fixture is not a bundle
+ * a producer could ever have published — and the Go gatekeeper, which validates shape
+ * against this schema before verifying, would reject a case it is expected to accept.
+ */
+describe('swarm-evidence-bundle schema vs. conformance vectors', () => {
+  const validate = compile('swarm-evidence-bundle.schema.json');
+  const manifest = loadConformanceManifest();
+  const acceptedCases = manifest.cases.filter((c) => c.expect.ok && c.response.bodyFile !== undefined);
+
+  it('has cases to check', () => {
+    expect(acceptedCases.length).toBeGreaterThan(0);
+  });
+
+  it.each(acceptedCases.map((c) => [c.id, c] as const))('%s validates against the schema', (_id, testCase) => {
+    expect(validate(loadCaseBody(testCase)), errorsOf(validate)).toBe(true);
   });
 });

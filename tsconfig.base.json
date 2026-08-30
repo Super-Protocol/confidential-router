@@ -19,6 +19,10 @@
     "target": "es2022",
     "customConditions": ["@confidential-router/source"],
     "paths": {
+      "@confidential-router/attestation": ["libs/attestation/src/index.ts"],
+      "@confidential-router/attestation-fixtures": [
+        "libs/attestation-fixtures/src/index.ts"
+      ],
       "@confidential-router/server-common": ["libs/server-common/src/index.ts"],
       "@confidential-router/types": ["libs/types/src/index.ts"]
     }
