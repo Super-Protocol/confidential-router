@@ -2,8 +2,13 @@
  * Behaviour that the language-neutral vectors cannot express: caller-side argument
  * validation and the verdict cache, both of which live outside the wire contract.
  */
-import { loadConformanceManifest, loadTrustedRoots, makeCaseFetcher } from '@confidential-router/attestation-fixtures';
-import { describe, expect, it } from 'vitest';
+import {
+  EVIDENCE_PATH,
+  loadConformanceManifest,
+  loadTrustedRoots,
+  makeCaseFetcher,
+} from '@confidential-router/attestation-fixtures';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryCache } from '../cache.js';
 import type { TrustedRoot, VerifyParams } from '../types.js';
 import { verifyHostname } from '../verify.js';
@@ -48,6 +53,10 @@ function happyParams(overrides: Partial<VerifyParams> = {}): VerifyParams {
 }
 
 describe('verifyHostname argument validation', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('rejects an empty hostname before touching the network', async () => {
     const result = await verifyHostname(happyParams({ hostname: '' }));
     expect(result).toEqual({ ok: false, stage: 'fetch', reason: 'hostname must be a non-empty string' });
@@ -60,12 +69,29 @@ describe('verifyHostname argument validation', () => {
     expect(result.stage).toBe('untrusted-root');
   });
 
-  it('fails at the fetch stage when no fetcher is available', async () => {
+  it('falls back to the global fetch and reports a transport failure as stage fetch', async () => {
+    const globalFetch = vi.fn<typeof fetch>().mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+    vi.stubGlobal('fetch', globalFetch);
+
     const result = await verifyHostname({ ...happyParams(), fetcher: undefined as unknown as typeof fetch });
-    // `globalThis.fetch` exists under Node, so the request is attempted and fails on DNS.
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('unreachable');
-    expect(result.stage).toBe('fetch');
+
+    expect(globalFetch).toHaveBeenCalledWith(`https://${happyPath.request.hostname}${EVIDENCE_PATH}`, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    });
+    expect(result).toEqual({ ok: false, stage: 'fetch', reason: 'request failed: getaddrinfo ENOTFOUND' });
+  });
+
+  it('fails at the fetch stage when the runtime has no fetch at all', async () => {
+    vi.stubGlobal('fetch', undefined);
+
+    const result = await verifyHostname({ ...happyParams(), fetcher: undefined as unknown as typeof fetch });
+
+    expect(result).toEqual({
+      ok: false,
+      stage: 'fetch',
+      reason: 'no fetcher available; pass params.fetcher or run with global fetch',
+    });
   });
 });
 

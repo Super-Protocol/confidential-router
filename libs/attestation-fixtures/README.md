@@ -108,6 +108,10 @@ future-dated payloads, and every way channel binding can fail.
 pnpm nx run attestation-fixtures:generate
 ```
 
+The generator is run directly by Node (`node tools/generate.ts`) and relies on
+type stripping, which is on by default from Node 22.18 — hence the workspace's
+`engines.node`. `.nvmrc` pins Node 24.
+
 Output is deterministic: the key material under `tools/keys` is fixed, so are all serial
 numbers, validity windows and timestamps, and both signature schemes are deterministic —
 RSASSA-PKCS1-v1_5 by construction, secp256k1 because `@noble/curves` derives `k` per

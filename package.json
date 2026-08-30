@@ -55,7 +55,7 @@
     "yaml": "^2.9.0"
   },
   "engines": {
-    "node": ">=22.11.0"
+    "node": ">=22.18.0"
   },
   "packageManager": "pnpm@11.24.0",
   "nx": {
