@@ -6,6 +6,7 @@ import pinoPretty from 'pino-pretty';
 import { GraphQLApiModule } from './api/graphql/graphql-api.module.js';
 import { RestApiModule } from './api/rest-api.module.js';
 import { AuthModule } from './auth/index.js';
+import { CatalogModule } from './catalog/catalog.module.js';
 import { routerConfig } from './config.js';
 import { DbModule } from './db/db.module.js';
 
@@ -29,6 +30,7 @@ import { DbModule } from './db/db.module.js';
     }),
     DbModule,
     AuthModule,
+    CatalogModule,
     RestApiModule,
     GraphQLApiModule,
   ],

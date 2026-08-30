@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
 import { Logger as PinoLogger } from 'nestjs-pino';
+import { jsonErrorMiddleware } from './api/v1/openai-exception.filter.js';
 import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import type { routerConfig } from './config.js';
 
@@ -63,6 +64,9 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
   // Order matters: raw stream to Better Auth, parsed bodies to everything else.
   app.use(AUTH_HANDLER_ROUTE, toNodeHandler(app.get(AuthService).handler));
   app.use(express.json({ limit: '1mb' }));
+  // Body-parser failures are thrown in middleware and never reach a Nest
+  // exception filter, so `/v1` gets its OpenAI-shaped `invalid_json` here.
+  app.use(jsonErrorMiddleware);
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
 
@@ -93,7 +97,7 @@ export function logStartup(config: ConfigType<typeof routerConfig>): void {
   const logger = new Logger('Bootstrap');
   const { host, port } = config.server;
   logger.log(`router-api listening on http://${host}:${port}`);
-  logger.log(`GraphQL: ${config.graphql.path} · health: /health · auth: ${AUTH_BASE_PATH}/*`);
+  logger.log(`GraphQL: ${config.graphql.path} · OpenAI API: /v1 · health: /health · auth: ${AUTH_BASE_PATH}/*`);
   if (config.swagger.enabled) {
     logger.log(`Swagger UI: /${config.swagger.path}`);
   }
