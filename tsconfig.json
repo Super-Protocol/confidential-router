@@ -4,6 +4,12 @@
   "files": [],
   "references": [
     {
+      "path": "./apps/router-api"
+    },
+    {
+      "path": "./libs/server-common"
+    },
+    {
       "path": "./libs/types"
     }
   ]
