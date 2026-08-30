@@ -12,7 +12,6 @@ export default defineConfig({
     conditions: ['@confidential-router/source'],
     alias: {
       '@confidential-router/server-common': `${repoRoot}/libs/server-common/src/index.ts`,
-      '@confidential-router/types': `${repoRoot}/libs/types/src/index.ts`,
     },
   },
   plugins: [

@@ -1,10 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { serviceVersion } from '../../config.js';
 import type { HealthResponseDto } from './health.dto.js';
-
-/** Package version, replaced at build time; `0.0.0` when running from source. */
-const VERSION = process.env.CR_API_VERSION ?? '0.0.0';
 
 @Injectable()
 export class HealthService {
@@ -23,7 +21,7 @@ export class HealthService {
     const database = await this.checkDatabase();
     return {
       status: database.status === 'up' ? 'ok' : 'error',
-      version: VERSION,
+      version: serviceVersion(),
       uptimeSeconds: Math.round(process.uptime()),
       database,
     };

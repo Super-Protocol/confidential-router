@@ -12,12 +12,17 @@ import { z } from 'zod';
  *  - `endpoints` and `models` default to empty. The JSON Schema requires at
  *    least one of each because a *deployment* with none is a mistake; a
  *    developer running `nx serve` with no config at all is not.
+ *
+ * Every section is a `strictObject`, matching the JSON Schema's
+ * `additionalProperties: false`: a typo such as `CR_API_SERVER__PROT=4000` has
+ * to fail the boot rather than be silently dropped while the real setting keeps
+ * its default.
  */
 
 const name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'must be a lowercase kebab-case name');
 
 const ServerSchema = z
-  .object({
+  .strictObject({
     port: integerish().pipe(z.number().int().min(1).max(65535)).prefault(3000),
     host: z.string().prefault('0.0.0.0'),
     publicBaseUrl: z.url().prefault('http://localhost:3000'),
@@ -27,14 +32,14 @@ const ServerSchema = z
 
 const DatabaseSchema = z
   .discriminatedUnion('type', [
-    z.object({
+    z.strictObject({
       type: z.literal('sqlite'),
       /** Relative paths resolve against the process working directory. */
       file: z.string().min(1).prefault('data/router-api.sqlite'),
       migrationsRun: booleanish().prefault(true),
       logging: booleanish().prefault(false),
     }),
-    z.object({
+    z.strictObject({
       type: z.literal('postgres'),
       url: z.string().min(1),
       /**
@@ -48,7 +53,7 @@ const DatabaseSchema = z
   .prefault({ type: 'sqlite' });
 
 const LiteLlmSchema = z
-  .object({
+  .strictObject({
     baseUrl: z.url().prefault('http://127.0.0.1:4000'),
     apiKey: z.string().optional(),
     connectTimeout: durationMs('5s'),
@@ -56,9 +61,9 @@ const LiteLlmSchema = z
   })
   .prefault({});
 
-const BackendsSchema = z.object({ litellm: LiteLlmSchema }).prefault({});
+const BackendsSchema = z.strictObject({ litellm: LiteLlmSchema }).prefault({});
 
-const EndpointSchema = z.object({
+const EndpointSchema = z.strictObject({
   name,
   hostname: z.string().min(1),
   tee: z.string().min(1),
@@ -66,7 +71,7 @@ const EndpointSchema = z.object({
   enabled: booleanish().prefault(true),
 });
 
-const ModelSchema = z.object({
+const ModelSchema = z.strictObject({
   id: z
     .string()
     .regex(/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(:[a-z0-9-]+)?$/, 'must look like "vendor/model[:variant]"'),
@@ -75,7 +80,7 @@ const ModelSchema = z.object({
   endpoint: name,
   contextLength: integerish().pipe(z.number().int().positive()),
   capabilities: z.array(z.enum(['chat', 'completions', 'embeddings'])).prefault(['chat', 'completions']),
-  pricing: z.object({
+  pricing: z.strictObject({
     promptPer1mMicros: integerish().pipe(z.number().int().nonnegative()),
     completionPer1mMicros: integerish().pipe(z.number().int().nonnegative()),
   }),
@@ -83,55 +88,53 @@ const ModelSchema = z.object({
 });
 
 const EvidenceSchema = z
-  .object({
+  .strictObject({
     pollInterval: durationMs('5m'),
     freshnessWindow: durationMs('24h'),
   })
   .prefault({});
 
 const RateLimitsSchema = z
-  .object({
+  .strictObject({
     requestsPerMinute: integerish().pipe(z.number().int().positive()).prefault(600),
     tokensPerMinute: integerish().pipe(z.number().int().positive()).prefault(2_000_000),
   })
   .prefault({});
 
-const OAuthClientSchema = z.object({
+const OAuthClientSchema = z.strictObject({
   clientId: z.string().min(1),
   clientSecret: z.string().min(1),
 });
 
-const AuthSchema = z
-  .object({
-    baseUrl: z.url().prefault('http://localhost:3000'),
-    /**
-     * Signs session cookies and magic-link tokens. Never defaulted: `loadConfig`
-     * mints an ephemeral one outside production and refuses to boot without it
-     * in production, so a deployment cannot silently run on a guessable secret.
-     */
-    secret: z.string().min(32, 'must be at least 32 characters'),
-    sessionMaxAge: durationMs('720h'),
-    github: OAuthClientSchema.optional(),
-    google: OAuthClientSchema.optional(),
-    magicLink: z
-      .object({
-        mailer: z.enum(['console', 'smtp', 'resend']).prefault('console'),
-        from: z.email().prefault('no-reply@confidential-router.local'),
-        smtpUrl: z.string().optional(),
-        resendApiKey: z.string().optional(),
-      })
-      .prefault({}),
-  })
-  // No `.prefault({})`: `auth.secret` has no default, and the config loader
-  // guarantees the section exists before this schema ever runs.
-  .strict();
+// No `.prefault({})` on this one: `auth.secret` has no default, and the config
+// loader guarantees the section exists before this schema ever runs.
+const AuthSchema = z.strictObject({
+  baseUrl: z.url().prefault('http://localhost:3000'),
+  /**
+   * Signs session cookies and magic-link tokens. Never defaulted: `loadConfig`
+   * mints an ephemeral one outside production and refuses to boot without it
+   * in production, so a deployment cannot silently run on a guessable secret.
+   */
+  secret: z.string().min(32, 'must be at least 32 characters'),
+  sessionMaxAge: durationMs('720h'),
+  github: OAuthClientSchema.optional(),
+  google: OAuthClientSchema.optional(),
+  magicLink: z
+    .strictObject({
+      mailer: z.enum(['console', 'smtp', 'resend']).prefault('console'),
+      from: z.email().prefault('no-reply@confidential-router.local'),
+      smtpUrl: z.string().optional(),
+      resendApiKey: z.string().optional(),
+    })
+    .prefault({}),
+});
 
 const BillingSchema = z
-  .object({
+  .strictObject({
     minTopUpMicros: integerish().pipe(z.number().int().nonnegative()).prefault(5_000_000),
     allowOverdraftMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
     stripe: z
-      .object({
+      .strictObject({
         secretKey: z.string().min(1),
         webhookSecret: z.string().min(1),
         currency: z
@@ -144,7 +147,7 @@ const BillingSchema = z
   .prefault({});
 
 const LogSchema = z
-  .object({
+  .strictObject({
     level: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).prefault('info'),
     /** Human-readable output; defaults to on outside production. */
     pretty: booleanish().prefault(process.env.NODE_ENV !== 'production'),
@@ -152,20 +155,20 @@ const LogSchema = z
   .prefault({});
 
 const GraphqlSchema = z
-  .object({
+  .strictObject({
     path: z.string().prefault('/graphql'),
     introspection: booleanish().prefault(process.env.NODE_ENV !== 'production'),
   })
   .prefault({});
 
 const SwaggerSchema = z
-  .object({
+  .strictObject({
     enabled: booleanish().prefault(process.env.NODE_ENV !== 'production'),
     path: z.string().prefault('docs'),
   })
   .prefault({});
 
-export const RouterConfigSchema = z.object({
+export const RouterConfigSchema = z.strictObject({
   version: z.literal(1).prefault(1),
   server: ServerSchema,
   database: DatabaseSchema,

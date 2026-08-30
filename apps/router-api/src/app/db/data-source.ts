@@ -1,9 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DataSourceOptions } from 'typeorm';
-import { DataSource } from 'typeorm';
 import { MIGRATIONS } from '../../migrations/index.js';
-import { loadRouterConfig } from '../config.js';
 import type { DatabaseConfig } from '../config.schema.js';
 import { ENTITIES } from './entities/index.js';
 
@@ -39,9 +37,3 @@ export function buildDataSourceOptions(config: DatabaseConfig): DataSourceOption
   }
   return { ...base, type: 'postgres', url: config.url };
 }
-
-/**
- * Entry point for the TypeORM CLI (`nx run router-api:migration:generate`). Nest
- * never uses this instance — it builds its own from the injected config.
- */
-export default new DataSource(buildDataSourceOptions(loadRouterConfig().database));
