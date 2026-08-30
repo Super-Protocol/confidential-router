@@ -1,0 +1,47 @@
+# Confidential Router — gatekeeper configuration.
+#
+# Schema: schemas/gatekeeper-config.schema.json
+# Model:  docs/adr/ADR-003-gatekeeper-trust-model.md
+#
+# This file is edited in place by the `gatekeeper trust` and `gatekeeper endpoint`
+# commands; your comments and formatting survive.
+version: 1
+
+# Trusted roots ("Trusted Clouds"). An endpoint's certificate chain must end in
+# one of these, matched by the SHA-256 of the root's DER. There is no built-in
+# trust: an empty list denies everything.
+#
+#   gatekeeper trust roots add swarm-cloud-prod --pem-file ./roots/prod.pem
+trustedRoots: []
+
+# Optional user policies (Rego v1). Every one of them is ANDed with the built-in
+# evidenceDigest pin policy, so a policy can narrow trust but never widen it.
+#
+# policies:
+#   - name: images-from-our-registry
+#     file: ./policies/images.rego
+
+# Inherited by every endpoint unless it overrides them.
+defaults:
+  failMode: closed
+  reattestInterval: 5m
+  verdictCacheTtl: 60s
+  maxBundleAge: 24h
+  initialTimeout: 15s
+
+# Local listeners, one per upstream you proxy to. Each needs at least one pinned
+# evidenceDigest — there is no trust-on-first-use.
+#
+#   gatekeeper endpoint add llama-33-70b \
+#     --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
+#   gatekeeper endpoint discover llama-33-70b     # review what it publishes
+#   gatekeeper endpoint trust add llama-33-70b --from-upstream
+endpoints: []
+
+log:
+  level: info
+  format: text
+
+# Local Prometheus endpoint, off unless set.
+# metrics:
+#   listen: 127.0.0.1:9464

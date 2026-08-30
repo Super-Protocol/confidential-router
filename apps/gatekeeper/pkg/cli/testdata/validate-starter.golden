@@ -1,0 +1,6 @@
+$TMP/config.yaml is not ready to run (2 problems):
+  - endpoints: at least one endpoint is required
+  - trustedRoots: at least one trusted root is required — the gatekeeper has no built-in trust
+
+Nothing in the file is wrong — it is not finished. See `gatekeeper trust roots add`
+and `gatekeeper endpoint add`.

@@ -103,7 +103,11 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	// Editable, not full, validation: a config being filled in one command at a
+	// time is legitimately incomplete (no roots yet, no endpoints yet), and the
+	// commands that complete it have to be able to open it. Readiness is
+	// `gatekeeper config validate`'s job, and startup's.
+	if err := cfg.ValidateEditable(); err != nil {
 		return nil, err
 	}
 	resolved, err := buildState(cfg)
@@ -299,12 +303,10 @@ func (s *Store) RemovePin(endpoint string, d Digest) (bool, error) {
 	if len(raws) == 0 {
 		return false, nil
 	}
-	// The schema requires at least one pin, so emptying the list would produce
-	// a config the gatekeeper refuses to start with. Say so here instead.
-	if len(raws) == len(ep.Pins) {
-		return false, fmt.Errorf(
-			"endpoint %q would be left without a pinned evidenceDigest; add the replacement first", endpoint)
-	}
+	// Unpinning the last digest is allowed — re-pinning an endpoint from
+	// scratch is a real operation — but it leaves the endpoint unable to admit
+	// anything. The caller is expected to say so; `gatekeeper config validate`
+	// reports it as not ready to run.
 	if _, err := s.doc.RemoveTrustedEvidence(endpoint, raws); err != nil {
 		return false, err
 	}
@@ -348,7 +350,7 @@ func (s *Store) resolve() (*state, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateEditable(); err != nil {
 		return nil, err
 	}
 	return buildState(cfg)
@@ -492,4 +494,47 @@ func FingerprintPEM(pemBytes []byte) (Digest, error) {
 		return "", err
 	}
 	return Sum(cert.Raw), nil
+}
+
+// AddEndpoint appends an endpoint and persists it. The new entry is resolved
+// before the file is written, so an unparseable upstream or a malformed pin is
+// rejected without touching the config.
+func (s *Store) AddEndpoint(spec config.EndpointSpec) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return ErrReadOnly
+	}
+	if err := s.doc.AddEndpoint(spec); err != nil {
+		return err
+	}
+	return s.persist()
+}
+
+// RemoveEndpoint drops an endpoint, its pins with it, and reports whether it
+// was there.
+func (s *Store) RemoveEndpoint(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return false, ErrReadOnly
+	}
+	removed, err := s.doc.RemoveEndpoint(name)
+	if err != nil || !removed {
+		return false, err
+	}
+	if err := s.persist(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Path is the config file the store persists to, empty for a read-only store.
+func (s *Store) Path() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.doc == nil {
+		return ""
+	}
+	return s.doc.Path()
 }
