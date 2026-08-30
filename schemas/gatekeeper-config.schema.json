@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Super-Protocol/confidential-router/schemas/gatekeeper-config.schema.json",
+  "title": "Confidential Gatekeeper configuration",
+  "description": "YAML config of the user-side attesting proxy (default path ~/.config/confidential-gatekeeper/config.yaml). See docs/adr/ADR-003-gatekeeper-trust-model.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "trustedRoots", "endpoints"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Config schema version."
+    },
+    "trustedRoots": {
+      "description": "Global list of trusted (TEE-attested) PKI roots \u2014 the 'Trusted Clouds'. A bundle's certChain must terminate in one of them (matched by SHA-256 of the DER).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/trustedRoot"
+      }
+    },
+    "policies": {
+      "description": "User Rego policies, loaded for every endpoint and ANDed with the built-in default pin policy. Each file must declare a distinct package with an `allow` rule.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/policy"
+      },
+      "default": []
+    },
+    "defaults": {
+      "description": "Defaults applied to every endpoint unless overridden there.",
+      "$ref": "#/$defs/endpointTuning"
+    },
+    "endpoints": {
+      "description": "Local listeners, each verifying and proxying to one router endpoint (hostname).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/endpoint"
+      }
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["text", "json"],
+          "default": "text"
+        }
+      }
+    },
+    "metrics": {
+      "description": "Optional Prometheus endpoint (local only).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listen"],
+      "properties": {
+        "listen": {
+          "$ref": "#/$defs/listenAddr"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "Lower-case identifier; used as the Rego key (`data.gatekeeper.trust.endpoints[<name>]`)."
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^([0-9]+(ms|s|m|h))+$",
+      "description": "Go-style duration, e.g. 60s, 5m, 24h."
+    },
+    "listenAddr": {
+      "type": "string",
+      "pattern": "^([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\]):[0-9]{1,5}$",
+      "description": "host:port to bind locally, e.g. 127.0.0.1:8443."
+    },
+    "evidenceDigest": {
+      "type": "string",
+      "pattern": "^(sha256/[A-Za-z0-9_-]{43}|sha256:[0-9a-fA-F]{64}|[0-9a-fA-F]{64})$",
+      "description": "Pinned evidenceDigest. Canonical form is sha256/<base64url>; sha256:<hex> and bare hex are accepted and normalised at load time."
+    },
+    "pem": {
+      "type": "string",
+      "pattern": "^-----BEGIN CERTIFICATE-----[\\s\\S]+-----END CERTIFICATE-----\\s*$"
+    },
+    "trustedRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "pem": {
+          "$ref": "#/$defs/pem",
+          "description": "Inline PEM of the root certificate."
+        },
+        "pemFile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a PEM file (relative to the config file)."
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["pem"],
+          "properties": {
+            "pem": {
+              "$ref": "#/$defs/pem"
+            }
+          }
+        },
+        {
+          "required": ["pemFile"],
+          "properties": {
+            "pemFile": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "file"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\.rego$",
+          "description": "Path to a Rego v1 module (relative to the config file)."
+        }
+      }
+    },
+    "endpointTuning": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "failMode": {
+          "type": "string",
+          "enum": ["closed", "open"],
+          "default": "closed",
+          "description": "closed: reject requests (503) while there is no valid verdict. open: proxy anyway, log a warning and flag the client-facing response."
+        },
+        "reattestInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "5m",
+          "description": "Background full re-verification period."
+        },
+        "verdictCacheTtl": {
+          "$ref": "#/$defs/duration",
+          "default": "60s",
+          "description": "On-demand re-checks reuse a verdict younger than this."
+        },
+        "maxBundleAge": {
+          "$ref": "#/$defs/duration",
+          "default": "24h",
+          "description": "Reject bundles whose issuedAt is older than this."
+        },
+        "initialTimeout": {
+          "$ref": "#/$defs/duration",
+          "default": "15s",
+          "description": "How long the first request waits for the initial verdict."
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "listen", "upstream", "trustedEvidence"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "listen": {
+          "$ref": "#/$defs/listenAddr"
+        },
+        "upstream": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[^/?#]+/?$",
+          "description": "Router endpoint base URL. Must be https; the hostname is what the evidence bundle is fetched from and bound to."
+        },
+        "trustedEvidence": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceDigest"
+          },
+          "description": "Pinned evidenceDigest values accepted for this endpoint. At least one \u2014 there is no trust-on-first-use."
+        },
+        "failMode": {
+          "$ref": "#/$defs/endpointTuning/properties/failMode"
+        },
+        "reattestInterval": {
+          "$ref": "#/$defs/duration"
+        },
+        "verdictCacheTtl": {
+          "$ref": "#/$defs/duration"
+        },
+        "maxBundleAge": {
+          "$ref": "#/$defs/duration"
+        },
+        "initialTimeout": {
+          "$ref": "#/$defs/duration"
+        }
+      }
+    }
+  }
+}

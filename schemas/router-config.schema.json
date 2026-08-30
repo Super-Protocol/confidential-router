@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Super-Protocol/confidential-router/schemas/router-config.schema.json",
+  "title": "Confidential Router (router-api) configuration",
+  "description": "YAML config of apps/router-api (conf/router.yaml, env overrides CR_API_*). `${ENV_VAR}` placeholders are expanded before validation. Endpoints and models are the source of truth for the Endpoint/Model tables (docs/contracts/data-model.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "server",
+    "database",
+    "backends",
+    "endpoints",
+    "models"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port"],
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "publicBaseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "validClientOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "default": []
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["postgres", "sqlite"]
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "postgres://\u2026 (required for postgres)."
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "SQLite file path (dev/test)."
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "postgres"
+            },
+            "url": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["url"]
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "sqlite"
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["file"]
+        }
+      ]
+    },
+    "backends": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["litellm"],
+      "properties": {
+        "litellm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["baseUrl"],
+          "properties": {
+            "baseUrl": {
+              "type": "string",
+              "format": "uri",
+              "description": "In-cluster LiteLLM base URL (plain http allowed; same cluster space)."
+            },
+            "apiKey": {
+              "type": "string"
+            },
+            "connectTimeout": {
+              "$ref": "#/$defs/duration",
+              "default": "5s"
+            },
+            "readTimeout": {
+              "$ref": "#/$defs/duration",
+              "default": "120s"
+            }
+          }
+        }
+      }
+    },
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "hostname", "tee"],
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/name"
+          },
+          "hostname": {
+            "type": "string",
+            "format": "hostname",
+            "description": "Public router hostname; the platform serves /.well-known/swarm-evidence for it."
+          },
+          "tee": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Operator-declared TEE label shown in the console (e.g. 'Intel TDX + H100 CC')."
+          },
+          "evidenceUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Override for fetching this endpoint's own bundle from inside the cluster. Operator-only."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "litellmModel",
+          "endpoint",
+          "contextLength",
+          "pricing"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*(:[a-z0-9-]+)?$",
+            "description": "Public model id, e.g. meta/llama-3.3-70b-instruct:tdx."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "litellmModel": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Model name as configured in LiteLLM."
+          },
+          "endpoint": {
+            "$ref": "#/$defs/name",
+            "description": "endpoints[].name that serves this model."
+          },
+          "contextLength": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "capabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": ["chat", "completions", "embeddings"]
+            },
+            "default": ["chat", "completions"]
+          },
+          "pricing": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["promptPer1mMicros", "completionPer1mMicros"],
+            "properties": {
+              "promptPer1mMicros": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Micro-USD per 1M prompt tokens ($0.28 = 280000)."
+              },
+              "completionPer1mMicros": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pollInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "5m"
+        },
+        "freshnessWindow": {
+          "$ref": "#/$defs/duration",
+          "default": "24h",
+          "description": "Snapshots older than this render as STALE."
+        }
+      }
+    },
+    "rateLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 600
+        },
+        "tokensPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2000000
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseUrl", "secret"],
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "secret": {
+          "type": "string",
+          "minLength": 32
+        },
+        "github": {
+          "$ref": "#/$defs/oauthClient"
+        },
+        "google": {
+          "$ref": "#/$defs/oauthClient"
+        },
+        "magicLink": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mailer"],
+          "properties": {
+            "mailer": {
+              "type": "string",
+              "enum": ["console", "smtp", "resend"]
+            },
+            "from": {
+              "type": "string",
+              "format": "email"
+            },
+            "smtpUrl": {
+              "type": "string"
+            },
+            "resendApiKey": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "billing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minTopUpMicros": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5000000
+        },
+        "allowOverdraftMicros": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "stripe": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secretKey", "webhookSecret"],
+          "properties": {
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "webhookSecret": {
+              "type": "string",
+              "minLength": 1
+            },
+            "currency": {
+              "type": "string",
+              "pattern": "^[a-z]{3}$",
+              "default": "usd"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^([0-9]+(ms|s|m|h))+$"
+    },
+    "oauthClient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clientId", "clientSecret"],
+      "properties": {
+        "clientId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientSecret": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

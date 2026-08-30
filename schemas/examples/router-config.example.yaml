@@ -1,0 +1,79 @@
+# conf/router.yaml — apps/router-api
+version: 1
+
+server:
+  port: 3000
+  publicBaseUrl: https://console.tee.swarm.cloud
+  validClientOrigins:
+    - https://console.tee.swarm.cloud
+
+database:
+  type: postgres
+  url: ${CR_API_DATABASE_URL}
+
+backends:
+  litellm:
+    baseUrl: http://litellm.cr-prod.svc.cluster.local:4000   # same confidential cluster space, plain HTTP
+    apiKey: ${CR_API_LITELLM_KEY}
+    connectTimeout: 5s
+    readTimeout: 120s
+
+# Router hostnames. The platform publishes /.well-known/swarm-evidence for each of them.
+endpoints:
+  - name: llama-33-70b
+    hostname: llama-33-70b.tee.swarm.cloud
+    tee: Intel TDX + H100 CC
+  - name: qwen25-72b
+    hostname: qwen25-72b.tee.swarm.cloud
+    tee: AMD SEV-SNP
+  - name: deepseek-v3
+    hostname: deepseek-v3.tee.swarm.cloud
+    tee: Intel TDX + H100 CC
+    evidenceUrl: http://evidence-mirror.cr-prod.svc.cluster.local/deepseek-v3   # operator-only override
+
+models:
+  - id: meta/llama-3.3-70b-instruct:tdx
+    name: Llama 3.3 70B Instruct
+    litellmModel: vllm/llama-3.3-70b-instruct
+    endpoint: llama-33-70b
+    contextLength: 131072
+    capabilities: [chat, completions]
+    pricing: { promptPer1mMicros: 280000, completionPer1mMicros: 420000 }
+  - id: alibaba/qwen2.5-72b-instruct:snp
+    name: Qwen2.5 72B Instruct
+    litellmModel: vllm/qwen2.5-72b-instruct
+    endpoint: qwen25-72b
+    contextLength: 131072
+    pricing: { promptPer1mMicros: 240000, completionPer1mMicros: 360000 }
+  - id: deepseek/deepseek-v3:tdx
+    name: DeepSeek-V3
+    litellmModel: sglang/deepseek-v3
+    endpoint: deepseek-v3
+    contextLength: 65536
+    pricing: { promptPer1mMicros: 310000, completionPer1mMicros: 620000 }
+
+evidence:
+  pollInterval: 5m
+  freshnessWindow: 24h
+
+rateLimits:
+  requestsPerMinute: 600
+  tokensPerMinute: 2000000
+
+auth:
+  baseUrl: https://console.tee.swarm.cloud
+  secret: ${CR_API_AUTH_SECRET}
+  github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
+  google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
+  magicLink:
+    mailer: resend
+    from: no-reply@tee.swarm.cloud
+    resendApiKey: ${CR_API_RESEND_KEY}
+
+billing:
+  minTopUpMicros: 5000000        # $5
+  allowOverdraftMicros: 0
+  stripe:
+    secretKey: ${CR_API_STRIPE_SECRET_KEY}
+    webhookSecret: ${CR_API_STRIPE_WEBHOOK_SECRET}
+    currency: usd

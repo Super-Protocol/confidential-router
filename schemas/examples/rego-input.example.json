@@ -1,0 +1,75 @@
+{
+  "endpoint": "llama-33-70b",
+  "upstream": {
+    "hostname": "llama-33-70b.tee.swarm.cloud",
+    "port": 443
+  },
+  "attestation": {
+    "verified": true,
+    "channelBinding": "observed",
+    "root": "swarm-cloud-prod",
+    "rootFingerprint": "sha256/CN9TvdttScO-k83aqy-07JEBs_SkKPWJjITtr6_ssAw",
+    "observedTlsFingerprint": "sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0",
+    "verifiedAt": "2026-08-30T10:11:04Z",
+    "quoteFormat": "intel-tdx-quote-v5"
+  },
+  "evidence": {
+    "version": "1",
+    "kind": "DeploymentEvidence",
+    "hostname": "llama-33-70b.tee.swarm.cloud",
+    "issuedAt": "2026-08-30T10:05:00Z",
+    "certFingerprint": "sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0",
+    "evidenceDigest": "sha256/axNB3kHhDGtF3v2P8lY6pWbBqzX0cR9kT1uJm4sN7dE",
+    "evidence": {
+      "version": 2,
+      "resources": [
+        {
+          "apiVersion": "apps/v1",
+          "kind": "Deployment",
+          "metadata": {
+            "name": "router-api",
+            "namespace": "cr-prod"
+          },
+          "spec": {
+            "template": {
+              "spec": {
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/confidential-router/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "apiVersion": "apps/v1",
+          "kind": "Deployment",
+          "metadata": {
+            "name": "vllm-llama-33-70b",
+            "namespace": "cr-prod"
+          },
+          "spec": {
+            "template": {
+              "spec": {
+                "containers": [
+                  {
+                    "name": "vllm",
+                    "image": "ghcr.io/super-protocol/confidential-router/vllm-tdx@sha256:6b1f000000000000000000000000000000000000000000000000000000009c04"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "containerImages": [
+      "ghcr.io/super-protocol/confidential-router/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "ghcr.io/super-protocol/confidential-router/vllm-tdx@sha256:6b1f000000000000000000000000000000000000000000000000000000009c04"
+    ],
+    "evidenceDigestHex": "6b1341de41e10c6b45defd8ff2563aa566c1ab35f4711f644f5b899b8b0dedd1",
+    "certFingerprintHex": "e1f4b167372769ded0cbfdb9ea9e07970ef39be8c74c48608cddf56d117e762d"
+  }
+}

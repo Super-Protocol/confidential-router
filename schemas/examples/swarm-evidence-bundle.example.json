@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "kind": "DeploymentEvidence",
+  "hostname": "llama-33-70b.tee.swarm.cloud",
+  "issuedAt": "2026-08-30T10:05:00Z",
+  "certFingerprint": "sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0",
+  "jws": "eyJhbGciOiJSUzI1NiJ9.eyJ2ZXJzaW9uIjoiMSIsImtpbmQiOiJEZXBsb3ltZW50RXZpZGVuY2UifQ.c2lnbmF0dXJlLWV4YW1wbGUtbm90LXJlYWw",
+  "certChain": [
+    "-----BEGIN CERTIFICATE-----\nEXAMPLELEAFCERTIFICATEEXAMPLELEAFCERTIFICATEEXAMPLELEAFCERTIFICATE\n-----END CERTIFICATE-----\n",
+    "-----BEGIN CERTIFICATE-----\nEXAMPLEINTERMEDIATECERTIFICATEEXAMPLEINTERMEDIATECERTIFICATE000000\n-----END CERTIFICATE-----\n",
+    "-----BEGIN CERTIFICATE-----\nEXAMPLEROOTCERTIFICATEEXAMPLEROOTCERTIFICATEEXAMPLEROOTCERTIFICATE\n-----END CERTIFICATE-----\n"
+  ],
+  "rootCaTeeQuote": {
+    "format": "intel-tdx-quote-v5",
+    "data": "BAACAIEAAAAAAAAAk5pyM_example_quote_bytes_base64url"
+  },
+  "tlsLeaf": "-----BEGIN CERTIFICATE-----\nEXAMPLELEAFCERTIFICATEEXAMPLELEAFCERTIFICATEEXAMPLELEAFCERTIFICATE\n-----END CERTIFICATE-----\n"
+}

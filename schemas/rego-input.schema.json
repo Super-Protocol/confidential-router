@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Super-Protocol/confidential-router/schemas/rego-input.schema.json",
+  "title": "Gatekeeper Rego input document",
+  "description": "The `input` the gatekeeper evaluates every policy package against, built only after the evidence bundle passed cryptographic verification. See docs/contracts/rego-input.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["endpoint", "upstream", "attestation", "evidence"],
+  "properties": {
+    "endpoint": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "endpoints[].name from the gatekeeper config."
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostname", "port"],
+      "properties": {
+        "hostname": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verified",
+        "channelBinding",
+        "root",
+        "rootFingerprint",
+        "observedTlsFingerprint",
+        "verifiedAt"
+      ],
+      "properties": {
+        "verified": {
+          "const": true,
+          "description": "Always true: Rego never runs on unverified evidence."
+        },
+        "channelBinding": {
+          "const": "observed",
+          "description": "The gatekeeper always binds to the live TLS leaf it observed."
+        },
+        "root": {
+          "type": "string",
+          "description": "trustedRoots[].name that the chain terminated in."
+        },
+        "rootFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "observedTlsFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "verifiedAt": { "type": "string", "format": "date-time" },
+        "quoteFormat": {
+          "type": "string",
+          "enum": ["intel-tdx-quote-v5", "amd-sev-snp-report"],
+          "description": "bundle.rootCaTeeQuote.format when present (displayed, not validated)."
+        }
+      }
+    },
+    "evidence": {
+      "description": "The verified DeploymentEvidence JWS payload plus convenience fields. Unknown payload fields are passed through.",
+      "type": "object",
+      "required": [
+        "version",
+        "kind",
+        "hostname",
+        "issuedAt",
+        "certFingerprint",
+        "evidenceDigest",
+        "containerImages",
+        "evidenceDigestHex",
+        "certFingerprintHex"
+      ],
+      "properties": {
+        "version": { "const": "1" },
+        "kind": { "const": "DeploymentEvidence" },
+        "hostname": { "type": "string", "minLength": 1 },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "certFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "evidenceDigest": {
+          "$ref": "#/$defs/fingerprint",
+          "description": "Normalised to canonical sha256/<base64url> before evaluation."
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Canonical deployment snapshot as published (opaque; version 2 = { version, resources[] })."
+        },
+        "containerImages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Every string `image` field found in the snapshot, flattened and deduplicated."
+        },
+        "evidenceDigestHex": { "$ref": "#/$defs/hex256" },
+        "certFingerprintHex": { "$ref": "#/$defs/hex256" }
+      }
+    }
+  },
+  "$defs": {
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256/[A-Za-z0-9_-]{43}$",
+      "description": "sha256/<base64url, unpadded> of DER bytes or of the canonical JSON."
+    },
+    "hex256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

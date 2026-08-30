@@ -1,0 +1,48 @@
+# ~/.config/confidential-gatekeeper/config.yaml
+version: 1
+
+# Global trusted roots ("Trusted Clouds"). A bundle's certChain must end in one of these.
+trustedRoots:
+  - name: swarm-cloud-prod
+    pem: |
+      -----BEGIN CERTIFICATE-----
+      MIIBszCCAVmgAwIBAgIUEXAMPLEROOTCERTIFICATE0000000000wCgYIKoZIzj0EAwIw
+      EXAMPLEONLYNOTAREALCERTIFICATEEXAMPLEONLYNOTAREALCERTIFICATE00000000
+      -----END CERTIFICATE-----
+  - name: swarm-cloud-staging
+    pemFile: ./roots/swarm-cloud-staging.pem
+
+# Optional user policies (Rego v1). ANDed with the built-in evidenceDigest pin policy.
+policies:
+  - name: images-from-our-registry
+    file: ./policies/images.rego
+
+defaults:
+  failMode: closed
+  reattestInterval: 5m
+  verdictCacheTtl: 60s
+  maxBundleAge: 24h
+  initialTimeout: 15s
+
+endpoints:
+  - name: llama-33-70b
+    listen: 127.0.0.1:8443
+    upstream: https://llama-33-70b.tee.swarm.cloud
+    # Pinned evidenceDigest values (canonical sha256/<base64url>; hex accepted). Two during a rollout.
+    trustedEvidence:
+      - sha256/axNB3kHhDGtF3v2P8lY6pWbBqzX0cR9kT1uJm4sN7dE
+      - 6b1f0d8c3a2e9f4b7c1d5e6a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c
+  - name: qwen25-72b
+    listen: 127.0.0.1:8444
+    upstream: https://qwen25-72b.tee.swarm.cloud
+    trustedEvidence:
+      - sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX8z
+    failMode: open          # explicit opt-in: proxy even without a verdict, warn loudly
+    reattestInterval: 1m
+
+log:
+  level: info
+  format: text
+
+metrics:
+  listen: 127.0.0.1:9464
