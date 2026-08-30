@@ -7,7 +7,11 @@
   "additionalProperties": false,
   "required": ["endpoint", "upstream", "attestation", "evidence"],
   "properties": {
-    "endpoint": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "endpoints[].name from the gatekeeper config." },
+    "endpoint": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "endpoints[].name from the gatekeeper config."
+    },
     "upstream": {
       "type": "object",
       "additionalProperties": false,
@@ -20,29 +24,65 @@
     "attestation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["verified", "channelBinding", "root", "rootFingerprint", "observedTlsFingerprint", "verifiedAt"],
+      "required": [
+        "verified",
+        "channelBinding",
+        "root",
+        "rootFingerprint",
+        "observedTlsFingerprint",
+        "verifiedAt"
+      ],
       "properties": {
-        "verified": { "const": true, "description": "Always true: Rego never runs on unverified evidence." },
-        "channelBinding": { "const": "observed", "description": "The gatekeeper always binds to the live TLS leaf it observed." },
-        "root": { "type": "string", "description": "trustedRoots[].name that the chain terminated in." },
+        "verified": {
+          "const": true,
+          "description": "Always true: Rego never runs on unverified evidence."
+        },
+        "channelBinding": {
+          "const": "observed",
+          "description": "The gatekeeper always binds to the live TLS leaf it observed."
+        },
+        "root": {
+          "type": "string",
+          "description": "trustedRoots[].name that the chain terminated in."
+        },
         "rootFingerprint": { "$ref": "#/$defs/fingerprint" },
         "observedTlsFingerprint": { "$ref": "#/$defs/fingerprint" },
         "verifiedAt": { "type": "string", "format": "date-time" },
-        "quoteFormat": { "type": "string", "enum": ["intel-tdx-quote-v5", "amd-sev-snp-report"], "description": "bundle.rootCaTeeQuote.format when present (displayed, not validated)." }
+        "quoteFormat": {
+          "type": "string",
+          "enum": ["intel-tdx-quote-v5", "amd-sev-snp-report"],
+          "description": "bundle.rootCaTeeQuote.format when present (displayed, not validated)."
+        }
       }
     },
     "evidence": {
       "description": "The verified DeploymentEvidence JWS payload plus convenience fields. Unknown payload fields are passed through.",
       "type": "object",
-      "required": ["version", "kind", "hostname", "issuedAt", "certFingerprint", "evidenceDigest", "containerImages", "evidenceDigestHex", "certFingerprintHex"],
+      "required": [
+        "version",
+        "kind",
+        "hostname",
+        "issuedAt",
+        "certFingerprint",
+        "evidenceDigest",
+        "containerImages",
+        "evidenceDigestHex",
+        "certFingerprintHex"
+      ],
       "properties": {
         "version": { "const": "1" },
         "kind": { "const": "DeploymentEvidence" },
         "hostname": { "type": "string", "minLength": 1 },
         "issuedAt": { "type": "string", "format": "date-time" },
         "certFingerprint": { "$ref": "#/$defs/fingerprint" },
-        "evidenceDigest": { "$ref": "#/$defs/fingerprint", "description": "Normalised to canonical sha256/<base64url> before evaluation." },
-        "evidence": { "type": "object", "description": "Canonical deployment snapshot as published (opaque; version 2 = { version, resources[] })." },
+        "evidenceDigest": {
+          "$ref": "#/$defs/fingerprint",
+          "description": "Normalised to canonical sha256/<base64url> before evaluation."
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Canonical deployment snapshot as published (opaque; version 2 = { version, resources[] })."
+        },
         "containerImages": {
           "type": "array",
           "uniqueItems": true,
@@ -55,7 +95,11 @@
     }
   },
   "$defs": {
-    "fingerprint": { "type": "string", "pattern": "^sha256/[A-Za-z0-9_-]{43}$", "description": "sha256/<base64url, unpadded> of DER bytes or of the canonical JSON." },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256/[A-Za-z0-9_-]{43}$",
+      "description": "sha256/<base64url, unpadded> of DER bytes or of the canonical JSON."
+    },
     "hex256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
   }
 }

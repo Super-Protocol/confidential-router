@@ -5,11 +5,7 @@
   "description": "YAML config of the user-side attesting proxy (default path ~/.config/confidential-gatekeeper/config.yaml). See docs/adr/ADR-003-gatekeeper-trust-model.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "version",
-    "trustedRoots",
-    "endpoints"
-  ],
+  "required": ["version", "trustedRoots", "endpoints"],
   "properties": {
     "version": {
       "const": 1,
@@ -49,20 +45,12 @@
       "properties": {
         "level": {
           "type": "string",
-          "enum": [
-            "debug",
-            "info",
-            "warn",
-            "error"
-          ],
+          "enum": ["debug", "info", "warn", "error"],
           "default": "info"
         },
         "format": {
           "type": "string",
-          "enum": [
-            "text",
-            "json"
-          ],
+          "enum": ["text", "json"],
           "default": "text"
         }
       }
@@ -71,9 +59,7 @@
       "description": "Optional Prometheus endpoint (local only).",
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "listen"
-      ],
+      "required": ["listen"],
       "properties": {
         "listen": {
           "$ref": "#/$defs/listenAddr"
@@ -109,9 +95,7 @@
     "trustedRoot": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "name"
-      ],
+      "required": ["name"],
       "properties": {
         "name": {
           "$ref": "#/$defs/name"
@@ -128,9 +112,7 @@
       },
       "oneOf": [
         {
-          "required": [
-            "pem"
-          ],
+          "required": ["pem"],
           "properties": {
             "pem": {
               "$ref": "#/$defs/pem"
@@ -138,9 +120,7 @@
           }
         },
         {
-          "required": [
-            "pemFile"
-          ],
+          "required": ["pemFile"],
           "properties": {
             "pemFile": {
               "type": "string",
@@ -153,10 +133,7 @@
     "policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "name",
-        "file"
-      ],
+      "required": ["name", "file"],
       "properties": {
         "name": {
           "$ref": "#/$defs/name"
@@ -175,10 +152,7 @@
       "properties": {
         "failMode": {
           "type": "string",
-          "enum": [
-            "closed",
-            "open"
-          ],
+          "enum": ["closed", "open"],
           "default": "closed",
           "description": "closed: reject requests (503) while there is no valid verdict. open: proxy anyway, log a warning and flag the client-facing response."
         },
@@ -207,12 +181,7 @@
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "name",
-        "listen",
-        "upstream",
-        "trustedEvidence"
-      ],
+      "required": ["name", "listen", "upstream", "trustedEvidence"],
       "properties": {
         "name": {
           "$ref": "#/$defs/name"

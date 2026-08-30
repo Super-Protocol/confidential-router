@@ -20,9 +20,7 @@
     "server": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "port"
-      ],
+      "required": ["port"],
       "properties": {
         "port": {
           "type": "integer",
@@ -46,16 +44,11 @@
     "database": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "properties": {
         "type": {
           "type": "string",
-          "enum": [
-            "postgres",
-            "sqlite"
-          ]
+          "enum": ["postgres", "sqlite"]
         },
         "url": {
           "type": "string",
@@ -79,9 +72,7 @@
               "minLength": 1
             }
           },
-          "required": [
-            "url"
-          ]
+          "required": ["url"]
         },
         {
           "properties": {
@@ -93,25 +84,19 @@
               "minLength": 1
             }
           },
-          "required": [
-            "file"
-          ]
+          "required": ["file"]
         }
       ]
     },
     "backends": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "litellm"
-      ],
+      "required": ["litellm"],
       "properties": {
         "litellm": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "baseUrl"
-          ],
+          "required": ["baseUrl"],
           "properties": {
             "baseUrl": {
               "type": "string",
@@ -139,11 +124,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "name",
-          "hostname",
-          "tee"
-        ],
+        "required": ["name", "hostname", "tee"],
         "properties": {
           "name": {
             "$ref": "#/$defs/name"
@@ -212,24 +193,14 @@
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "enum": [
-                "chat",
-                "completions",
-                "embeddings"
-              ]
+              "enum": ["chat", "completions", "embeddings"]
             },
-            "default": [
-              "chat",
-              "completions"
-            ]
+            "default": ["chat", "completions"]
           },
           "pricing": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "promptPer1mMicros",
-              "completionPer1mMicros"
-            ],
+            "required": ["promptPer1mMicros", "completionPer1mMicros"],
             "properties": {
               "promptPer1mMicros": {
                 "type": "integer",
@@ -283,10 +254,7 @@
     "auth": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "baseUrl",
-        "secret"
-      ],
+      "required": ["baseUrl", "secret"],
       "properties": {
         "baseUrl": {
           "type": "string",
@@ -305,17 +273,11 @@
         "magicLink": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "mailer"
-          ],
+          "required": ["mailer"],
           "properties": {
             "mailer": {
               "type": "string",
-              "enum": [
-                "console",
-                "smtp",
-                "resend"
-              ]
+              "enum": ["console", "smtp", "resend"]
             },
             "from": {
               "type": "string",
@@ -348,10 +310,7 @@
         "stripe": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "secretKey",
-            "webhookSecret"
-          ],
+          "required": ["secretKey", "webhookSecret"],
           "properties": {
             "secretKey": {
               "type": "string",
@@ -383,10 +342,7 @@
     "oauthClient": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "clientId",
-        "clientSecret"
-      ],
+      "required": ["clientId", "clientSecret"],
       "properties": {
         "clientId": {
           "type": "string",
