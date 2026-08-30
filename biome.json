@@ -13,6 +13,7 @@
       "!**/src/migrations",
       "!**/src/generated",
       "!**/__fixtures__",
+      "!**/attestation-fixtures/vectors",
       "!**/coverage",
       "!**/test-output",
       "!**/playwright-report",

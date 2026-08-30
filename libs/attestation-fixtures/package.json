@@ -1,0 +1,36 @@
+{
+  "name": "@confidential-router/attestation-fixtures",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "@confidential-router/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "nx": {
+    "targets": {
+      "generate": {
+        "command": "node tools/generate.ts",
+        "options": {
+          "cwd": "{projectRoot}"
+        },
+        "cache": false
+      }
+    }
+  },
+  "devDependencies": {
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "@peculiar/webcrypto": "^1.5.0",
+    "@peculiar/x509": "^1.12.3",
+    "jose": "^6.1.0"
+  }
+}
