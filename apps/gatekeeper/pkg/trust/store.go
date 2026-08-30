@@ -18,6 +18,12 @@ import (
 // from an in-memory config rather than opened from a file.
 var ErrReadOnly = errors.New("trust store is read-only (no config file is attached)")
 
+// ErrPoisoned is returned once a failed edit could not be rolled back. The
+// in-memory document may still hold the rejected change, so writing it would
+// commit something the user was told had failed; the store refuses instead and
+// the caller re-opens it.
+var ErrPoisoned = errors.New("trust store holds an edit that could not be rolled back; reopen the configuration")
+
 // Root is one entry of the global trusted-root list, with its certificate
 // parsed and fingerprinted.
 type Root struct {
@@ -80,6 +86,8 @@ type Store struct {
 	mu    sync.RWMutex
 	doc   *config.Document
 	state *state
+	// poisoned is set when a rollback failed; see [ErrPoisoned].
+	poisoned error
 }
 
 // New builds a read-only store from an already loaded config. Certificates are
@@ -103,7 +111,11 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	// Editable, not full, validation: a config being filled in one command at a
+	// time is legitimately incomplete (no roots yet, no endpoints yet), and the
+	// commands that complete it have to be able to open it. Readiness is
+	// `gatekeeper config validate`'s job, and startup's.
+	if err := cfg.ValidateEditable(); err != nil {
 		return nil, err
 	}
 	resolved, err := buildState(cfg)
@@ -222,6 +234,9 @@ func (s *Store) AddRoot(name string, pemBytes []byte) (bool, error) {
 	if s.doc == nil {
 		return false, ErrReadOnly
 	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
 	for _, r := range s.state.roots {
 		if r.Fingerprint.Equal(fp) {
 			return false, nil
@@ -243,6 +258,9 @@ func (s *Store) RemoveRoot(name string) (bool, error) {
 	if s.doc == nil {
 		return false, ErrReadOnly
 	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
 	removed, err := s.doc.RemoveTrustedRoot(name)
 	if err != nil || !removed {
 		return false, err
@@ -261,6 +279,9 @@ func (s *Store) AddPin(endpoint string, d Digest) (bool, error) {
 	defer s.mu.Unlock()
 	if s.doc == nil {
 		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
 	}
 	ep, ok := s.endpointLocked(endpoint)
 	if !ok {
@@ -286,6 +307,9 @@ func (s *Store) RemovePin(endpoint string, d Digest) (bool, error) {
 	if s.doc == nil {
 		return false, ErrReadOnly
 	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
 	ep, ok := s.endpointLocked(endpoint)
 	if !ok {
 		return false, fmt.Errorf("no endpoint named %q", endpoint)
@@ -299,12 +323,10 @@ func (s *Store) RemovePin(endpoint string, d Digest) (bool, error) {
 	if len(raws) == 0 {
 		return false, nil
 	}
-	// The schema requires at least one pin, so emptying the list would produce
-	// a config the gatekeeper refuses to start with. Say so here instead.
-	if len(raws) == len(ep.Pins) {
-		return false, fmt.Errorf(
-			"endpoint %q would be left without a pinned evidenceDigest; add the replacement first", endpoint)
-	}
+	// Unpinning the last digest is allowed — re-pinning an endpoint from
+	// scratch is a real operation — but it leaves the endpoint unable to admit
+	// anything. The caller is expected to say so; `gatekeeper config validate`
+	// reports it as not ready to run.
 	if _, err := s.doc.RemoveTrustedEvidence(endpoint, raws); err != nil {
 		return false, err
 	}
@@ -348,15 +370,22 @@ func (s *Store) resolve() (*state, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateEditable(); err != nil {
 		return nil, err
 	}
 	return buildState(cfg)
 }
 
+// reload discards the edited document and reads the file again, so a rejected
+// change cannot linger and be written by the next successful save.
+//
+// When it cannot do that — the file has become unreadable, or what is on disk
+// no longer resolves — the document in hand is still the mutated one, and the
+// only safe thing left is to refuse every further write.
 func (s *Store) reload() {
 	doc, err := config.OpenDocument(s.doc.Path())
 	if err != nil {
+		s.poisoned = fmt.Errorf("%w: %w", ErrPoisoned, err)
 		return
 	}
 	previous := s.doc
@@ -364,6 +393,7 @@ func (s *Store) reload() {
 	resolved, err := s.resolve()
 	if err != nil {
 		s.doc = previous
+		s.poisoned = fmt.Errorf("%w: %w", ErrPoisoned, err)
 		return
 	}
 	s.state = resolved
@@ -492,4 +522,53 @@ func FingerprintPEM(pemBytes []byte) (Digest, error) {
 		return "", err
 	}
 	return Sum(cert.Raw), nil
+}
+
+// AddEndpoint appends an endpoint and persists it. The new entry is resolved
+// before the file is written, so an unparseable upstream or a malformed pin is
+// rejected without touching the config.
+func (s *Store) AddEndpoint(spec config.EndpointSpec) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return s.poisoned
+	}
+	if err := s.doc.AddEndpoint(spec); err != nil {
+		return err
+	}
+	return s.persist()
+}
+
+// RemoveEndpoint drops an endpoint, its pins with it, and reports whether it
+// was there.
+func (s *Store) RemoveEndpoint(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
+	removed, err := s.doc.RemoveEndpoint(name)
+	if err != nil || !removed {
+		return false, err
+	}
+	if err := s.persist(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Path is the config file the store persists to, empty for a read-only store.
+func (s *Store) Path() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.doc == nil {
+		return ""
+	}
+	return s.doc.Path()
 }

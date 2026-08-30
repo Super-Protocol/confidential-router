@@ -1,0 +1,6 @@
+NAME           LISTEN          UPSTREAM                               STATUS                                                         LAST ATTEST  REQ/S  IN/OUT
+llama-33-70b   127.0.0.1:8443  https://llama-33-70b.tee.swarm.cloud   confidential                                                   1m ago       4.2    50.0KB/1.0MB
+qwen25-72b     127.0.0.1:8444  https://qwen25-72b.tee.swarm.cloud     non-confidential (the published evidenceDigest is not pinned)  20s ago      0.5    2.0KB/8.0KB
+mistral-large  127.0.0.1:8445  https://mistral-large.tee.swarm.cloud  stopped (listener stopped)                                     never        0.0    0B/0B
+
+! qwen25-72b is proxying WITHOUT a valid verdict (failMode: open): the published evidenceDigest is not pinned
