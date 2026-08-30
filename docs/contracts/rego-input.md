@@ -45,8 +45,8 @@ to `endpoint` and the attestation block extended. Rego v1 syntax, evaluated by e
   "roots":     { "<root name>": { "fingerprint": "sha256/…" } },
   "endpoints": { "<endpoint name>": {
       "hostname": "…",
-      "evidence_digests": ["sha256/…", …],          // canonical form
-      "evidence_digests_hex": ["…", …],
+      "evidence_digests": {"sha256/…", …},          // a Rego set, canonical form
+      "evidence_digests_hex": {"…", …},
       "fail_mode": "closed" | "open"
   } }
 }
@@ -56,11 +56,11 @@ to `endpoint` and the attestation block extended. Rego v1 syntax, evaluated by e
 
 ```rego
 package gatekeeper.default
-import rego.v1
 
 default allow := false
 
 allow if {
+  input.attestation.verified == true
   some digest in data.gatekeeper.trust.endpoints[input.endpoint].evidence_digests
   digest == input.evidence.evidenceDigest
 }
@@ -70,7 +70,6 @@ allow if {
 
 ```rego
 package user.images
-import rego.v1
 
 default allow := false
 

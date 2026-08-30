@@ -70,11 +70,11 @@ and ships a built-in **default policy** that cannot be removed:
 
 ```rego
 package gatekeeper.default
-import rego.v1
 
 default allow := false
 
 allow if {
+  input.attestation.verified == true
   some digest in data.gatekeeper.trust.endpoints[input.endpoint].evidence_digests
   digest == input.evidence.evidenceDigest
 }
@@ -140,5 +140,8 @@ never live in the file: the gatekeeper does not hold the router API key — the 
   SUP-72 (CLI/TUI). They all code against the schemas in `/schemas`.
 - The Rego engine is the real OPA (`github.com/open-policy-agent/opa/rego`), Rego v1 syntax; policies
   written for the gatekeeper run unchanged under `opa eval`.
-- Custom built-ins are not needed for v1; swarm-cloud's Rust `custom.tree_match` idea is noted for a
-  later "match a subtree of the snapshot" helper if `walk()`-based policies prove too verbose.
+- One custom built-in ships in v1: `custom.tree_match(pattern, actual)`, a port of the Rust gatekeeper's
+  built-in of the same name (every key of `pattern` must be present in `actual` with an equal value;
+  objects recurse; keys only in `actual` are ignored). It exists so that "match a subtree of the
+  snapshot" policies do not have to be written with `walk()`, and so that policies move over from the
+  Rust gatekeeper unchanged. Policies that use it need `opa eval` to be given the same built-in.
