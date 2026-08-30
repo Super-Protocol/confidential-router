@@ -2,29 +2,18 @@
 // Router: it verifies an endpoint's published evidence before letting traffic
 // through.
 //
-// This is the bootstrap skeleton — it only reports its build identity. The
-// verification pipeline, trust store and proxy data plane land in SUP-68,
-// SUP-69 and SUP-71; keep all reusable logic under pkg/ so a desktop shell can
-// embed it later.
+// Everything lives in pkg/: pkg/cli is the command tree, pkg/tui the dashboard,
+// and pkg/{config,trust,policy,status} the core an embedder — a desktop shell,
+// another Go program — can use without this binary. This file exists only to
+// map the process's exit status onto the CLI's.
 package main
 
 import (
-	"flag"
-	"fmt"
 	"os"
 
-	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/version"
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/cli"
 )
 
 func main() {
-	showVersion := flag.Bool("version", false, "print the build identity and exit")
-	flag.Parse()
-
-	if *showVersion {
-		fmt.Fprintln(os.Stdout, version.Get())
-		return
-	}
-
-	fmt.Fprintln(os.Stdout, version.Get())
-	fmt.Fprintln(os.Stdout, "no commands are implemented yet — see apps/gatekeeper/README.md")
+	os.Exit(cli.Execute())
 }

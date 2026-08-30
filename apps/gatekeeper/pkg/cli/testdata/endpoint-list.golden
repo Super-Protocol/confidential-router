@@ -1,0 +1,2 @@
+NAME          LISTEN          UPSTREAM                              FAIL MODE  PINS
+llama-33-70b  127.0.0.1:8443  https://llama-33-70b.tee.swarm.cloud  closed     1

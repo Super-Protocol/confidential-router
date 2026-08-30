@@ -1,0 +1,12 @@
+DENIED — untrusted-root: the chain terminates in sha256/xxxx, which is not a trusted root
+
+Endpoint  llama-33-70b
+Upstream  https://llama-33-70b.tee.swarm.cloud
+Checked   just now
+
+Trusted root            sha256/xxxx — NOT a trusted root
+Observed TLS leaf       —
+Signed certFingerprint  —
+
+evidenceDigest            —
+Pinned for this endpoint  no

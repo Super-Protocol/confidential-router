@@ -29,6 +29,13 @@ type FieldError struct {
 	Path string
 	// Message says what is wrong and, where useful, what was expected.
 	Message string
+	// Incomplete marks a problem that is only about the configuration not being
+	// *runnable yet* — a required list that is still empty — rather than about a
+	// value being wrong. A config is built up one command at a time
+	// (`gatekeeper init`, then `trust roots add`, then `endpoint add`), so the
+	// editing commands accept an incomplete file; [Config.Validate], which
+	// `gatekeeper config validate` and startup use, does not.
+	Incomplete bool
 }
 
 func (e FieldError) Error() string { return e.Path + ": " + e.Message }
@@ -66,10 +73,29 @@ func (p *problems) addf(path, format string, args ...any) {
 	p.list = append(p.list, FieldError{Path: path, Message: fmt.Sprintf(format, args...)})
 }
 
+// addIncompletef records a problem that only means "not runnable yet"; see
+// [FieldError.Incomplete].
+func (p *problems) addIncompletef(path, format string, args ...any) {
+	p.list = append(p.list, FieldError{Path: path, Message: fmt.Sprintf(format, args...), Incomplete: true})
+}
+
 // Validate reproduces the JSON schema's constraints plus the cross-field rules
 // the schema cannot express (unique names, unique listen addresses). It returns
 // a *ValidationError listing every problem, or nil.
-func (c *Config) Validate() error {
+func (c *Config) Validate() error { return c.validate(true) }
+
+// ValidateEditable checks everything [Config.Validate] does except whether the
+// file is complete enough to run: an empty `trustedRoots`, an endpoint list
+// with no entries and an endpoint without pins are all accepted.
+//
+// It is what the config-editing commands validate against. `gatekeeper init`
+// deliberately writes a config that is not yet runnable, and every `trust`/
+// `endpoint` command that fills it in has to be able to save its result —
+// while still refusing to write a malformed value. Readiness is reported by
+// `gatekeeper config validate` and enforced at startup.
+func (c *Config) ValidateEditable() error { return c.validate(false) }
+
+func (c *Config) validate(completeness bool) error {
 	p := &problems{}
 
 	if c.Version != SchemaVersion {
@@ -83,16 +109,25 @@ func (c *Config) Validate() error {
 	c.validateObservability(p)
 	c.validateOverlays(p)
 
-	if len(p.list) == 0 {
+	list := p.list
+	if !completeness {
+		list = list[:0:0]
+		for _, fe := range p.list {
+			if !fe.Incomplete {
+				list = append(list, fe)
+			}
+		}
+	}
+	if len(list) == 0 {
 		return nil
 	}
-	sort.SliceStable(p.list, func(i, j int) bool { return p.list[i].Path < p.list[j].Path })
-	return &ValidationError{Source: c.Path, Errors: p.list}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].Path < list[j].Path })
+	return &ValidationError{Source: c.Path, Errors: list}
 }
 
 func (c *Config) validateRoots(p *problems) {
 	if len(c.TrustedRoots) == 0 {
-		p.addf("trustedRoots", "at least one trusted root is required — the gatekeeper has no built-in trust")
+		p.addIncompletef("trustedRoots", "at least one trusted root is required — the gatekeeper has no built-in trust")
 	}
 	seen := map[string]int{}
 	for i, root := range c.TrustedRoots {
@@ -135,7 +170,7 @@ func (c *Config) validatePolicies(p *problems) {
 
 func (c *Config) validateEndpoints(p *problems) {
 	if len(c.Endpoints) == 0 {
-		p.addf("endpoints", "at least one endpoint is required")
+		p.addIncompletef("endpoints", "at least one endpoint is required")
 	}
 	names := map[string]int{}
 	listens := map[string]int{}
@@ -163,7 +198,7 @@ func (c *Config) validateEndpoints(p *problems) {
 		}
 
 		if len(ep.TrustedEvidence) == 0 {
-			p.addf(path+".trustedEvidence", "at least one pinned evidenceDigest is required — there is no trust-on-first-use")
+			p.addIncompletef(path+".trustedEvidence", "at least one pinned evidenceDigest is required — there is no trust-on-first-use")
 		}
 		pinned := map[string]int{}
 		for j, digest := range ep.TrustedEvidence {

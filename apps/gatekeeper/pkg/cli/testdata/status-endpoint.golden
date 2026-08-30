@@ -1,0 +1,37 @@
+Endpoint          llama-33-70b
+Listen            127.0.0.1:8443
+Upstream          https://llama-33-70b.tee.swarm.cloud
+Fail mode         closed
+Status            confidential
+Last attestation  1m ago
+Next attestation  in 3m
+Traffic           4.2 req/s, 50.0KB in, 1.0MB out
+
+ADMITTED — verified and allowed by every policy
+
+Endpoint       llama-33-70b
+Upstream       https://llama-33-70b.tee.swarm.cloud
+Checked        30s ago
+Evidence kind  DeploymentEvidence
+Issued         4m ago
+
+Trusted root            swarm-cloud-prod (sha256/4rDDqk4QaXWLKrWi1GJt1yqZaFoZmQGxU6HcvHAGdKQ)
+Observed TLS leaf       sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0
+Signed certFingerprint  sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0
+Root CA TEE quote       intel-tdx-quote-v5 (displayed, not validated)
+
+evidenceDigest            sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490
+Pinned for this endpoint  yes
+
+Certificate chain (leaf → root)
+  ROLE  SUBJECT                          FINGERPRINT             EXPIRES
+  leaf  CN=llama-33-70b.tee.swarm.cloud  sha256/4fSxZzcn…RF-di0  2026-10-29
+  root  CN=swarm-cloud-prod-root         sha256/4rDDqk4Q…HAGdKQ  2037-08-12
+
+Container images
+  ghcr.io/super-protocol/sidecar@sha256:bbbb
+  ghcr.io/super-protocol/vllm@sha256:aaaa
+
+Policies
+  POLICY      PACKAGE             RESULT
+  (built-in)  gatekeeper.default  allow

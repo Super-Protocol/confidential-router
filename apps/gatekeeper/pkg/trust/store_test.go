@@ -1,7 +1,9 @@
 package trust_test
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,24 +176,40 @@ func TestStoreAddRemovePinRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStoreRefusesToRemoveTheLastPin(t *testing.T) {
+func TestStoreUnpinsTheLastDigest(t *testing.T) {
 	path := writeStoreConfig(t, selfSignedPEM(t, "prod"), oneEndpointYAML(pinA))
 	store, err := trust.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
-	// An endpoint with no pins is a config the gatekeeper refuses to start
-	// with, so the store must not create one.
-	_, err = store.RemovePin("llama", pinA)
-	if err == nil || !strings.Contains(err.Error(), "without a pinned evidenceDigest") {
-		t.Fatalf("err = %v, want a refusal to empty the pin list", err)
+	// Re-pinning an endpoint from scratch is a real operation, so emptying the
+	// list is allowed. The result is a config that no longer runs — which
+	// `gatekeeper config validate` reports, and the CLI warns about — not one
+	// the store refuses to write.
+	removed, err := store.RemovePin("llama", pinA)
+	if err != nil || !removed {
+		t.Fatalf("RemovePin = %v, %v; want true, nil", removed, err)
 	}
-	if !store.IsPinned("llama", pinA) {
-		t.Error("the rejected removal was applied in memory anyway")
+	ep, _ := store.Endpoint("llama")
+	if len(ep.Pins) != 0 {
+		t.Errorf("pins = %v, want none left", ep.Pins)
 	}
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), pinA.String()) {
-		t.Error("the rejected removal reached the file")
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), pinA.String()) {
+		t.Error("the removed pin is still in the file")
+	}
+
+	// The file it left behind is editable but not runnable.
+	cfg, err := config.Parse(bytes.NewReader(data), path)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if err := cfg.ValidateEditable(); err != nil {
+		t.Errorf("ValidateEditable: %v, want nil", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("Validate accepted an endpoint with no pins")
 	}
 }
 
@@ -310,5 +328,142 @@ func TestSumMatchesCryptoSha256(t *testing.T) {
 	}
 	if got := trust.Sum(data); got != want {
 		t.Errorf("Sum = %q, want %q", got, want)
+	}
+}
+
+func TestStoreEndpointRoundTrip(t *testing.T) {
+	path := writeStoreConfig(t, selfSignedPEM(t, "prod"), oneEndpointYAML(pinA))
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	if err := store.AddEndpoint(config.EndpointSpec{
+		Name: "qwen", Listen: "127.0.0.1:8444", Upstream: "https://qwen.example",
+		FailMode: config.FailOpen, TrustedEvidence: []string{pinB.String()},
+	}); err != nil {
+		t.Fatalf("AddEndpoint: %v", err)
+	}
+	ep, ok := store.Endpoint("qwen")
+	if !ok {
+		t.Fatal("the new endpoint is not in the resolved state")
+	}
+	if ep.Hostname != "qwen.example" || ep.FailMode != config.FailOpen || !ep.IsPinned(pinB) {
+		t.Errorf("endpoint = %+v, want the spec resolved", ep)
+	}
+
+	// A name that is taken is an explicit remove + add, never a silent replace:
+	// the pins are the thing that would be quietly lost.
+	if err := store.AddEndpoint(config.EndpointSpec{
+		Name: "qwen", Listen: "127.0.0.1:9000", Upstream: "https://other.example",
+	}); err == nil {
+		t.Error("adding a duplicate endpoint succeeded")
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "127.0.0.1:9000") {
+		t.Error("the rejected endpoint reached the file")
+	}
+
+	removed, err := store.RemoveEndpoint("qwen")
+	if err != nil || !removed {
+		t.Fatalf("RemoveEndpoint = %v, %v; want true, nil", removed, err)
+	}
+	if _, ok := store.Endpoint("qwen"); ok {
+		t.Error("the endpoint survived its removal")
+	}
+	if again, err := store.RemoveEndpoint("qwen"); err != nil || again {
+		t.Errorf("RemoveEndpoint(absent) = %v, %v; want false, nil", again, err)
+	}
+}
+
+func TestStoreRejectsAMalformedEndpointWithoutWriting(t *testing.T) {
+	path := writeStoreConfig(t, selfSignedPEM(t, "prod"), oneEndpointYAML(pinA))
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	before, _ := os.ReadFile(path)
+
+	if err := store.AddEndpoint(config.EndpointSpec{
+		Name: "qwen", Listen: "not-an-address", Upstream: "https://qwen.example",
+	}); err == nil {
+		t.Fatal("a malformed listen address was accepted")
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Error("a rejected edit reached the file")
+	}
+	// And the in-memory state is not left holding the rejected edit either.
+	if _, ok := store.Endpoint("qwen"); ok {
+		t.Error("the rejected endpoint is in the resolved state")
+	}
+}
+
+func TestStoreOpensAnUnfinishedConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\ntrustedRoots: []\nendpoints: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// This is what `gatekeeper init` leaves behind, and every command that
+	// finishes the setup has to be able to open it.
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if len(store.Roots()) != 0 || len(store.Endpoints()) != 0 {
+		t.Error("an empty config resolved to something")
+	}
+	if _, err := store.AddRoot("prod", []byte(selfSignedPEM(t, "prod"))); err != nil {
+		t.Errorf("AddRoot on a fresh config: %v", err)
+	}
+}
+
+func TestStoreRefusesToWriteAfterAFailedRollback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path,
+		[]byte("version: 1\ntrustedRoots: []\nendpoints: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Make the save fail and the re-read fail with it: the document in hand
+	// still holds the rejected root, so the store has nothing clean to fall
+	// back to.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddRoot("evil", []byte(selfSignedPEM(t, "evil"))); err == nil {
+		t.Fatal("the write succeeded against a directory")
+	}
+
+	// Without this the rejected root would ride along on the next successful
+	// save — an edit the user was told had failed.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path,
+		[]byte("version: 1\ntrustedRoots: []\nendpoints: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.AddRoot("prod", []byte(selfSignedPEM(t, "prod")))
+	if !errors.Is(err, trust.ErrPoisoned) {
+		t.Fatalf("err = %v, want ErrPoisoned", err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "evil") {
+		t.Error("the rejected root reached the file after all")
+	}
+
+	// Re-opening is the way out.
+	if _, err := trust.Open(path); err != nil {
+		t.Errorf("reopening a clean config: %v", err)
 	}
 }

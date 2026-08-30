@@ -1,0 +1,65 @@
+Dashboard — the detail pane follows the cursor
+
+gatekeeper  1 confidential · 1 non-confidential                                                   
+~/.config/confidential-gatekeeper/config.yaml                                                     
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  ENDPOINT          LISTEN            UPSTREAM          STATUS            LAST ATTEST   REQ/S   │
+│ ────────────────────────────────────────────────────────────────────────────────────────────── │
+│  llama-33-70b      127.0.0.1:8443    https://llama-3…  confidential      now           0.8     │
+│  qwen25-72b        127.0.0.1:8444    https://qwen25-…  non-confidential  now           2.5     │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ llama-33-70b  confidential                                                                     │
+│                                                                                                │
+│ root                    demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                  │
+│ observed TLS leaf       sha256/hf1GyYDQLx…SsEbA-QE                                             │
+│ signed certFingerprint  sha256/hf1GyYDQLx…SsEbA-QE                                             │
+│ evidenceDigest          sha256/q6kP-YVuoi…BmHXlMPg  pinned                                     │
+│ root CA TEE quote       tdx-v4 (not validated)                                                 │
+│                                                                                                │
+│ chain (leaf → root)                                                                            │
+│   ├─ CN=llama-33-70b.tee.swarm.cloud  sha256/hf1GyYDQLx…SsEbA-QE                               │
+│   ├─ CN=demo-intermediate  sha256/F4tTs2djw7…iMDCUMT4                                          │
+│   └─ CN=demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                                  │
+│                                                                                                │
+│ images                                                                                         │
+│   ghcr.io/super-protocol/vllm@sha256:8f1c...c2a1                                               │
+│   ghcr.io/super-protocol/router-sidecar@sha256:41ab...9d7e                                     │
+│                                                                                                │
+│ …                                                                                              │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+showing detail · 2 endpoint(s)                                                                    
+↑/k up • ↓/j down • s start/stop • r re-attest • t trust this deployment • ? help • q quit        
+
+The log tail, on `l`
+
+gatekeeper  1 confidential · 1 non-confidential                                                   
+~/.config/confidential-gatekeeper/config.yaml                                                     
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  ENDPOINT          LISTEN            UPSTREAM          STATUS            LAST ATTEST   REQ/S   │
+│ ────────────────────────────────────────────────────────────────────────────────────────────── │
+│  llama-33-70b      127.0.0.1:8443    https://llama-3…  confidential      now           0.8     │
+│  qwen25-72b        127.0.0.1:8444    https://qwen25-…  non-confidential  now           2.5     │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ 12:00:00 warn  qwen25-72b       verdict deny: the published evidenceDigest is not pinned       │
+│ 12:00:00 info  llama-33-70b     re-attested: admitted                                          │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+│                                                                                                │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+showing logs · 2 endpoint(s)                                                                      
+↑/k up • ↓/j down • s start/stop • r re-attest • t trust this deployment • ? help • q quit        

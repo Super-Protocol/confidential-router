@@ -1,11 +1,22 @@
 package config_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 )
+
+// mustParse decodes a config document, failing the test if it does not parse.
+func mustParse(t *testing.T, yaml string) *config.Config {
+	t.Helper()
+	cfg, err := config.Parse(strings.NewReader(yaml), "config.yaml")
+	if err != nil {
+		t.Fatalf("parsing: %v", err)
+	}
+	return cfg
+}
 
 func TestValidateReportsEveryProblemWithItsPath(t *testing.T) {
 	tests := []struct {
@@ -228,5 +239,57 @@ func TestValidateChecksTheEnvAndFlagLayers(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want it to mention %q", err, want)
 		}
+	}
+}
+
+func TestValidateEditableAcceptsAnUnfinishedConfig(t *testing.T) {
+	// What `gatekeeper init` writes: nothing wrong, nothing finished.
+	cfg := mustParse(t, `version: 1
+trustedRoots: []
+endpoints: []
+`)
+	if err := cfg.ValidateEditable(); err != nil {
+		t.Errorf("ValidateEditable: %v, want nil — the editing commands have to be able to open this", err)
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a config that cannot run")
+	}
+	var invalid *config.ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Validate returned %T, want *config.ValidationError", err)
+	}
+	if len(invalid.Errors) != 2 {
+		t.Fatalf("problems = %v, want two", invalid.Errors)
+	}
+	for _, fe := range invalid.Errors {
+		if !fe.Incomplete {
+			t.Errorf("%s is reported as an error, not as unfinished setup", fe.Path)
+		}
+	}
+}
+
+func TestValidateEditableStillRejectsWrongValues(t *testing.T) {
+	// Incompleteness is forgiven; a malformed value is not, or the editing
+	// commands would happily write a config that can never load.
+	cfg := mustParse(t, `version: 1
+trustedRoots: []
+endpoints:
+  - name: llama
+    listen: nonsense
+    upstream: https://llama.example
+    trustedEvidence: []
+`)
+	err := cfg.ValidateEditable()
+	if err == nil {
+		t.Fatal("ValidateEditable accepted a malformed listen address")
+	}
+	var invalid *config.ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("got %T, want *config.ValidationError", err)
+	}
+	if len(invalid.Errors) != 1 || invalid.Errors[0].Path != "endpoints[0].listen" {
+		t.Errorf("problems = %v, want only the listen address", invalid.Errors)
 	}
 }

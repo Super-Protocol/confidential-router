@@ -43,17 +43,27 @@ func DefaultPath() string {
 // ResolvePath applies the config-path precedence: flag, then CR_GATEKEEPER_CONFIG,
 // then GATEKEEPER_CONFIG (the name ADR-003 documents), then DefaultPath.
 func ResolvePath(flagValue string, environ []string) string {
+	path, _ := ResolvePathSource(flagValue, environ)
+	return path
+}
+
+// ResolvePathSource is [ResolvePath] plus the layer the path came from, spelled
+// the way the user would recognise it (`--config`, `$CR_GATEKEEPER_CONFIG`,
+// `$GATEKEEPER_CONFIG`, `default`). `gatekeeper config path` prints it: "which
+// file am I editing, and why that one" is otherwise guesswork across three
+// environment layers.
+func ResolvePathSource(flagValue string, environ []string) (path, source string) {
 	if flagValue != "" {
-		return flagValue
+		return flagValue, "--config"
 	}
 	env := parseEnviron(environ)
 	if v := env[envPrefix+"CONFIG"]; v != "" {
-		return v
+		return v, "$" + envPrefix + "CONFIG"
 	}
 	if v := env["GATEKEEPER_CONFIG"]; v != "" {
-		return v
+		return v, "$GATEKEEPER_CONFIG"
 	}
-	return DefaultPath()
+	return DefaultPath(), "default"
 }
 
 // Load reads and validates the configuration, applying the four precedence
