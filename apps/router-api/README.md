@@ -34,6 +34,14 @@ Two sources, later wins:
    is read as snake_case: `CR_API_SERVER__PORT=4000` sets `server.port`,
    `CR_API_AUTH__GITHUB__CLIENT_ID` sets `auth.github.clientId`.
 
+   Two names under that prefix are meta-variables, not configuration, and are
+   skipped by the loader: `CR_API_CONFIG_FILE` (where to look) and
+   `CR_API_VERSION` (the build identifier `/health` reports).
+
+Every section is strict. An unknown key — `CR_API_SERVER__PROT=4000`, a stray
+setting in the YAML — fails the boot rather than being silently dropped, which
+matches `additionalProperties: false` in the JSON Schema.
+
 Both are validated once, at boot, against the Zod schema in
 `src/app/config.schema.ts` — the runtime mirror of
 [`schemas/router-config.schema.json`](../../schemas/router-config.schema.json).
@@ -68,6 +76,10 @@ pnpm nx run router-api:migrate
 `database.migrationsRun` defaults to `true` on SQLite (so `nx serve` works on an
 empty directory) and `false` on PostgreSQL, where a deployment runs the command
 above once from a job rather than racing every replica.
+
+Migrations are **written by hand** against TypeORM's dialect-neutral `Table` API,
+not generated. `migration:generate` emits SQL for whichever database it was
+pointed at, which is exactly the portability this schema is built to avoid.
 
 `src/app/db/migrations.spec.ts` asserts that the migrated schema is *exactly* the
 schema the entities describe, on both databases — the PostgreSQL half runs when

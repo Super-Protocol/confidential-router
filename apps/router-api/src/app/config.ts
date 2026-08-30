@@ -22,6 +22,21 @@ export const CONFIG_ENV_PREFIX = 'CR_API';
 export const DEFAULT_CONFIG_FILE = 'conf/router.yaml';
 
 /**
+ * `CR_API_*` names that are meta-variables rather than configuration.
+ *
+ * They live under the same prefix because that is where an operator looks for
+ * them, but the env layer must skip them: `CR_API_VERSION` would otherwise
+ * become `version: "1.2.3"` and collide with the config's own `version: 1`,
+ * failing the boot on a variable that has nothing to do with the schema.
+ */
+export const RESERVED_ENV_SUFFIXES = ['CONFIG_FILE', 'VERSION'];
+
+/** Build or release identifier, surfaced by `/health`. Never part of the config. */
+export function serviceVersion(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CR_API_VERSION ?? '0.0.0';
+}
+
+/**
  * Finds the config file when `CR_API_CONFIG_FILE` is not set.
  *
  * `conf/router.yaml` under the working directory first — that is what a
@@ -73,7 +88,7 @@ export function loadRouterConfig(options: LoadRouterConfigOptions = {}): RouterC
   const configFile = resolveConfigFile(env);
 
   const yamlLayer = yamlConfiguration<RouterConfig>(configFile, env);
-  const envLayer = envConfiguration<RouterConfig>(CONFIG_ENV_PREFIX, env);
+  const envLayer = envConfiguration<RouterConfig>(CONFIG_ENV_PREFIX, { env, reserved: RESERVED_ENV_SUFFIXES });
   const layers: Array<ConfigurationLoader<RouterConfig>> = [
     developmentDefaults(deepMerge(yamlLayer(), envLayer()), env, warn),
     yamlLayer,

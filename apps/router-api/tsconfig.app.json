@@ -29,9 +29,6 @@
   "references": [
     {
       "path": "../../libs/server-common/tsconfig.lib.json"
-    },
-    {
-      "path": "../../libs/types/tsconfig.lib.json"
     }
   ]
 }

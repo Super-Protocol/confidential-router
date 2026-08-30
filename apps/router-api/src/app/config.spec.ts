@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import { loadRouterConfig, MissingAuthSecretError, resolveConfigFile } from './config.js';
+import { loadRouterConfig, MissingAuthSecretError, resolveConfigFile, serviceVersion } from './config.js';
 import { RouterConfigSchema } from './config.schema.js';
 
 const SECRET = 'a'.repeat(32);
@@ -110,10 +110,38 @@ describe('loadRouterConfig', () => {
     expect(() => loadRouterConfig({ env: env({ CR_API_SERVER__PORT: '70000' }) })).toThrow(/server\.port/);
   });
 
+  it('ignores the CR_API_* meta-variables instead of mapping them into the config', () => {
+    // `CR_API_VERSION` used to become `version: "1.2.3"` and collide with the
+    // config's own `version: 1`, failing the boot on a variable that has
+    // nothing to do with the schema. `CR_API_CONFIG_FILE` landed as `configFile`.
+    const config = loadRouterConfig({
+      env: env({ CR_API_VERSION: '1.2.3' }),
+    });
+
+    expect(config.version).toBe(1);
+    expect(config).not.toHaveProperty('configFile');
+  });
+
+  it('rejects an unknown key rather than silently dropping it', () => {
+    // The JSON Schema is `additionalProperties: false`; the runtime schema has
+    // to agree, or `CR_API_SERVER__PROT=4000` leaves the port on its default.
+    expect(() => loadRouterConfig({ env: env({ CR_API_SERVER__PROT: '4000' }) })).toThrow(/prot/i);
+  });
+
   it('warns when no models are configured', () => {
     const warnings: string[] = [];
     loadRouterConfig({ env: env(), onWarning: (message) => warnings.push(message) });
     expect(warnings.some((warning) => warning.includes('No models'))).toBe(true);
+  });
+});
+
+describe('serviceVersion', () => {
+  it('reads CR_API_VERSION, which is deliberately not part of the config tree', () => {
+    expect(serviceVersion({ CR_API_VERSION: '1.2.3' })).toBe('1.2.3');
+  });
+
+  it('falls back to 0.0.0 when unset', () => {
+    expect(serviceVersion({})).toBe('0.0.0');
   });
 });
 
