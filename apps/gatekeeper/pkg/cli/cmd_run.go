@@ -61,14 +61,13 @@ func newRunCommand(g *globals) *cobra.Command {
 			fmt.Fprintln(cmd.ErrOrStderr(),
 				"warning: --demo — no evidence is fetched, verified or proxied; every verdict on screen is invented")
 		}
-		if supervisor == nil {
-			return failf(ExitUnavailable,
-				"this build has no proxy data plane wired in, so there is nothing to run\n"+
-					"       (try `gatekeeper run --demo` to see the dashboard; see apps/gatekeeper/README.md)")
-		}
-
 		if drain <= 0 {
 			return failf(ExitUsage, "--drain-timeout must be greater than zero, got %s", drain)
+		}
+		if supervisor == nil {
+			if supervisor, err = g.supervisor(cmd.Context(), cfg); err != nil {
+				return err
+			}
 		}
 
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -83,14 +82,23 @@ func newRunCommand(g *globals) *cobra.Command {
 			shutdown(drainCtx, cmd.ErrOrStderr(), supervisor, cfg)
 		}()
 
-		// The dashboard owns the terminal while it is up, so a reload writes
-		// nothing: the new configuration shows up in the next snapshot, and a
+		// The dashboard owns the terminal while it is up, so startup and reload
+		// write nothing: what happened shows up in the next snapshot, and a
 		// stray line here would tear a hole in the alternate screen.
-		reloadLog := io.Discard
+		runLog := io.Discard
 		if headless {
-			reloadLog = cmd.ErrOrStderr()
+			runLog = cmd.ErrOrStderr()
 		}
-		go watchHangup(ctx, g, reloadLog, supervisor)
+		go watchHangup(ctx, g, runLog, supervisor)
+
+		// Every endpoint is started individually so that one address already in
+		// use leaves that endpoint broken — and visible as broken — instead of
+		// taking the whole gatekeeper down with it.
+		for _, ep := range cfg.Endpoints {
+			if err := supervisor.Start(ctx, ep.Name); err != nil {
+				fmt.Fprintf(runLog, "starting %s: %v\n", ep.Name, err)
+			}
+		}
 
 		if headless {
 			err = runHeadless(ctx, cmd.OutOrStdout(), supervisor)
@@ -196,11 +204,18 @@ func watchHangup(ctx context.Context, g *globals, w io.Writer, supervisor status
 	}
 }
 
-// shutdown stops every endpoint, giving each the remaining drain budget.
+// shutdown stops every endpoint, giving each the remaining drain budget, and
+// then releases whatever else the supervisor holds — the admin socket, the
+// audit log, the event stream.
 func shutdown(ctx context.Context, w io.Writer, supervisor status.Supervisor, cfg *config.Config) {
 	for _, ep := range cfg.Endpoints {
 		if err := supervisor.Stop(ctx, ep.Name); err != nil {
 			fmt.Fprintf(w, "stopping %s: %v\n", ep.Name, err)
+		}
+	}
+	if closer, ok := supervisor.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			fmt.Fprintf(w, "shutting down: %v\n", err)
 		}
 	}
 	fmt.Fprintln(w, "gatekeeper stopped")

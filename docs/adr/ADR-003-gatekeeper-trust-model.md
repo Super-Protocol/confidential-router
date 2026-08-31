@@ -134,6 +134,14 @@ sent upstream** (no request header, no query parameter, no separate call).
 never live in the file: the gatekeeper does not hold the router API key — the client sends
 `Authorization: Bearer sk-tee-…` through the proxy untouched.
 
+Two optional sections belong to the running proxy (SUP-71). `admin.listen` (`unix:<path>` or a **loopback**
+`host:port`, enforced) exposes the read-only status API — `/healthz`, `/status`, `/endpoints`, `/verdicts`,
+`/metrics` — which is how `gatekeeper status` reports on a gatekeeper running in another process; there is
+deliberately no route that can start, stop, pin or re-attest. `audit.file` appends one JSON object per line
+for every verdict change, every refused request and every request a `failMode: open` endpoint forwarded
+without one — and never a request body, a response body or a query string. `metrics.listen` keeps serving
+`/metrics` and `/healthz` only, since a scrape endpoint reaches further than the verdict routes should.
+
 ## Consequences
 
 - Implementation tasks: SUP-68 (verifier), SUP-69 (config + trust store + OPA), SUP-71 (data plane),

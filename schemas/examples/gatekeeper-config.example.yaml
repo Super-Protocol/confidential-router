@@ -46,3 +46,12 @@ log:
 
 metrics:
   listen: 127.0.0.1:9464
+
+# Local status API of the running gatekeeper: what `gatekeeper status` reads from
+# another process. It carries verdicts, so only unix:<path> and loopback are allowed.
+admin:
+  listen: 127.0.0.1:9465   # or unix:/run/user/1000/confidential-gatekeeper.sock
+
+# Every verdict and every blocked request, one JSON object per line. Never bodies.
+audit:
+  file: ./audit.jsonl
