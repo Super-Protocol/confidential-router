@@ -24,21 +24,62 @@ signed-out shell. The route groups exist so the two never share a layout: the
 console layout mounts `SessionProvider`, and there is no session to fetch on the
 sign-in screen.
 
-| Route                                       | Owner   |
-| ------------------------------------------- | ------- |
-| `/`                                         | SUP-78 (metrics) |
-| `/models`                                   | SUP-78  |
-| `/keys`, `/gatekeeper`                      | SUP-79  |
-| `/activity`, `/logs`                        | SUP-80  |
-| `/credits`, `/profile`, `/preferences`      | SUP-81  |
-| `/login`                                    | this issue |
-| `/dev/components`                           | this issue |
+| Route                                       | Owner   | State |
+| ------------------------------------------- | ------- | ----- |
+| `/`, `/models`                              | SUP-78  | built |
+| `/keys`, `/gatekeeper`                      | SUP-79  | built |
+| `/activity`, `/logs`                        | SUP-80  | placeholder |
+| `/credits`, `/profile`, `/preferences`      | SUP-81  | built |
+| `/login`, `/dev/components`                 | SUP-77  | built |
 
-The screens above render a placeholder naming the issue that builds them. The
-shell, tokens, data layer and tests they sit on are complete.
+A placeholder screen names the issue that builds it. The shell, tokens, data
+layer and tests they sit on are complete.
+
+### Account screens (SUP-81)
+
+`/credits`, `/profile` and `/preferences` are the account group.
+
+- **Credits** — `creditBalance` + `creditTransactions`, top-ups through Stripe
+  Checkout (`createCheckout`) and automatic top-up (`setAutoTopUp`). The screen
+  never writes credit: a checkout returns to `/credits?topup=success|cancelled`,
+  which only refetches, because the money is real when Stripe's webhook says so.
+  There is no crypto option — ADR-005 closed that.
+- **Profile** — `me` plus a week of `activitySeries`, `usageByModel` and the
+  `signedResponseDays` heatmap. A square means the endpoint had published
+  evidence when the generation was served: publication, never a verdict
+  (ADR-002).
+- **Preferences** — `me { preferences }` and `updatePreferences`, plus
+  `exportEvidence`, which mints a signed 15-minute link to the auditor's zip.
+  Every control writes on change; there is no Save button, because
+  `updatePreferences` updates only the settings it is given.
+
+Two mutation results carry no id (`CreditBalance`, `UserPreferences`), so Apollo
+cannot normalise them; both call sites write the result into the screen's query
+with `cache.updateQuery`. Without that a saved setting snaps back to the cached
+value on the next render.
 
 `src/components/navigation.ts` is the single source of truth for the nine
 screens: the sidebar, the breadcrumb trail and the placeholder copy all read it.
+
+## Evidence
+
+`src/components/evidence/` is the one place the console renders what an endpoint
+published, and every screen that shows an endpoint uses it:
+
+- `EvidenceBadge` — the publication state as a badge, and the way into the modal.
+  Give it an `EndpointEvidenceFields` fragment and, where the screen owns a
+  query, an `onRefreshed` that refetches it.
+- `EvidenceModal` — platform, quote format and age, enclave image, measurement
+  registers, the certificate chain, **Copy evidence JWS** and **Fetch fresh
+  quote** (`refreshEvidence`, a re-poll of what the platform publishes).
+- `evidence-state.ts` — the strings for `PUBLISHED` / `STALE` / `NOT_PUBLISHED`.
+
+The vocabulary is fixed by ADR-002: the router publishes evidence and never
+learns whether anyone verified it, so nothing in this directory may say
+*verified*, *valid* or *trusted*. The chain is described as terminating at a
+named root; whether that root is trusted is a fact about the viewer's gatekeeper,
+which this console has never seen. `STALE` is the prototype's "signing key
+rotating" state — a bundle exists but is outside the freshness window.
 
 ## Session handling
 

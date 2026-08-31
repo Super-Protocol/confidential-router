@@ -31,6 +31,75 @@ export function formatCompact(value: number): string {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
 
+/**
+ * Prices are micro-USD per 1M tokens and are routinely well under a cent, so
+ * two decimals would round most of the catalogue to `$0.00`. Four is enough for
+ * every price the router config can express, and trailing zeroes are dropped so
+ * `$0.28` does not read as `$0.2800`.
+ */
+export function formatPricePer1m(micros: string): string {
+  return formatUsd(micros, { maximumFractionDigits: 4 });
+}
+
+/** `0.984` → `98.4%`; a whole percentage loses its `.0`. */
+export function formatPercent(ratio: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 1 }).format(ratio);
+}
+
+/** Context windows are quoted in K/M of tokens, never as 128000. */
+export function formatContextLength(tokens: number): string {
+  if (tokens >= 1_000_000) return `${trimZero(tokens / 1_000_000)}M`;
+  if (tokens >= 1000) return `${trimZero(tokens / 1000)}K`;
+  return String(tokens);
+}
+
+function trimZero(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, '');
+}
+
+const MINUTE = 60;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/**
+ * `EvidenceSnapshot.quoteAgeSeconds` as "issued 4 min ago".
+ *
+ * Seconds are kept below a minute because a quote's age is the one number in
+ * the evidence modal a viewer watches change while re-fetching.
+ */
+export function formatQuoteAge(seconds: number): string {
+  const age = Math.max(0, Math.round(seconds));
+  if (age < MINUTE) return `${age}s ago`;
+  if (age < HOUR) return `${Math.floor(age / MINUTE)} min ago`;
+  if (age < DAY) return `${Math.floor(age / HOUR)} h ago`;
+  return `${Math.floor(age / DAY)} d ago`;
+}
+
+const TIMESTAMP_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'UTC',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+/**
+ * An ISO instant as `2026-08-31 09:30 UTC` — `formatDate` below when the day is
+ * enough, this when the time of day matters.
+ *
+ * Always UTC, never the browser's zone: evidence timestamps are compared
+ * against `issuedAt` values a viewer reads out of a bundle or a gatekeeper log,
+ * and both of those are UTC. It also keeps a server-rendered string identical
+ * to the one the browser produces, which a locale-dependent format does not.
+ */
+export function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return `${TIMESTAMP_FORMAT.format(date).replace(',', '')} UTC`;
+}
+
 /** Truncates a `sha256/<base64url>` digest for display, keeping both ends. */
 export function shortenDigest(digest: string, keep = 6): string {
   const [algorithm, encoded] = digest.includes('/') ? digest.split('/', 2) : ['', digest];
