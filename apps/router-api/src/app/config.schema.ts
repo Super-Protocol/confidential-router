@@ -106,6 +106,22 @@ const OAuthClientSchema = z.strictObject({
   clientSecret: z.string().min(1),
 });
 
+/**
+ * A secret a deployment is allowed to leave unset.
+ *
+ * Blank means unset, not "a zero-length secret": a Helm chart renders an
+ * optional value as an empty string rather than as an absent key, and failing
+ * the boot on that would turn an optional feature into a mandatory one.
+ */
+function optionalSecret(minLength: number) {
+  return z
+    .string()
+    .transform((value) => value.trim())
+    .refine((value) => value.length === 0 || value.length >= minLength, `must be at least ${minLength} characters`)
+    .transform((value) => (value.length === 0 ? undefined : value))
+    .optional();
+}
+
 // No `.prefault({})` on this one: `auth.secret` has no default, and the config
 // loader guarantees the section exists before this schema ever runs.
 const AuthSchema = z.strictObject({
@@ -121,12 +137,28 @@ const AuthSchema = z.strictObject({
   google: OAuthClientSchema.optional(),
   magicLink: z
     .strictObject({
-      mailer: z.enum(['console', 'smtp', 'resend']).prefault('console'),
+      /**
+       * `none` disables magic-link sign-in altogether. It exists for the
+       * deployment that has no mail provider at all — a marketplace install,
+       * say — which would otherwise be unable to boot in production, because
+       * `console` is refused there and `resend` needs a key.
+       */
+      mailer: z.enum(['none', 'console', 'smtp', 'resend']).prefault('console'),
       from: z.email().prefault('no-reply@confidential-router.local'),
       smtpUrl: z.string().optional(),
       resendApiKey: z.string().optional(),
     })
     .prefault({}),
+  /**
+   * Lets the first admin in on a deployment that has neither a mailer nor an
+   * OAuth app. While it is set *and* no user exists, `POST /auth/bootstrap`
+   * trades this token for the first account and a session; the endpoint is a
+   * hard 404 the rest of the time. Unset it after first sign-in if you like —
+   * nothing else reads it.
+   */
+  bootstrapToken: optionalSecret(16),
+  /** The address the bootstrapped account is created under. */
+  bootstrapEmail: z.email().prefault('admin@confidential-router.local'),
 });
 
 const BillingSchema = z

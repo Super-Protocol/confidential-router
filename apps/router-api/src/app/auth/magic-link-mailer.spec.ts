@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthConfig } from '../config.schema.js';
-import { ConsoleMagicLinkMailer, createMagicLinkMailer, ResendMagicLinkMailer } from './magic-link-mailer.js';
+import {
+  ConsoleMagicLinkMailer,
+  createMagicLinkMailer,
+  DisabledMagicLinkMailer,
+  type MagicLinkMailer,
+  ResendMagicLinkMailer,
+} from './magic-link-mailer.js';
 
 function authConfig(magicLink: Partial<AuthConfig['magicLink']>): AuthConfig {
   return {
@@ -33,8 +39,27 @@ describe('createMagicLinkMailer', () => {
     expect(() => createMagicLinkMailer(authConfig({ mailer: 'resend' }), 'production')).toThrow(/resendApiKey/);
   });
 
+  it('builds a disabled mailer in production when there is no mail provider at all', () => {
+    // The deployment this exists for — a marketplace install with no mailer and
+    // no OAuth app — has to be able to boot in production; `console` is refused
+    // there and `resend` needs a key it does not have.
+    expect(createMagicLinkMailer(authConfig({ mailer: 'none' }), 'production')).toBeInstanceOf(DisabledMagicLinkMailer);
+  });
+
   it('says plainly that SMTP is not implemented rather than failing later', () => {
     expect(() => createMagicLinkMailer(authConfig({ mailer: 'smtp' }), 'development')).toThrow(/not implemented/);
+  });
+});
+
+describe('DisabledMagicLinkMailer', () => {
+  it('refuses to send instead of pretending it did', async () => {
+    // Through the interface: this is the shape `AuthService` holds, and the
+    // point is that nothing can call it and believe a link went out.
+    const mailer: MagicLinkMailer = new DisabledMagicLinkMailer();
+
+    await expect(mailer.send({ email: 'dev@example.com', url: 'http://localhost/', token: 't' })).rejects.toThrow(
+      /disabled/,
+    );
   });
 });
 

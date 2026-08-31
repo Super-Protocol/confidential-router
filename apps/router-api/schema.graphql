@@ -615,6 +615,9 @@ type Query {
     tee: String
   ): [Model!]!
 
+  """The sign-in paths this deployment offers. Public."""
+  signInOptions: SignInOptions!
+
   """
   UTC days on which at least one generation was served with published evidence.
   """
@@ -648,6 +651,23 @@ type Query {
 input SetAutoTopUpInput {
   settings: AutoTopUpInput!
   workspaceId: ID!
+}
+
+"""Which sign-in paths this deployment offers."""
+type SignInOptions {
+  """
+  A bootstrap token can create the first account right now: one is configured and the deployment has no user yet. False on every deployment that has already been signed into.
+  """
+  bootstrap: Boolean!
+
+  """A GitHub OAuth app is configured."""
+  github: Boolean!
+
+  """A Google OAuth app is configured."""
+  google: Boolean!
+
+  """A mailer is configured, so a one-time link can be sent."""
+  magicLink: Boolean!
 }
 
 enum SortDirection {
