@@ -86,7 +86,7 @@
     "@nestjs/graphql": "^13.1.0",
     "@nestjs/platform-express": "^11.1.6",
     "@nestjs/swagger": "^11.2.5",
-    "@nestjs/typeorm": "^11.0.0",
+    "@nestjs/typeorm": "^12.0.0",
     "better-auth": "^1.7.2",
     "better-sqlite3": "^12.4.1",
     "class-transformer": "^0.5.1",
