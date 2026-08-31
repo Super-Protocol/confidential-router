@@ -51,6 +51,15 @@ type FetchOptions struct {
 	// Cloud roots are not publicly trusted, so a system-pool check would reject
 	// every healthy endpoint. ServerName and NextProtos are always set.
 	TLSConfig *tls.Config
+	// DialContext opens the TCP connection the handshake then runs over. Nil
+	// uses a plain net.Dialer.
+	//
+	// It exists because substituting the whole [Fetcher] is the wrong tool for
+	// "reach this host over my transport": a Fetcher replaces the handshake
+	// too, and with it the observed channel binding, which is the only binding
+	// the gatekeeper accepts. Overriding the dial keeps the TLS layer — and the
+	// certificate this package records — entirely intact.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // FetchResult is a bundle document together with the certificate the gatekeeper
@@ -122,7 +131,7 @@ func Fetch(ctx context.Context, hostname string, opts FetchOptions) (*FetchResul
 	transport := &http.Transport{
 		DisableKeepAlives: true,
 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return observer.dial(ctx, network, addr, hostname, opts.TLSConfig)
+			return observer.dial(ctx, network, addr, hostname, opts)
 		},
 	}
 	defer transport.CloseIdleConnections()
@@ -179,15 +188,15 @@ type leafObserver struct {
 	err   error
 }
 
-func (o *leafObserver) dial(ctx context.Context, network, addr, serverName string, base *tls.Config) (net.Conn, error) {
+func (o *leafObserver) dial(ctx context.Context, network, addr, serverName string, opts FetchOptions) (net.Conn, error) {
 	cfg := &tls.Config{
 		//nolint:gosec // G402: the handshake is intentionally not validated against the
 		// system pool — trust is decided by the evidence chain terminating at a
 		// user-configured root plus the fingerprint binding below (ADR-003 §1).
 		InsecureSkipVerify: true,
 	}
-	if base != nil {
-		cfg = base.Clone()
+	if opts.TLSConfig != nil {
+		cfg = opts.TLSConfig.Clone()
 	}
 	cfg.ServerName = serverName
 	// HTTP/1.1 only: an h2 connection can be reused for later requests, which
@@ -195,24 +204,36 @@ func (o *leafObserver) dial(ctx context.Context, network, addr, serverName strin
 	// response came over".
 	cfg.NextProtos = []string{"http/1.1"}
 
-	dialer := &tls.Dialer{Config: cfg}
-	conn, err := dialer.DialContext(ctx, network, addr)
+	raw, err := DialTCP(ctx, opts.DialContext, network, addr)
 	if err != nil {
 		return nil, err
 	}
-	tlsConn, ok := conn.(*tls.Conn)
-	if !ok {
-		_ = conn.Close()
-		return nil, errors.New("TLS dial returned a non-TLS connection")
+	tlsConn := tls.Client(raw, cfg)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = raw.Close()
+		return nil, err
 	}
 
 	state := tlsConn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
-		_ = conn.Close()
+		_ = tlsConn.Close()
 		return nil, errors.New("peer did not present a certificate")
 	}
 	o.record(state.PeerCertificates[0].Raw)
-	return conn, nil
+	return tlsConn, nil
+}
+
+// DialTCP opens the connection a TLS handshake will run over, through dial when
+// one was supplied and a plain net.Dialer otherwise. It is exported because the
+// data plane dials the same upstreams for the traffic it proxies and has to
+// honour the same override.
+func DialTCP(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error),
+	network, addr string,
+) (net.Conn, error) {
+	if dial != nil {
+		return dial(ctx, network, addr)
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
 }
 
 func (o *leafObserver) record(der []byte) {
