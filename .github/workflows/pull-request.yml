@@ -84,6 +84,20 @@ jobs:
             --parallel=3 \
             --outputStyle=static
 
+      # Unconditional, because `apps/router-api/schema.graphql` is what the
+      # console's client is generated from: the first spec checks it against the
+      # schema the resolvers produce, the second against the schema the running
+      # application serves. Either failing means the committed SDL is stale.
+      - name: Console schema drift
+        run: pnpm exec vitest run --root apps/router-api src/app/api/graphql/schema.spec.ts test/schema.e2e.spec.ts
+
+      # `apps/router-ui/src/generated` is never edited by hand. Regenerating it
+      # from the committed schema has to be a no-op.
+      - name: Generated GraphQL client is up to date
+        run: |
+          pnpm nx run @confidential-router/router-ui:codegen
+          git diff --exit-code -- apps/router-ui/src/generated
+
       - name: Check formatting
         run: pnpm format:check
 
