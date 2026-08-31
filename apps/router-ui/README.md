@@ -12,7 +12,10 @@ pnpm nx run @confidential-router/router-ui:codegen     # regenerate the GraphQL 
 ```
 
 Configuration is three `NEXT_PUBLIC_*` variables — see [`.env.example`](./.env.example).
-They are inlined at build time, so a container image is bound to one API origin.
+They are inlined at build time, so a container image is bound to one API origin:
+[`router-ui.dockerfile`](../../router-ui.dockerfile) takes them as build args,
+and setting them on a running container would be read by the server and ignored
+by the browser.
 
 ## Routes
 
