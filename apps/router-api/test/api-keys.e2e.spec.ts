@@ -51,6 +51,18 @@ function gql(query: string, variables: Record<string, unknown> = {}, session: st
   return (session.length > 0 ? call.set('Cookie', session) : call).send({ query, variables });
 }
 
+/** The GraphQL error code, wherever the framework put it. */
+function errorCodeOf(response: { body: { errors?: { extensions?: Record<string, unknown> }[] } }): unknown {
+  const extensions = response.body.errors?.[0]?.extensions ?? {};
+  const original = extensions.originalError as { statusCode?: number } | undefined;
+  return original?.statusCode === 400 ? 'BAD_REQUEST' : extensions.code;
+}
+
+async function countKeysNamed(name: string): Promise<number> {
+  const listed = await gql(LIST, { workspaceId }, cookies);
+  return (listed.body.data.apiKeys as { name: string }[]).filter((key) => key.name === name).length;
+}
+
 async function createKey(input: Record<string, unknown> = {}) {
   const response = await gql(CREATE, { input: { workspaceId, name: 'CI key', ...input } }, cookies);
   expect(response.body.errors, JSON.stringify(response.body.errors)).toBeUndefined();
@@ -101,6 +113,30 @@ describe('createApiKey', () => {
       requestsPerMinute: 30,
       expiresAt: '2027-01-01T00:00:00.000Z',
     });
+  });
+
+  it('refuses a spend limit that is not a number, rather than failing at the database', async () => {
+    const response = await gql(
+      CREATE,
+      { input: { workspaceId, name: 'Bad money', spendLimitMicros: 'lots' } },
+      cookies,
+    );
+
+    expect(errorCodeOf(response)).toBe('BAD_REQUEST');
+    expect(await countKeysNamed('Bad money')).toBe(0);
+  });
+
+  it('treats an explicit null spend limit as no limit, not a limit of zero', async () => {
+    // `Number(null)` is 0, and a key with a zero ceiling is refused on its first
+    // request — the opposite of what the caller asked for.
+    const created = await createKey({ name: 'Unlimited', spendLimitMicros: null });
+
+    expect(created.key.spendLimitMicros).toBeNull();
+    await request(harness.app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set(bearer(created.secret))
+      .send({ model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'hi' }] })
+      .expect(200);
   });
 
   it('refuses a scope naming a model that does not exist', async () => {
@@ -166,6 +202,23 @@ describe('updateApiKey', () => {
 
     const cleared = await gql(UPDATE, { id: created.key.id, input: { modelIds: [] } }, cookies);
     expect(cleared.body.data.updateApiKey.modelScope).toBeNull();
+  });
+
+  it('clears the spend limit when the caller sends an explicit null', async () => {
+    const created = await createKey({ spendLimitMicros: '250000' });
+
+    const response = await gql(UPDATE, { id: created.key.id, input: { spendLimitMicros: null } }, cookies);
+
+    expect(response.body.errors).toBeUndefined();
+    expect(response.body.data.updateApiKey.spendLimitMicros).toBeNull();
+  });
+
+  it('refuses a spend limit that is not a number', async () => {
+    const created = await createKey();
+
+    const response = await gql(UPDATE, { id: created.key.id, input: { spendLimitMicros: '-1' } }, cookies);
+
+    expect(errorCodeOf(response)).toBe('BAD_REQUEST');
   });
 
   it('refuses a key belonging to another tenant', async () => {
