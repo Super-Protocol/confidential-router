@@ -3,9 +3,13 @@ import { API_ORIGIN, AUTH_CALLBACK_URL } from './env';
 export type SocialProvider = 'github' | 'google';
 
 export class AuthRequestError extends Error {
-  constructor(message: string) {
+  /** HTTP status of the failed response, when there was one to read. */
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'AuthRequestError';
+    this.status = status;
   }
 }
 
@@ -31,7 +35,7 @@ async function postToAuth(path: string, body: unknown): Promise<unknown> {
       .json()
       .then((body: { message?: unknown }) => (typeof body?.message === 'string' ? body.message : null))
       .catch(() => null);
-    throw new AuthRequestError(detail ?? 'Sign-in failed. Please try again.');
+    throw new AuthRequestError(detail ?? 'Sign-in failed. Please try again.', response.status);
   }
 
   return response.json().catch(() => ({}));
@@ -57,6 +61,18 @@ export async function signInWithProvider(provider: SocialProvider): Promise<void
 /** Mails a magic link. Resolves once the mail is accepted — never with a session. */
 export async function signInWithMagicLink(email: string): Promise<void> {
   await postToAuth('/sign-in/magic-link', { email, callbackURL: AUTH_CALLBACK_URL });
+}
+
+/**
+ * Trades the deployment's bootstrap token for the first account and a session.
+ *
+ * Only reachable while `signInOptions.bootstrap` is true: the router registers
+ * the endpoint at all only when a token is configured, and answers 404 once any
+ * user exists. Nothing is returned — the session arrives as a cookie, exactly
+ * as it does from a magic link.
+ */
+export async function signInWithBootstrapToken(token: string): Promise<void> {
+  await postToAuth('/bootstrap', { token });
 }
 
 export async function signOut(): Promise<void> {

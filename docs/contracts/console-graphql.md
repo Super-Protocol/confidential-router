@@ -216,6 +216,12 @@ SUP-75 deltas above, these are the differences between this document's outline a
   to advertise its catalogue and its prices before anyone signs up. A signed-in caller gets their own
   `tokensRouted30d` on the same query; an anonymous one gets `0`, because there is no workspace to
   attribute usage to.
+- **`signInOptions`** — new (SUP-95), and public, like `models`. Four booleans saying which sign-in paths
+  this deployment offers: `bootstrap`, `github`, `google`, `magicLink`. The console asks before it has a
+  session, so it can render only the paths that can work — a deployment with no OAuth app and no mailer
+  would otherwise show two buttons and a form that all end in an error. `bootstrap` is the only one that
+  is not configuration alone: it is true while `auth.bootstrapToken` is set *and* the deployment has no
+  user, which is the window `POST /auth/bootstrap` is open in. The token itself is never reported.
 - **`gatekeeperRelease`** — new, and the Gatekeeper screen's only query. Version, notes URL, checksum
   manifest and one `GatekeeperDownload` per platform, read from GitHub Releases and cached
   (`gatekeeper.*` in the router config). `stale: true` means GitHub could not be reached and these are the
@@ -245,7 +251,8 @@ its stack trace.
 
 ### Screen → operations, as shipped
 
-**Overview** `activitySummary + endpoints + creditBalance`; **Models** `models` (public) `+ endpoints`;
+**Sign in** `signInOptions` (public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
+`models` (public) `+ endpoints`;
 **Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` / `evidenceDigestHistory` +
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
 `activitySummary` / `activitySeries` / `topKeys` / `usageByModel`; **Logs** `generations` (+ the CSV

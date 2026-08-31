@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { CONSOLE_OPERATIONS } from './evidence-fixtures';
-import { signIn } from './fixtures';
+import { mockGraphQL, signIn } from './fixtures';
 
 /**
  * The acceptance criterion for this work is "Lighthouse a11y ≥ 90 on the shell".
@@ -26,6 +26,25 @@ async function auditPage(page: import('@playwright/test').Page) {
   }));
 }
 
+/** The sign-in screen renders from this, so an audit of it has to say what it is. */
+async function signInOptions(
+  page: import('@playwright/test').Page,
+  offers: Partial<{ bootstrap: boolean; github: boolean; google: boolean; magicLink: boolean }>,
+): Promise<void> {
+  await mockGraphQL(page, {
+    SignInOptions: {
+      signInOptions: {
+        __typename: 'SignInOptions',
+        bootstrap: false,
+        github: true,
+        google: true,
+        magicLink: false,
+        ...offers,
+      },
+    },
+  });
+}
+
 test.describe('accessibility', () => {
   for (const theme of ['dark', 'light'] as const) {
     test(`the console shell has no serious axe violations in ${theme} mode`, async ({ page, baseURL }) => {
@@ -41,8 +60,22 @@ test.describe('accessibility', () => {
   }
 
   test('the sign-in screen has no serious axe violations', async ({ page }) => {
+    await signInOptions(page, { magicLink: true });
+
     await page.goto('/login');
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
+
+  test('the bootstrap screen has no serious axe violations', async ({ page }) => {
+    // The one screen a marketplace deployment shows before anything else exists.
+    await signInOptions(page, { bootstrap: true });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Have a bootstrap token?' }).click();
+    await expect(page.getByLabel('Bootstrap token')).toBeVisible();
 
     const violations = await auditPage(page);
     expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);

@@ -291,7 +291,8 @@
           "properties": {
             "mailer": {
               "type": "string",
-              "enum": ["console", "smtp", "resend"]
+              "enum": ["none", "console", "smtp", "resend"],
+              "description": "`none` disables magic-link sign-in, for a deployment with no mail provider."
             },
             "from": {
               "type": "string",
@@ -309,6 +310,16 @@
           "$ref": "#/$defs/duration",
           "default": "720h",
           "description": "Rolling session lifetime (ADR-004 \u00a74)."
+        },
+        "bootstrapToken": {
+          "type": "string",
+          "description": "While this is set and no user exists, POST /auth/bootstrap trades it for the first account and a session. Blank counts as unset; otherwise at least 16 characters."
+        },
+        "bootstrapEmail": {
+          "type": "string",
+          "format": "email",
+          "default": "admin@confidential-router.local",
+          "description": "The address the bootstrapped first account is created under."
         }
       }
     },
