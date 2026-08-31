@@ -197,14 +197,24 @@ auth:
 
 While that token is set **and** the `user` table is still empty, the console's
 sign-in screen offers "Have a bootstrap token?", and posting the token creates
-the first account, its personal workspace and a session:
+the first account, its personal workspace and a session.
+
+By hand, against **the API's own origin** — `auth.baseUrl`, where `/auth/*` is
+mounted. That is usually not the console's hostname: a deployment that puts the
+console and the API on separate names (as the marketplace listing does, with
+`consoleHostname` and `apiHostname`) has to use the latter here.
 
 ```bash
-curl -i -X POST https://console.example.com/auth/bootstrap \
+curl -i -X POST https://api.example.com/auth/bootstrap \
   -H 'content-type: application/json' \
+  -H 'origin: https://console.example.com' \
   -d '{"token":"…"}'
 # 200, Set-Cookie: cr_session=…
 ```
+
+The `origin` header is only needed when you send one at all — a browser always
+does, and it must be listed in `server.validClientOrigins` or the request is
+refused with 403.
 
 What the endpoint promises:
 

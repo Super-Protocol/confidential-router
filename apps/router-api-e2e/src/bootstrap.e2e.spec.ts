@@ -11,6 +11,13 @@
  * The stack is `startRouterProcess`, not `startRouterStack`: the latter signs a
  * user in as part of coming up, which is precisely the state that closes this
  * endpoint.
+ *
+ * **Four requests reach `/auth/bootstrap` below, and the plugin's own rate limit
+ * is five a minute.** Better Auth only enables rate limiting in production and
+ * this process runs as `development`, so nothing is throttled today — but a
+ * fifth case, or a run against a production-mode build, would start answering
+ * 429 and the failure would look nothing like a rate limit. Add cases to the
+ * in-process suite instead, or raise the window here deliberately.
  */
 import {
   CONSOLE_ORIGIN,
