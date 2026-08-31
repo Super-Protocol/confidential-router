@@ -26,11 +26,34 @@ sign-in screen.
 | `/`, `/models`                              | SUP-78  | built |
 | `/keys`, `/gatekeeper`                      | SUP-79  | built |
 | `/activity`, `/logs`                        | SUP-80  | placeholder |
-| `/credits`, `/profile`, `/preferences`      | SUP-81  | placeholder |
+| `/credits`, `/profile`, `/preferences`      | SUP-81  | built |
 | `/login`, `/dev/components`                 | SUP-77  | built |
 
 A placeholder screen names the issue that builds it. The shell, tokens, data
 layer and tests they sit on are complete.
+
+### Account screens (SUP-81)
+
+`/credits`, `/profile` and `/preferences` are the account group.
+
+- **Credits** — `creditBalance` + `creditTransactions`, top-ups through Stripe
+  Checkout (`createCheckout`) and automatic top-up (`setAutoTopUp`). The screen
+  never writes credit: a checkout returns to `/credits?topup=success|cancelled`,
+  which only refetches, because the money is real when Stripe's webhook says so.
+  There is no crypto option — ADR-005 closed that.
+- **Profile** — `me` plus a week of `activitySeries`, `usageByModel` and the
+  `signedResponseDays` heatmap. A square means the endpoint had published
+  evidence when the generation was served: publication, never a verdict
+  (ADR-002).
+- **Preferences** — `me { preferences }` and `updatePreferences`, plus
+  `exportEvidence`, which mints a signed 15-minute link to the auditor's zip.
+  Every control writes on change; there is no Save button, because
+  `updatePreferences` updates only the settings it is given.
+
+Two mutation results carry no id (`CreditBalance`, `UserPreferences`), so Apollo
+cannot normalise them; both call sites write the result into the screen's query
+with `cache.updateQuery`. Without that a saved setting snaps back to the cached
+value on the next render.
 
 `src/components/navigation.ts` is the single source of truth for the nine
 screens: the sidebar, the breadcrumb trail and the placeholder copy all read it.

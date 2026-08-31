@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from '@confidential-router/ui/components/select';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
+import { Switch } from '@confidential-router/ui/components/switch';
 import {
   Table,
   TableBody,
@@ -201,6 +202,10 @@ export function ComponentGallery() {
                   <SelectItem value="30d">Last 30 days</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="gallery-archive">Archive quotes</Label>
+              <Switch id="gallery-archive" defaultChecked />
             </div>
           </div>
         </Section>

@@ -1,14 +1,8 @@
 import type { Metadata } from 'next';
-import { ScreenPlaceholder } from '../../../components/screen-placeholder';
+import { PreferencesScreen } from '../../../components/preferences/preferences-screen';
 
 export const metadata: Metadata = { title: 'Preferences' };
 
 export default function PreferencesPage() {
-  return (
-    <ScreenPlaceholder
-      title="Preferences"
-      description="Evidence archiving and retention, notifications and receipts."
-      issue="SUP-81"
-    />
-  );
+  return <PreferencesScreen />;
 }
