@@ -26,13 +26,19 @@ sign-in screen.
 | `/`                                         | SUP-78 (metrics) |
 | `/models`                                   | SUP-78  |
 | `/keys`, `/gatekeeper`                      | SUP-79  |
-| `/activity`, `/logs`                        | SUP-80  |
+| `/activity`, `/logs`                        | SUP-80 (built) |
 | `/credits`, `/profile`, `/preferences`      | SUP-81  |
-| `/login`                                    | this issue |
-| `/dev/components`                           | this issue |
+| `/login`                                    | SUP-77  |
+| `/dev/components`                           | SUP-77  |
 
-The screens above render a placeholder naming the issue that builds them. The
-shell, tokens, data layer and tests they sit on are complete.
+Screens still marked with an issue render a placeholder naming it. The shell,
+tokens, data layer and tests they sit on are complete.
+
+`/activity` and `/logs` are built (SUP-80). Both hang off one 24h / 7d / 30d
+range toggle (`src/lib/ranges.ts`); Activity draws `activitySummary`,
+`activitySeries`, `topKeys` and a fixed-30-day `usageByModel`, Logs paginates
+`generations` by cursor and links the CSV export, which is a REST endpoint on
+router-api rather than a GraphQL field.
 
 `src/components/navigation.ts` is the single source of truth for the nine
 screens: the sidebar, the breadcrumb trail and the placeholder copy all read it.
