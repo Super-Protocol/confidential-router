@@ -34,7 +34,10 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: 'on-first-retry',
-    video: 'retain-on-failure',
+    // A failure keeps its video; `PLAYWRIGHT_VIDEO=on` records every test, which
+    // is how the console flows get recorded for a review (Team Workflow §4)
+    // without editing this file.
+    video: process.env.PLAYWRIGHT_VIDEO === 'on' ? 'on' : 'retain-on-failure',
   },
   projects: [
     {

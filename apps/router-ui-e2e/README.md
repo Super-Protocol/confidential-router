@@ -44,6 +44,16 @@ than taking a free port like every other suite here. `ROUTER_API_E2E_PORT`
 overrides it if something else already owns 3000, but the console then has to be
 rebuilt against the same value.
 
+## Recording the flows
+
+A failing test keeps its video and, on a retry, its trace. To record every test
+— which is what a review of the console flows wants — set `PLAYWRIGHT_VIDEO`:
+
+```bash
+PLAYWRIGHT_VIDEO=on pnpm exec playwright test --project=cross-app
+# → test-output/playwright/router-ui/<test>/video.webm
+```
+
 ## Both
 
 Run against a production build (`next start`), not `next dev`: the proxy and the
