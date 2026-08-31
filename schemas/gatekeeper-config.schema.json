@@ -65,6 +65,30 @@
           "$ref": "#/$defs/listenAddr"
         }
       }
+    },
+    "admin": {
+      "description": "Optional local status API of a running gatekeeper (/healthz, /status, /endpoints, /verdicts, /metrics). It answers with verdicts, so it may only bind a unix socket or a loopback address.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listen"],
+      "properties": {
+        "listen": {
+          "$ref": "#/$defs/adminListenAddr"
+        }
+      }
+    },
+    "audit": {
+      "description": "Optional audit log: one JSON object per line, appended, recording every verdict and every blocked request. Request and response bodies are never written to it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the JSON-lines audit log (relative to the config file). Created if missing, appended to otherwise."
+        }
+      }
     }
   },
   "$defs": {
@@ -82,6 +106,11 @@
       "type": "string",
       "pattern": "^([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\]):[0-9]{1,5}$",
       "description": "host:port to bind locally, e.g. 127.0.0.1:8443."
+    },
+    "adminListenAddr": {
+      "type": "string",
+      "pattern": "^(unix:.+|(localhost|127(\\.[0-9]{1,3}){3}|\\[::1\\]):[0-9]{1,5})$",
+      "description": "unix:<path>, or a loopback host:port such as 127.0.0.1:9465. The admin API exposes verdicts and is local-only."
     },
     "evidenceDigest": {
       "type": "string",
