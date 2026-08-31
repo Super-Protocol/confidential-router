@@ -63,6 +63,12 @@ graphql:
   path: /graphql
   introspection: true
 
+# The Gatekeeper screen's download links, read from GitHub Releases. Nothing is
+# fetched until the console asks; set a token if the anonymous rate limit bites.
+gatekeeper:
+  repo: Super-Protocol/confidential-router
+  cacheTtl: 15m
+
 swagger:
   enabled: true
   path: docs
