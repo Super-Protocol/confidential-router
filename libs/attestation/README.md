@@ -90,6 +90,19 @@ alike — through `@noble/curves` on every runtime. Behaviour is then identical
 everywhere, which is what a conformance-tested verifier needs; `valid-ec-deployment` in
 the conformance suite covers it. The RSA path is unchanged and stays on Web Crypto.
 
+That verification is called with **`lowS: false`**. `(r, s)` and `(r, n − s)` are both
+valid ECDSA signatures over the same message, and neither RFC 7515 nor X.509 constrains
+which half a producer emits — OpenSSL, which does not normalise, emits the high one
+about half the time. noble's `secp256k1` object is built with `lowS: true` and its
+`verify` rejects high-S by default, so leaving that default in place would deny roughly
+half of all genuine K-256 bundles while the Go verifier (dcrd, which enforces low-S only
+when *signing*) accepted them — an implementation split on the verdict itself. The
+`valid-ec-deployment-high-s` and `valid-ec-chain-high-s` vectors pin both sides.
+
+Low-S is a transaction-malleability defence, and nothing here is a transaction: a bundle
+is bound by its `evidenceDigest` and its channel binding, never by the bytes of a
+signature over it.
+
 Consumers must import this package statically (no lazy `import()` splits) so the
 secp256k1 implementation is always present.
 
