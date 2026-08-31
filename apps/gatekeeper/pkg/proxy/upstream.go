@@ -98,13 +98,25 @@ func newPool(hostname string, port int, dial DialFunc) *pool {
 // old one are closed immediately, in flight or not: they are no longer covered
 // by a verdict.
 func (p *pool) setPin(pin string) {
+	// The flip and the sweep happen under one lock hold, so that a connection
+	// admitted against the *new* pin — a handshake that finished after the flip
+	// — cannot be swept by the flip that preceded it. The closing itself is
+	// done outside the lock: Close calls back into [pool.forget].
 	p.mu.Lock()
 	changed := p.pin != pin
 	p.pin = pin
-	p.mu.Unlock()
+	var stale []net.Conn
 	if changed {
-		p.closeAll()
+		stale = p.takeLocked()
 	}
+	p.mu.Unlock()
+	if !changed {
+		return
+	}
+	for _, conn := range stale {
+		_ = conn.Close()
+	}
+	p.transport.CloseIdleConnections()
 }
 
 // closeAll drops every connection the pool holds. It is what a verdict flip
@@ -122,6 +134,11 @@ func (p *pool) closeAll() {
 func (p *pool) take() []net.Conn {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.takeLocked()
+}
+
+// takeLocked is take for a caller that already holds the lock.
+func (p *pool) takeLocked() []net.Conn {
 	out := make([]net.Conn, 0, len(p.conns))
 	for conn := range p.conns {
 		out = append(out, conn)
@@ -181,11 +198,15 @@ func (p *pool) dialTLS(ctx context.Context, network, addr string) (net.Conn, err
 
 	tracked := &trackedConn{Conn: conn, pool: p}
 	p.mu.Lock()
-	// A pin that changed during the handshake invalidates this connection
-	// before it ever carries a request. The new pin is read into a local under
-	// the lock: reading the field again after unlocking would race with the
-	// setPin this branch exists to catch.
-	if current := p.pin; current != pin {
+	// What decides this connection is the pin in force now, not the one read
+	// before the handshake. A pin that changed mid-handshake and no longer
+	// matches the leaf invalidates the connection before it ever carries a
+	// request; a pin that changed *to* this leaf — the first verdict landing
+	// while the first request is already dialling — attests exactly this
+	// channel, so the connection is kept and tracked under it. The current pin
+	// is read into a local under the lock: reading the field again after
+	// unlocking would race with the setPin this branch exists to catch.
+	if current := p.pin; current != pin && !attestation.FingerprintsEqual(current, observed) {
 		p.mu.Unlock()
 		_ = conn.Close()
 		return nil, &leafMismatchError{Want: current, Got: observed}

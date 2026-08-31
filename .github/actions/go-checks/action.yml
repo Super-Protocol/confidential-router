@@ -1,0 +1,51 @@
+name: Go checks (gatekeeper)
+description: >-
+  vet, race tests, the static CGO_ENABLED=0 build and golangci-lint over
+  apps/gatekeeper. Shared by the PR checks and the release workflow so a release
+  cannot be cut from code the PR gate would have rejected.
+
+# A composite action rather than a reusable workflow on purpose: a reusable
+# workflow renames the check to `<caller job> / <called job>`, and `Go checks
+# (gatekeeper)` is one of the names main's branch protection requires.
+
+inputs:
+  golangci-lint-version:
+    description: >-
+      Must be a build whose own Go is at least the `go` directive in
+      apps/gatekeeper/go.mod; an older one refuses to load the config.
+    required: false
+    default: v2.13.2
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: apps/gatekeeper/go.mod
+        cache-dependency-path: apps/gatekeeper/go.sum
+
+    - name: go vet
+      shell: bash
+      working-directory: apps/gatekeeper
+      run: go vet ./...
+
+    - name: go test
+      shell: bash
+      working-directory: apps/gatekeeper
+      run: go test -race -count=1 ./...
+
+    # The gatekeeper ships as a single static binary, so the build must not
+    # acquire a libc dependency through cgo.
+    - name: go build (CGO_ENABLED=0)
+      shell: bash
+      working-directory: apps/gatekeeper
+      env:
+        CGO_ENABLED: '0'
+      run: go build -o bin/gatekeeper ./cmd/gatekeeper
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: ${{ inputs.golangci-lint-version }}
+        working-directory: apps/gatekeeper

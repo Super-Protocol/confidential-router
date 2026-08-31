@@ -7,6 +7,7 @@ import { BarChart } from '@confidential-router/ui/components/charts/bar-chart';
 import { Heatmap } from '@confidential-router/ui/components/charts/heatmap';
 import { Sparkline } from '@confidential-router/ui/components/charts/sparkline';
 import { StackedBarChart } from '@confidential-router/ui/components/charts/stacked-bar-chart';
+import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
   SelectValue,
 } from '@confidential-router/ui/components/select';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
+import { Switch } from '@confidential-router/ui/components/switch';
 import {
   Table,
   TableBody,
@@ -224,6 +226,10 @@ export function ComponentGallery() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="gallery-archive">Archive quotes</Label>
+              <Switch id="gallery-archive" defaultChecked />
+            </div>
           </div>
         </Section>
 
@@ -257,6 +263,13 @@ export function ComponentGallery() {
             <Button variant="outline" onClick={() => toast.success('Evidence JWS copied')}>
               Show toast
             </Button>
+            <CopyButton
+              value="sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs"
+              label="Copy the evidence digest"
+              variant="outline"
+              showLabel
+            />
+            <CopyButton value="sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs" label="Copy the evidence digest" />
           </div>
         </Section>
 
