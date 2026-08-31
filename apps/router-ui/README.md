@@ -21,21 +21,39 @@ signed-out shell. The route groups exist so the two never share a layout: the
 console layout mounts `SessionProvider`, and there is no session to fetch on the
 sign-in screen.
 
-| Route                                       | Owner   |
-| ------------------------------------------- | ------- |
-| `/`                                         | SUP-78 (metrics) |
-| `/models`                                   | SUP-78  |
-| `/keys`, `/gatekeeper`                      | SUP-79  |
-| `/activity`, `/logs`                        | SUP-80  |
-| `/credits`, `/profile`, `/preferences`      | SUP-81  |
-| `/login`                                    | this issue |
-| `/dev/components`                           | this issue |
+| Route                                       | Owner   | State |
+| ------------------------------------------- | ------- | ----- |
+| `/`, `/models`                              | SUP-78  | built |
+| `/keys`, `/gatekeeper`                      | SUP-79  | built |
+| `/activity`, `/logs`                        | SUP-80  | placeholder |
+| `/credits`, `/profile`, `/preferences`      | SUP-81  | placeholder |
+| `/login`, `/dev/components`                 | SUP-77  | built |
 
-The screens above render a placeholder naming the issue that builds them. The
-shell, tokens, data layer and tests they sit on are complete.
+A placeholder screen names the issue that builds it. The shell, tokens, data
+layer and tests they sit on are complete.
 
 `src/components/navigation.ts` is the single source of truth for the nine
 screens: the sidebar, the breadcrumb trail and the placeholder copy all read it.
+
+## Evidence
+
+`src/components/evidence/` is the one place the console renders what an endpoint
+published, and every screen that shows an endpoint uses it:
+
+- `EvidenceBadge` — the publication state as a badge, and the way into the modal.
+  Give it an `EndpointEvidenceFields` fragment and, where the screen owns a
+  query, an `onRefreshed` that refetches it.
+- `EvidenceModal` — platform, quote format and age, enclave image, measurement
+  registers, the certificate chain, **Copy evidence JWS** and **Fetch fresh
+  quote** (`refreshEvidence`, a re-poll of what the platform publishes).
+- `evidence-state.ts` — the strings for `PUBLISHED` / `STALE` / `NOT_PUBLISHED`.
+
+The vocabulary is fixed by ADR-002: the router publishes evidence and never
+learns whether anyone verified it, so nothing in this directory may say
+*verified*, *valid* or *trusted*. The chain is described as terminating at a
+named root; whether that root is trusted is a fact about the viewer's gatekeeper,
+which this console has never seen. `STALE` is the prototype's "signing key
+rotating" state — a bundle exists but is outside the freshness window.
 
 ## Session handling
 

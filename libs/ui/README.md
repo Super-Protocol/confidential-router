@@ -43,7 +43,12 @@ swarm-cloud when a screen needs it rather than stocking the shelf. Deviations ar
 currently a `brand` button variant and `success`/`warning`/`brand` badge
 variants.
 
-`empty-state`, `error-state` and `theme-provider` are this repository's own.
+`code-block`, `copy-button`, `empty-state`, `error-state` and `theme-provider`
+are this repository's own. `CopyButton` carries a lot of the console: every long
+value it shows — evidence digests, the compact JWS, key prefixes — is truncated
+for display and therefore only useful if the whole thing can be copied. The
+button's own accessible name reports the outcome, including a clipboard the
+browser refused.
 
 ### Charts
 
