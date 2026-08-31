@@ -1,6 +1,9 @@
 const { join } = require('node:path');
 const { NxAppWebpackPlugin } = require('@nx/webpack/app-plugin');
 const { IgnorePlugin } = require('webpack');
+// Shared with `router-api.dockerfile`, which installs exactly this list into the
+// runtime image. See the file for why the two must not drift.
+const { EXTERNAL_AT_RUNTIME } = require('./tools/runtime-deps.cjs');
 
 /**
  * TypeORM, Nest and Apollo all reference drivers and adapters they support but
@@ -40,14 +43,6 @@ const OPTIONAL_AT_RUNTIME = [
   'typeorm-aurora-data-api-driver',
   'utf-8-validate',
 ];
-
-/**
- * `better-sqlite3` ships a compiled `.node` addon that `bindings` locates by
- * walking up from the *calling* file. Bundled, that walk starts in `dist/` and
- * finds nothing, so it stays external and is required from `node_modules` at
- * runtime — which is what the generated `package.json` is there to install.
- */
-const EXTERNAL_AT_RUNTIME = ['better-sqlite3'];
 
 module.exports = {
   output: {

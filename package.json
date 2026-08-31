@@ -23,6 +23,8 @@
     "codegen": "pnpm nx run @confidential-router/router-ui:codegen",
     "dev:up": "docker compose -f docker/docker-compose.dev.yml up -d",
     "dev:down": "docker compose -f docker/docker-compose.dev.yml down",
+    "stack:up": "docker compose -f docker/docker-compose.yml --profile demo up -d --build --wait",
+    "stack:down": "docker compose -f docker/docker-compose.yml --profile demo down -v",
     "graph": "pnpm nx graph",
     "show:projects": "pnpm nx show projects",
     "clean": "pnpm nx reset"
@@ -73,6 +75,7 @@
     "unplugin-swc": "^1.5.11",
     "vite": "^7.1.14",
     "vitest": "^3.2.4",
+    "webpack": "^5.110.1",
     "webpack-cli": "^7.2.3",
     "yaml": "^2.9.0",
     "zod": "^4.5.4"
