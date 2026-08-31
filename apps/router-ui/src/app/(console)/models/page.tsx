@@ -1,14 +1,17 @@
 import type { Metadata } from 'next';
-import { ScreenPlaceholder } from '../../../components/screen-placeholder';
+import { ModelsScreen } from '../../../components/models/models-screen';
+import { PageHeader } from '../../../components/page-header';
 
 export const metadata: Metadata = { title: 'Models' };
 
 export default function ModelsPage() {
   return (
-    <ScreenPlaceholder
-      title="Models"
-      description="Every model this router serves, its endpoint, context window and price."
-      issue="SUP-78"
-    />
+    <>
+      <PageHeader
+        title="Models"
+        description="Open-weight models served from hardware-isolated enclaves. Prices are per 1M tokens, billed from credits."
+      />
+      <ModelsScreen />
+    </>
   );
 }

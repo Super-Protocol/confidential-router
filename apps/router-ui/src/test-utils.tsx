@@ -36,6 +36,22 @@ export interface RenderWithSessionOptions extends Omit<RenderOptions, 'wrapper'>
   mocks?: MockLink.MockedResponse[];
 }
 
+/**
+ * Apollo alone, with no session around it — for components that issue their own
+ * operations but never read the viewer. `SessionProvider` calls `useRouter`,
+ * which throws outside an app-router tree, so wrapping in it would force every
+ * such test to mock `next/navigation` for a provider it does not use.
+ */
+export function renderWithApollo(
+  ui: React.ReactElement,
+  { mocks = [], ...rest }: RenderWithSessionOptions = {},
+): RenderResult {
+  return render(ui, {
+    wrapper: ({ children }) => <MockedProvider mocks={mocks}>{children}</MockedProvider>,
+    ...rest,
+  });
+}
+
 export function renderWithSession(ui: React.ReactElement, options: RenderWithSessionOptions = {}): RenderResult {
   const { mocks = [sessionMock()], ...rest } = options;
 

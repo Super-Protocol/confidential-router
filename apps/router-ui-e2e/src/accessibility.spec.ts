@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { CONSOLE_OPERATIONS } from './evidence-fixtures';
 import { signIn } from './fixtures';
 
 /**
@@ -28,7 +29,7 @@ async function auditPage(page: import('@playwright/test').Page) {
 test.describe('accessibility', () => {
   for (const theme of ['dark', 'light'] as const) {
     test(`the console shell has no serious axe violations in ${theme} mode`, async ({ page, baseURL }) => {
-      await signIn(page, baseURL as string);
+      await signIn(page, baseURL as string, CONSOLE_OPERATIONS);
       await page.addInitScript((value) => window.localStorage.setItem('theme', value), theme);
 
       await page.goto('/');
@@ -56,7 +57,7 @@ test.describe('accessibility', () => {
   });
 
   test('the mobile drawer is reachable and labelled at a phone width', async ({ page, baseURL }) => {
-    await signIn(page, baseURL as string);
+    await signIn(page, baseURL as string, CONSOLE_OPERATIONS);
     await page.setViewportSize({ width: 390, height: 844 });
 
     await page.goto('/');

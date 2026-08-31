@@ -1,15 +1,24 @@
 import { Button } from '@confidential-router/ui/components/button';
-import { EmptyState } from '@confidential-router/ui/components/empty-state';
-import { Construction } from 'lucide-react';
 import Link from 'next/link';
 import { BrandMark } from '../../components/brand-mark';
+import { OverviewScreen } from '../../components/overview/overview-screen';
 import { PageHeader } from '../../components/page-header';
 
+const SHORTCUTS = [
+  { href: '/keys', title: 'API Keys', description: 'Issue keys, scope them to models, cap spend per key.' },
+  { href: '/models', title: 'Models', description: 'What this router serves, from which endpoint, at what price.' },
+  {
+    href: '/logs',
+    title: 'Logs',
+    description: 'Metered generations per key. Prompt content never leaves the enclave.',
+  },
+];
+
 /**
- * The landing screen. Its metrics — spend, requests, tokens, evidence coverage —
- * are built in SUP-78 on top of `activitySummary` and `endpoints`. What is here
- * is the part that belongs to the shell: the product's claim, and the one action
- * that follows from it.
+ * The landing screen: the product's claim, this week's numbers, and the
+ * endpoints behind them. Everything with data in it lives in `OverviewScreen`,
+ * which is a client component because the workspace it is scoped to comes from
+ * the session in the browser.
  */
 export default function OverviewPage() {
   return (
@@ -33,11 +42,20 @@ export default function OverviewPage() {
         </Button>
       </div>
 
-      <EmptyState
-        icon={<Construction className="size-5" aria-hidden="true" />}
-        title="Usage metrics land with SUP-78"
-        description="Spend, requests, tokens and evidence coverage render here once the Overview queries exist."
-      />
+      <OverviewScreen />
+
+      <div className="mt-6 grid gap-3.5 sm:grid-cols-3">
+        {SHORTCUTS.map((shortcut) => (
+          <Link
+            key={shortcut.href}
+            href={shortcut.href}
+            className="rounded-xl border bg-card px-4 py-3.5 text-card-foreground shadow-sm transition-colors hover:border-ring"
+          >
+            <p className="font-medium text-sm">{shortcut.title}</p>
+            <p className="mt-1 text-muted-foreground text-sm leading-relaxed">{shortcut.description}</p>
+          </Link>
+        ))}
+      </div>
     </>
   );
 }
