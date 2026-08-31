@@ -49,7 +49,14 @@ export function verifySecp256k1(signatureBytes: Uint8Array, signedBytes: Uint8Ar
 
   // `prehash: false` (the default) means `messageHash` is consumed as-is rather than
   // hashed again.
-  return secp256k1.verify(signatureBytes, messageHash, publicPoint, { format });
+  //
+  // `lowS: false` because neither RFC 7515 (ES256K) nor X.509 constrains S to the low
+  // half of the group order: (r, s) and (r, n − s) are both valid ECDSA signatures, and
+  // a producer that does not normalise — OpenSSL, for one — emits the high one about
+  // half the time. noble's `secp256k1` is built with `lowS: true`, so leaving the
+  // default in place would reject those bundles while the Go verifier accepts them.
+  // See README, "Deviations from the source".
+  return secp256k1.verify(signatureBytes, messageHash, publicPoint, { format, lowS: false });
 }
 
 /**

@@ -64,6 +64,42 @@ const rawSubtle = peculiar.subtle;
 /** Private scalars of the secp256k1 keys, keyed by the CryptoKey handed to `sign`. */
 const ecScalars = new Map<CryptoKey, Uint8Array>();
 
+/** Order of the secp256k1 group — the modulus S is negated against for the high-S vectors. */
+const SECP256K1_ORDER = secp256k1.Point.Fn.ORDER;
+
+/**
+ * Rewrites a 64-byte r||s signature to its equivalent high-half form (`s → n − s`).
+ *
+ * Both spellings are valid ECDSA signatures over the same message; producers that do
+ * not normalise S emit either. noble always signs low-S, so the high-S conformance
+ * vectors are made by negating after the fact.
+ */
+function toHighS(compact: Uint8Array): Uint8Array {
+  if (compact.length !== 64) throw new Error(`expected a 64-byte compact signature, got ${compact.length}`);
+  const s = BigInt(`0x${Buffer.from(compact.subarray(32)).toString('hex')}`);
+  if (s > SECP256K1_ORDER >> 1n)
+    throw new Error('signature is already high-S; the generator expects noble low-S input');
+  const negated = SECP256K1_ORDER - s;
+  const out = Uint8Array.from(compact);
+  out.set(Buffer.from(negated.toString(16).padStart(64, '0'), 'hex'), 32);
+  return out;
+}
+
+/**
+ * While set, every secp256k1 signature `deterministicSign` produces is negated into its
+ * high-S form. Scoped through `withHighS` so a case opts in explicitly.
+ */
+let emitHighS = false;
+
+async function withHighS<T>(fn: () => Promise<T>): Promise<T> {
+  emitHighS = true;
+  try {
+    return await fn();
+  } finally {
+    emitHighS = false;
+  }
+}
+
 async function deterministicSign(algorithm: unknown, key: CryptoKey, data: BufferSource): Promise<ArrayBuffer> {
   const scalar = ecScalars.get(key);
   if (!scalar) {
@@ -77,7 +113,7 @@ async function deterministicSign(algorithm: unknown, key: CryptoKey, data: Buffe
   // WebCrypto's ECDSA signature format is raw r||s; @peculiar/x509 re-encodes it as
   // the DER SEQUENCE the certificate needs.
   const signature = secp256k1.sign(sha256(toBytes(data)), scalar).toBytes('compact');
-  return toArrayBuffer(signature);
+  return toArrayBuffer(emitHighS ? toHighS(signature) : signature);
 }
 
 const deterministicSubtle = new Proxy(rawSubtle, {
@@ -182,6 +218,8 @@ interface CertSpec {
   notAfter?: Date;
   /** Omitted for a self-signed root. */
   issuer?: IssuedCert;
+  /** Negate the S of the certificate signature (secp256k1 issuers only). */
+  highS?: boolean;
   extensions: Extension[];
 }
 
@@ -217,19 +255,24 @@ async function issue(spec: CertSpec): Promise<IssuedCert> {
     signingAlgorithm,
     extensions: spec.extensions,
   };
-  const cert = spec.issuer
-    ? await X509CertificateGenerator.create({
-        ...common,
-        subject: spec.subject,
-        issuer: spec.issuer.cert.subject,
-        publicKey: spec.keys.publicKey,
-        signingKey: spec.issuer.privateKey,
-      })
-    : await X509CertificateGenerator.createSelfSigned({
-        ...common,
-        name: spec.subject,
-        keys: { privateKey: spec.keys.privateKey, publicKey: spec.keys.publicKey },
-      });
+  if (spec.highS && !ecScalars.has(signingKey)) {
+    throw new Error(`highS was requested for "${spec.subject}" but the issuing key is not secp256k1`);
+  }
+  const generate = () =>
+    spec.issuer
+      ? X509CertificateGenerator.create({
+          ...common,
+          subject: spec.subject,
+          issuer: spec.issuer.cert.subject,
+          publicKey: spec.keys.publicKey,
+          signingKey: spec.issuer.privateKey,
+        })
+      : X509CertificateGenerator.createSelfSigned({
+          ...common,
+          name: spec.subject,
+          keys: { privateKey: spec.keys.privateKey, publicKey: spec.keys.publicKey },
+        });
+  const cert = spec.highS ? await withHighS(generate) : await generate();
   const raw = new Uint8Array(cert.rawData);
   return {
     ...spec.keys,
@@ -318,6 +361,7 @@ function buildPayload(options: PayloadOptions): Record<string, unknown> {
 
 async function signCompactJws(payload: string, alg: 'RS256' | 'ES256K', signer: IssuedCert): Promise<string> {
   if (alg === 'RS256') {
+    if (emitHighS) throw new Error('a high-S signature is meaningless for RS256');
     return new CompactSign(new TextEncoder().encode(payload)).setProtectedHeader({ alg }).sign(signer.privateKey);
   }
   // jose v6 expects the Node-native `secp256k1` namedCurve while @peculiar/webcrypto
@@ -329,7 +373,7 @@ async function signCompactJws(payload: string, alg: 'RS256' | 'ES256K', signer: 
   const payloadB64 = base64UrlEncode(new TextEncoder().encode(payload));
   const signingInput = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
   const signature = secp256k1.sign(sha256(signingInput), scalar).toBytes('compact');
-  return `${headerB64}.${payloadB64}.${base64UrlEncode(signature)}`;
+  return `${headerB64}.${payloadB64}.${base64UrlEncode(emitHighS ? toHighS(signature) : signature)}`;
 }
 
 interface BundleOptions {
@@ -339,6 +383,8 @@ interface BundleOptions {
   /** Defaults to the chain leaf. */
   signer?: IssuedCert;
   alg?: 'RS256' | 'ES256K';
+  /** Negate the S of the ES256K JWS signature. */
+  highSJws?: boolean;
   issuedAt?: string;
   /** Fingerprint embedded in the signed payload. Defaults to the chain leaf's. */
   payloadCertFingerprint?: string;
@@ -361,7 +407,8 @@ async function buildBundle(options: BundleOptions): Promise<Record<string, unkno
     issuedAt: options.issuedAt,
     certFingerprint,
   });
-  const jws = await signCompactJws(JSON.stringify(payload), alg, signer);
+  const signJws = () => signCompactJws(JSON.stringify(payload), alg, signer);
+  const jws = options.highSJws ? await withHighS(signJws) : await signJws();
   const bundle: Record<string, unknown> = {
     version: '1',
     kind,
@@ -433,6 +480,7 @@ const TEE_QUOTE = {
 
 const ROOT_RSA = 'confidential-router-test-root-rsa';
 const ROOT_EC = 'confidential-router-test-root-ec';
+const ROOT_EC_HIGH_S = 'confidential-router-test-root-ec-high-s';
 const ROOT_OTHER = 'other-cloud-root-rsa';
 
 async function main(): Promise<void> {
@@ -503,6 +551,36 @@ async function main(): Promise<void> {
     extensions: leafExtensions(HOSTNAME),
   });
 
+  // The same secp256k1 PKI re-issued with the S of every certificate signature negated
+  // (`n − s`). Both spellings are valid ECDSA; a producer that does not normalise S —
+  // OpenSSL, notably — emits the high one about half the time, so a verifier that
+  // enforces low-S would reject roughly half of all genuine K-256 chains. The key
+  // material is deliberately shared with the low-S chain above: only the encoding of
+  // the signatures differs, which is exactly the property under test.
+  const ecRootHighS = await issue({
+    serial: '24',
+    subject: `CN=${ROOT_EC_HIGH_S}`,
+    keys: keys.ecRoot,
+    highS: true,
+    extensions: caExtensions(),
+  });
+  const ecIntHighS = await issue({
+    serial: '25',
+    subject: 'CN=confidential-router-test-intermediate-ec-high-s',
+    keys: keys.ecInt,
+    issuer: ecRootHighS,
+    highS: true,
+    extensions: caExtensions(0),
+  });
+  const ecLeafHighS = await issue({
+    serial: '26',
+    subject: `CN=${HOSTNAME}`,
+    keys: keys.ecLeaf,
+    issuer: ecIntHighS,
+    highS: true,
+    extensions: leafExtensions(HOSTNAME),
+  });
+
   // The TLS-terminating leaf of the producer-asserted mode is issued by an unrelated
   // CA — in production it is an auto-ssl leaf from a public CA, not the evidence PKI.
   const tlsLeaf = await issue({
@@ -536,6 +614,7 @@ async function main(): Promise<void> {
   const chainA = [leafA, intA, rootA];
   const chainB = [leafB, intB, rootB];
   const chainEc = [ecLeaf, ecInt, ecRoot];
+  const chainEcHighS = [ecLeafHighS, ecIntHighS, ecRootHighS];
 
   // --- Cases -------------------------------------------------------------
   const cases: ConformanceCase[] = [];
@@ -604,6 +683,34 @@ async function main(): Promise<void> {
       matchedRoot: ROOT_EC,
     }),
     body: await buildBundle({ chain: chainEc }),
+  });
+
+  addCase({
+    id: 'valid-ec-deployment-high-s',
+    description:
+      'The ES256K JWS carries the high-half S (n − s) of the same signature. RFC 7515 does not require low-S, so it must verify exactly like valid-ec-deployment.',
+    request: { ...observed(ecLeaf.fingerprint), trustedRoots: [ROOT_EC] },
+    expect: okExpect({
+      kind: 'DeploymentEvidence',
+      payload: buildPayload({ kind: 'DeploymentEvidence', certFingerprint: ecLeaf.fingerprint }),
+      channelBinding: 'observed',
+      matchedRoot: ROOT_EC,
+    }),
+    body: await buildBundle({ chain: chainEc, highSJws: true }),
+  });
+
+  addCase({
+    id: 'valid-ec-chain-high-s',
+    description:
+      'Every K-256 certificate signature in the chain — leaf, intermediate and the root self-signature — is high-S. X.509 does not require low-S either, so the chain must validate.',
+    request: { ...observed(ecLeafHighS.fingerprint), trustedRoots: [ROOT_EC_HIGH_S] },
+    expect: okExpect({
+      kind: 'DeploymentEvidence',
+      payload: buildPayload({ kind: 'DeploymentEvidence', certFingerprint: ecLeafHighS.fingerprint }),
+      channelBinding: 'observed',
+      matchedRoot: ROOT_EC_HIGH_S,
+    }),
+    body: await buildBundle({ chain: chainEcHighS }),
   });
 
   addCase({
@@ -843,6 +950,7 @@ async function main(): Promise<void> {
     roots: [
       { name: ROOT_RSA, fingerprint: rootA.fingerprint, pem: rootA.pem },
       { name: ROOT_EC, fingerprint: ecRoot.fingerprint, pem: ecRoot.pem },
+      { name: ROOT_EC_HIGH_S, fingerprint: ecRootHighS.fingerprint, pem: ecRootHighS.pem },
       { name: ROOT_OTHER, fingerprint: rootB.fingerprint, pem: rootB.pem },
     ],
   });

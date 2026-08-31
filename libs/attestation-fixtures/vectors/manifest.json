@@ -190,6 +190,122 @@
       }
     },
     {
+      "id": "valid-ec-deployment-high-s",
+      "description": "The ES256K JWS carries the high-half S (n − s) of the same signature. RFC 7515 does not require low-S, so it must verify exactly like valid-ec-deployment.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-ec"
+        ],
+        "observedTlsFingerprint": "sha256/kaSfsK_ELJqBEFszox7TLeH2GmtTxfRLQexPcmZOED4",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "DeploymentEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/kaSfsK_ELJqBEFszox7TLeH2GmtTxfRLQexPcmZOED4",
+          "kind": "DeploymentEvidence",
+          "evidenceDigest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+          "evidence": {
+            "version": 2,
+            "resources": [
+              {
+                "kind": "Deployment",
+                "name": "router-api",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "kind": "Deployment",
+                "name": "litellm",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "litellm",
+                    "image": "ghcr.io/berriai/litellm@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-ec"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-ec-deployment-high-s.json"
+      }
+    },
+    {
+      "id": "valid-ec-chain-high-s",
+      "description": "Every K-256 certificate signature in the chain — leaf, intermediate and the root self-signature — is high-S. X.509 does not require low-S either, so the chain must validate.",
+      "request": {
+        "hostname": "router.example.test",
+        "trustedRoots": [
+          "confidential-router-test-root-ec-high-s"
+        ],
+        "observedTlsFingerprint": "sha256/Se8jXZF8g0TUIW9B8vlKqiqFd47GzRmRFfMOB-gOF7M",
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxBundleAge": 86400000
+      },
+      "expect": {
+        "ok": true,
+        "kind": "DeploymentEvidence",
+        "payload": {
+          "version": "1",
+          "hostname": "router.example.test",
+          "issuedAt": "2026-01-15T11:55:00.000Z",
+          "certFingerprint": "sha256/Se8jXZF8g0TUIW9B8vlKqiqFd47GzRmRFfMOB-gOF7M",
+          "kind": "DeploymentEvidence",
+          "evidenceDigest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+          "evidence": {
+            "version": 2,
+            "resources": [
+              {
+                "kind": "Deployment",
+                "name": "router-api",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "router-api",
+                    "image": "ghcr.io/super-protocol/router-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "kind": "Deployment",
+                "name": "litellm",
+                "namespace": "confidential-router",
+                "containers": [
+                  {
+                    "name": "litellm",
+                    "image": "ghcr.io/berriai/litellm@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "channelBinding": "observed",
+        "matchedRoot": "confidential-router-test-root-ec-high-s"
+      },
+      "response": {
+        "status": 200,
+        "bodyFile": "bundles/valid-ec-chain-high-s.json"
+      }
+    },
+    {
       "id": "valid-producer-asserted",
       "description": "No observed fingerprint: the binding falls back to hashing bundle.tlsLeaf, which is an unrelated TLS leaf.",
       "request": {

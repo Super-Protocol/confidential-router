@@ -61,6 +61,12 @@ structure with `encoding/asn1`, delegates RSA and NIST-curve keys to
 noble fallback in swarm-cloud's `crypto-secp256k1.ts`. No cgo; the binary builds
 with `CGO_ENABLED=0`.
 
+dcrd enforces low-S when it *signs* and not when it verifies, so both halves of a
+secp256k1 `S` are accepted here — `(r, s)` and `(r, n − s)` are equally valid
+ECDSA and neither RFC 7515 nor X.509 picks one. That is the behaviour the
+`valid-ec-deployment-high-s` and `valid-ec-chain-high-s` vectors pin; the
+TypeScript verifier has to opt out of noble's low-S default to match.
+
 It is slightly stricter than `crypto/x509` in two places, both of which can only
 *narrow* what is accepted, so no bundle the TypeScript verifier admits is
 rejected here: the outer `signatureAlgorithm` must equal the one inside the

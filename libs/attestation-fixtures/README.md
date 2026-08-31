@@ -95,12 +95,30 @@ loader in `apps/gatekeeper/pkg/config`.
 
 ## Coverage
 
-29 cases: every evidence `kind`, both channel-binding modes, `maxBundleAge` present and
-absent, an RSA/RS256 chain and a secp256k1/ES256K one, and at least three failures per
-verifier stage — HTTP error, non-JSON body, replayed hostname, malformed envelope,
-expired certificate, spliced chain, non-CA intermediate, chain that never reaches a
-self-signed root, untrusted/absent trust anchor, forged and unsupported JWS, stale and
-future-dated payloads, and every way channel binding can fail.
+31 cases: every evidence `kind`, both channel-binding modes, `maxBundleAge` present and
+absent, an RSA/RS256 chain and a secp256k1/ES256K one, both halves of the secp256k1 `S`
+(see below), and at least three failures per verifier stage — HTTP error, non-JSON body,
+replayed hostname, malformed envelope, expired certificate, spliced chain, non-CA
+intermediate, chain that never reaches a self-signed root, untrusted/absent trust
+anchor, forged and unsupported JWS, stale and future-dated payloads, and every way
+channel binding can fail.
+
+### High-S secp256k1 signatures
+
+`(r, s)` and `(r, n − s)` are both valid ECDSA signatures over the same message, and
+neither RFC 7515 (`ES256K`) nor X.509 requires the low-half form. A producer that does
+not normalise S — OpenSSL, notably — emits the high one about half the time, so a
+verifier that rejects it would deny roughly half of all genuine K-256 bundles. Two
+vectors pin the accepting behaviour, kept orthogonal so a failure names the code path:
+
+| Case | High-S where | Everything else |
+| --- | --- | --- |
+| `valid-ec-deployment-high-s` | the ES256K JWS signature | the `confidential-router-test-root-ec` chain, low-S |
+| `valid-ec-chain-high-s` | all three certificate signatures of the `confidential-router-test-root-ec-high-s` chain — leaf, intermediate, root self-signature | the JWS, low-S |
+
+`@noble/curves` signs low-S unconditionally, so the generator negates S after signing;
+the high-S PKI shares its key material with the low-S one on purpose — only the encoding
+of the signatures differs.
 
 ## Regenerating
 
