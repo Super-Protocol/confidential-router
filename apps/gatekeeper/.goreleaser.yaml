@@ -1,0 +1,161 @@
+# GoReleaser configuration for the gatekeeper binary.
+#
+# Run from this directory:
+#
+#   goreleaser build --snapshot --clean     # local cross-compile, no publishing
+#   goreleaser release --snapshot --clean   # + archives and checksums in dist/
+#
+# Both name their output `0.0.0-dev` unless $GATEKEEPER_VERSION says otherwise.
+#
+# Releases are cut by .github/workflows/release-gatekeeper.yml from a
+# `gatekeeper-v<semver>` tag. The prefix exists because this is a monorepo and
+# the router will get its own tags; GoReleaser's own monorepo support (which
+# would strip the prefix for us) is a Pro feature, so the workflow passes the
+# bare semver in $GATEKEEPER_VERSION and every template below uses that instead
+# of `.Version`. Unset — a local snapshot — it falls back to `0.0.0-dev`;
+# GoReleaser loads `env` before it has parsed a tag, so `.Version` is not
+# available here to default to.
+version: 2
+
+project_name: gatekeeper
+
+env:
+  - GATEKEEPER_VERSION={{ envOrDefault "GATEKEEPER_VERSION" "0.0.0-dev" }}
+
+before:
+  hooks:
+    # Tests are the release workflow's first job — repeating them here would
+    # double a release's runtime for no extra signal.
+    - go mod download
+    # Apache-2.0 asks that the licence travel with the binaries. GoReleaser
+    # cannot glob a path above the directory it runs in, so the two workspace
+    # files are copied in first; both copies are gitignored.
+    - cp ../../LICENSE LICENSE
+    - cp ../../NOTICE NOTICE
+
+builds:
+  - id: gatekeeper
+    main: ./cmd/gatekeeper
+    binary: gatekeeper
+    env:
+      # The whole point of the gatekeeper's packaging: one file that runs on a
+      # glibc host, on Alpine's musl, and in a scratch container alike.
+      - CGO_ENABLED=0
+    flags:
+      # Keeps the build machine's paths out of the binary, which is also what
+      # makes two builds of the same commit byte-identical.
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X {{ .ModulePath }}/pkg/version.version={{ .Env.GATEKEEPER_VERSION }}
+      - -X {{ .ModulePath }}/pkg/version.commit={{ .FullCommit }}
+      - -X {{ .ModulePath }}/pkg/version.date={{ .CommitDate }}
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows on ARM is not a platform anyone has asked for yet, and every
+      # extra target is another artifact the install path has to be true for.
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: gatekeeper
+    ids:
+      - gatekeeper
+    # `gatekeeper_0.1.0_linux_amd64.tar.gz`. The console's Gatekeeper screen
+    # classifies assets by these OS/arch tokens
+    # (apps/router-api/src/app/gatekeeper/release-assets.ts), so the separators
+    # and spellings here are a contract, not a preference.
+    name_template: 'gatekeeper_{{ .Env.GATEKEEPER_VERSION }}_{{ .Os }}_{{ .Arch }}'
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - NOTICE
+
+checksum:
+  # install.sh and install.ps1 both verify against this file, so its name is
+  # part of the installer contract too.
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: '{{ .Env.GATEKEEPER_VERSION }}'
+
+changelog:
+  # Conventional commits, grouped by type. `use: git` reads the commit log
+  # rather than GitHub's compare API, so `--snapshot` runs produce notes too.
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]*\))?!?:'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix(\([^)]*\))?!?:'
+      order: 1
+    - title: Performance
+      regexp: '^perf(\([^)]*\))?!?:'
+      order: 2
+    - title: Documentation
+      regexp: '^docs(\([^)]*\))?!?:'
+      order: 3
+    - title: Other
+      order: 99
+  filters:
+    exclude:
+      - '^chore(\([^)]*\))?!?:'
+      - '^ci(\([^)]*\))?!?:'
+      - '^test(\([^)]*\))?!?:'
+      - '^style(\([^)]*\))?!?:'
+      - '^refactor(\([^)]*\))?!?:'
+      - '^Merge '
+
+release:
+  github:
+    owner: Super-Protocol
+    name: confidential-router
+  name_template: 'gatekeeper {{ .Env.GATEKEEPER_VERSION }}'
+  # Published as a draft and flipped by the workflow, which is what decides
+  # between a release and a pre-release: `releases/latest` is what both the
+  # console and install.sh resolve, so a release candidate must never hold it,
+  # not even for the few seconds an upload takes.
+  draft: true
+  header: |
+    ## Install
+
+    macOS and Linux:
+
+    ```sh
+    curl -fsSL https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.sh | sh
+    ```
+
+    Windows (PowerShell):
+
+    ```powershell
+    irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex
+    ```
+
+    Or download an archive below and verify it against `checksums.txt`.
+  footer: |
+    ---
+
+    Every binary is a static `CGO_ENABLED=0` build of
+    `{{ .ModulePath }}` at `{{ .FullCommit }}`.
+
+# Not published yet, deliberately (SUP-64 decision Q7 — GitHub Releases only):
+# TODO(SUP-64): ghcr.io image for `gatekeeper run --headless` in a cluster.
+# TODO(SUP-64): Homebrew tap for `brew install super-protocol/tap/gatekeeper`.
+# TODO(SUP-64): nfpms deb/rpm packages, once a systemd unit ships as a package.
+# TODO(SUP-64): cosign keyless signing + SLSA provenance for the checksums file.

@@ -1,0 +1,24 @@
+{
+  "name": "installer",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "tools/installer",
+  "projectType": "application",
+  "tags": ["type:tooling", "lang:shell"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*"],
+      "options": {
+        "command": "sh tools/installer/install.test.sh"
+      }
+    },
+    "test-distros": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "sh tools/installer/install.docker.sh"
+      }
+    }
+  }
+}
