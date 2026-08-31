@@ -49,7 +49,7 @@ func openDocument(t *testing.T, body string) (*config.Document, string) {
 func TestDocumentAddTrustedEvidenceKeepsComments(t *testing.T) {
 	doc, path := openDocument(t, commentedConfig)
 
-	added, err := doc.AddTrustedEvidence("llama", "sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX8z")
+	added, err := doc.AddTrustedEvidence("llama", "sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX80")
 	if err != nil {
 		t.Fatalf("AddTrustedEvidence: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestDocumentAddTrustedEvidenceKeepsComments(t *testing.T) {
 			t.Errorf("comment %q was lost:\n%s", comment, saved)
 		}
 	}
-	if !strings.Contains(saved, "sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX8z") {
+	if !strings.Contains(saved, "sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX80") {
 		t.Errorf("the new pin is missing:\n%s", saved)
 	}
 	// The literal block scalar of the PEM must survive as a block, not be
@@ -177,7 +177,7 @@ func TestDocumentSaveIsAtomicAndKeepsPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reopened.AddTrustedEvidence("llama", "sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX8z"); err != nil {
+	if _, err := reopened.AddTrustedEvidence("llama", "sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX80"); err != nil {
 		t.Fatal(err)
 	}
 	if err := reopened.Save(); err != nil {

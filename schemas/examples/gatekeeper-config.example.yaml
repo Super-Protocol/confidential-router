@@ -36,7 +36,7 @@ endpoints:
     listen: 127.0.0.1:8444
     upstream: https://qwen25-72b.tee.swarm.cloud
     trustedEvidence:
-      - sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX8z
+      - sha256/pxKq2dS9fLm3nT7vW1yB4cE6gH8jK0mN2pR4sU6wX80
     failMode: open          # explicit opt-in: proxy even without a verdict, warn loudly
     reattestInterval: 1m
 
