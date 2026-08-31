@@ -61,10 +61,15 @@ real deployment has, and the console renders them.
 Neither is published to a registry, and neither belongs anywhere near a
 deployment. They exist so a clone can show the whole pipeline working.
 
-**`mock-litellm`** (`demo/mock-litellm.mjs`) answers the OpenAI-compatible calls
-the router forwards — streaming included — for every model in the catalogue.
-It counts a token as four characters, so the meter moves and the numbers look
-sane; it is not a tokenizer.
+**`mock-litellm`** answers the OpenAI-compatible calls the router forwards —
+streaming included — for every model in the catalogue. It counts a token as four
+characters, so the meter moves and the numbers look sane; it is not a tokenizer.
+
+It is not a copy kept beside this file: the image runs
+[`tools/mock-litellm`](../tools/mock-litellm), the same server the e2e suites
+import in process, straight from its TypeScript sources (Node's type stripping,
+no build step, no dependencies). That is why `demo.dockerfile`'s build context
+is the repository root.
 
 **`evidence-publisher`** (`demo/evidence-publisher.mjs`) serves
 `/<endpoint>/.well-known/swarm-evidence` for each endpoint hostname. The PKI is
@@ -80,6 +85,13 @@ verify this stack end to end:
 ```bash
 curl -O http://localhost:8081/roots/demo-root.pem
 ```
+
+It is deliberately not [`tools/mock-evidence-host`](../tools/mock-evidence-host),
+which answers a different question: that one is a *TLS front* for one router
+host, rooted in the conformance fixtures, and can break what it publishes on
+demand so the deny paths are reachable. This one is plain HTTP, several endpoints
+at once, and exists so the console's evidence screens have something to render on
+a laptop.
 
 ## Read this before borrowing any of it
 

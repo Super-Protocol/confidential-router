@@ -33,6 +33,10 @@ RUN pnpm fetch --frozen-lockfile
 COPY nx.json tsconfig.base.json tsconfig.json biome.json ./
 COPY libs ./libs
 COPY apps ./apps
+# `tools/` is part of the pnpm workspace and of the root tsconfig's project
+# references, so leaving it out makes `--frozen-lockfile` and Nx's sync check
+# both fail. Nothing from it reaches the runner stage.
+COPY tools ./tools
 RUN pnpm install --frozen-lockfile --offline
 
 ARG NEXT_PUBLIC_API_ORIGIN=http://localhost:3000

@@ -17,6 +17,15 @@
     },
     {
       "path": "./libs/types"
+    },
+    {
+      "path": "./tools/demo"
+    },
+    {
+      "path": "./tools/mock-evidence-host"
+    },
+    {
+      "path": "./tools/mock-litellm"
     }
   ]
 }

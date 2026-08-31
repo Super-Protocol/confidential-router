@@ -265,6 +265,21 @@ importers:
         specifier: ^7.8.0
         version: 7.8.0(undici@8.10.0)(ws@8.21.3)(zod@4.5.4)
 
+  apps/router-api-e2e:
+    devDependencies:
+      '@confidential-router/demo':
+        specifier: workspace:*
+        version: link:../../tools/demo
+      '@confidential-router/mock-evidence-host':
+        specifier: workspace:*
+        version: link:../../tools/mock-evidence-host
+      '@confidential-router/mock-litellm':
+        specifier: workspace:*
+        version: link:../../tools/mock-litellm
+      openai:
+        specifier: ^7.8.0
+        version: 7.8.0(undici@8.10.0)(ws@8.21.3)(zod@4.5.4)
+
   apps/router-ui:
     dependencies:
       '@apollo/client':
@@ -308,7 +323,11 @@ importers:
         specifier: ^4.3.3
         version: 4.3.3
 
-  apps/router-ui-e2e: {}
+  apps/router-ui-e2e:
+    devDependencies:
+      '@confidential-router/demo':
+        specifier: workspace:*
+        version: link:../../tools/demo
 
   libs/attestation:
     dependencies:
@@ -436,6 +455,33 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+
+  tools/demo:
+    dependencies:
+      '@confidential-router/mock-evidence-host':
+        specifier: workspace:*
+        version: link:../mock-evidence-host
+      '@confidential-router/mock-litellm':
+        specifier: workspace:*
+        version: link:../mock-litellm
+      openai:
+        specifier: ^7.8.0
+        version: 7.8.0(undici@8.10.0)(ws@8.21.3)(zod@4.5.4)
+
+  tools/mock-evidence-host:
+    dependencies:
+      '@confidential-router/attestation-fixtures':
+        specifier: workspace:*
+        version: link:../../libs/attestation-fixtures
+      '@peculiar/x509':
+        specifier: ^1.12.3
+        version: 1.14.3
+    devDependencies:
+      '@confidential-router/attestation':
+        specifier: workspace:*
+        version: link:../../libs/attestation
+
+  tools/mock-litellm: {}
 
 packages:
 

@@ -5,10 +5,8 @@ TEE and publishes signed attestation evidence** — plus the **Gatekeeper**, a
 user-side attesting proxy that verifies that evidence before letting your
 traffic through.
 
-> **Status: early.** The workspace, the architecture decision records and the
-> `router-api` foundation (configuration, database, authentication, health) are
-> in place. The OpenAI-compatible gateway, the console and the gatekeeper land
-> incrementally.
+**[Ten-minute quickstart →](./docs/quickstart.md)** · [Gatekeeper](./docs/gatekeeper.md)
+· [Router](./docs/router.md) · [Threat model](./docs/threat-model.md)
 
 ## The one architectural rule
 
@@ -38,28 +36,45 @@ the router.
 
 ```
 apps/
-  router-api/            NestJS — config, TypeORM, auth, health, GraphQL           ✅ foundation
-  router-ui/             Next.js console — app shell, design tokens, auth pages   ✅ scaffolded
-  gatekeeper/            Go — attesting forward proxy: CLI + TUI, embedded OPA/Rego   ✅ scaffolded
-  router-ui-e2e/         Playwright smoke + axe accessibility suite for the console  ✅ scaffolded
-  *-e2e/                 vitest (API) / Go integration tests
+  router-api/            NestJS — OpenAI-compatible /v1, console GraphQL, metering, billing
+  router-ui/             Next.js console — the nine screens of the design
+  gatekeeper/            Go — attesting forward proxy: CLI + TUI, embedded OPA/Rego
+  router-api-e2e/        vitest + supertest against the *built* router as a process
+  router-ui-e2e/         Playwright: per-screen suites (mocked) + cross-app flows (live)
 libs/
-  attestation/           TS verifier of the /.well-known/swarm-evidence contract           ✅ scaffolded
-  attestation-fixtures/  language-neutral conformance vectors shared by the TS and Go verifiers ✅
-  server-common/         config loading (YAML + env + Zod) and structured logging     ✅
-  ui/                    shared React components + design tokens                 ✅ scaffolded
-  types/                 shared TS contracts (API DTOs, config schemas)              ✅ scaffolded
-  nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json ✅
-docker/                  dev + demo compose stacks, and the two demo stand-ins  ✅
-tools/installer/         install.sh / install.ps1 for the gatekeeper + tests    ✅
-.github/workflows/       PR checks and release workflows                        ✅
+  attestation/           TS verifier of the /.well-known/swarm-evidence contract
+  attestation-fixtures/  language-neutral conformance vectors shared by the TS and Go verifiers
+  server-common/         config loading (YAML + env + Zod) and structured logging
+  ui/                    shared React components + design tokens
+  types/                 shared TS contracts (API DTOs, config schemas)
+  nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json
+tools/
+  mock-litellm/          a minimal OpenAI-compatible backend, standing in for LiteLLM
+  mock-evidence-host/    a TLS front that publishes evidence — and can break it on demand
+  demo/                  the end-to-end story: the stack, the gatekeeper, the assertions
+  installer/             install.sh / install.ps1 for the gatekeeper + tests
+docker/                  dev + demo compose stacks
+docs/                    quickstart, gatekeeper, router, threat model, ADRs, contracts
+.github/workflows/       PR checks and release workflows
 ```
-
-Directories without a ✅ are the planned shape, not yet present.
 
 ## Try it
 
-The whole thing in containers — console, API, PostgreSQL, plus a mock model
+The whole story, scripted and checked, in a few seconds:
+
+```bash
+pnpm install
+pnpm demo
+```
+
+It starts the router behind a mock evidence publisher, configures a gatekeeper
+from nothing, pins what the endpoint publishes, sends an OpenAI SDK call through
+it, redeploys the endpoint behind its back, shows the next call refused
+fail-closed with the stage that refused it, then pins the new digest and watches
+traffic resume. [`docs/quickstart.md`](./docs/quickstart.md) walks the same
+sequence by hand.
+
+Or the whole thing in containers — console, API, PostgreSQL, plus a mock model
 backend and a mock evidence publisher — from a clean clone:
 
 ```bash
@@ -121,7 +136,10 @@ pnpm nx run-many -t lint typecheck build test
 pnpm nx run gatekeeper:test         # go test ./...
 pnpm nx run router-api:migrate      # apply pending database migrations
 pnpm ui:dev                         # the console on http://localhost:3001
-pnpm nx run @confidential-router/router-ui-e2e:e2e   # Playwright smoke + axe audit
+pnpm nx run @confidential-router/router-ui-e2e:e2e   # Playwright: screens + cross-app flows
+pnpm nx run @confidential-router/router-api-e2e:e2e  # the built API as a process
+pnpm demo                           # the gatekeeper → router → model story
+pnpm e2e                            # every e2e target
 pnpm nx affected -t lint build test # what CI runs on a PR
 pnpm nx graph
 
@@ -134,7 +152,7 @@ make up                             # the demo stack; make up-core omits the moc
 | Tool           | Version | Notes                                                              |
 | -------------- | ------- | ------------------------------------------------------------------ |
 | Node           | 24      | `.nvmrc`; `engines` allows ≥22.11 so a slightly older LTS still installs |
-| pnpm           | 11      | workspaces: `apps/*`, `libs/*`                                      |
+| pnpm           | 11      | workspaces: `apps/*`, `libs/*`, `tools/*`                            |
 | Nx             | 23      | inference plugins — no hand-written targets for TS projects         |
 | Biome          | 2.5     | formatter + linter; 2-space, width 120, single quotes               |
 | TypeScript     | 5.9     | `strict`, `nodenext`, project references                            |
@@ -151,6 +169,17 @@ This repository is **standalone**: it has no build or runtime dependency on
 [swarm-cloud](https://github.com/Super-Protocol/swarm-cloud). Shared logic is
 ported by copying, with attribution recorded in [`NOTICE`](./NOTICE). Never add
 an `@swarm-cloud/*` dependency here.
+
+## Documentation
+
+| | |
+| --- | --- |
+| [Quickstart](./docs/quickstart.md) | clone → verified generation, in ten minutes |
+| [Gatekeeper](./docs/gatekeeper.md) | configuration, the verdict pipeline, Rego policies |
+| [Router](./docs/router.md) | models, LiteLLM, endpoints, evidence, auth, Stripe |
+| [Threat model](./docs/threat-model.md) | what a verdict does and does not mean |
+| [ADRs](./docs/adr/) | why the architecture is what it is |
+| [Contracts](./docs/contracts/) | `/v1`, GraphQL, the data model, the Rego `input` |
 
 ## Contributing
 

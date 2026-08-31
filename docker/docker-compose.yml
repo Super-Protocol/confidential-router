@@ -128,9 +128,11 @@ services:
     profiles: [demo]
     image: confidential-router/demo:local
     build:
-      context: demo
-      dockerfile: demo.dockerfile
-    command: ['mock-litellm.mjs']
+      # The repository root: the image runs `tools/mock-litellm` itself, not a
+      # copy of it kept beside this file.
+      context: ..
+      dockerfile: docker/demo/demo.dockerfile
+    command: ['mock-litellm/src/main.ts']
     restart: unless-stopped
     # Published so you can curl the backend directly and see what the router
     # forwarded to it.
@@ -147,8 +149,8 @@ services:
     profiles: [demo]
     image: confidential-router/demo:local
     build:
-      context: demo
-      dockerfile: demo.dockerfile
+      context: ..
+      dockerfile: docker/demo/demo.dockerfile
     command: ['evidence-publisher.mjs']
     restart: unless-stopped
     # Published so the demo root CA is reachable:

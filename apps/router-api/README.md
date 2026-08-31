@@ -5,6 +5,10 @@ GraphQL API behind the console. Configuration, persistence, authentication and
 health are the foundation; the metering gateway on top of them is what a client
 actually talks to.
 
+User-facing reference: [`docs/router.md`](../../docs/router.md) — models,
+LiteLLM, endpoints, evidence, auth and Stripe. This file is about building and
+hacking on the service.
+
 ## Quick start
 
 ```bash
@@ -346,3 +350,13 @@ behaviour — streaming, a crash, a 429, an over-long prompt, a dropped connecti
 — is chosen by the `litellmModel` the router forwards, and
 `test/openai-sdk.e2e.spec.ts` drives a running router with the real `openai`
 client to check the "swap one base URL" promise end to end.
+
+All of that runs *in process*, which is the right shape for testing an
+application and cannot show that the built artefact starts, reads its
+configuration file, applies its migrations and answers on a socket.
+[`apps/router-api-e2e`](../router-api-e2e) covers exactly that, against
+`dist/main.js` over real HTTP:
+
+```bash
+pnpm nx run @confidential-router/router-api-e2e:e2e
+```

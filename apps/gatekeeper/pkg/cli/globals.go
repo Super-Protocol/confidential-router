@@ -90,7 +90,17 @@ func (g *globals) pathSource() (path, source string) {
 // every rule including "is this runnable". It is what the commands that act on
 // a whole configuration use.
 func (g *globals) load() (*config.Config, error) {
-	cfg, err := config.Load(config.Options{Environ: g.env.environ(), Overrides: g.overrides})
+	return g.loadWith(false)
+}
+
+// loadEditable is load without the completeness check, for the commands that
+// only inspect a live host. See [config.Options.Editable].
+func (g *globals) loadEditable() (*config.Config, error) {
+	return g.loadWith(true)
+}
+
+func (g *globals) loadWith(editable bool) (*config.Config, error) {
+	cfg, err := config.Load(config.Options{Environ: g.env.environ(), Overrides: g.overrides, Editable: editable})
 	if err != nil {
 		return nil, configError(err, g.path())
 	}
@@ -128,11 +138,17 @@ func configError(err error, path string) error {
 // It is built per command rather than once at startup because it compiles the
 // trust store and the whole policy set, and the commands that never verify
 // anything should not pay for — or fail on — that.
+//
+// The configuration is loaded *editable*: `endpoint trust add --from-upstream`
+// is the command that gives an endpoint its first pin, so it cannot require one
+// to already be there. A missing pin is not silently tolerated — it surfaces
+// where it belongs, as a `policy`-stage denial in the report, which still
+// carries the published digest the user is about to pin.
 func (g *globals) verifier(ctx context.Context) (status.Verifier, error) {
 	if g.env.Verifier != nil {
 		return g.env.Verifier, nil
 	}
-	cfg, err := g.load()
+	cfg, err := g.loadEditable()
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,8 @@
     "lint-fix": "pnpm nx run-many -t lint-fix",
     "typecheck": "pnpm nx run-many -t typecheck",
     "verify": "pnpm nx run-many -t lint typecheck build test",
+    "e2e": "pnpm nx run-many -t e2e",
+    "demo": "pnpm nx run gatekeeper:e2e",
     "format": "pnpm exec biome format --write .",
     "format:check": "pnpm exec biome format .",
     "gatekeeper:build": "pnpm nx run gatekeeper:build",

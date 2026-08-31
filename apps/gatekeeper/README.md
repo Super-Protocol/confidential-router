@@ -26,7 +26,17 @@ pnpm nx run gatekeeper:build   # -> apps/gatekeeper/bin/gatekeeper
 pnpm nx run gatekeeper:test    # -> go test ./...
 pnpm nx run gatekeeper:lint    # -> go vet ./... && golangci-lint run
 pnpm nx run gatekeeper:serve   # -> go run ./cmd/gatekeeper
+pnpm nx run gatekeeper:e2e     # -> the end-to-end demo (`pnpm demo`)
 ```
+
+`gatekeeper:e2e` runs `tools/demo`: this binary against a real router, behind a
+real evidence publisher, with a live digest rotation in the middle — the
+fail-closed behaviour asserted rather than described. The script is
+`tools/demo/src/story.ts`; `docs/quickstart.md` walks the same sequence by hand.
+
+User-facing reference: [`docs/gatekeeper.md`](../../docs/gatekeeper.md) —
+configuration, the verdict pipeline, denials and Rego policies. This file is
+about building and hacking on it.
 
 ## Install
 

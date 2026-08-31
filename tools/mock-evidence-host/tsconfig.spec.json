@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../dist/out-tsc",
+    "module": "NodeNext",
+    "types": ["vitest/globals", "node"],
+    "lib": ["es2022", "dom"]
+  },
+  "include": [
+    "vitest.config.mts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.d.ts"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/attestation/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/attestation-fixtures/tsconfig.lib.json"
+    }
+  ]
+}

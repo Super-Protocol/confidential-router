@@ -33,6 +33,17 @@
         "cwd": "apps/gatekeeper"
       }
     },
+    "e2e": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["build", "@confidential-router/router-api:build"],
+      "options": {
+        "command": "tsx tools/demo/src/main.ts",
+        "env": {
+          "NODE_OPTIONS": "--conditions=@confidential-router/source"
+        }
+      }
+    },
     "lint": {
       "executor": "nx:run-commands",
       "cache": true,

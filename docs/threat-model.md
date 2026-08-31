@@ -3,6 +3,12 @@
 Scope: Confidential Router (router-api, router-ui, LiteLLM + model servers in one Swarm Cloud cluster
 space) and the user-side Gatekeeper. Companion to ADR-002 and ADR-003.
 
+How the pieces this reasons about are configured and run:
+[`gatekeeper.md`](gatekeeper.md) (trusted roots, pins, policies, denials),
+[`router.md`](router.md) (models, endpoints, evidence retrieval, billing), and
+[`quickstart.md`](quickstart.md), which walks T1 — a redeployment behind a pinned
+digest — from a clean clone in ten minutes.
+
 ## Assets
 
 | Asset | Owner | Protection goal |
@@ -84,6 +90,21 @@ handshakes with `InsecureSkipVerify` and relies on channel binding to the publis
 | T10 | Prompt leakage via logs/metrics/errors | Log sanitiser; content-free `Generation`; error bodies never echo input | LiteLLM/model server logging is the operator's config and is inside the pinned snapshot |
 | T11 | Billing manipulation | Ledger append-only with idempotency keys; Stripe webhook signature; prices frozen per generation | — |
 | T12 | Evidence poller as SSRF vector | `evidenceUrl` override is config-only (operator), never user input | — |
+
+## How these are exercised
+
+T1, T2, T4 and T7 are not left as prose. `tools/mock-evidence-host` can rotate the deployment, rotate
+the certificate without re-signing the binding, or re-chain to a root the user never trusted, on
+demand; the suites hold each of them to the stage that must refuse it:
+
+| Threat | Made to happen by | Asserted in |
+| --- | --- | --- |
+| T1 redeploy behind a pin | `rotateDeployment()` | `tools/demo/src/story.ts` (503, `stage: policy`), `tools/mock-evidence-host/src/server.spec.ts` |
+| T2 channel binding broken | `breakChannelBinding()` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: tls-fingerprint`) |
+| T3 stale bundle | `issuedAtSkewMs` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: jws`) |
+| T4 wrong root | `useOtherCloud()` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: untrusted-root`) |
+| T7 empty pins | a fresh `gatekeeper init` | `apps/gatekeeper/pkg/cli` (`config validate`, "never admits") |
+| T10 prompt leakage | — | `apps/router-api` (`Generation` column test, log sanitiser) |
 
 ## Out of scope for v1
 

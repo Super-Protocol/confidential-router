@@ -194,12 +194,17 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       # `nx affected` would skip the suite on a PR that only touches, say, the
-      # gatekeeper — which is the point. The `e2e` target builds the app first.
+      # gatekeeper — which is the point. The `e2e` target builds the console and
+      # the API first; the `cross-app` project runs the console against a live
+      # router-api, so both have to be built.
+      # gatekeeper:e2e and router-api-e2e:e2e belong to the `demo` job below,
+      # which runs them unconditionally; this job owns the browser.
       - name: Run the console e2e suite
         run: |
           pnpm nx affected -t e2e \
             --base="${{ github.event.pull_request.base.sha }}" \
             --head="${{ github.event.pull_request.head.sha }}" \
+            --exclude=gatekeeper,@confidential-router/router-api-e2e \
             --outputStyle=static
 
       - name: Upload the Playwright report
@@ -211,6 +216,48 @@ jobs:
             apps/router-ui-e2e/playwright-report
             test-output/playwright
           retention-days: 7
+
+  # The whole story in one process tree: gatekeeper → mock evidence host →
+  # router-api → mock LiteLLM, with a live digest rotation in the middle. It is
+  # unconditional rather than `nx affected` because it is the only check that
+  # covers the seams *between* the apps, and a PR that breaks one of those
+  # rarely touches every project involved.
+  #
+  # The acceptance criterion for this suite is that it finishes in under ten
+  # minutes; the timeout is the guard, and the demo prints its own wall clock.
+  demo:
+    name: End-to-end demo (gatekeeper → router → model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: apps/gatekeeper/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The built router-api as a process, the OpenAI SDK over real HTTP, and
+      # the router's own /v1, GraphQL and evidence surfaces.
+      - name: router-api e2e
+        run: pnpm nx run @confidential-router/router-api-e2e:e2e --outputStyle=static
+
+      - name: The demo
+        run: pnpm nx run gatekeeper:e2e --outputStyle=static
 
 
   # The two latent bugs this job exists to catch were both real: a package

@@ -27,6 +27,17 @@ type Options struct {
 	Environ []string
 	// Overrides is the command-line layer, the highest-precedence one.
 	Overrides Overrides
+	// Editable validates with [Config.ValidateEditable] instead of
+	// [Config.Validate]: every value is still checked for being well formed,
+	// but a file that is not *finished* — no trusted roots yet, an endpoint
+	// without pins yet — still loads.
+	//
+	// It exists for the commands that only look at a live host: `verify`,
+	// `endpoint discover` and `endpoint trust add --from-upstream`. Those are
+	// how a config gets finished, so requiring a finished config to run them
+	// makes the sequence `gatekeeper init` prints impossible to follow. Nothing
+	// that opens a listener loads this way.
+	Editable bool
 }
 
 // DefaultPath is where the gatekeeper looks when nothing says otherwise:
@@ -88,7 +99,11 @@ func Load(opts Options) (*Config, error) {
 	if err := cfg.applyOverrides(opts.Overrides); err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	validate := cfg.Validate
+	if opts.Editable {
+		validate = cfg.ValidateEditable
+	}
+	if err := validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
