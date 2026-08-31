@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { CONSOLE_OPERATIONS } from './evidence-fixtures';
 import { mockGraphQL, signIn } from './fixtures';
 
 test.describe('sign-in', () => {
@@ -48,7 +49,7 @@ test.describe('sign-in', () => {
   });
 
   test('signs in and lands on Overview', async ({ page, baseURL }) => {
-    await signIn(page, baseURL as string);
+    await signIn(page, baseURL as string, CONSOLE_OPERATIONS);
 
     await page.goto('/login');
 
@@ -61,18 +62,21 @@ test.describe('sign-in', () => {
   });
 
   test('navigates between console screens', async ({ page, baseURL }) => {
-    await signIn(page, baseURL as string);
+    await signIn(page, baseURL as string, CONSOLE_OPERATIONS);
     await page.goto('/');
 
-    await page.getByRole('link', { name: 'API Keys' }).click();
+    // Scoped to the sidebar: the Overview also links to API Keys from its
+    // shortcut cards, and this test is about the navigation landmark.
+    const sidebar = page.getByRole('navigation', { name: 'Console' });
+    await sidebar.getByRole('link', { name: 'API Keys' }).click();
 
     await expect(page).toHaveURL(`${baseURL}/keys`);
     await expect(page.getByRole('heading', { level: 1, name: 'API Keys' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'API Keys' })).toHaveAttribute('aria-current', 'page');
+    await expect(sidebar.getByRole('link', { name: 'API Keys' })).toHaveAttribute('aria-current', 'page');
   });
 
   test('shows an unknown console URL as not found', async ({ page, baseURL }) => {
-    await signIn(page, baseURL as string);
+    await signIn(page, baseURL as string, CONSOLE_OPERATIONS);
 
     await page.goto('/nope');
 

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@conf
 import { BarChart } from '@confidential-router/ui/components/charts/bar-chart';
 import { Heatmap } from '@confidential-router/ui/components/charts/heatmap';
 import { Sparkline } from '@confidential-router/ui/components/charts/sparkline';
+import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import {
   Dialog,
   DialogContent,
@@ -234,6 +235,13 @@ export function ComponentGallery() {
             <Button variant="outline" onClick={() => toast.success('Evidence JWS copied')}>
               Show toast
             </Button>
+            <CopyButton
+              value="sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs"
+              label="Copy the evidence digest"
+              variant="outline"
+              showLabel
+            />
+            <CopyButton value="sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs" label="Copy the evidence digest" />
           </div>
         </Section>
 
