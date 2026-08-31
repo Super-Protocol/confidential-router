@@ -4,6 +4,20 @@ const PORT = Number(process.env.ROUTER_UI_PORT ?? 4300);
 const BASE_URL = process.env.ROUTER_UI_BASE_URL ?? `http://127.0.0.1:${PORT}`;
 
 /**
+ * The port the console was *built* against.
+ *
+ * `NEXT_PUBLIC_*` is inlined by `next build`, so the console cannot be pointed
+ * at another API afterwards — which is why the cross-app project pins the
+ * router here rather than taking a free port like every other suite.
+ * `apps/router-ui/src/lib/env.ts` holds the default this mirrors.
+ */
+const API_PORT = Number(process.env.ROUTER_API_E2E_PORT ?? 3000);
+const API_URL = `http://127.0.0.1:${API_PORT}`;
+
+/** `cross-app` runs against a live stack; every other spec mocks the API. */
+const CROSS_APP = 'cross-app.spec.ts';
+
+/**
  * The suite runs against a production build rather than `next dev`: the proxy
  * (session redirects) and route-group layouts behave the same either way, but a
  * dev server recompiles on first hit and turns a smoke test into a flake.
@@ -22,12 +36,41 @@ export default defineConfig({
     trace: 'on-first-retry',
     video: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
-    command: `pnpm exec next start --port ${PORT} --hostname 127.0.0.1`,
-    cwd: new URL('../router-ui', import.meta.url).pathname,
-    url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      testIgnore: CROSS_APP,
+    },
+    {
+      // Serial, and after the mocked project: it shares one router-api process
+      // and one workspace across its cases, so parallel workers would fight
+      // over the same ledger.
+      name: 'cross-app',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: CROSS_APP,
+      fullyParallel: false,
+      workers: 1,
+    },
+  ],
+  webServer: [
+    {
+      command: `pnpm exec next start --port ${PORT} --hostname 127.0.0.1`,
+      cwd: new URL('../router-ui', import.meta.url).pathname,
+      url: BASE_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      // router-api, mock-litellm and the mock evidence host, behind one command.
+      command: 'pnpm exec tsx tools/demo/src/serve.ts',
+      cwd: new URL('../..', import.meta.url).pathname,
+      env: { NODE_OPTIONS: '--conditions=@confidential-router/source' },
+      url: `${API_URL}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  ],
 });

@@ -223,3 +223,61 @@ func TestPEMFileIsReadRelativeToTheConfig(t *testing.T) {
 		t.Errorf("PEM = %q, want the file contents", got)
 	}
 }
+
+// unfinishedConfig is the state `gatekeeper endpoint add` leaves behind: a
+// well-formed file that is not yet runnable, because the endpoint has no pin.
+// Getting it a pin is what `endpoint trust add --from-upstream` is *for*.
+const unfinishedConfig = `version: 1
+trustedRoots:
+  - name: swarm-cloud-prod
+    pem: |
+      -----BEGIN CERTIFICATE-----
+      MIIBkTCB+w==
+      -----END CERTIFICATE-----
+endpoints:
+  - name: llama
+    listen: 127.0.0.1:8443
+    upstream: https://llama.tee.swarm.cloud
+    trustedEvidence: []
+`
+
+func TestLoadEditableAcceptsAConfigThatIsNotFinishedYet(t *testing.T) {
+	path := writeConfig(t, unfinishedConfig)
+
+	// Without Editable this is the strict load every listener does, and it must
+	// keep refusing: an endpoint with no pins can never admit anything.
+	if _, err := config.Load(config.Options{Path: path, Environ: []string{}}); err == nil {
+		t.Fatal("Load accepted a config with an unpinned endpoint")
+	}
+
+	// With it, the commands that only *inspect* a live host can run. Requiring a
+	// finished config to run them would make the sequence `gatekeeper init`
+	// prints impossible to follow: the endpoint gets its first pin from
+	// `endpoint trust add --from-upstream`, which needs a verifier, which needs
+	// a loaded config. `tools/demo` walks that sequence end to end.
+	cfg, err := config.Load(config.Options{Path: path, Environ: []string{}, Editable: true})
+	if err != nil {
+		t.Fatalf("Load(Editable): %v, want the unfinished file to load", err)
+	}
+	if len(cfg.Endpoints) != 1 || cfg.Endpoints[0].Name != "llama" {
+		t.Fatalf("endpoints = %+v, want the one from the file", cfg.Endpoints)
+	}
+	if len(cfg.Endpoints[0].TrustedEvidence) != 0 {
+		t.Errorf("trustedEvidence = %v, want it left empty", cfg.Endpoints[0].TrustedEvidence)
+	}
+}
+
+func TestLoadEditableStillRejectsAValueThatIsWrong(t *testing.T) {
+	path := writeConfig(t, strings.Replace(unfinishedConfig,
+		"listen: 127.0.0.1:8443", "listen: not-an-address", 1))
+
+	// Relaxing "is it finished" must not relax "is it well formed": a typo in a
+	// listen address is a mistake at any stage of editing.
+	_, err := config.Load(config.Options{Path: path, Environ: []string{}, Editable: true})
+	if err == nil {
+		t.Fatal("Load(Editable) accepted a malformed listen address")
+	}
+	if !strings.Contains(err.Error(), "endpoints[0].listen") {
+		t.Errorf("err = %v, want it to name the offending field", err)
+	}
+}
