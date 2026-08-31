@@ -158,7 +158,10 @@ func (p *pool) dialTLS(ctx context.Context, network, addr string) (net.Conn, err
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"http/1.1"},
 	})
-	if err := conn.HandshakeContext(ctx); err != nil {
+	// dialCtx, not ctx: Transport.TLSHandshakeTimeout does not apply when
+	// DialTLSContext is set, so without this an upstream that accepts a
+	// connection and then says nothing stalls for the client's whole patience.
+	if err := conn.HandshakeContext(dialCtx); err != nil {
 		_ = raw.Close()
 		return nil, err
 	}
@@ -168,22 +171,24 @@ func (p *pool) dialTLS(ctx context.Context, network, addr string) (net.Conn, err
 		_ = conn.Close()
 		return nil, errors.New("the upstream presented no certificate")
 	}
-	if pin != "" {
-		observed := attestation.SHA256Fingerprint(state.PeerCertificates[0].Raw)
-		if !attestation.FingerprintsEqual(pin, observed) {
-			_ = conn.Close()
-			return nil, &leafMismatchError{Want: pin, Got: observed}
-		}
+	// Unconditionally, because the recheck below reports it too and can be
+	// reached from an empty starting pin.
+	observed := attestation.SHA256Fingerprint(state.PeerCertificates[0].Raw)
+	if pin != "" && !attestation.FingerprintsEqual(pin, observed) {
+		_ = conn.Close()
+		return nil, &leafMismatchError{Want: pin, Got: observed}
 	}
 
 	tracked := &trackedConn{Conn: conn, pool: p}
 	p.mu.Lock()
 	// A pin that changed during the handshake invalidates this connection
-	// before it ever carries a request.
-	if p.pin != pin {
+	// before it ever carries a request. The new pin is read into a local under
+	// the lock: reading the field again after unlocking would race with the
+	// setPin this branch exists to catch.
+	if current := p.pin; current != pin {
 		p.mu.Unlock()
 		_ = conn.Close()
-		return nil, &leafMismatchError{Want: p.pin, Got: pin}
+		return nil, &leafMismatchError{Want: current, Got: observed}
 	}
 	p.conns[tracked] = struct{}{}
 	p.mu.Unlock()
