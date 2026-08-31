@@ -14,21 +14,31 @@ import type { TypedDocumentNode as DocumentNode } from '@graphql-typed-document-
  * Learn more about it here: https://the-guild.dev/graphql/codegen/plugins/presets/preset-client#reducing-bundle-size
  */
 type Documents = {
+    "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      isRoot\n    }\n    jws\n  }\n": typeof types.EvidenceSnapshotFieldsFragmentDoc,
+    "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    tee\n    evidenceState\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n": typeof types.EndpointEvidenceFieldsFragmentDoc,
+    "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n": typeof types.RefreshEvidenceDocument,
     "\n  query GatekeeperRelease {\n    gatekeeperRelease {\n      version\n      notesUrl\n      checksumsUrl\n      publishedAt\n      fetchedAt\n      stale\n      downloads {\n        os\n        arch\n        name\n        url\n        sizeBytes\n      }\n    }\n  }\n": typeof types.GatekeeperReleaseDocument,
     "\n  fragment ApiKeyFields on ApiKey {\n    id\n    name\n    prefix\n    modelScope\n    createdAt\n    expiresAt\n    lastUsedAt\n    revokedAt\n    spendLimitMicros\n    spentTotalMicros\n    requestsPerMinute\n    tokensPerMinute\n  }\n": typeof types.ApiKeyFieldsFragmentDoc,
     "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n    }\n  }\n": typeof types.ApiKeysDocument,
     "\n  mutation CreateApiKey($input: CreateApiKeyInput!) {\n    createApiKey(input: $input) {\n      secret\n      key {\n        ...ApiKeyFields\n      }\n    }\n  }\n": typeof types.CreateApiKeyDocument,
     "\n  mutation UpdateApiKey($id: ID!, $input: UpdateApiKeyInput!) {\n    updateApiKey(id: $id, input: $input) {\n      ...ApiKeyFields\n    }\n  }\n": typeof types.UpdateApiKeyDocument,
     "\n  mutation RevokeApiKey($id: ID!) {\n    revokeApiKey(id: $id) {\n      ...ApiKeyFields\n    }\n  }\n": typeof types.RevokeApiKeyDocument,
+    "\n  query ModelCatalogue {\n    models {\n      id\n      slug\n      name\n      contextLength\n      tee\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n    }\n  }\n": typeof types.ModelCatalogueDocument,
+    "\n  query Overview($workspaceId: ID!, $from: DateTime!, $to: DateTime!) {\n    activitySummary(workspaceId: $workspaceId, from: $from, to: $to) {\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n      coveredRequests\n      evidenceCoverage\n    }\n    activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {\n      bucket\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n    }\n    endpoints(workspaceId: $workspaceId) {\n      ...EndpointEvidenceFields\n      tokensRouted30d\n    }\n  }\n": typeof types.OverviewDocument,
     "\n  query Session {\n    me {\n      id\n      email\n      name\n      avatarUrl\n      workspaces {\n        id\n        name\n        slug\n        role\n        balanceMicros\n      }\n    }\n  }\n": typeof types.SessionDocument,
 };
 const documents: Documents = {
+    "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      isRoot\n    }\n    jws\n  }\n": types.EvidenceSnapshotFieldsFragmentDoc,
+    "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    tee\n    evidenceState\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n": types.EndpointEvidenceFieldsFragmentDoc,
+    "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n": types.RefreshEvidenceDocument,
     "\n  query GatekeeperRelease {\n    gatekeeperRelease {\n      version\n      notesUrl\n      checksumsUrl\n      publishedAt\n      fetchedAt\n      stale\n      downloads {\n        os\n        arch\n        name\n        url\n        sizeBytes\n      }\n    }\n  }\n": types.GatekeeperReleaseDocument,
     "\n  fragment ApiKeyFields on ApiKey {\n    id\n    name\n    prefix\n    modelScope\n    createdAt\n    expiresAt\n    lastUsedAt\n    revokedAt\n    spendLimitMicros\n    spentTotalMicros\n    requestsPerMinute\n    tokensPerMinute\n  }\n": types.ApiKeyFieldsFragmentDoc,
     "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n    }\n  }\n": types.ApiKeysDocument,
     "\n  mutation CreateApiKey($input: CreateApiKeyInput!) {\n    createApiKey(input: $input) {\n      secret\n      key {\n        ...ApiKeyFields\n      }\n    }\n  }\n": types.CreateApiKeyDocument,
     "\n  mutation UpdateApiKey($id: ID!, $input: UpdateApiKeyInput!) {\n    updateApiKey(id: $id, input: $input) {\n      ...ApiKeyFields\n    }\n  }\n": types.UpdateApiKeyDocument,
     "\n  mutation RevokeApiKey($id: ID!) {\n    revokeApiKey(id: $id) {\n      ...ApiKeyFields\n    }\n  }\n": types.RevokeApiKeyDocument,
+    "\n  query ModelCatalogue {\n    models {\n      id\n      slug\n      name\n      contextLength\n      tee\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n    }\n  }\n": types.ModelCatalogueDocument,
+    "\n  query Overview($workspaceId: ID!, $from: DateTime!, $to: DateTime!) {\n    activitySummary(workspaceId: $workspaceId, from: $from, to: $to) {\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n      coveredRequests\n      evidenceCoverage\n    }\n    activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {\n      bucket\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n    }\n    endpoints(workspaceId: $workspaceId) {\n      ...EndpointEvidenceFields\n      tokensRouted30d\n    }\n  }\n": types.OverviewDocument,
     "\n  query Session {\n    me {\n      id\n      email\n      name\n      avatarUrl\n      workspaces {\n        id\n        name\n        slug\n        role\n        balanceMicros\n      }\n    }\n  }\n": types.SessionDocument,
 };
 
@@ -46,6 +56,18 @@ const documents: Documents = {
  */
 export function graphql(source: string): unknown;
 
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      isRoot\n    }\n    jws\n  }\n"): (typeof documents)["\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      isRoot\n    }\n    jws\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    tee\n    evidenceState\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n"): (typeof documents)["\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    tee\n    evidenceState\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n"): (typeof documents)["\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
@@ -70,6 +92,14 @@ export function graphql(source: "\n  mutation UpdateApiKey($id: ID!, $input: Upd
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  mutation RevokeApiKey($id: ID!) {\n    revokeApiKey(id: $id) {\n      ...ApiKeyFields\n    }\n  }\n"): (typeof documents)["\n  mutation RevokeApiKey($id: ID!) {\n    revokeApiKey(id: $id) {\n      ...ApiKeyFields\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query ModelCatalogue {\n    models {\n      id\n      slug\n      name\n      contextLength\n      tee\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n    }\n  }\n"): (typeof documents)["\n  query ModelCatalogue {\n    models {\n      id\n      slug\n      name\n      contextLength\n      tee\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query Overview($workspaceId: ID!, $from: DateTime!, $to: DateTime!) {\n    activitySummary(workspaceId: $workspaceId, from: $from, to: $to) {\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n      coveredRequests\n      evidenceCoverage\n    }\n    activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {\n      bucket\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n    }\n    endpoints(workspaceId: $workspaceId) {\n      ...EndpointEvidenceFields\n      tokensRouted30d\n    }\n  }\n"): (typeof documents)["\n  query Overview($workspaceId: ID!, $from: DateTime!, $to: DateTime!) {\n    activitySummary(workspaceId: $workspaceId, from: $from, to: $to) {\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n      coveredRequests\n      evidenceCoverage\n    }\n    activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {\n      bucket\n      spendMicros\n      requests\n      promptTokens\n      completionTokens\n    }\n    endpoints(workspaceId: $workspaceId) {\n      ...EndpointEvidenceFields\n      tokensRouted30d\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
