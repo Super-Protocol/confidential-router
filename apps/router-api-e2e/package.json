@@ -1,0 +1,38 @@
+{
+  "name": "@confidential-router/router-api-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "nx": {
+    "targets": {
+      "e2e": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "dependsOn": [
+          "@confidential-router/router-api:build"
+        ],
+        "options": {
+          "command": "vitest run --config vitest.e2e.config.mts",
+          "cwd": "{projectRoot}"
+        }
+      },
+      "typecheck": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "^build"
+        ],
+        "cache": true,
+        "options": {
+          "command": "tsc -p tsconfig.json --noEmit",
+          "cwd": "{projectRoot}"
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@confidential-router/demo": "workspace:*",
+    "@confidential-router/mock-evidence-host": "workspace:*",
+    "@confidential-router/mock-litellm": "workspace:*",
+    "openai": "^7.8.0"
+  }
+}

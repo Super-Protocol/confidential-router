@@ -18,6 +18,34 @@ export const VECTORS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '
 
 export const EVIDENCE_PATH = '/.well-known/swarm-evidence';
 
+/**
+ * Absolute path of the private keys the vectors were generated from.
+ *
+ * They are test key material and are committed on purpose: a tool that has to
+ * *mint* something rooted at a fixture anchor — `tools/mock-evidence-host`
+ * stands up a live TLS endpoint with fresh validity windows — needs the issuing
+ * keys, not just the certificates the vectors already carry.
+ */
+export const KEYS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'keys');
+
+/** Names of the key pairs in {@link KEYS_DIR}. */
+export type FixtureKeyName =
+  | 'rsa-root-a'
+  | 'rsa-intermediate-a'
+  | 'rsa-leaf-a'
+  | 'rsa-root-b'
+  | 'rsa-intermediate-b'
+  | 'rsa-leaf-b'
+  | 'rsa-tls-leaf'
+  | 'ec-root'
+  | 'ec-intermediate'
+  | 'ec-leaf';
+
+/** Reads one PKCS#8 private key of the fixture PKI, PEM-encoded. */
+export function loadFixtureKey(name: FixtureKeyName): string {
+  return readFileSync(join(KEYS_DIR, `${name}.key.pem`), 'utf8');
+}
+
 export type EvidenceKind = 'DeploymentEvidence' | 'ControlPlaneEvidence' | 'KubernetesControlPlaneEvidence';
 
 export type VerifyStage = 'fetch' | 'cert-chain' | 'untrusted-root' | 'jws' | 'tls-fingerprint';
@@ -135,6 +163,11 @@ export function resolveTrustedRoots(names: string[], roots = loadTrustedRoots())
     if (!root) throw new Error(`conformance case references unknown trusted root "${name}"`);
     return root;
   });
+}
+
+/** Reads one bundle document by file name, without going through a case. */
+export function loadBundle(name: string): Record<string, unknown> {
+  return readVector<Record<string, unknown>>(`bundles/${name}.json`);
 }
 
 /** The raw document a case's evidence endpoint serves, or `undefined` for a literal body. */

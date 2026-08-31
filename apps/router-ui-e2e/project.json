@@ -2,7 +2,10 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "targets": {
     "e2e": {
-      "dependsOn": ["@confidential-router/router-ui:build"]
+      "dependsOn": [
+        "@confidential-router/router-ui:build",
+        "@confidential-router/router-api:build"
+      ]
     },
     "typecheck": {
       "command": "tsc -p tsconfig.json",
