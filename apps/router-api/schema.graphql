@@ -1,0 +1,734 @@
+"""One bucket of an activity series. Quiet buckets are zeroes, not gaps."""
+type ActivityPoint {
+  """Start of the bucket."""
+  bucket: DateTime!
+  completionTokens: Int!
+
+  """Of `requests`, how many the endpoint had published evidence for."""
+  coveredRequests: Int!
+
+  """0–1. Zero when there were no requests."""
+  evidenceCoverage: Float!
+  promptTokens: Int!
+  requests: Int!
+
+  """Spend in micro-USD."""
+  spendMicros: String!
+}
+
+"""Totals for a period."""
+type ActivitySummary {
+  """Null when no request reported a first-token time."""
+  avgTimeToFirstTokenMs: Float
+  avgTokensPerSecond: Float
+  completionTokens: Int!
+
+  """Of `requests`, how many the endpoint had published evidence for."""
+  coveredRequests: Int!
+
+  """0–1. Zero when there were no requests."""
+  evidenceCoverage: Float!
+  promptTokens: Int!
+  requests: Int!
+
+  """Spend in micro-USD."""
+  spendMicros: String!
+}
+
+"""A /v1 credential. The secret itself is returned only at creation."""
+type ApiKey {
+  createdAt: DateTime!
+  expiresAt: DateTime
+  id: ID!
+  lastUsedAt: DateTime
+
+  """Model ids this key may call. Null means every model in the catalogue."""
+  modelScope: [String!]
+  name: String!
+
+  """Leading characters of the key, for display: `sk-tee-v1-4f`."""
+  prefix: String!
+  requestsPerMinute: Int
+  revokedAt: DateTime
+
+  """Spend ceiling in micro-USD."""
+  spendLimitMicros: String
+
+  """Micro-USD metered against this key so far."""
+  spentTotalMicros: String!
+  tokensPerMinute: Int
+}
+
+"""The one and only time the plaintext key is available."""
+type ApiKeyCreated {
+  key: ApiKey!
+
+  """The full key. It is not stored and cannot be shown again."""
+  secret: String!
+}
+
+"""Charge the saved card when the balance falls below the threshold."""
+type AutoTopUp {
+  amountMicros: String
+
+  """False when the configured payment provider cannot charge a saved card."""
+  available: Boolean!
+  enabled: Boolean!
+  lastChargedAt: DateTime
+  thresholdMicros: String
+}
+
+input AutoTopUpInput {
+  """Micro-USD. Required when enabling."""
+  amountMicros: String
+  enabled: Boolean!
+
+  """Micro-USD. Required when enabling."""
+  thresholdMicros: String
+}
+
+"""Granularity of an activity series. Buckets start on UTC boundaries."""
+enum Bucket {
+  DAY
+  HOUR
+}
+
+"""One certificate of the published chain, leaf → root."""
+type CertSummary {
+  """sha256/<base64url> of the certificate DER."""
+  fingerprint: String!
+
+  """True for the terminal certificate of the published chain."""
+  isRoot: Boolean!
+  issuer: String!
+  notAfter: String!
+  subject: String!
+}
+
+"""Where to send the browser to pay."""
+type CheckoutSession {
+  """The provider's own id for the session."""
+  ref: String!
+  url: String!
+}
+
+input CreateApiKeyInput {
+  expiresAt: DateTime
+
+  """Restrict the key to these model ids. Omit for all."""
+  modelIds: [String!]
+  name: String!
+  requestsPerMinute: Int
+  spendLimitMicros: String
+  tokensPerMinute: Int
+  workspaceId: ID!
+}
+
+input CreateCheckoutInput {
+  """Micro-USD, a whole number of cents, at least `minTopUpMicros`."""
+  amountMicros: String!
+  workspaceId: ID!
+}
+
+"""The Credits screen header: balance, admission and top-up settings."""
+type CreditBalance {
+  autoTopUp: AutoTopUp!
+
+  """Micro-USD. Negative after an overdrawing generation."""
+  balanceMicros: String!
+  minTopUpMicros: String!
+
+  """False once `/v1` starts answering 402 insufficient_credits."""
+  spendable: Boolean!
+  workspaceId: ID!
+}
+
+"""One entry of the append-only credits ledger."""
+type CreditTransaction {
+  """Signed micro-USD: credits positive, usage negative."""
+  amountMicros: String!
+  createdAt: DateTime!
+
+  """Human-readable note; carries the receipt link when there is one."""
+  description: String
+  id: ID!
+  kind: CreditTransactionKind!
+
+  """Payment id or generation id, depending on the kind."""
+  reference: String
+}
+
+type CreditTransactionConnection {
+  edges: [CreditTransactionEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type CreditTransactionEdge {
+  cursor: String!
+  node: CreditTransaction!
+}
+
+enum CreditTransactionKind {
+  ADJUSTMENT
+  AUTO_TOPUP
+  PURCHASE
+  REFUND
+  USAGE
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+"""
+A router hostname the platform publishes evidence for. Projected from the router config; never created or edited through this API.
+"""
+type Endpoint {
+  evidenceState: EvidenceState!
+  hostname: String!
+  id: ID!
+
+  """
+  The most recently issued bundle this router has fetched, or null if there is none.
+  """
+  latestEvidence: EvidenceSnapshot
+  name: String!
+
+  """
+  Operator-declared TEE label from the config. Informational, never a claim.
+  """
+  tee: String!
+
+  """
+  Prompt + completion tokens the viewer’s workspace routed here in 30 days.
+  """
+  tokensRouted30d: Int!
+}
+
+"""
+Of the generations served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate.
+"""
+type EvidenceCoverage {
+  covered: Int!
+
+  """covered / requests; 0 when nothing was served."""
+  ratio: Float!
+  requests: Int!
+}
+
+"""
+One distinct digest an endpoint has published, and the period it was current for.
+"""
+type EvidenceDigestChange {
+  evidenceDigest: String!
+  evidenceDigestHex: String!
+
+  """issuedAt of the first bundle carrying this digest."""
+  firstIssuedAt: DateTime!
+
+  """issuedAt of the last one."""
+  lastIssuedAt: DateTime!
+
+  """How many publications carried it."""
+  snapshots: Int!
+}
+
+"""An expiring link to a zip of what the endpoints published."""
+type EvidenceExport {
+  expiresAt: DateTime!
+  url: String!
+}
+
+"""What an endpoint published, and when. Never whether it was valid."""
+type EvidenceSnapshot {
+  """The raw bundle, for export and offline verification."""
+  bundle: JSON!
+
+  """sha256/<base64url> of the TLS leaf the bundle asserts."""
+  certFingerprint: String!
+  chain: [CertSummary!]!
+
+  """Enclave image digests from the canonical snapshot."""
+  containerImages: [String!]!
+  endpointId: ID!
+
+  """
+  sha256/<base64url> of the canonical deployment snapshot — the value users pin.
+  """
+  evidenceDigest: String!
+
+  """The same digest in hex, for tools that expect that form."""
+  evidenceDigestHex: String!
+
+  """When this router last retrieved this publication."""
+  fetchedAt: DateTime!
+  id: ID!
+
+  """When the platform signed it."""
+  issuedAt: DateTime!
+
+  """The compact JWS as published — "Copy evidence JWS"."""
+  jws: String!
+
+  """Empty when the producer published none."""
+  measurements: [Measurement!]!
+
+  """Quote age in seconds — "issued 4 min ago" in the evidence modal."""
+  quoteAgeSeconds: Int!
+
+  """rootCaTeeQuote.format, e.g. intel-tdx-quote-v5."""
+  quoteFormat: String
+}
+
+type EvidenceSnapshotConnection {
+  edges: [EvidenceSnapshotEdge!]!
+  pageInfo: PageInfo!
+}
+
+type EvidenceSnapshotEdge {
+  cursor: String!
+  node: EvidenceSnapshot!
+}
+
+"""
+Whether the platform currently publishes a bundle for this endpoint, and whether it is inside the freshness window. A statement about publication only — the router never reports a verification verdict.
+"""
+enum EvidenceState {
+  NOT_PUBLISHED
+  PUBLISHED
+  STALE
+}
+
+enum GatekeeperArch {
+  AMD64
+  ARM64
+}
+
+"""One published binary of the gatekeeper, for one platform."""
+type GatekeeperDownload {
+  arch: GatekeeperArch!
+  contentType: String!
+
+  """The asset file name, e.g. gatekeeper_0.4.1_linux_amd64.tar.gz."""
+  name: String!
+  os: GatekeeperOs!
+
+  """Size of the asset in bytes; 0 when the release did not say."""
+  sizeBytes: Int!
+
+  """Direct download URL on GitHub."""
+  url: String!
+}
+
+enum GatekeeperOs {
+  LINUX
+  MACOS
+  WINDOWS
+}
+
+"""The gatekeeper build the platform currently publishes."""
+type GatekeeperRelease {
+  """
+  The checksum manifest, so a download can be verified without trusting this API.
+  """
+  checksumsUrl: String
+
+  """One entry per platform, Linux first."""
+  downloads: [GatekeeperDownload!]!
+
+  """When this router last read the release from GitHub."""
+  fetchedAt: DateTime!
+
+  """The release page, for the changelog."""
+  notesUrl: String!
+  publishedAt: DateTime
+
+  """
+  True when GitHub could not be reached and these are the last known links.
+  """
+  stale: Boolean!
+
+  """The release tag, e.g. v0.4.1."""
+  version: String!
+}
+
+"""One metered request. Never any prompt or completion content."""
+type Generation {
+  apiKeyId: ID
+
+  """Null once the key has been deleted."""
+  apiKeyName: String
+  completionTokens: Int!
+
+  """Cost in micro-USD."""
+  costMicros: String!
+  createdAt: DateTime!
+  endpointId: ID!
+  errorCode: String
+  evidenceDigest: String
+
+  """The snapshot the endpoint had published when this was served."""
+  evidenceSnapshotId: ID
+  finishReason: String
+  id: ID!
+  latencyMs: Int!
+  modelId: ID!
+  modelName: String!
+  promptTokens: Int!
+  status: GenerationStatus!
+  streamed: Boolean!
+  timeToFirstTokenMs: Int
+  tokensPerSecond: Float
+}
+
+type GenerationConnection {
+  edges: [GenerationEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type GenerationEdge {
+  cursor: String!
+  node: Generation!
+}
+
+input GenerationFilter {
+  apiKeyIds: [ID!]
+  from: DateTime
+  modelIds: [ID!]
+  statuses: [GenerationStatus!]
+  to: DateTime
+}
+
+input GenerationSort {
+  direction: SortDirection! = DESC
+  field: GenerationSortField! = CREATED_AT
+}
+
+enum GenerationSortField {
+  COST
+  CREATED_AT
+  LATENCY
+  TOTAL_TOKENS
+}
+
+enum GenerationStatus {
+  ABORTED
+  ERROR
+  OK
+}
+
+"""Arbitrary JSON, serialised as-is."""
+scalar JSON
+
+"""What one API key spent in a period."""
+type KeyUsage {
+  """Null once the key has been deleted."""
+  apiKeyId: ID
+  completionTokens: Int!
+
+  """Of `requests`, how many the endpoint had published evidence for."""
+  coveredRequests: Int!
+
+  """0–1. Zero when there were no requests."""
+  evidenceCoverage: Float!
+  name: String!
+  prefix: String
+  promptTokens: Int!
+  requests: Int!
+
+  """Spend in micro-USD."""
+  spendMicros: String!
+}
+
+"""A measurement register the producer published (MRTD, RTMR0-2, GPU…)."""
+type Measurement {
+  name: String!
+  value: String!
+}
+
+"""A model the router can route to, as declared in the router config."""
+type Model {
+  capabilities: [ModelCapability!]!
+  contextLength: Int!
+
+  """The endpoint that serves it — what the user attests."""
+  endpoint: Endpoint!
+
+  """The public model id, e.g. meta/llama-3.3-70b-instruct:tdx."""
+  id: ID!
+  name: String!
+  pricing: Pricing!
+
+  """Same value as `id`; the console calls it the slug."""
+  slug: String!
+
+  """Denormalised from the endpoint so a model list needs no join."""
+  tee: String!
+}
+
+enum ModelCapability {
+  CHAT
+  COMPLETIONS
+  EMBEDDINGS
+}
+
+"""What one model was used for in a period, most expensive first."""
+type ModelUsage {
+  completionTokens: Int!
+
+  """Of `requests`, how many the endpoint had published evidence for."""
+  coveredRequests: Int!
+
+  """0–1. Zero when there were no requests."""
+  evidenceCoverage: Float!
+  modelId: ID!
+  name: String!
+  promptTokens: Int!
+  requests: Int!
+
+  """Spend in micro-USD."""
+  spendMicros: String!
+}
+
+type Mutation {
+  """
+  Creates a key and returns its secret. The secret is never retrievable again.
+  """
+  createApiKey(input: CreateApiKeyInput!): ApiKeyCreated!
+
+  """Starts a top-up. Credit appears once the provider confirms."""
+  createCheckout(input: CreateCheckoutInput!): CheckoutSession!
+
+  """An expiring link to the evidence for a period."""
+  exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
+  refreshEvidence(endpointId: ID!): EvidenceSnapshot
+
+  """Revokes a key. Idempotent; the row is kept for its generations."""
+  revokeApiKey(id: ID!): ApiKey!
+
+  """Turns automatic top-up on or off."""
+  setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
+  updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
+
+  """Updates the settings named; leaves the rest alone."""
+  updatePreferences(input: UpdatePreferencesInput!): UserPreferences!
+
+  """Changes the viewer’s display name."""
+  updateProfile(input: UpdateProfileInput!): User!
+}
+
+type PageInfo {
+  """Cursor of the last edge, to pass as `after`."""
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
+"""
+Frozen at request time onto every generation, so a config change cannot rewrite history.
+"""
+type Pricing {
+  """Micro-USD per 1M completion tokens."""
+  completionPer1m: String!
+
+  """
+  Micro-USD per 1M prompt tokens, as a string so no precision is lost in JSON.
+  """
+  promptPer1m: String!
+}
+
+type Query {
+  """The same totals, bucketed. Quiet buckets are zeroes."""
+  activitySeries(
+    bucket: Bucket!
+
+    """Inclusive start of the range."""
+    from: DateTime!
+
+    """Exclusive end of the range."""
+    to: DateTime!
+    workspaceId: ID!
+  ): [ActivityPoint!]!
+
+  """Spend, traffic, latency and evidence coverage for a period."""
+  activitySummary(
+    """Inclusive start of the range."""
+    from: DateTime!
+
+    """Exclusive end of the range."""
+    to: DateTime!
+    workspaceId: ID!
+  ): ActivitySummary!
+
+  """Every key in the workspace, newest first."""
+  apiKeys(workspaceId: ID!): [ApiKey!]!
+
+  """Balance, admission state and automatic top-up settings."""
+  creditBalance(workspaceId: ID!): CreditBalance!
+
+  """The credits ledger, newest first."""
+  creditTransactions(after: String, first: Int! = 20, workspaceId: ID!): CreditTransactionConnection!
+
+  """
+  The router hostnames the platform publishes evidence for, with what each currently publishes.
+  """
+  endpoints(workspaceId: ID!): [Endpoint!]!
+
+  """
+  Share of the workspace’s generations served while the endpoint had a fresh bundle published.
+  """
+  evidenceCoverage(
+    """Narrow to the generations one endpoint served."""
+    endpointId: ID
+    from: DateTime!
+    to: DateTime!
+    workspaceId: ID!
+  ): EvidenceCoverage!
+
+  """
+  Each distinct digest this endpoint has published — when a pinned value would have had to change.
+  """
+  evidenceDigestHistory(endpointId: ID!, limit: Int! = 20): [EvidenceDigestChange!]!
+
+  """Everything this endpoint has published, newest first."""
+  evidenceSnapshots(after: String, endpointId: ID!, first: Int! = 20): EvidenceSnapshotConnection!
+
+  """
+  The published gatekeeper build, or null when none has been retrieved yet.
+  """
+  gatekeeperRelease: GatekeeperRelease
+
+  """The generation log, filtered, sorted and paginated."""
+  generations(after: String, filter: GenerationFilter, first: Int! = 50, sort: GenerationSort, workspaceId: ID!): GenerationConnection!
+
+  """The signed-in user, or an error when anonymous."""
+  me: User!
+
+  """One routable model, by id. Public."""
+  model(id: ID!): Model
+
+  """Routable models, in config order. Public."""
+  models(
+    """Narrow to one TEE label."""
+    tee: String
+  ): [Model!]!
+
+  """
+  UTC days on which at least one generation was served with published evidence.
+  """
+  signedResponseDays(days: Int! = 365, workspaceId: ID!): [DateTime!]!
+
+  """API keys by spend, highest first."""
+  topKeys(
+    """Inclusive start of the range."""
+    from: DateTime!
+    limit: Int! = 5
+
+    """Exclusive end of the range."""
+    to: DateTime!
+    workspaceId: ID!
+  ): [KeyUsage!]!
+
+  """Models by spend, highest first."""
+  usageByModel(
+    """Inclusive start of the range."""
+    from: DateTime!
+
+    """Omit for every model; set it for "top models by spend"."""
+    limit: Int
+
+    """Exclusive end of the range."""
+    to: DateTime!
+    workspaceId: ID!
+  ): [ModelUsage!]!
+}
+
+input SetAutoTopUpInput {
+  settings: AutoTopUpInput!
+  workspaceId: ID!
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+input UpdateApiKeyInput {
+  expiresAt: DateTime
+
+  """Replaces the scope. An empty list clears it."""
+  modelIds: [String!]
+  name: String
+  requestsPerMinute: Int
+  spendLimitMicros: String
+  tokensPerMinute: Int
+}
+
+input UpdatePreferencesInput {
+  archiveEvidence: Boolean
+  desktopNotifications: Boolean
+  emailReceipts: Boolean
+  evidenceRetentionDays: Int
+  notifyOnMeasurementChange: Boolean
+}
+
+input UpdateProfileInput {
+  """The display name shown in the console. Blank is not a name."""
+  name: String!
+}
+
+"""The signed-in console user."""
+type User {
+  """Profile picture from the OAuth provider, when there is one."""
+  avatarUrl: String
+
+  """When the account was created — “member since” on the Profile screen."""
+  createdAt: DateTime!
+  email: String!
+  id: ID!
+  name: String
+
+  """The viewer’s console settings."""
+  preferences: UserPreferences!
+
+  """Every workspace the viewer is a member of, oldest first."""
+  workspaces: [Workspace!]!
+}
+
+"""Console settings, including the Evidence group."""
+type UserPreferences {
+  """Keep the published bundle and JWS, not just the digests."""
+  archiveEvidence: Boolean!
+  desktopNotifications: Boolean!
+  emailReceipts: Boolean!
+
+  """How long archived bundles are kept, in days. Digests are kept forever."""
+  evidenceRetentionDays: Int!
+
+  """Notify when an endpoint publishes different measurements."""
+  notifyOnMeasurementChange: Boolean!
+}
+
+"""A workspace the viewer belongs to."""
+type Workspace {
+  """
+  Credit balance in micro-USD, as a string so no precision is lost in JSON.
+  """
+  balanceMicros: String!
+  id: ID!
+  name: String!
+
+  """The role the viewer holds here."""
+  role: WorkspaceRole!
+  slug: String!
+}
+
+"""
+An owner may spend the workspace’s credits; a member may only use them.
+"""
+enum WorkspaceRole {
+  MEMBER
+  OWNER
+}

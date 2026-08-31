@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import swc from 'unplugin-swc';
@@ -5,15 +6,26 @@ import { defineConfig } from 'vitest/config';
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(rootDir));
+const require_ = createRequire(import.meta.url);
 
 export default defineConfig({
   root: rootDir,
   resolve: {
     conditions: ['@confidential-router/source'],
-    alias: {
-      '@confidential-router/attestation-fixtures': `${repoRoot}/libs/attestation-fixtures/src/index.ts`,
-      '@confidential-router/server-common': `${repoRoot}/libs/server-common/src/index.ts`,
-    },
+    alias: [
+      {
+        find: /^@confidential-router\/attestation-fixtures$/,
+        replacement: `${repoRoot}/libs/attestation-fixtures/src/index.ts`,
+      },
+      { find: /^@confidential-router\/server-common$/, replacement: `${repoRoot}/libs/server-common/src/index.ts` },
+      // One `graphql` instance, the CommonJS one. Vite would resolve the
+      // package's ESM build for our sources while `@nestjs/graphql` requires its
+      // CommonJS build, and the two fail each other's `instanceof` checks —
+      // "Duplicate \"graphql\" modules cannot be used at the same time". The
+      // webpack build has one copy for the same reason, so this also makes the
+      // tests resolve it the way production does.
+      { find: /^graphql$/, replacement: require_.resolve('graphql') },
+    ],
   },
   plugins: [
     // NestJS and TypeORM both read `design:type` metadata, which esbuild — the

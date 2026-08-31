@@ -169,6 +169,28 @@ const GraphqlSchema = z
   })
   .prefault({});
 
+/**
+ * Where the console's Gatekeeper screen gets its download links.
+ *
+ * The binaries are published by GoReleaser to this repository's GitHub Releases
+ * (ADR-001), so the router only has to read that release and cache it. Nothing
+ * here is a secret: `token` exists purely because the anonymous GitHub API is
+ * rate-limited per source IP, and a busy console behind one NAT would hit it.
+ */
+const GatekeeperSchema = z
+  .strictObject({
+    repo: z
+      .string()
+      .regex(/^[\w.-]+\/[\w.-]+$/, 'must look like "owner/repo"')
+      .prefault('Super-Protocol/confidential-router'),
+    apiBaseUrl: z.url().prefault('https://api.github.com'),
+    /** How long a fetched release is served before the next call is made. */
+    cacheTtl: durationMs('15m'),
+    requestTimeout: durationMs('5s'),
+    token: z.string().optional(),
+  })
+  .prefault({});
+
 const SwaggerSchema = z
   .strictObject({
     enabled: booleanish().prefault(process.env.NODE_ENV !== 'production'),
@@ -189,6 +211,7 @@ export const RouterConfigSchema = z.strictObject({
   billing: BillingSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
+  gatekeeper: GatekeeperSchema,
   swagger: SwaggerSchema,
 });
 

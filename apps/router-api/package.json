@@ -19,6 +19,17 @@
           "parallel": false
         }
       },
+      "schema": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "vitest run src/app/api/graphql/schema.spec.ts",
+          "cwd": "apps/router-api",
+          "env": {
+            "CR_UPDATE_SCHEMA": "1"
+          }
+        }
+      },
       "build": {
         "executor": "nx:run-commands",
         "dependsOn": [

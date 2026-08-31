@@ -56,38 +56,20 @@ Two layers, doing different jobs:
 
 ## GraphQL
 
-`graphql/schema.graphql` is an **interim copy** of the contract in
-`docs/contracts/console-graphql.md`, mechanically adjusted so it is executable
-(the contract's first `extend type Mutation` becomes `type Mutation`). Codegen
-runs against that file rather than a live server, so `codegen` works in CI and
-on a laptop with nothing started.
+Codegen runs against [`apps/router-api/schema.graphql`](../router-api/schema.graphql) — the SDL
+router-api emits from its code-first resolvers, committed and checked on every CI run against both the
+resolver metadata and the schema the running application serves. Typing the client against that file is
+therefore typing it against the deployed server, and `codegen` still works in CI and on a laptop with
+nothing started.
 
-`@graphql-codegen/client-preset` emits typed document nodes into
-`src/generated/`, consumed directly by Apollo Client 4's `useQuery`. Never edit
-that directory by hand — change the `graphql(...)` document next to the
-component and re-run codegen.
+```bash
+pnpm nx run @confidential-router/router-api:schema   # regenerate the SDL, after changing a resolver
+pnpm nx run @confidential-router/router-ui:codegen   # regenerate this client from it
+```
 
-> **Open item for SUP-76.** The contract names the root field `viewer` and the
-> workspace balance `balance`; the router-api foundation branch (SUP-70)
-> currently implements `me` and `balanceMicros`. This app is written against the
-> contract. SUP-76 owns reconciling the two — either the resolvers match the
-> contract, or the contract and this client change together.
+`@graphql-codegen/client-preset` emits typed document nodes into `src/generated/`, consumed directly by
+Apollo Client 4's `useQuery`. Never edit that directory by hand — change the `graphql(...)` document next
+to the component and re-run codegen. CI regenerates it and fails on any diff.
 
-## Theming
-
-Dark by default, light fully supported, plus the four curated accents from the
-prototype. `next-themes` toggles `.dark` on `<html>`; the accent is a
-`data-accent` attribute set before first paint by the inline `accentScript`, so
-the page never paints once in the wrong accent. Both are in the header's
-Appearance menu, and `/dev/components` renders every primitive under whichever
-combination is selected.
-
-## Testing
-
-- `src/**/*.spec.{ts,tsx}` — vitest + Testing Library over the shell, the
-  navigation model, the sign-in form, the proxy redirects and the money
-  formatting.
-- `apps/router-ui-e2e` — Playwright against a production build: the signed-out
-  redirect, both sign-in paths, the signed-in landing, in-console navigation,
-  and an axe audit of the shell (dark and light), the sign-in screen, the
-  gallery and the mobile drawer.
+Money crosses the wire as a `String` of integer micro-USD (`balanceMicros`, `spendMicros`, …), never a
+custom scalar — see `docs/contracts/console-graphql.md`. `src/lib/format.ts` parses it as a `bigint`.

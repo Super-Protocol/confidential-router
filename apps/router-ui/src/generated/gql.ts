@@ -14,10 +14,10 @@ import type { TypedDocumentNode as DocumentNode } from '@graphql-typed-document-
  * Learn more about it here: https://the-guild.dev/graphql/codegen/plugins/presets/preset-client#reducing-bundle-size
  */
 type Documents = {
-    "\n  query Session {\n    viewer {\n      id\n      email\n      name\n      avatarUrl\n    }\n    workspaces {\n      id\n      name\n      slug\n      role\n      balance\n    }\n  }\n": typeof types.SessionDocument,
+    "\n  query Session {\n    me {\n      id\n      email\n      name\n      avatarUrl\n      workspaces {\n        id\n        name\n        slug\n        role\n        balanceMicros\n      }\n    }\n  }\n": typeof types.SessionDocument,
 };
 const documents: Documents = {
-    "\n  query Session {\n    viewer {\n      id\n      email\n      name\n      avatarUrl\n    }\n    workspaces {\n      id\n      name\n      slug\n      role\n      balance\n    }\n  }\n": types.SessionDocument,
+    "\n  query Session {\n    me {\n      id\n      email\n      name\n      avatarUrl\n      workspaces {\n        id\n        name\n        slug\n        role\n        balanceMicros\n      }\n    }\n  }\n": types.SessionDocument,
 };
 
 /**
@@ -37,7 +37,7 @@ export function graphql(source: string): unknown;
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
-export function graphql(source: "\n  query Session {\n    viewer {\n      id\n      email\n      name\n      avatarUrl\n    }\n    workspaces {\n      id\n      name\n      slug\n      role\n      balance\n    }\n  }\n"): (typeof documents)["\n  query Session {\n    viewer {\n      id\n      email\n      name\n      avatarUrl\n    }\n    workspaces {\n      id\n      name\n      slug\n      role\n      balance\n    }\n  }\n"];
+export function graphql(source: "\n  query Session {\n    me {\n      id\n      email\n      name\n      avatarUrl\n      workspaces {\n        id\n        name\n        slug\n        role\n        balanceMicros\n      }\n    }\n  }\n"): (typeof documents)["\n  query Session {\n    me {\n      id\n      email\n      name\n      avatarUrl\n      workspaces {\n        id\n        name\n        slug\n        role\n        balanceMicros\n      }\n    }\n  }\n"];
 
 export function graphql(source: string) {
   return (documents as any)[source] ?? {};

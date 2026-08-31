@@ -1,5 +1,12 @@
 import type { IncomingHttpHeaders } from 'node:http';
-import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+  type OnModuleInit,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { type Auth, type BetterAuthOptions, betterAuth } from 'better-auth';
 import { fromNodeHeaders } from 'better-auth/node';
@@ -89,6 +96,26 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug(`Session lookup failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
+  }
+
+  /**
+   * Renames the signed-in user.
+   *
+   * It goes through Better Auth rather than through TypeORM because Better Auth
+   * owns the `user` table (ADR-004 §2) — `db/entities/user.entity.ts` is a
+   * read-only projection and writing through it would put two owners on one
+   * row. Keeping the write here also keeps the auth boundary at this service,
+   * which is the property ADR-004 §3 asks for.
+   */
+  async updateProfile(headers: IncomingHttpHeaders, changes: { name: string }): Promise<SessionUser> {
+    await this.instance.api.updateUser({ body: changes, headers: fromNodeHeaders(headers) });
+    const user = await this.getSessionUser(headers);
+    if (!user) {
+      // The guard resolved a session moments ago, so this means it expired
+      // mid-request rather than that the update failed silently.
+      throw new UnauthorizedException('Authentication is required.');
+    }
+    return user;
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -4,29 +4,30 @@ import type { Page } from '@playwright/test';
 export const SESSION_COOKIE_NAME = 'cr_session';
 
 export const SESSION_DATA = {
-  viewer: {
+  me: {
     id: '00000000-0000-4000-8000-000000000001',
     email: 'developer@example.com',
     name: 'Dev Eloper',
     avatarUrl: null,
+    workspaces: [
+      {
+        id: '00000000-0000-4000-8000-0000000000a1',
+        name: 'Default Workspace',
+        slug: 'default',
+        role: 'OWNER',
+        balanceMicros: '170650000',
+      },
+    ],
   },
-  workspaces: [
-    {
-      id: '00000000-0000-4000-8000-0000000000a1',
-      name: 'Default Workspace',
-      slug: 'default',
-      role: 'OWNER',
-      balance: '170650000',
-    },
-  ],
 };
 
 /**
  * Answers the console's GraphQL calls from a fixture.
  *
- * router-api is not built yet (SUP-76), and even once it is, a shell smoke test
- * should not depend on a database. Anything the shell does not know how to ask
- * for fails loudly rather than returning an empty object.
+ * A shell smoke test should not depend on a database, so the fixture answers
+ * the `Session` query router-api serves (`apps/router-api/schema.graphql`).
+ * Anything the shell does not know how to ask for fails loudly rather than
+ * returning an empty object.
  */
 export async function mockGraphQL(page: Page, data: unknown = SESSION_DATA): Promise<void> {
   await page.route('**/graphql', async (route) => {

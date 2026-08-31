@@ -17,7 +17,8 @@ and the database lands in `data/router-api.sqlite`. Then:
 
 - `http://localhost:3000/v1/*` — the OpenAI-compatible gateway
 - `http://localhost:3000/health` — liveness plus a real database round-trip
-- `http://localhost:3000/graphql` — Apollo, `{ me { id email } }`
+- `http://localhost:3000/graphql` — Apollo, `{ me { id email } }`; the catalogue (`{ models { id } }`)
+  answers without a session
 - `http://localhost:3000/docs` — Swagger UI for the REST surface
 - `http://localhost:3000/auth/*` — Better Auth
 
@@ -228,6 +229,45 @@ balance falls under `autoTopUpThresholdMicros`, at most once per `billing.autoTo
 written before the charge, so concurrent generations produce one charge and a declining card backs off
 instead of retrying per request.
 
+## The console GraphQL API
+
+Code-first Apollo at `/graphql`, one schema for all nine console screens
+([`docs/contracts/console-graphql.md`](../../docs/contracts/console-graphql.md)). Every operation is
+behind `SessionGuard` and scoped through `WorkspaceScopeService` — except `models` and `model`, which are
+public, because a router that meters LLM traffic has to be able to say what it routes to, and at what
+price, before anyone signs up.
+
+The emitted SDL is committed to [`schema.graphql`](schema.graphql) and is what `apps/router-ui` generates
+its Apollo client from:
+
+```bash
+pnpm nx run @confidential-router/router-api:schema   # rewrite schema.graphql after changing a resolver
+```
+
+Two checks keep the file honest, and both run in CI: `src/app/api/graphql/schema.spec.ts` compares it with
+the schema built from the resolver metadata, and `test/schema.e2e.spec.ts` compares it with the schema the
+booted application serves. `CONSOLE_RESOLVERS` is one array — the module's provider list and the SDL
+builder read the same one — so a resolver cannot reach the running API without reaching the file.
+
+A GraphQL response is `200` whatever happened, so `extensions.code` is the only thing a client can branch
+on. `src/app/api/graphql/errors.ts` is the one place a Nest exception's HTTP status becomes a code:
+`UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `BAD_USER_INPUT`, `PAYMENT_REQUIRED`, `CONFLICT`,
+`TOO_MANY_REQUESTS`, `INTERNAL_SERVER_ERROR`. With `graphql.introspection` off — the production default —
+an unmapped failure loses its message and its stack, because a driver message is exactly the kind of thing
+that leaks a table name.
+
+### Gatekeeper downloads
+
+`gatekeeperRelease` is the Gatekeeper screen's only query: the version, the release notes, the checksum
+manifest and one download per platform, read from GitHub Releases (`gatekeeper.repo`) and cached for
+`gatekeeper.cacheTtl`. It is refreshed lazily when the console asks, never on a timer, and concurrent asks
+share one request. A refresh that fails keeps the last known links and marks them `stale` rather than
+emptying the screen.
+
+It describes an artefact and nothing else. There is no gatekeeper registration, instance list or status
+anywhere in this API: verification happens on the user's machine and this router never learns that it
+happened (ADR-002).
+
 ## Downloads
 
 Two things the console needs are files rather than GraphQL responses:
@@ -259,7 +299,8 @@ src/
     billing/              credits ledger, payment providers, automatic top-up
     preferences/          console settings and the evidence export
     api/health            /health
-    api/graphql           Apollo code-first schema (`me`, keys, catalogue, activity, credits, preferences)
+    gatekeeper/           GitHub release metadata for the console's download screen
+    api/graphql           Apollo code-first schema, its error codes and the committed SDL
     api/v1                the OpenAI-compatible gateway
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs

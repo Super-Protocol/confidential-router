@@ -99,7 +99,7 @@ describe('the me query', () => {
     expect(response.body.data.me.workspaces).toHaveLength(1);
     expect(response.body.data.me.workspaces[0]).toMatchObject({
       slug: 'viewer',
-      role: 'owner',
+      role: 'OWNER',
       balanceMicros: '0',
     });
   });

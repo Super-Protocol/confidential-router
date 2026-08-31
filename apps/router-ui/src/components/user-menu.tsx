@@ -68,7 +68,9 @@ export function UserMenu() {
           <span className="flex min-w-0 flex-col items-start">
             <span className="max-w-full truncate text-sm">{display}</span>
             {activeWorkspace ? (
-              <span className="font-mono text-muted-foreground text-xs">{formatUsd(activeWorkspace.balance)}</span>
+              <span className="font-mono text-muted-foreground text-xs">
+                {formatUsd(activeWorkspace.balanceMicros)}
+              </span>
             ) : null}
           </span>
         </Button>

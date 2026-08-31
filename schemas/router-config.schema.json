@@ -396,6 +396,36 @@
         }
       }
     },
+    "gatekeeper": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where the console's Gatekeeper screen reads its download links. GoReleaser publishes the binaries to this repository's GitHub Releases (ADR-001).",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[\\w.-]+/[\\w.-]+$",
+          "default": "Super-Protocol/confidential-router"
+        },
+        "apiBaseUrl": {
+          "type": "string",
+          "format": "uri",
+          "default": "https://api.github.com"
+        },
+        "cacheTtl": {
+          "$ref": "#/$defs/duration",
+          "default": "15m",
+          "description": "How long a fetched release is served before the next call is made."
+        },
+        "requestTimeout": {
+          "$ref": "#/$defs/duration",
+          "default": "5s"
+        },
+        "token": {
+          "type": "string",
+          "description": "Optional GitHub token. The anonymous API is rate-limited per source IP, which one NAT-ed console can exhaust."
+        }
+      }
+    },
     "swagger": {
       "type": "object",
       "additionalProperties": false,

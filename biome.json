@@ -12,6 +12,7 @@
       "!**/node_modules",
       "!**/src/migrations",
       "!**/src/generated",
+      "!**/schema.graphql",
       "!**/__fixtures__",
       "!**/coverage",
       "!**/test-output",
