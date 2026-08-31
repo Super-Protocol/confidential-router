@@ -50,16 +50,52 @@ libs/
   ui/                    shared React components + design tokens                 ✅ scaffolded
   types/                 shared TS contracts (API DTOs, config schemas)              ✅ scaffolded
   nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json ✅
-docker/                  dev/demo compose stack
-.github/workflows/       PR checks and release workflows
+docker/                  dev + demo compose stacks, and the two demo stand-ins  ✅
+tools/installer/         install.sh / install.ps1 for the gatekeeper + tests    ✅
+.github/workflows/       PR checks and release workflows                        ✅
 ```
 
 Directories without a ✅ are the planned shape, not yet present.
 
+## Try it
+
+The whole thing in containers — console, API, PostgreSQL, plus a mock model
+backend and a mock evidence publisher — from a clean clone:
+
+```bash
+make up          # http://localhost:3001, first run builds two images
+make down
+```
+
+Sign in with a magic link (the API prints it to the log; no mail provider
+needed), top up on the Credits screen, mint a key, and point any OpenAI client
+at `http://localhost:3000/v1`. See [`docker/README.md`](./docker/README.md) —
+including why that stack is a demo and not a deployment.
+
+## Install the gatekeeper
+
+The gatekeeper is a single static binary; nothing else in this repository has to
+be installed to use it.
+
+```sh
+# macOS and Linux
+curl -fsSL https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex
+```
+
+Both scripts verify the download against the release's `checksums.txt` before
+installing anything. See
+[`apps/gatekeeper/README.md`](./apps/gatekeeper/README.md) for the manual route,
+the flags, a systemd unit, and how releases are cut.
+
 ## Quick start
 
-Prerequisites: **Node 24** (see `.nvmrc`), **pnpm 11**, **Go 1.24**,
-**golangci-lint v2**, and Docker for the dev services.
+Prerequisites: **Node 24** (see `.nvmrc`), **pnpm 11**, **Go 1.26**,
+**golangci-lint v2.13+**, and Docker for the dev services.
 
 ```bash
 pnpm install                 # also compiles the local nx-biome plugin (prepare script)
@@ -88,6 +124,9 @@ pnpm ui:dev                         # the console on http://localhost:3001
 pnpm nx run @confidential-router/router-ui-e2e:e2e   # Playwright smoke + axe audit
 pnpm nx affected -t lint build test # what CI runs on a PR
 pnpm nx graph
+
+make images                         # build the router-api and router-ui images
+make up                             # the demo stack; make up-core omits the mocks
 ```
 
 ## Toolchain
@@ -99,7 +138,7 @@ pnpm nx graph
 | Nx             | 23      | inference plugins — no hand-written targets for TS projects         |
 | Biome          | 2.5     | formatter + linter; 2-space, width 120, single quotes               |
 | TypeScript     | 5.9     | `strict`, `nodenext`, project references                            |
-| Go             | 1.24    | `apps/gatekeeper`, wired into Nx via `nx:run-commands`              |
+| Go             | 1.26    | `apps/gatekeeper`, wired into Nx via `nx:run-commands`              |
 | NestJS         | 11      | `apps/router-api`; Apollo code-first GraphQL, TypeORM 0.3           |
 | PostgreSQL     | 16      | production store; SQLite in development, tests and CI unit runs     |
 
