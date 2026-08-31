@@ -125,6 +125,24 @@ function present(key: ApiKey): ApiKeyModel {
   };
 }
 
-function micros(value: string | undefined): number | null {
-  return value === undefined ? null : Number(value);
+/**
+ * Money arrives as a decimal string of micro-USD (`console-graphql.md`).
+ *
+ * Parsed defensively even though the input type carries the pattern: an
+ * explicit `null` is legal GraphQL that `@IsOptional` waves through, and
+ * `Number(null)` is `0` — silently turning "clear the limit" into "allow
+ * nothing". Anything else that is not a whole, non-negative amount is a bad
+ * request, and saying so beats letting `NaN` reach the database as a 500.
+ */
+function micros(value: string | null | undefined): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const parsed = Number(value);
+  // The empty string is checked separately because `Number('')` is 0, which
+  // would otherwise pass for a deliberate limit of nothing.
+  if (value.trim().length === 0 || !Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new BadRequestException('spendLimitMicros must be a whole, non-negative number of micro-USD.');
+  }
+  return parsed;
 }

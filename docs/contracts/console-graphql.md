@@ -5,8 +5,10 @@ target the code-first types must produce; SUP-76 commits the generated `schema.g
 `apps/router-ui` runs GraphQL codegen against it (never edit generated client code by hand). Auth: session
 cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
 carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
-string buys nothing a described `String` does not, and costs every client a codegen mapping); IDs are
-UUIDs; times are ISO-8601 `DateTime`. Every money field is therefore named `…Micros`.
+string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
+field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
+and anything that is not a whole non-negative amount is a `400`, not a server error. IDs are UUIDs;
+times are ISO-8601 `DateTime`.
 
 Vocabulary rule (ADR-002): evidence fields say *published / fresh / stale* — there is no `verified`
 field anywhere in this schema.
