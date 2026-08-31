@@ -4,6 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatekeeperScreen } from './gatekeeper-screen';
+import { INSTALL_COMMANDS } from './install-commands';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
 import { SETUP_STEPS, setupScript } from './setup-commands';
 
@@ -101,6 +102,29 @@ describe('GatekeeperScreen', () => {
 
     expect(await screen.findByText('The release could not be loaded')).toBeInTheDocument();
     expect(screen.getByText(SETUP_STEPS[3].command)).toBeInTheDocument();
+  });
+
+  it('offers a verified one-liner per platform, and says what it does before you paste it', async () => {
+    renderScreen();
+
+    for (const entry of INSTALL_COMMANDS) {
+      expect(screen.getByText(entry.command)).toBeInTheDocument();
+    }
+
+    await userEvent.click(
+      screen.getByRole('button', { name: `Copy the ${INSTALL_COMMANDS[0].platform} install command` }),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(INSTALL_COMMANDS[0].command);
+    expect(screen.getByText(/verifies it against the release checksums/)).toBeInTheDocument();
+  });
+
+  it('still offers the one-liners when the release lookup failed — the scripts ship with every release', async () => {
+    renderScreen([{ request: { query: GATEKEEPER_RELEASE_QUERY }, error: new Error('github unreachable') }]);
+
+    expect(await screen.findByText('The release could not be loaded')).toBeInTheDocument();
+    for (const entry of INSTALL_COMMANDS) {
+      expect(screen.getByText(entry.command)).toBeInTheDocument();
+    }
   });
 
   it('lists the four setup commands in order, and copies them as a script', async () => {

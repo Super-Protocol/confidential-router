@@ -28,6 +28,44 @@ pnpm nx run gatekeeper:lint    # -> go vet ./... && golangci-lint run
 pnpm nx run gatekeeper:serve   # -> go run ./cmd/gatekeeper
 ```
 
+## Install
+
+One static binary, no runtime dependencies — the same Linux archive runs on
+glibc and on musl.
+
+```sh
+# macOS and Linux
+curl -fsSL https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex
+```
+
+The script picks the archive for your OS and CPU, **verifies it against the
+release's `checksums.txt`**, and installs into `/usr/local/bin` if that is
+writable and `~/.local/bin` otherwise (`%LOCALAPPDATA%\Programs\gatekeeper` on
+Windows, which it adds to your user PATH). `--version`, `--install-dir` and
+`--help` are there when you want them; `--version nightly` installs the rolling
+build of the default branch.
+
+Or do it by hand — pick an archive from
+[Releases](https://github.com/Super-Protocol/confidential-router/releases),
+then:
+
+```sh
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf gatekeeper_<version>_linux_amd64.tar.gz
+install -m 0755 gatekeeper /usr/local/bin/gatekeeper
+gatekeeper version
+```
+
+Published for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and
+windows/amd64. Nothing else is published yet — no container image, no Homebrew
+tap, no deb or rpm, no signatures beyond the checksums; those are noted as TODOs
+at the end of [`.goreleaser.yaml`](./.goreleaser.yaml).
+
 ## Commands
 
 Every read command takes `--json`, so the gatekeeper is scriptable without
@@ -230,6 +268,111 @@ cannot drift from the code. What still needs a human at a terminal:
 8. `q` leaves the terminal clean — no leftover alternate screen, cursor visible.
 9. `gatekeeper run --demo --headless` logs to stdout instead; `kill -HUP` on it
    logs a reload, and `ctrl+c` drains and exits 0.
+
+## Running as a service
+
+`gatekeeper run --headless` logs to stdout instead of opening the dashboard,
+which is what a unit file and a container both want. It reloads on `SIGHUP` and
+drains on `SIGTERM`, so `systemctl reload` and `systemctl stop` both do the
+right thing.
+
+`/etc/systemd/system/gatekeeper.service`:
+
+```ini
+[Unit]
+Description=Confidential Router gatekeeper
+Documentation=https://github.com/Super-Protocol/confidential-router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=gatekeeper
+Group=gatekeeper
+ExecStart=/usr/local/bin/gatekeeper run --headless --config /etc/confidential-gatekeeper/config.yaml --log-format json
+# SIGHUP reloads in place; a reload that fails to validate changes nothing.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+# Longer than --drain-timeout (30s by default), so a graceful shutdown finishes
+# before systemd reaches for SIGKILL.
+TimeoutStopSec=45s
+
+# Everything below is what the gatekeeper does *not* need. It reads one config
+# file, opens listeners, and appends to its audit log; it never writes to the
+# configuration it is running, and holds no key of its own.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# For `audit.file`; drop it if the endpoint has no audit log configured.
+LogsDirectory=confidential-gatekeeper
+# For a `unix:` admin socket under /run/confidential-gatekeeper.
+RuntimeDirectory=confidential-gatekeeper
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin gatekeeper
+sudo install -d -o gatekeeper -g gatekeeper /etc/confidential-gatekeeper
+sudo -u gatekeeper gatekeeper --config /etc/confidential-gatekeeper/config.yaml init
+# ... add roots, endpoints and pins, then:
+sudo -u gatekeeper gatekeeper --config /etc/confidential-gatekeeper/config.yaml config validate
+sudo systemctl enable --now gatekeeper
+```
+
+The unit is deliberately unprivileged: the listeners in the starter config are
+loopback ports above 1024, so nothing here needs `CAP_NET_BIND_SERVICE`. If you
+move an endpoint onto :443, add
+`AmbientCapabilities=CAP_NET_BIND_SERVICE` rather than running as root.
+
+Because `ProtectSystem=strict` makes the whole filesystem read-only, the editing
+commands (`trust roots add`, `endpoint add`, and the dashboard's `t` and `a`
+keys) cannot be run *through* the unit; edit the file directly, or as the
+`gatekeeper` user, and `systemctl reload gatekeeper`.
+
+## Releases
+
+Tag `gatekeeper-v<semver>` and push it.
+[`.github/workflows/release-gatekeeper.yml`](../../.github/workflows/release-gatekeeper.yml)
+runs the same Go checks the PR gate runs, then GoReleaser
+([`.goreleaser.yaml`](./.goreleaser.yaml)) cross-compiles the five static
+targets, writes `checksums.txt`, and publishes a draft that the workflow flips
+to a release — or to a *pre-release* when the version carries a suffix
+(`gatekeeper-v0.2.0-rc.1`), so `releases/latest` keeps pointing at the last
+stable build. Both install scripts ship as release assets, which is what makes
+`releases/latest/download/install.sh` a stable URL.
+
+The prefix is there because this is a monorepo and the router will get tags of
+its own. GoReleaser's own monorepo support is a paid feature, so the workflow
+passes the bare version in `$GATEKEEPER_VERSION` and the config templates on
+that rather than on `.Version`.
+
+`gatekeeper-nightly` is a rolling pre-release rebuilt from the default branch
+each night, when it has moved. Its binaries report `nightly` as their version;
+the commit and build date they also carry say which one.
+
+To rehearse a release without publishing anything:
+
+```sh
+cd apps/gatekeeper
+GATEKEEPER_VERSION=0.1.0 goreleaser release --snapshot --clean --skip=publish
+```
+
+The installers are tested on every PR against a fixture release
+(`pnpm nx run installer:test`), and against a real one on Ubuntu, Alpine,
+Fedora, macOS arm64 and Windows by the release workflow's `verify-install` jobs.
 
 ## Layout
 
@@ -449,8 +592,12 @@ rather than printing an empty table.
 
 ## Toolchain
 
-Go 1.24.6 (`go.mod`, the floor OPA sets). With Go 1.21+ and `GOTOOLCHAIN=auto` (the default) an older
+Go 1.26.0 (`go.mod`, the floor OPA sets). With Go 1.21+ and `GOTOOLCHAIN=auto` (the default) an older
 local Go will fetch the pinned toolchain automatically.
 
-`golangci-lint` v2 is required for the `lint` target —
-[installation instructions](https://golangci-lint.run/docs/welcome/install/).
+`golangci-lint` v2.13.2 or newer is required for the `lint` target —
+[installation instructions](https://golangci-lint.run/docs/welcome/install/). It
+has to be a build whose own Go is at least the `go` directive above: an older
+one refuses to load the config rather than linting against the wrong language
+version. CI pins the same floor in
+[`.github/actions/go-checks`](../../.github/actions/go-checks/action.yml).

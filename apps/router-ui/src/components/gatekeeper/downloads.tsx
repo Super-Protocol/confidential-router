@@ -1,5 +1,6 @@
 import { Badge } from '@confidential-router/ui/components/badge';
 import { Button } from '@confidential-router/ui/components/button';
+import { CodeBlock } from '@confidential-router/ui/components/code-block';
 import {
   Table,
   TableBody,
@@ -11,6 +12,7 @@ import {
 import { Download, ExternalLink, FileCheck2 } from 'lucide-react';
 import type { GatekeeperArch, GatekeeperOs, GatekeeperReleaseQuery } from '../../generated/graphql';
 import { formatBytes, formatDate } from '../../lib/format';
+import { INSTALL_COMMANDS, INSTALL_STEPS } from './install-commands';
 
 type Release = NonNullable<GatekeeperReleaseQuery['gatekeeperRelease']>;
 
@@ -25,6 +27,33 @@ const ARCH_LABELS: Record<GatekeeperArch, string> = {
   AMD64: 'x86-64 (amd64)',
   ARM64: 'arm64',
 };
+
+/**
+ * The one-liner, first, because it is what almost everyone wants — and the list
+ * of what it does, because nobody should paste a `curl | sh` on trust alone.
+ * Shown whether or not the release query resolved: the scripts are attached to
+ * every release, so the URLs hold even when the console cannot reach GitHub.
+ */
+export function InstallCommands() {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {INSTALL_COMMANDS.map((entry) => (
+          <CodeBlock
+            key={entry.platform}
+            code={entry.command}
+            title={`${entry.platform} · ${entry.shell}`}
+            copyLabel={`Copy the ${entry.platform} install command`}
+          />
+        ))}
+      </div>
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        The script {INSTALL_STEPS.slice(0, -1).join(', ')} and {INSTALL_STEPS[INSTALL_STEPS.length - 1]}. Prefer to do
+        it by hand? Take an archive below and check it against the release checksums yourself.
+      </p>
+    </div>
+  );
+}
 
 export function DownloadTable({ release }: { release: Release }) {
   return (

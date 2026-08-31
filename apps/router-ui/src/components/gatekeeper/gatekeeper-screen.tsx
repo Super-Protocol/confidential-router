@@ -9,7 +9,7 @@ import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import { PackageOpen } from 'lucide-react';
 import { PageHeader } from '../page-header';
 import { DataFlowDiagram } from './data-flow-diagram';
-import { ComingLater, DownloadTable, ReleaseMeta } from './downloads';
+import { ComingLater, DownloadTable, InstallCommands, ReleaseMeta } from './downloads';
 import { FailModeExplainer } from './fail-mode-explainer';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
 import { SETUP_STEPS, setupScript } from './setup-commands';
@@ -59,6 +59,8 @@ export function GatekeeperScreen() {
               before you run it.
             </p>
           </div>
+
+          <InstallCommands />
 
           {error ? (
             <ErrorState

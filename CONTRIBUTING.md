@@ -12,8 +12,13 @@ pnpm install
 pnpm verify            # lint + typecheck + build + test
 ```
 
-Go work additionally needs Go 1.24 and
-[golangci-lint v2](https://golangci-lint.run/docs/welcome/install/).
+Go work additionally needs Go 1.26 and
+[golangci-lint v2.13+](https://golangci-lint.run/docs/welcome/install/) — a
+golangci-lint whose own Go is older than `apps/gatekeeper/go.mod`'s `go`
+directive refuses to load the config.
+
+Cutting a gatekeeper release is `git tag gatekeeper-v<semver> && git push --tags`;
+see [`apps/gatekeeper/README.md`](./apps/gatekeeper/README.md#releases).
 
 ## Branch model
 

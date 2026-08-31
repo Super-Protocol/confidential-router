@@ -75,6 +75,26 @@ test.describe('Gatekeeper', () => {
     await expect(page.getByText('gatekeeper run', { exact: true })).toBeVisible();
   });
 
+  test('offers a checksum-verifying one-liner for each platform', async ({ page, baseURL }) => {
+    await signIn(page, baseURL as string, OPERATIONS);
+
+    await page.goto('/gatekeeper');
+
+    // The URL is `releases/latest/download/...`: the installer that ships with
+    // the release, not a script from a branch.
+    await expect(
+      page.getByText(
+        'curl -fsSL https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.sh | sh',
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        'irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex',
+      ),
+    ).toBeVisible();
+    await expect(page.getByText(/verifies it against the release checksums/)).toBeVisible();
+  });
+
   test('keeps the setup usable when no build has been published', async ({ page, baseURL }) => {
     await signIn(page, baseURL as string, { GatekeeperRelease: { gatekeeperRelease: null } });
 

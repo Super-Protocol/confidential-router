@@ -130,7 +130,10 @@ type tickMsg time.Time
 // message, so that Update owns it from then on.
 func (m Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
+		// The cancel outlives this function on purpose: it travels in the
+		// message, Update stores it on the model, and stop() calls it when the
+		// dashboard quits. gosec cannot follow that hand-off.
+		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancelled by Model.stop
 		return subscribedMsg{events: m.opts.Supervisor.Events(ctx), cancel: cancel}
 	}
 }

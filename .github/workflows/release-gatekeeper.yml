@@ -1,0 +1,298 @@
+name: Release gatekeeper
+
+# Two ways to publish:
+#
+#   * push a `gatekeeper-v<semver>` tag  -> a GitHub Release with the five
+#     archives, checksums.txt and both install scripts. A tag whose version
+#     carries a pre-release suffix (`gatekeeper-v0.2.0-rc.1`) is published as a
+#     GitHub pre-release, so `releases/latest` — which is what the console and
+#     install.sh both resolve — keeps pointing at the last stable one.
+#   * nightly, or on demand -> the rolling `gatekeeper-nightly` pre-release,
+#     rebuilt from the default branch when it has moved.
+#
+# The tag prefix exists because this is a monorepo and the router will get tags
+# of its own; see apps/gatekeeper/.goreleaser.yaml for how the bare version is
+# recovered from it.
+
+on:
+  push:
+    tags:
+      - 'gatekeeper-v*'
+  schedule:
+    # 03:17 UTC, off the hour so it does not queue behind everyone else's cron.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: Rebuild the nightly pre-release from this branch
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Releases are never cancelled halfway: a superseded run that is already
+# uploading assets has to finish or the release is left incomplete.
+concurrency:
+  group: release-gatekeeper-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Go checks (gatekeeper)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The same composite action the PR gate runs: nothing is published from
+      # code that would not have passed review.
+      - name: vet, test, static build and lint
+        uses: ./.github/actions/go-checks
+
+  release:
+    name: Publish the release
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/gatekeeper-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # GoReleaser builds the changelog from the commits since the previous
+          # tag, so it needs the history and the tags.
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: apps/gatekeeper/go.sum
+
+      - name: Resolve the version
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#gatekeeper-v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "::error::$tag does not name a semantic version (expected gatekeeper-v<major>.<minor>.<patch>)"
+            exit 1
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing gatekeeper $version from $tag (pre-release: $prerelease)"
+
+      # Publishes as a draft (apps/gatekeeper/.goreleaser.yaml), so the release
+      # is never briefly visible as `latest` before the step below decides
+      # whether it should be.
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          # `--skip=validate` because `gatekeeper-v0.1.0` is not a semantic
+          # version to GoReleaser's parser and it refuses a tag it cannot read.
+          # The checks that skips — a clean tree, HEAD on the tag — are what a
+          # tag-triggered checkout gives by construction.
+          args: release --clean --skip=validate
+          workdir: apps/gatekeeper
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GATEKEEPER_VERSION: ${{ steps.version.outputs.version }}
+
+      # Uploaded here rather than through GoReleaser's `extra_files`, which
+      # cannot glob a path above the directory it runs in. Publishing them with
+      # the release is what makes
+      # `releases/latest/download/install.sh` a stable URL, and pins the script
+      # to the artifacts it was written against.
+      - name: Attach the install scripts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release upload "$TAG" tools/installer/install.sh tools/installer/install.ps1 --clobber
+
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --prerelease=false --latest
+          fi
+
+  # The acceptance criterion for SUP-82, run against what was actually
+  # published: the installer, the archives and the checksums, on every platform
+  # the release claims. `gh release download` rather than the public URL,
+  # because it is the one form that works while the repository is still private;
+  # the installers then read the downloaded release through their file:// path,
+  # which is the same code as the https:// one from the checksum check onwards.
+  verify-install-unix:
+    name: Install on ${{ matrix.label }}
+    needs: release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Ubuntu (glibc, amd64)
+            os: ubuntu-latest
+            containers: true
+          - label: macOS (arm64)
+            os: macos-latest
+            containers: false
+    steps:
+      - name: Download the published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: gh release download "$TAG" --dir "$RUNNER_TEMP/release/$TAG"
+
+      - name: Install and run it
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -eu
+          sh "$RUNNER_TEMP/release/$TAG/install.sh" \
+            --base-url "file://$RUNNER_TEMP/release" \
+            --version "$VERSION" \
+            --install-dir "$RUNNER_TEMP/bin"
+          "$RUNNER_TEMP/bin/gatekeeper" version | grep -F "gatekeeper $VERSION"
+
+      # musl and a second glibc distribution, on the same downloaded artifacts.
+      # Neither image gets any package installed: a static binary and an
+      # installer that copies from file:// need nothing that busybox or a
+      # minimal Fedora does not already have.
+      - name: Install it on Alpine (musl) and Fedora
+        if: matrix.containers
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -eu
+          for image in alpine:3.22 fedora:42; do
+            echo "=== $image ==="
+            docker run --rm -v "$RUNNER_TEMP/release:/release:ro" "$image" sh -c "
+              sh /release/$TAG/install.sh --base-url file:///release --version $VERSION --install-dir /usr/local/bin &&
+              gatekeeper version | grep -F 'gatekeeper $VERSION'"
+          done
+
+  verify-install-windows:
+    name: Install on Windows (amd64)
+    needs: release
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download the published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: gh release download "$env:TAG" --dir "$env:RUNNER_TEMP/release/$env:TAG"
+
+      - name: Install and run it
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releases = Join-Path $env:RUNNER_TEMP 'release'
+          $bin = Join-Path $env:RUNNER_TEMP 'bin'
+          & (Join-Path $releases "$env:TAG\install.ps1") `
+            -BaseUrl ([uri]::new($releases + [IO.Path]::DirectorySeparatorChar).AbsoluteUri) `
+            -Version $env:VERSION -InstallDir $bin
+          $out = & (Join-Path $bin 'gatekeeper.exe') version
+          if ($out -notmatch [regex]::Escape("gatekeeper $env:VERSION")) {
+            throw "unexpected version output: $out"
+          }
+
+  nightly:
+    name: Publish the nightly pre-release
+    needs: checks
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      NIGHTLY_TAG: gatekeeper-nightly
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: apps/gatekeeper/go.sum
+
+      - name: Has the branch moved since the last nightly?
+        id: moved
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          previous="$(gh release view "$NIGHTLY_TAG" --json targetCommitish -q .targetCommitish 2>/dev/null || true)"
+          if [ "$previous" = "$GITHUB_SHA" ]; then
+            echo 'The nightly already covers this commit; nothing to rebuild.'
+            echo 'skip=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'skip=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      # A snapshot build, because there is no tag to release from: the version
+      # reads `nightly`, and the commit and build date the binary also carries
+      # say exactly which nightly it is.
+      - name: Build the artifacts
+        if: steps.moved.outputs.skip == 'false'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --snapshot --clean --skip=publish
+          workdir: apps/gatekeeper
+        env:
+          GATEKEEPER_VERSION: nightly
+
+      # Replaced rather than updated, so the assets can never be a mix of two
+      # commits and the tag always points at the build that is published.
+      - name: Replace the rolling pre-release
+        if: steps.moved.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete "$NIGHTLY_TAG" --yes --cleanup-tag 2>/dev/null || true
+          notes="Unreleased build of ${GITHUB_SHA}, from the default branch. Not covered by any"
+          notes="$notes compatibility promise. Install it with \`install.sh --version nightly\`."
+          gh release create "$NIGHTLY_TAG" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "gatekeeper nightly ($(date -u +%Y-%m-%d))" \
+            --notes "$notes" \
+            apps/gatekeeper/dist/gatekeeper_nightly_*.tar.gz \
+            apps/gatekeeper/dist/gatekeeper_nightly_*.zip \
+            apps/gatekeeper/dist/checksums.txt \
+            tools/installer/install.sh \
+            tools/installer/install.ps1

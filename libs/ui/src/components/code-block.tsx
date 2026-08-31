@@ -39,7 +39,20 @@ export function CodeBlock({
       {copyable ? (
         <CopyButton value={code} label={copyLabel} className={cn('absolute right-1.5', title ? 'top-9' : 'top-1.5')} />
       ) : null}
-      <pre className={cn('overflow-x-auto p-3 text-xs leading-relaxed', copyable && 'pr-12')}>
+      {/*
+        Long lines wrap instead of scrolling sideways. A scrollable box has to be
+        keyboard-reachable to satisfy WCAG 2.1.1 (axe:
+        scrollable-region-focusable), and a `<pre>` in the tab order to hold a
+        command nobody can interact with is a worse answer than one that fits:
+        newlines and indentation are still preserved, and the copy button hands
+        over the text verbatim whatever the wrapping did on screen.
+      */}
+      <pre
+        className={cn(
+          'overflow-x-auto whitespace-pre-wrap break-words p-3 text-xs leading-relaxed',
+          copyable && 'pr-12',
+        )}
+      >
         <code className="font-mono">{code}</code>
       </pre>
     </div>
