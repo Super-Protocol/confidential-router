@@ -217,34 +217,10 @@ jobs:
     name: Go checks (gatekeeper)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: apps/gatekeeper
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go test
-        run: go test -race -count=1 ./...
-
-      # The gatekeeper ships as a single static binary, so the build must not
-      # acquire a libc dependency through cgo.
-      - name: go build (CGO_ENABLED=0)
-        run: go build -o bin/gatekeeper ./cmd/gatekeeper
-        env:
-          CGO_ENABLED: "0"
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.6.2
-          working-directory: apps/gatekeeper
+      # The same steps the release workflow runs before it publishes anything.
+      - name: vet, test, static build and lint
+        uses: ./.github/actions/go-checks

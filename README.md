@@ -51,15 +51,36 @@ libs/
   types/                 shared TS contracts (API DTOs, config schemas)              ✅ scaffolded
   nx-biome/              local Nx plugin: infers lint / lint-fix targets from biome.json ✅
 docker/                  dev/demo compose stack
-.github/workflows/       PR checks and release workflows
+tools/installer/         install.sh / install.ps1 for the gatekeeper, and their tests    ✅
+.github/workflows/       PR checks and release workflows                                 ✅
 ```
 
 Directories without a ✅ are the planned shape, not yet present.
 
+## Install the gatekeeper
+
+The gatekeeper is a single static binary; nothing else in this repository has to
+be installed to use it.
+
+```sh
+# macOS and Linux
+curl -fsSL https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex
+```
+
+Both scripts verify the download against the release's `checksums.txt` before
+installing anything. See
+[`apps/gatekeeper/README.md`](./apps/gatekeeper/README.md) for the manual route,
+the flags, a systemd unit, and how releases are cut.
+
 ## Quick start
 
-Prerequisites: **Node 24** (see `.nvmrc`), **pnpm 11**, **Go 1.24**,
-**golangci-lint v2**, and Docker for the dev services.
+Prerequisites: **Node 24** (see `.nvmrc`), **pnpm 11**, **Go 1.26**,
+**golangci-lint v2.13+**, and Docker for the dev services.
 
 ```bash
 pnpm install                 # also compiles the local nx-biome plugin (prepare script)
@@ -99,7 +120,7 @@ pnpm nx graph
 | Nx             | 23      | inference plugins — no hand-written targets for TS projects         |
 | Biome          | 2.5     | formatter + linter; 2-space, width 120, single quotes               |
 | TypeScript     | 5.9     | `strict`, `nodenext`, project references                            |
-| Go             | 1.24    | `apps/gatekeeper`, wired into Nx via `nx:run-commands`              |
+| Go             | 1.26    | `apps/gatekeeper`, wired into Nx via `nx:run-commands`              |
 | NestJS         | 11      | `apps/router-api`; Apollo code-first GraphQL, TypeORM 0.3           |
 | PostgreSQL     | 16      | production store; SQLite in development, tests and CI unit runs     |
 
