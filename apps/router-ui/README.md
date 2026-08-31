@@ -28,7 +28,7 @@ sign-in screen.
 | ------------------------------------------- | ------- | ----- |
 | `/`, `/models`                              | SUP-78  | built |
 | `/keys`, `/gatekeeper`                      | SUP-79  | built |
-| `/activity`, `/logs`                        | SUP-80  | placeholder |
+| `/activity`, `/logs`                        | SUP-80  | built |
 | `/credits`, `/profile`, `/preferences`      | SUP-81  | built |
 | `/login`, `/dev/components`                 | SUP-77  | built |
 
@@ -57,6 +57,14 @@ Two mutation results carry no id (`CreditBalance`, `UserPreferences`), so Apollo
 cannot normalise them; both call sites write the result into the screen's query
 with `cache.updateQuery`. Without that a saved setting snaps back to the cached
 value on the next render.
+
+### Activity and Logs (SUP-80)
+
+`/activity` and `/logs` hang off one 24h / 7d / 30d range toggle
+(`src/lib/ranges.ts`); Activity draws `activitySummary`, `activitySeries`,
+`topKeys` and a fixed-30-day `usageByModel`, Logs paginates `generations` by
+cursor and links the CSV export, which is a REST endpoint on router-api rather
+than a GraphQL field.
 
 `src/components/navigation.ts` is the single source of truth for the nine
 screens: the sidebar, the breadcrumb trail and the placeholder copy all read it.

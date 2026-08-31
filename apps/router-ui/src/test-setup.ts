@@ -30,3 +30,19 @@ if (!window.ResizeObserver) {
     disconnect() {}
   };
 }
+
+/**
+ * jsdom implements neither the Pointer Capture API nor `scrollIntoView`, and
+ * Radix's `Select` calls both on the first pointer event. Without them, opening
+ * a drop-down throws out of an event handler, where React cannot report it as a
+ * test failure — it surfaces as an unhandled exception instead.
+ */
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@conf
 import { BarChart } from '@confidential-router/ui/components/charts/bar-chart';
 import { Heatmap } from '@confidential-router/ui/components/charts/heatmap';
 import { Sparkline } from '@confidential-router/ui/components/charts/sparkline';
+import { StackedBarChart } from '@confidential-router/ui/components/charts/stacked-bar-chart';
 import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import {
   Dialog,
@@ -46,6 +47,17 @@ import { ThemeToggle } from '../../../components/theme-toggle';
 const BARS = [12, 28, 64, 55, 39, 0, 0].map((value, index) => ({
   label: `Day ${index + 1}`,
   value,
+}));
+
+const STACKED_SERIES = [
+  { key: 'output', label: 'Output tokens' },
+  { key: 'input', label: 'Input tokens' },
+];
+
+const STACKED_BARS = [4200, 5100, 6800, 5900, 0, 7400, 8100].map((input, index) => ({
+  id: `day-${index}`,
+  label: `${index + 1} Aug`,
+  values: { input, output: Math.round(input * 0.3) },
 }));
 
 const HEATMAP_CELLS = Array.from({ length: 7 * 22 }, (_, index) => ({
@@ -148,6 +160,17 @@ export function ComponentGallery() {
                 <p className="text-muted-foreground text-xs">Sparkline (flat)</p>
                 <Sparkline values={[5, 5, 5, 5, 5]} label="Flat trend" className="text-success" />
               </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-muted-foreground text-xs">Stacked bar chart</p>
+              <StackedBarChart
+                data={STACKED_BARS}
+                series={STACKED_SERIES}
+                label="Tokens per day, last 7 days"
+                height={120}
+                axis="all"
+                format={(value) => `${value} tok`}
+              />
             </div>
             <div className="space-y-2">
               <p className="text-muted-foreground text-xs">Heatmap</p>
