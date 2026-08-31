@@ -241,9 +241,9 @@ cannot drift from the code. What still needs a human at a terminal:
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
 | `pkg/status/`            | What an endpoint's live state and one verification look like, plus the two seams the CLI and TUI are written against. |
 | `pkg/config/`            | YAML configuration: load (defaults → file → env → flags), validate, and rewrite in place. |
-| `pkg/trust/`             | Trusted roots and per-endpoint pinned `evidenceDigest` values; digest parsing and normalisation. |
+| `pkg/trust/`             | Trusted roots and per-endpoint pinned `evidenceDigest` values. Digest spelling is decided by `pkg/attestation`, which this package delegates to. |
 | `pkg/policy/`            | Embedded OPA: the generated trust module, the built-in pin policy, user policies. |
-| `pkg/policy/testing/`    | Offline evaluation of a saved bundle — what `gatekeeper policy test` runs. |
+| `pkg/policy/testing/`    | Offline evaluation of a saved bundle — what `gatekeeper policy test` runs; `NewVerifier` wires the real `pkg/attestation` pipeline in. |
 | `pkg/version/`           | Build identity, stamped by GoReleaser via `-ldflags`.                    |
 
 Keeping the verification pipeline, trust store and proxy in `pkg/` (never in
@@ -284,8 +284,18 @@ survive — and saves atomically.
 
 Global trusted roots (matched by the SHA-256 of the root DER) and, per endpoint,
 the pinned `evidenceDigest` values. Digests are canonical `sha256/<base64url>`;
-`sha256:<hex>` and bare hex are accepted on input and normalised, so a pin
-copied out of a log matches one copied out of the console.
+`sha256/<hex>`, `sha256:<hex>` and bare hex are accepted on input and
+normalised, so a pin copied out of a log matches one copied out of the console.
+
+There is one digest parser in the binary: `trust.ParseDigest` delegates to
+`attestation.NormalizeEvidenceDigest`, the implementation the shared vectors in
+`libs/attestation-fixtures/vectors/evidence-digest.json` are run against — both
+packages iterate those vectors in their own tests. A bare base64url token with
+no scheme, and a base64url spelling whose final character carries non-zero
+trailing bits, are **rejected rather than normalised**: pins are compared as
+exact strings, so a second spelling of the same 32 bytes would be a pin that
+never fires. `sha256:<hex>` is the one spelling `pkg/trust` accepts on top of
+the vectors, as config-input sugar — hex needs no scheme to be unambiguous.
 
 `Store.Hash()` fingerprints the whole trust state and belongs in the verdict
 cache key, so editing a pin takes effect on the next check instead of waiting
@@ -309,8 +319,21 @@ or an undefined result is a deny.
 Without a verifier it runs **policy-only**: the JWS payload is decoded without
 checking the signature, chain or freshness, so `Result.Admitted` is false
 whatever the policies said, and every shortcut is listed in `Result.Warnings`.
-`Options.Verify` is the seam `pkg/attestation` plugs into to make the run a real
-end-to-end check.
+`Options.Verify` is the seam that makes the run a real end-to-end check.
+`testing.NewVerifier(cfg, opts)` builds the default adapter over
+`pkg/attestation`: the same chain → trusted root → JWS → freshness → channel
+binding pipeline the data plane runs. A bundle it rejects is never admitted,
+whatever the Rego policies said about the payload. A bundle that binds to its
+own `tlsLeaf` is rejected too — the gatekeeper admits an observed binding only
+(ADR-003 §1), so an admitted verdict needs
+`VerifierOptions.ObservedTLSFingerprint` from a real handshake. What the run
+merely settled for, such as an unenforced `maxBundleAge`, comes back in
+`Result.Warnings` rather than passing silently.
+
+`gatekeeper policy test` itself stays policy-only by design (see
+`cli.verifyFuncFor`); the adapter is for callers that already hold an observed
+fingerprint, and `gatekeeper verify` (`pkg/verifier`) is the command that
+answers "would this be let through".
 
 `custom.tree_match(pattern, actual)` is available to policies: every key of
 `pattern` must be present in `actual` with an equal value, objects recurse, and
