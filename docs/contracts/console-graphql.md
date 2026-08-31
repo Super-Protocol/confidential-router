@@ -3,9 +3,12 @@
 Served by `apps/router-api` at `/graphql` (Apollo, **code-first** NestJS resolvers). This SDL is the
 target the code-first types must produce; SUP-76 commits the generated `schema.graphql` and
 `apps/router-ui` runs GraphQL codegen against it (never edit generated client code by hand). Auth: session
-cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is `Micros` (string of integer
-micro-USD); a nullable `Micros` sent as `null` means *no limit*, never zero, and anything that is not a
-whole non-negative amount is a `400`, not a server error. IDs are UUIDs; times are ISO-8601 `DateTime`.
+cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
+carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
+string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
+field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
+and anything that is not a whole non-negative amount is a `400`, not a server error. IDs are UUIDs;
+times are ISO-8601 `DateTime`.
 
 Vocabulary rule (ADR-002): evidence fields say *published / fresh / stale* — there is no `verified`
 field anywhere in this schema.
@@ -143,6 +146,40 @@ type EvidenceSnapshotEdge { cursor: String!, node: EvidenceSnapshot! }
 type CreditTransactionConnection { edges: [CreditTransactionEdge!]!, pageInfo: PageInfo!, totalCount: Int! }
 type CreditTransactionEdge { cursor: String!, node: CreditTransaction! }
 ```
+
+## As shipped (SUP-75)
+
+Activity, Logs, Credits and Preferences are implemented; the deltas from the SDL above are deliberate
+and small:
+
+- **Money fields** are `String` named `…Micros` (see above), and `Bucket`/`GenerationSortField` /
+  `SortDirection` are enums on the query rather than free strings.
+- **Cross-type references are ids plus a resolved name** — `Generation.modelId` + `modelName`,
+  `KeyUsage.apiKeyId` + `name`, `ModelUsage.modelId` + `name` — because the `Model`, `Endpoint` and
+  `ApiKey` object types land with SUP-73/SUP-74. Adding the object field later is additive; a name is
+  what the Logs and Activity tables render today.
+- **`creditBalance(workspaceId)`** replaces reading `workspace.balance`: the Credits screen also needs
+  `spendable`, `minTopUpMicros` and the automatic top-up settings, and one query is one round trip.
+- **Mutations take one input object** (`createCheckout(input:)`, `setAutoTopUp(input:)`) so the workspace
+  id and the payload travel together — that pair is what the membership check reads.
+- **`generations` gains `sort:`**, and `usageByModel` an optional `limit:` (which is the "top models by
+  spend" list).
+- **`activitySummary`/`activitySeries` also return `coveredRequests`**, so a client can render the ratio
+  and its numerator without a second query.
+- **Downloads are REST, not GraphQL**, because a download is a browser navigation with a filename and a
+  content type:
+  - `GET /activity/generations.csv?workspaceId=&from=&to=&modelIds=&apiKeyIds=&status=` — session
+    cookie, same filters as `generations`, oldest first;
+  - `GET /exports/evidence.zip?token=…` — the link `exportEvidence` mints. Signed with `auth.secret` and
+    valid for 15 minutes, because the point of the export is that it can be handed to an auditor who has
+    no console session. Membership is re-checked when the link is followed.
+- **`updateProfile` and `deleteAccount`** are not implemented yet; they are account lifecycle rather than
+  preferences.
+
+Aggregates are computed in SQL over `generations` on every request. `activity_rollups` stays unwritten
+until there is a workspace whose log is too large to scan: one source of truth is cheaper to keep correct
+than a cache two screens can disagree with, and every query here is a prefix of
+`IDX_generations_workspaceId_createdAt`.
 
 Screen → operations: **Overview** `activitySummary + endpoints`; **Models** `models + endpoints`;
 **Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` + `refreshEvidence`; **API Keys**
