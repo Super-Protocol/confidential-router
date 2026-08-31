@@ -1,15 +1,19 @@
 import { UseGuards } from '@nestjs/common';
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Resolver } from '@nestjs/graphql';
 import { CurrentUser, SessionGuard, type SessionUser, WorkspaceScopeService } from '../../../auth/index.js';
-import type { UserPreferences } from '../../../db/entities/user-preferences.entity.js';
 import { EvidenceExportService, PreferencesService } from '../../../preferences/index.js';
 import {
   EvidenceExportModel,
   ExportEvidenceArgs,
+  preferencesModel,
   UpdatePreferencesInput,
   UserPreferencesModel,
 } from './preferences.model.js';
 
+/**
+ * The Preferences screen's writes. The read is `me { preferences }` — one
+ * query for the whole screen, and one place a setting can come from.
+ */
 @Resolver()
 @UseGuards(SessionGuard)
 export class PreferencesResolver {
@@ -18,14 +22,6 @@ export class PreferencesResolver {
     private readonly exports: EvidenceExportService,
     private readonly workspaces: WorkspaceScopeService,
   ) {}
-
-  @Query(() => UserPreferencesModel, {
-    name: 'preferences',
-    description: "The signed-in user's console settings.",
-  })
-  async userPreferences(@CurrentUser() user: SessionUser): Promise<UserPreferencesModel> {
-    return preferencesModel(await this.preferences.get(user.id));
-  }
 
   @Mutation(() => UserPreferencesModel, { description: 'Updates the settings named; leaves the rest alone.' })
   async updatePreferences(
@@ -50,14 +46,4 @@ export class PreferencesResolver {
     await this.workspaces.requireMembership(user.id, args.workspaceId);
     return this.exports.link({ userId: user.id, workspaceId: args.workspaceId, from: args.from, to: args.to });
   }
-}
-
-function preferencesModel(preferences: UserPreferences): UserPreferencesModel {
-  return {
-    archiveEvidence: preferences.archiveEvidence,
-    evidenceRetentionDays: preferences.evidenceRetentionDays,
-    notifyOnMeasurementChange: preferences.notifyOnMeasurementChange,
-    desktopNotifications: preferences.desktopNotifications,
-    emailReceipts: preferences.emailReceipts,
-  };
 }
