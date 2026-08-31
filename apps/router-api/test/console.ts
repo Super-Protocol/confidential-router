@@ -34,12 +34,21 @@ export async function graphql(
   query: string,
   variables?: Record<string, unknown>,
 ): Promise<any> {
-  const response = await request(session.harness.app.getHttpServer())
+  return (await post(session, query, variables).expect(200)).body;
+}
+
+/**
+ * The same call without the status assertion.
+ *
+ * Apollo answers a document it could not parse or validate with `400`, unlike a
+ * resolver failure, which is a `200` carrying `errors`. A test about the former
+ * has to be able to see the response rather than fail on its status.
+ */
+export function post(session: ConsoleSession, query: string, variables?: Record<string, unknown>) {
+  return request(session.harness.app.getHttpServer())
     .post('/graphql')
     .set('Cookie', session.cookies)
-    .send({ query, variables })
-    .expect(200);
-  return response.body;
+    .send({ query, variables });
 }
 
 /** Fails loudly on a GraphQL error, so a broken query cannot look like an empty result. */

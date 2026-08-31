@@ -5,8 +5,10 @@ import { createHarness, type Harness } from './app-harness.js';
 import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql, signIn } from './console.js';
 import { type Catalog, seedCatalog, seedGeneration } from './seed.js';
 
+// The Preferences screen reads through the viewer, so one query loads the whole
+// screen and a setting has exactly one place it can come from.
 const PREFERENCES = `
-  query { preferences { archiveEvidence evidenceRetentionDays notifyOnMeasurementChange desktopNotifications emailReceipts } }
+  query { me { preferences { archiveEvidence evidenceRetentionDays notifyOnMeasurementChange desktopNotifications emailReceipts } } }
 `;
 
 const UPDATE = `
@@ -41,7 +43,7 @@ describe('preferences', () => {
   it('answers with the defaults before anything has been changed', async () => {
     const data = await expectData(session, PREFERENCES);
 
-    expect(data.preferences).toEqual({
+    expect(data.me.preferences).toEqual({
       archiveEvidence: true,
       evidenceRetentionDays: 90,
       notifyOnMeasurementChange: true,
@@ -71,7 +73,7 @@ describe('preferences', () => {
     const other = await signIn(harness, 'preferences-other@example.com');
     const data = await expectData(other, PREFERENCES);
 
-    expect(data.preferences.archiveEvidence).toBe(true);
+    expect(data.me.preferences.archiveEvidence).toBe(true);
   });
 
   it('is refused without a session', async () => {

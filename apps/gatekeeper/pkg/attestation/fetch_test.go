@@ -379,3 +379,40 @@ func TestVerifyHostnameWithTheTLSLeafOutsideTheChain(t *testing.T) {
 		t.Error("the binding must be against the observed leaf, not the chain leaf")
 	}
 }
+
+func TestFetchDialsThroughTheSuppliedDialer(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"hello":"world"}`))
+	}))
+	defer server.Close()
+
+	// The hostname the bundle is published for does not resolve. Overriding the
+	// dial is what lets a caller reach the endpoint anyway — over its own
+	// transport, or in a test — without giving up the observed channel binding
+	// a substituted Fetcher would lose.
+	var dialled string
+	opts := attestation.FetchOptions{
+		Timeout: 10 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialled = addr
+			return (&net.Dialer{}).DialContext(ctx, network, strings.TrimPrefix(server.URL, "https://"))
+		},
+	}
+
+	result, err := attestation.Fetch(context.Background(), "router.example.test", opts)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if dialled != "router.example.test:443" {
+		t.Errorf("dialled %q, want the address the URL named", dialled)
+	}
+	if string(result.Body) != `{"hello":"world"}` {
+		t.Errorf("body = %q", result.Body)
+	}
+	// The handshake still happened here, so the certificate is still observed.
+	want := attestation.SHA256Fingerprint(server.Certificate().Raw)
+	if result.ObservedTLSFingerprint != want {
+		t.Errorf("observed = %q, want %q", result.ObservedTLSFingerprint, want)
+	}
+}
