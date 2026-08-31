@@ -1,6 +1,7 @@
 packages:
   - 'apps/*'
   - 'libs/*'
+  - 'tools/*'
 autoInstallPeers: true
 strictPeerDependencies: false
 # Packages allowed to run install scripts. Keep this list explicit and short —
