@@ -127,6 +127,9 @@ describe('streaming responses', () => {
     const row = await generations().findOneByOrFail({ id });
     expect(row.timeToFirstTokenMs).not.toBeNull();
     expect(row.timeToFirstTokenMs ?? -1).toBeGreaterThanOrEqual(0);
+    // The rate needs a generation that took measurable time after its first
+    // token, which is what the mock's inter-chunk gap guarantees.
+    expect(row.tokensPerSecond).not.toBeNull();
     expect(row.tokensPerSecond ?? 0).toBeGreaterThan(0);
     expect(row.finishReason).toBe('stop');
   });

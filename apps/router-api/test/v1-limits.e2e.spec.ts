@@ -11,10 +11,11 @@ const upstream = new MockLiteLlm();
 let harness: Harness;
 let secret: string;
 let workspaceId: string;
+let upstreamUrl: string;
 
 beforeAll(async () => {
-  const baseUrl = await upstream.start();
-  harness = await createHarness({ config: routerConfigFor(baseUrl) });
+  upstreamUrl = await upstream.start();
+  harness = await createHarness({ config: routerConfigFor(upstreamUrl) });
   const workspace = await seedWorkspace(harness.app);
   workspaceId = workspace.id;
   secret = (await createKey(harness.app, workspaceId)).secret;
@@ -147,6 +148,44 @@ describe('rate limits', () => {
     const response = await post(limited.secret, chat()).expect(429);
 
     expect(response.body.error.code).toBe('rate_limit_exceeded');
+  });
+});
+
+/**
+ * Its own harness: the workspace token budget comes from `rateLimits`, which is
+ * deployment configuration and cannot be varied per key.
+ */
+describe('the workspace token budget', () => {
+  let scoped: Harness;
+  let generous: string;
+
+  beforeAll(async () => {
+    scoped = await createHarness({ config: routerConfigFor(upstreamUrl, { rateLimits: { tokensPerMinute: 10 } }) });
+    const workspace = await seedWorkspace(scoped.app);
+    // A key with a far larger budget of its own, so only the workspace bucket
+    // can refuse anything here.
+    generous = (await createKey(scoped.app, workspace.id, { tokensPerMinute: 1_000_000 })).secret;
+  }, 60_000);
+
+  afterAll(async () => {
+    await scoped?.close();
+  });
+
+  it('refuses a request once the previous generation spent the workspace s tokens', async () => {
+    const first = await request(scoped.app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set(bearer(generous))
+      .send(chat());
+    expect(first.status).toBe(200);
+
+    const response = await request(scoped.app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set(bearer(generous))
+      .send(chat())
+      .expect(429);
+
+    expect(response.body.error).toMatchObject({ type: 'rate_limit_error', code: 'rate_limit_exceeded' });
+    expect(response.body.error.message).toContain('workspace');
   });
 });
 
