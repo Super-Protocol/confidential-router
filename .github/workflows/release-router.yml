@@ -126,14 +126,11 @@ jobs:
           sbom: true
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
-          # `NEXT_PUBLIC_*` is inlined by `next build`, so the published console
-          # image is bound to one API origin. The repository variables let a
-          # deployment own that without a fork; unset, they build the localhost
-          # image the compose demo uses. router-api ignores all three.
+          # router-ui takes no build configuration: it reads its API origin from
+          # the environment at run time, so one published digest serves any
+          # origin (SUP-100). router-ui ignores CR_API_VERSION.
           build-args: |
             CR_API_VERSION=${{ steps.release.outputs.version || format('0.0.0-{0}', github.sha) }}
-            NEXT_PUBLIC_API_ORIGIN=${{ vars.ROUTER_PUBLIC_API_ORIGIN || 'http://localhost:3000' }}
-            NEXT_PUBLIC_GRAPHQL_HTTP=${{ vars.ROUTER_PUBLIC_API_ORIGIN || 'http://localhost:3000' }}/graphql
 
       # The published digest, signed and traceable to this run. Consumers check
       # it with `gh attestation verify oci://<image>@<digest> --repo <repo>`.
@@ -212,8 +209,14 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"query":"{ models { id name } }"}' | tee /dev/stderr | grep -q 'llama-3.3-70b'
 
-      - name: The console serves the sign-in page
-        run: curl -fsS http://localhost:3001/login | grep -qi '<html'
+      # Also that the published image took this stack's API origin from the
+      # environment: the image carries no origin of its own (SUP-100).
+      - name: The console serves the sign-in page, configured for this stack
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:3001/login > login.html
+          grep -qi '<html' login.html
+          grep -qF '__ROUTER_UI_PUBLIC_CONFIG__={"apiOrigin":"http://localhost:3000"' login.html
 
       # End to end through the demo profile: the publisher signs a bundle, the
       # poller fetches it, and the router hands it back unchanged. The poll

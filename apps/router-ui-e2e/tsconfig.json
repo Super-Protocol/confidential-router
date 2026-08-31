@@ -12,7 +12,11 @@
     "lib": ["dom", "dom.iterable", "es2022"],
     "types": ["node"]
   },
-  "include": ["playwright.config.ts", "src/**/*.ts"],
+  "include": [
+    "playwright.config.ts",
+    "playwright.image.config.ts",
+    "src/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist"],
   "references": [
     {

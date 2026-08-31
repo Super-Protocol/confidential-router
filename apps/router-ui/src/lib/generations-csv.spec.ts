@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { API_ORIGIN } from './env';
 import { generationsCsvUrl } from './generations-csv';
+import { publicConfig } from './public-config';
 
 describe('generationsCsvUrl', () => {
   it('points at router-api and always carries the workspace', () => {
     const url = new URL(generationsCsvUrl({ workspaceId: 'ws-1' }));
 
-    expect(url.origin).toBe(new URL(API_ORIGIN).origin);
+    expect(url.origin).toBe(new URL(publicConfig().apiOrigin).origin);
     expect(url.pathname).toBe('/activity/generations.csv');
     expect(url.searchParams.get('workspaceId')).toBe('ws-1');
   });

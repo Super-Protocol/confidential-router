@@ -1,4 +1,4 @@
-import { API_ORIGIN, AUTH_CALLBACK_URL } from './env';
+import { publicConfig } from './public-config';
 
 export type SocialProvider = 'github' | 'google';
 
@@ -16,7 +16,7 @@ export class AuthRequestError extends Error {
 async function postToAuth(path: string, body: unknown): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(`${API_ORIGIN}/auth${path}`, {
+    response = await fetch(`${publicConfig().apiOrigin}/auth${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // The session cookie is set on the API origin, so it has to be sent and
@@ -48,7 +48,7 @@ async function postToAuth(path: string, body: unknown): Promise<unknown> {
 export async function signInWithProvider(provider: SocialProvider): Promise<void> {
   const result = (await postToAuth('/sign-in/social', {
     provider,
-    callbackURL: AUTH_CALLBACK_URL,
+    callbackURL: publicConfig().authCallbackUrl,
   })) as { url?: unknown };
 
   if (typeof result.url !== 'string') {
@@ -60,7 +60,7 @@ export async function signInWithProvider(provider: SocialProvider): Promise<void
 
 /** Mails a magic link. Resolves once the mail is accepted — never with a session. */
 export async function signInWithMagicLink(email: string): Promise<void> {
-  await postToAuth('/sign-in/magic-link', { email, callbackURL: AUTH_CALLBACK_URL });
+  await postToAuth('/sign-in/magic-link', { email, callbackURL: publicConfig().authCallbackUrl });
 }
 
 /**
