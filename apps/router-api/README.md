@@ -122,6 +122,22 @@ developer runs against is what CI and production get:
 pnpm nx run router-api:migrate
 ```
 
+In a container that command is the image's `migrate` argument — the same entry
+point, the same bundle:
+
+```bash
+docker run --rm \
+  -e CR_API_DATABASE__TYPE=postgres \
+  -e CR_API_DATABASE__URL=postgres://… \
+  -e CR_API_AUTH__SECRET=… \
+  ghcr.io/super-protocol/confidential-router/router-api:1.0.0 migrate
+```
+
+Run it once per deployment, from a job or an init container, before the replicas
+roll. It is idempotent: a re-run against an up-to-date database prints
+`No pending migrations.` and exits 0. With no argument the image serves;
+[`docker/README.md`](../../docker/README.md) has the rest.
+
 `database.migrationsRun` defaults to `true` on SQLite (so `nx serve` works on an
 empty directory) and `false` on PostgreSQL, where a deployment runs the command
 above once from a job rather than racing every replica.
@@ -148,6 +164,12 @@ three confidential endpoints — is committed as `conf/router.dev-seed.yaml`:
 ```bash
 CR_API_CONFIG_FILE=conf/router.dev-seed.yaml pnpm nx serve router-api
 ```
+
+Its two backend addresses are `${VAR:-default}` placeholders, so the same file
+serves a laptop (the defaults, `127.0.0.1`) and the compose demo stack, which
+sets `CR_DEMO_LITELLM_URL` and `CR_DEMO_EVIDENCE_BASE` to service names on the
+compose network. Neither is a `CR_API_*` variable: they are substituted into the
+file, not read as configuration.
 
 Evidence is *retrieved*, never adjudicated. `EvidencePollerService` fetches
 `https://<hostname>/.well-known/swarm-evidence` for every endpoint every
@@ -305,6 +327,9 @@ src/
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs
 test/                     supertest e2e against the real module graph
+tools/runtime-deps.cjs    the one list of packages webpack leaves external and
+                          the container image installs — read by webpack.config.js
+                          and by router-api.dockerfile
 ```
 
 ## Tests

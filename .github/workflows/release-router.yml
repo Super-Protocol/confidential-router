@@ -1,0 +1,240 @@
+# Publishes the router images to GitHub Container Registry, then boots the
+# compose stack from what it published.
+#
+#   push to main            → :main, :main-<sha>, :build<run number>
+#   tag router-v1.2.3       → :1.2.3, :1.2, :1, :latest, :build<run number>
+#   tag router-v1.2.3-rc.1  → :1.2.3-rc.1 and :build<run number>, nothing moving
+#
+# The gatekeeper is released separately, as static binaries on GitHub Releases
+# (ADR-001 / SUP-82); nothing here builds Go.
+name: Release router images
+
+on:
+  push:
+    branches: [main]
+    tags: ['router-v*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push the images to ghcr (off = build only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Releases queue rather than cancel: a half-pushed set of tags is worse than a
+# slow one.
+concurrency:
+  group: release-router-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      # For the build provenance attestation, which is what ties a published
+      # digest back to this workflow run.
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: router-api
+            dockerfile: router-api.dockerfile
+          - app: router-ui
+            dockerfile: router-ui.dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Two things this cannot be left to `docker/metadata-action`:
+      #  - the tag prefix `router-v` contains a hyphen, and its own prerelease
+      #    detection reads a hyphen in the ref as a prerelease marker;
+      #  - `${{ github.repository }}` keeps the owner's capitalisation, and an
+      #    OCI reference has to be lowercase.
+      - name: Resolve the release version and image name
+        id: release
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          echo "image=${REGISTRY}/${GITHUB_REPOSITORY,,}/${APP}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/router-v* ]]; then
+            version="${GITHUB_REF#refs/tags/router-v}"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "Releasing ${APP} ${version}"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "Not a router-v tag; publishing branch tags only."
+          fi
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.release.outputs.image }}
+          # `type=semver` is given the version rather than the ref, so it can
+          # still do the part worth keeping: skipping the moving tags and
+          # `latest` when the version is a prerelease.
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
+            type=raw,value=build${{ github.run_number }}
+            type=ref,event=branch
+            type=sha,prefix=main-,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.app }}
+            org.opencontainers.image.description=Confidential Router — ${{ matrix.app }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # linux/amd64 only. arm64 would need QEMU here, and `better-sqlite3` is
+          # compiled from source in the builder stage — emulated, that turns a
+          # few minutes into most of an hour, for a platform nothing deploys on
+          # yet.
+          platforms: linux/amd64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          # `NEXT_PUBLIC_*` is inlined by `next build`, so the published console
+          # image is bound to one API origin. The repository variables let a
+          # deployment own that without a fork; unset, they build the localhost
+          # image the compose demo uses. router-api ignores all three.
+          build-args: |
+            CR_API_VERSION=${{ steps.release.outputs.version || format('0.0.0-{0}', github.sha) }}
+            NEXT_PUBLIC_API_ORIGIN=${{ vars.ROUTER_PUBLIC_API_ORIGIN || 'http://localhost:3000' }}
+            NEXT_PUBLIC_GRAPHQL_HTTP=${{ vars.ROUTER_PUBLIC_API_ORIGIN || 'http://localhost:3000' }}/graphql
+
+      # The published digest, signed and traceable to this run. Consumers check
+      # it with `gh attestation verify oci://<image>@<digest> --repo <repo>`.
+      - name: Attest the build provenance
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.release.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ matrix.app }}"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Proves the published images are the ones the documented command runs, not
+  # just that they built: pull them, bring up the compose stack, and ask the API
+  # and the console for a page.
+  smoke:
+    name: Compose stack (published images)
+    needs: images
+    if: github.event_name != 'workflow_dispatch' || inputs.push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the image names
+        id: images
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY,,}"
+          tag="build${{ github.run_number }}"
+          echo "api=${REGISTRY}/${repo}/router-api:${tag}" >> "$GITHUB_OUTPUT"
+          echo "ui=${REGISTRY}/${repo}/router-ui:${tag}" >> "$GITHUB_OUTPUT"
+
+      # The demo stand-ins are never published, so they are built here; the two
+      # release images are pulled, which is the point of this job.
+      - name: Bring the stack up
+        env:
+          ROUTER_API_IMAGE: ${{ steps.images.outputs.api }}
+          ROUTER_UI_IMAGE: ${{ steps.images.outputs.ui }}
+        run: |
+          set -euo pipefail
+          compose() { docker compose -f docker/docker-compose.yml --profile demo "$@"; }
+          compose build mock-litellm
+          compose pull --quiet postgres migrate api ui
+          compose up -d --no-build --wait --wait-timeout 300
+
+      # `--wait` already blocks on the healthchecks; these assert what the stack
+      # is *for*, and would catch a container that is healthy and empty.
+      - name: The API serves the seeded catalogue
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:3000/health | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -fsS -X POST http://localhost:3000/graphql \
+            -H 'content-type: application/json' \
+            -d '{"query":"{ models { id name } }"}' | tee /dev/stderr | grep -q 'llama-3.3-70b'
+
+      - name: The console serves the sign-in page
+        run: curl -fsS http://localhost:3001/login | grep -qi '<html'
+
+      # End to end through the demo profile: the publisher signs a bundle, the
+      # poller fetches it, and the router hands it back unchanged. The poll
+      # interval is 30s in this stack, so the first snapshot may not exist yet.
+      - name: The router retrieved what the publisher published
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 24); do
+            if curl -fsS http://localhost:3000/v1/evidence/llama-33-70b -o bundle.json; then
+              break
+            fi
+            sleep 5
+          done
+          cat bundle.json
+          grep -q '"kind": *"DeploymentEvidence"' bundle.json
+          grep -q 'llama-33-70b.tee.swarm.cloud' bundle.json
+
+      - name: Logs
+        if: always()
+        run: docker compose -f docker/docker-compose.yml --profile demo logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.yml --profile demo down -v

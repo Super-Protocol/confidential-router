@@ -1,7 +1,7 @@
 # Thin convenience wrapper over the pnpm/Nx targets. Everything here has a
 # `pnpm` equivalent; the Makefile exists for people who reach for `make` first.
 .DEFAULT_GOAL := help
-.PHONY: help install verify lint lint-fix typecheck build test format gatekeeper dev-up dev-down clean
+.PHONY: help install verify lint lint-fix typecheck build test format gatekeeper dev-up dev-down images up up-core down clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -38,6 +38,19 @@ dev-up: ## Start local dev services (PostgreSQL)
 
 dev-down: ## Stop local dev services
 	docker compose -f docker/docker-compose.dev.yml down
+
+images: ## Build the router-api and router-ui images, tagged :local
+	docker build -f router-api.dockerfile -t confidential-router/router-api:local .
+	docker build -f router-ui.dockerfile -t confidential-router/router-ui:local .
+
+up: ## Bring up the full demo stack (console, API, PostgreSQL, mock model + evidence)
+	docker compose -f docker/docker-compose.yml --profile demo up -d --build --wait
+
+up-core: ## Same without the demo stand-ins: no model backend, no evidence
+	docker compose -f docker/docker-compose.yml up -d --build --wait
+
+down: ## Stop the demo stack and drop its volumes
+	docker compose -f docker/docker-compose.yml --profile demo down -v
 
 clean: ## Reset the Nx cache and daemon
 	pnpm nx reset

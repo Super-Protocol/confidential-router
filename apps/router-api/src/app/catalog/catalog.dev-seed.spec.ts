@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expandEnvPlaceholders } from '@confidential-router/server-common';
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -15,9 +16,15 @@ import { CatalogService } from './catalog.service.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const SEED_FILE = join(here, '..', '..', '..', 'conf', 'router.dev-seed.yaml');
 
-/** The committed development seed, parsed the way the boot path parses it. */
+/**
+ * The committed development seed, parsed the way the boot path parses it —
+ * including the `${VAR:-default}` expansion the loader does before validation.
+ * The seed's backend addresses are placeholders so one file serves both a
+ * laptop and the compose demo stack, and without expanding them here the schema
+ * would see `${…}` where it expects a URL.
+ */
 function seedConfig(overrides: Partial<RouterConfig> = {}): RouterConfig {
-  const seed = parseYaml(readFileSync(SEED_FILE, 'utf8')) as Record<string, unknown>;
+  const seed = expandEnvPlaceholders(parseYaml(readFileSync(SEED_FILE, 'utf8')) as Record<string, unknown>, {});
   return RouterConfigSchema.parse({ ...seed, auth: { secret: 'a'.repeat(32) }, ...overrides });
 }
 

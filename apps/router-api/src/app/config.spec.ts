@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expandEnvPlaceholders } from '@confidential-router/server-common';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { loadRouterConfig, MissingAuthSecretError, resolveConfigFile, serviceVersion } from './config.js';
@@ -178,12 +179,36 @@ describe('the committed development seed', () => {
   it('loads through the runtime schema', async () => {
     const { readFileSync } = await import('node:fs');
     const raw = readFileSync(join(REPO_ROOT, 'apps/router-api/conf/router.dev-seed.yaml'), 'utf8');
+    // As the loader does: placeholders are expanded before the schema sees them.
+    const seed = expandEnvPlaceholders(parseYaml(raw) as object, {});
 
-    const result = RouterConfigSchema.safeParse({ ...(parseYaml(raw) as object), auth: { secret: SECRET } });
+    const result = RouterConfigSchema.safeParse({ ...seed, auth: { secret: SECRET } });
 
     expect(result.success ? null : result.error.issues).toBeNull();
     expect(result.success && result.data.models).toHaveLength(8);
     expect(result.success && result.data.endpoints).toHaveLength(3);
+  });
+
+  /**
+   * The placeholders are what let one file serve a laptop and the compose demo
+   * stack; the defaults are what keep `nx serve` working with neither set.
+   */
+  it('points at the compose services when the demo variables are set', async () => {
+    const { readFileSync } = await import('node:fs');
+    const raw = readFileSync(join(REPO_ROOT, 'apps/router-api/conf/router.dev-seed.yaml'), 'utf8');
+    const seed = expandEnvPlaceholders(parseYaml(raw) as object, {
+      CR_DEMO_LITELLM_URL: 'http://mock-litellm:4000',
+      CR_DEMO_EVIDENCE_BASE: 'http://evidence-publisher:8081',
+    });
+
+    const config = RouterConfigSchema.parse({ ...seed, auth: { secret: SECRET } });
+
+    expect(config.backends.litellm.baseUrl).toBe('http://mock-litellm:4000');
+    expect(config.endpoints.map((endpoint) => endpoint.evidenceUrl)).toEqual([
+      'http://evidence-publisher:8081/llama-33-70b/.well-known/swarm-evidence',
+      'http://evidence-publisher:8081/qwen25-72b/.well-known/swarm-evidence',
+      'http://evidence-publisher:8081/deepseek-v3/.well-known/swarm-evidence',
+    ]);
   });
 });
 

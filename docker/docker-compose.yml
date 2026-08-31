@@ -1,0 +1,168 @@
+# The Confidential Router demo stack: PostgreSQL, the migration job, the API and
+# the console — plus, behind the `demo` profile, the two stand-ins that make the
+# stack answer real generations and publish real (but meaningless) evidence.
+#
+#   docker compose -f docker/docker-compose.yml up --build            # console + API
+#   docker compose -f docker/docker-compose.yml --profile demo up --build
+#
+# Console:  http://localhost:3001      API: http://localhost:3000
+# Swagger:  http://localhost:3000/docs GraphQL: http://localhost:3000/graphql
+#
+# Sign in with a magic link: submit your address on the console and open the URL
+# the API logs (`docker compose logs api`). No mail provider is involved.
+#
+# This is a demo, not a deployment. Read docker/README.md before borrowing any
+# of it: the credentials are committed, the API runs outside production mode on
+# purpose, and the console image is bound to http://localhost:3000.
+name: confidential-router
+
+# ---------------------------------------------------------------------------
+# router-api runs twice from one image — once as the migration job, once as the
+# server. Both need the same configuration, so it is written once here.
+# ---------------------------------------------------------------------------
+x-router-api-env: &router-api-env
+  # Deliberately *not* production. In production mode the API requires a Resend
+  # API key for magic links and refuses to boot without Stripe credentials —
+  # correct for a deployment, and fatal for a stack meant to be usable two
+  # minutes after a clone. The console mailer prints the sign-in link to the log
+  # and the manual payment provider completes a top-up without a card.
+  NODE_ENV: development
+
+  # The eight models and three endpoints of the design prototype, shipped inside
+  # the image. Bind-mount your own file over it to change the catalogue.
+  CR_API_CONFIG_FILE: /app/conf/router.dev-seed.yaml
+  CR_DEMO_LITELLM_URL: http://mock-litellm:4000
+  CR_DEMO_EVIDENCE_BASE: http://evidence-publisher:8081
+
+  CR_API_DATABASE__TYPE: postgres
+  CR_API_DATABASE__URL: postgres://${POSTGRES_USER:-router}:${POSTGRES_PASSWORD:-router}@postgres:5432/${POSTGRES_DB:-router}
+
+  # Signs session cookies and magic-link tokens. The default is a committed
+  # development value; set CR_API_AUTH__SECRET in docker/.env for anything you
+  # leave running.
+  CR_API_AUTH__SECRET: ${CR_API_AUTH__SECRET:-demo-secret-not-for-anything-real-32}
+  CR_API_AUTH__BASE_URL: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}
+  CR_API_SERVER__PUBLIC_BASE_URL: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}
+  # CORS and Better Auth's trusted origins. The console calls the API from the
+  # browser with `credentials: 'include'`, so its origin has to be listed.
+  CR_API_SERVER__VALID_CLIENT_ORIGINS: ${ROUTER_UI_PUBLIC_URL:-http://localhost:3001}
+  CR_API_BILLING__CHECKOUT_RETURN_URL: ${ROUTER_UI_PUBLIC_URL:-http://localhost:3001}/credits
+
+  # Short enough that the evidence screens fill in while you are still looking
+  # at them; the deployment default is 5m.
+  CR_API_EVIDENCE__POLL_INTERVAL: 30s
+  CR_API_LOG__LEVEL: ${CR_API_LOG__LEVEL:-info}
+
+x-router-api: &router-api
+  image: ${ROUTER_API_IMAGE:-confidential-router/router-api:local}
+  build:
+    context: ..
+    dockerfile: router-api.dockerfile
+  environment: *router-api-env
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-router}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-router}
+      POSTGRES_DB: ${POSTGRES_DB:-router}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-router} -d ${POSTGRES_DB:-router}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies Better Auth's four tables and this service's ten, then exits. On
+  # PostgreSQL `database.migrationsRun` is off by default so replicas do not race
+  # each other at boot — this job is what owns the schema. It is idempotent, so
+  # every `up` re-runs it and a stack already migrated pays a second.
+  migrate:
+    <<: *router-api
+    command: ['migrate']
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *router-api
+    restart: unless-stopped
+    ports:
+      - '${ROUTER_API_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # `NEXT_PUBLIC_*` is inlined by `next build`, so the console image is bound to
+  # the API origin it was built against (apps/router-ui/README.md). Change
+  # ROUTER_API_PUBLIC_URL and this image has to be rebuilt, not just restarted.
+  ui:
+    image: ${ROUTER_UI_IMAGE:-confidential-router/router-ui:local}
+    build:
+      context: ..
+      dockerfile: router-ui.dockerfile
+      args:
+        NEXT_PUBLIC_API_ORIGIN: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}
+        NEXT_PUBLIC_GRAPHQL_HTTP: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}/graphql
+    restart: unless-stopped
+    ports:
+      - '${ROUTER_UI_PORT:-3001}:3001'
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # profile: demo — never part of a deployment.
+  # -------------------------------------------------------------------------
+
+  # Answers every model in the catalogue, so a generation is metered, priced and
+  # shows up under Activity. Without it the API answers 502 backend_unavailable,
+  # which is also a truthful demo of an endpoint being down.
+  mock-litellm:
+    profiles: [demo]
+    image: confidential-router/demo:local
+    build:
+      context: demo
+      dockerfile: demo.dockerfile
+    command: ['mock-litellm.mjs']
+    restart: unless-stopped
+    # Published so you can curl the backend directly and see what the router
+    # forwarded to it.
+    ports:
+      - '${MOCK_LITELLM_PORT:-4000}:4000'
+    environment:
+      PORT: '4000'
+
+  # Publishes a signed DeploymentEvidence bundle for each endpoint hostname in
+  # the catalogue, so the evidence screens have something correctly shaped to
+  # render. It attests nothing — the root CA is minted in the container at
+  # startup and the quote is a fabricated blob.
+  evidence-publisher:
+    profiles: [demo]
+    image: confidential-router/demo:local
+    build:
+      context: demo
+      dockerfile: demo.dockerfile
+    command: ['evidence-publisher.mjs']
+    restart: unless-stopped
+    # Published so the demo root CA is reachable:
+    #   curl http://localhost:8081/roots/demo-root.pem
+    # That is the certificate you would add to a gatekeeper's `trustedRoots` to
+    # verify this stack — see docker/README.md.
+    ports:
+      - '${EVIDENCE_PUBLISHER_PORT:-8081}:8081'
+    environment:
+      PORT: '8081'
+      EVIDENCE_ENDPOINTS: >-
+        llama-33-70b=llama-33-70b.tee.swarm.cloud,
+        qwen25-72b=qwen25-72b.tee.swarm.cloud,
+        deepseek-v3=deepseek-v3.tee.swarm.cloud
+
+volumes:
+  postgres-data:
