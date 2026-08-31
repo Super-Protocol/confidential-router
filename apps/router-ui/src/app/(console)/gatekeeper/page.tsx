@@ -1,14 +1,8 @@
 import type { Metadata } from 'next';
-import { ScreenPlaceholder } from '../../../components/screen-placeholder';
+import { GatekeeperScreen } from '../../../components/gatekeeper/gatekeeper-screen';
 
 export const metadata: Metadata = { title: 'Gatekeeper' };
 
 export default function GatekeeperPage() {
-  return (
-    <ScreenPlaceholder
-      title="Gatekeeper"
-      description="Download the verifying proxy and pin the evidence digests you trust."
-      issue="SUP-79"
-    />
-  );
+  return <GatekeeperScreen />;
 }

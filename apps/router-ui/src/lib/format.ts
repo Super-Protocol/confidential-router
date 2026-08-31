@@ -38,3 +38,52 @@ export function shortenDigest(digest: string, keep = 6): string {
   const short = `${encoded.slice(0, keep)}…${encoded.slice(-keep)}`;
   return algorithm ? `${algorithm}/${short}` : short;
 }
+
+/**
+ * Parses a user-typed dollar amount into the integer micro-USD string the API
+ * takes. Returns null for anything that is not a plain amount with at most six
+ * decimals — the caller turns that into a field error.
+ *
+ * Deliberately string arithmetic: `12.34 * 1_000_000` is 12339999.999999998.
+ */
+export function usdToMicros(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(trimmed)) return null;
+  const [whole, fraction = ''] = trimmed.split('.');
+  return (BigInt(whole) * MICROS_PER_USD + BigInt(fraction.padEnd(6, '0'))).toString();
+}
+
+/** The inverse, for pre-filling an edit form: `1500000` → `1.5`. */
+export function microsToUsdInput(micros: string): string {
+  return String(microsToUsd(micros));
+}
+
+const BYTE_UNITS = ['B', 'kB', 'MB', 'GB'];
+
+/** Download sizes. `0` means the release did not say, and renders as a dash. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < BYTE_UNITS.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${BYTE_UNITS[unit]}`;
+}
+
+/**
+ * One date shape for the console. UTC, because every timestamp the API returns
+ * is UTC and a table that silently shifted them would misreport an expiry.
+ */
+export function formatDate(iso: string | null | undefined, fallback = '—'): string {
+  if (!iso) return fallback;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(date);
+}
