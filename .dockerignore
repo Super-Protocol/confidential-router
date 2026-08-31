@@ -1,8 +1,36 @@
+# Build context for router-api.dockerfile / router-ui.dockerfile. Everything a
+# stage needs is copied explicitly; everything here is either rebuilt inside the
+# image, irrelevant to it, or must never end up in one.
+
+# Reinstalled and rebuilt in the builder stage.
 node_modules
+.pnpm-store
 dist
+.next
+out
+out-tsc
+tmp
+*.tsbuildinfo
 .nx
+
+# Not read by any build.
 .git
 .github
+.serena
+docs
+schemas
+
+# Test and local run artefacts.
 test-output
 coverage
+playwright-report
+blob-report
+.playwright-mcp
+data
 **/*.log
+
+# Local secrets. A `.env` copied into a layer stays in the image whatever a
+# later step deletes.
+.env
+.env.*
+!.env.example
