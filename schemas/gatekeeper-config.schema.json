@@ -85,8 +85,8 @@
     },
     "evidenceDigest": {
       "type": "string",
-      "pattern": "^(sha256/[A-Za-z0-9_-]{43}|sha256:[0-9a-fA-F]{64}|[0-9a-fA-F]{64})$",
-      "description": "Pinned evidenceDigest. Canonical form is sha256/<base64url>; sha256:<hex> and bare hex are accepted and normalised at load time."
+      "pattern": "^(sha256/[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]|sha256/[0-9a-fA-F]{64}|sha256:[0-9a-fA-F]{64}|[0-9a-fA-F]{64})$",
+      "description": "Pinned evidenceDigest. Canonical form is sha256/<base64url, unpadded>; sha256/<hex>, sha256:<hex> and bare hex are accepted and normalised at load time. A 32-byte digest leaves the last sextet's two trailing bits clear, so only AEIMQUYcgkosw048 can end the base64url form — the other 48 characters are a second spelling of the same bytes, and pins are compared as exact strings."
     },
     "pem": {
       "type": "string",

@@ -76,10 +76,11 @@ describe('gatekeeper-config rules', () => {
     expect(errorsOf(validate)).toContain('/endpoints/0/trustedEvidence');
   });
 
-  it('accepts canonical, sha256:hex and bare-hex digest encodings', () => {
+  it('accepts canonical, sha256/hex, sha256:hex and bare-hex digest encodings', () => {
     const cfg = base();
     cfg.endpoints[0].trustedEvidence = [
       'sha256/axNB3kHhDGtF3v2P8lY6pWbBqzX0cR9kT1uJm4sN7dE',
+      `sha256/${'a'.repeat(64)}`,
       `sha256:${'a'.repeat(64)}`,
       'b'.repeat(64),
     ];
@@ -87,7 +88,18 @@ describe('gatekeeper-config rules', () => {
   });
 
   it('rejects malformed digests', () => {
-    for (const bad of ['sha256/short', 'md5/abc', 'a'.repeat(63), `sha256/${'a'.repeat(43)}=`]) {
+    const bads = [
+      'sha256/short',
+      'md5/abc',
+      'a'.repeat(63),
+      `sha256/${'a'.repeat(43)}=`,
+      // A final character with non-zero trailing bits is a second spelling of the same 32 bytes;
+      // pins are exact string matches, so it would be a pin that never fires.
+      `sha256/${'a'.repeat(42)}B`,
+      // Hex needs no scheme to be unambiguous; a bare base64url token does.
+      'weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs',
+    ];
+    for (const bad of bads) {
       const cfg = base();
       cfg.endpoints[0].trustedEvidence = [bad];
       expect(validate(cfg), bad).toBe(false);

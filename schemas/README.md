@@ -20,7 +20,10 @@ you if they disagree. Generated TypeScript types (`json-schema-to-typescript`) a
 Encoding rules shared by all schemas:
 
 - Fingerprints and digests: `sha256/<base64url, unpadded, 43 chars>` (canonical). `evidenceDigest` pins
-  additionally accept `sha256:<hex>` / bare hex on input.
+  additionally accept `sha256/<hex>`, `sha256:<hex>` / bare hex on input. The base64url form must be the
+  canonical spelling of 32 bytes — the last character can only be one of `AEIMQUYcgkosw048` — because pins
+  are compared as exact strings. `libs/attestation-fixtures/vectors/evidence-digest.json` is the vector set
+  every implementation is held to.
 - Durations: Go style (`60s`, `5m`, `24h`).
 - Money: integer micro-USD (`…Micros`).
 - Names: `^[a-z0-9][a-z0-9-]{0,62}$` (they become Rego object keys).
