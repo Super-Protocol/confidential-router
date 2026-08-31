@@ -15,6 +15,7 @@ about publication, never a verdict.
 - [Models, endpoints and LiteLLM](#models-endpoints-and-litellm)
 - [Evidence](#evidence)
 - [Auth](#auth)
+- [First sign-in on a fresh deployment](#first-sign-in-on-a-fresh-deployment)
 - [Billing and Stripe](#billing-and-stripe)
 - [The OpenAI-compatible surface](#the-openai-compatible-surface)
 - [Running it](#running-it)
@@ -166,12 +167,65 @@ auth:
 `mailer: console` writes the sign-in URL to the log instead of sending it, which
 is what makes a headless demo possible. The service refuses to boot with it in
 production, because a sign-in link in a log file is a sign-in link anybody with
-the log can use.
+the log can use. `mailer: none` switches magic-link sign-in off altogether —
+`/auth/sign-in/magic-link` is not mounted — which is what lets a deployment with
+no mail provider boot in production at all.
 
 Every new user gets a personal workspace on first sign-in. `/v1` takes no
 cookies and no query parameters — a `Bearer sk-tee-v1-…` key, and nothing else.
 Only `sha256(key)` is stored; the plaintext exists for the length of one GraphQL
 response.
+
+The console asks `signInOptions` — the one public query it makes before there is
+a session — for which of these paths this deployment actually offers, and renders
+only those. A "Continue with GitHub" button on a deployment with no GitHub app
+can only end in an error.
+
+## First sign-in on a fresh deployment
+
+A deployment can be brought up with no mailer and no OAuth app — a marketplace
+install is exactly that — and then none of the paths above can produce the first
+account. `auth.bootstrapToken` is the way in:
+
+```yaml
+auth:
+  bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}   # at least 16 characters; blank counts as unset
+  bootstrapEmail: admin@example.com           # default: admin@confidential-router.local
+  magicLink:
+    mailer: none                              # no mail on this deployment
+```
+
+While that token is set **and** the `user` table is still empty, the console's
+sign-in screen offers "Have a bootstrap token?", and posting the token creates
+the first account, its personal workspace and a session:
+
+```bash
+curl -i -X POST https://console.example.com/auth/bootstrap \
+  -H 'content-type: application/json' \
+  -d '{"token":"…"}'
+# 200, Set-Cookie: cr_session=…
+```
+
+What the endpoint promises:
+
+- **Once.** The first account closes it. `user.email` is unique, so two
+  simultaneous requests cannot both win — the loser gets the same 404 as anyone
+  arriving afterwards.
+- **404, not 403.** With no token configured the endpoint is not mounted at all;
+  once the deployment has an owner it answers 404. Neither state confirms to an
+  anonymous caller that a bootstrap token exists. A *wrong* token while
+  bootstrap is genuinely open answers 401, because at that point availability is
+  already public (`signInOptions.bootstrap`) and a typo deserves a retry.
+- **Constant-time, and never logged.** The token is compared through SHA-256
+  digests, so neither its value nor its length leaks through timing, and it is
+  not written to the log, echoed in a response or exposed by any query.
+- **Rate-limited** to five attempts a minute per source, in production.
+
+Afterwards the account is an ordinary one: it owns its workspace and it is the
+account a magic link to `bootstrapEmail` signs into, so a deployment that later
+configures a mailer or an OAuth app is not left with a stranded admin. There is
+no separate "admin" role — this product's only role is workspace ownership.
+Clearing `bootstrapToken` is optional; the endpoint is already closed.
 
 ## Billing and Stripe
 

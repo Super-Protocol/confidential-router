@@ -109,7 +109,13 @@ Two settings behave differently in production:
 | Setting | Development | Production (`NODE_ENV=production`) |
 | --- | --- | --- |
 | `auth.secret` | minted per process, with a warning | required; the boot fails without it |
-| `auth.magicLink.mailer: console` | prints the link to the log | rejected — configure `resend` |
+| `auth.magicLink.mailer: console` | prints the link to the log | rejected — configure `resend`, or `none` |
+
+A deployment with neither a mailer nor an OAuth app sets `auth.magicLink.mailer:
+none` so it can boot, and `auth.bootstrapToken` so somebody can get in:
+`POST /auth/bootstrap` trades that token for the first account, once, and is a
+404 the rest of the time. See
+[`docs/router.md`](../../docs/router.md#first-sign-in-on-a-fresh-deployment).
 
 ## Database
 
