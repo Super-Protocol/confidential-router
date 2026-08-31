@@ -118,6 +118,53 @@ func TestDialRefusesAConnectionWhosePinChangedDuringTheHandshake(t *testing.T) {
 	}
 }
 
+func TestDialKeepsAConnectionThePinChangedToDuringTheHandshake(t *testing.T) {
+	addr, fingerprint := testTLSServer(t)
+
+	// The pin starts empty — the first request is admitted before any verdict
+	// exists and dials while the first attestation is still running.
+	started, resume := make(chan struct{}), make(chan struct{})
+	p := newPool("router.example.test", 443, func(ctx context.Context, network, _ string) (net.Conn, error) {
+		close(started)
+		<-resume
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	})
+
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		conn, err := p.dialTLS(context.Background(), "tcp", p.addr)
+		done <- result{conn, err}
+	}()
+
+	// The verdict lands mid-handshake and pins the very leaf this handshake is
+	// about: the connection is the one the fresh verdict attests.
+	<-started
+	p.setPin(fingerprint)
+	close(resume)
+
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("err = %v, want the connection the new pin covers to be kept", got.err)
+	}
+	if got.conn == nil {
+		t.Fatal("no connection and no error")
+	}
+	defer got.conn.Close() //nolint:errcheck // test cleanup
+
+	// Kept means kept *under the new pin*: a later flip has to be able to close
+	// it, which only works if the pool is tracking it.
+	p.mu.Lock()
+	_, tracked := p.conns[got.conn]
+	p.mu.Unlock()
+	if !tracked {
+		t.Error("the connection was handed back untracked, so a later pin change could not close it")
+	}
+}
+
 func TestDialIsSafeWhileThePinIsChanging(t *testing.T) {
 	addr, fingerprint := testTLSServer(t)
 	p := newPool("router.example.test", 443, func(ctx context.Context, network, _ string) (net.Conn, error) {
