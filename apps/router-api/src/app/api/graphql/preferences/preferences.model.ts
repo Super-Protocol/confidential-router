@@ -1,5 +1,6 @@
 import { ArgsType, Field, GraphQLISODateTime, ID, InputType, Int, ObjectType } from '@nestjs/graphql';
 import { IsBoolean, IsDate, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
+import type { UserPreferences } from '../../../db/entities/user-preferences.entity.js';
 
 @ObjectType('UserPreferences', { description: 'Console settings, including the Evidence group.' })
 export class UserPreferencesModel {
@@ -72,4 +73,18 @@ export class ExportEvidenceArgs {
   @Field(() => GraphQLISODateTime)
   @IsDate()
   to!: Date;
+}
+
+/**
+ * Projection of the stored row, shared by the `updatePreferences` mutation and
+ * the `me.preferences` field so the two cannot answer differently.
+ */
+export function preferencesModel(preferences: UserPreferences): UserPreferencesModel {
+  return {
+    archiveEvidence: preferences.archiveEvidence,
+    evidenceRetentionDays: preferences.evidenceRetentionDays,
+    notifyOnMeasurementChange: preferences.notifyOnMeasurementChange,
+    desktopNotifications: preferences.desktopNotifications,
+    emailReceipts: preferences.emailReceipts,
+  };
 }

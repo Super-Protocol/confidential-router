@@ -1,9 +1,13 @@
 # Console GraphQL — schema outline
 
-Served by `apps/router-api` at `/graphql` (Apollo, **code-first** NestJS resolvers). This SDL is the
-target the code-first types must produce; SUP-76 commits the generated `schema.graphql` and
-`apps/router-ui` runs GraphQL codegen against it (never edit generated client code by hand). Auth: session
-cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
+Served by `apps/router-api` at `/graphql` (Apollo, **code-first** NestJS resolvers).
+
+**The shipped schema is [`apps/router-api/schema.graphql`](../../apps/router-api/schema.graphql).** It is
+emitted from the resolvers, committed, and checked on every CI run against both the resolver metadata and
+the schema the running application serves; `apps/router-ui` generates its Apollo client from that file
+(never edit generated client code by hand). The SDL below is the *design target* this document has carried
+since SUP-66 — where the two differ, the committed file wins and the difference is listed under "As
+shipped" at the end. Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
 carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
 string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
 field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
@@ -187,3 +191,65 @@ Screen → operations: **Overview** `activitySummary + endpoints`; **Models** `m
 `generations`; **Credits** `workspace.balance + creditTransactions + createCheckout + setAutoTopUp`;
 **Profile** `viewer + activitySeries + usageByModel + signedResponseDays`; **Preferences**
 `viewer.preferences + updatePreferences + exportEvidence`.
+
+## As shipped (SUP-76)
+
+SUP-76 consolidated the console API, emitted the schema and pointed the UI's codegen at it. On top of the
+SUP-75 deltas above, these are the differences between this document's outline and the committed
+`schema.graphql`:
+
+- **`me`, not `viewer`, and no top-level `workspaces`/`workspace`.** The root field has been `me` since
+  SUP-70 and every suite is written against it; renaming it would churn the whole API for a synonym.
+  Memberships hang off it (`me { workspaces { … } }`) — the console needs identity and workspaces in the
+  same round trip, and a second root field would be a second way to ask one question.
+- **`User.avatarUrl`** (the contract's name) over Better Auth's `image`, and **`Workspace.balanceMicros`**
+  over `balance`, keeping the `…Micros` rule that every money field follows.
+- **`WorkspaceRole` is a real enum** (`OWNER` / `MEMBER`) rather than a string of the stored lower-case
+  value, so a client cannot compare it against the wrong casing.
+- **`User.preferences` replaces the top-level `preferences` query.** The Preferences screen loads in one
+  query, and a setting has exactly one place it can be read from. `updatePreferences` stays a mutation.
+- **`updateProfile(input: UpdateProfileInput!)`** takes an input object, like every other mutation here,
+  and rejects a blank name. **`deleteAccount` is still not implemented**: deleting an account has to decide
+  what happens to an append-only credits ledger and to generations other rows reference, and no ADR covers
+  that yet.
+- **`models` and `model` are the only public operations.** A router that meters LLM traffic has to be able
+  to advertise its catalogue and its prices before anyone signs up. A signed-in caller gets their own
+  `tokensRouted30d` on the same query; an anonymous one gets `0`, because there is no workspace to
+  attribute usage to.
+- **`gatekeeperRelease`** — new, and the Gatekeeper screen's only query. Version, notes URL, checksum
+  manifest and one `GatekeeperDownload` per platform, read from GitHub Releases and cached
+  (`gatekeeper.*` in the router config). `stale: true` means GitHub could not be reached and these are the
+  last known links. It describes a published artefact: there is no registration, instance list or status,
+  because the router never learns that a gatekeeper verified anything (ADR-002).
+
+### Error codes
+
+A GraphQL response is `200` whatever happened, so `extensions.code` is what a client branches on. Nest
+exceptions are mapped in one place (`src/app/api/graphql/errors.ts`):
+
+| status | `extensions.code` |
+| --- | --- |
+| 400 / 422 | `BAD_USER_INPUT` |
+| 401 | `UNAUTHENTICATED` |
+| 402 | `PAYMENT_REQUIRED` |
+| 403 | `FORBIDDEN` |
+| 404 | `NOT_FOUND` |
+| 409 | `CONFLICT` |
+| 429 | `TOO_MANY_REQUESTS` |
+| anything else | `INTERNAL_SERVER_ERROR` |
+
+`extensions.status` carries the HTTP status alongside it. Apollo's own pre-resolution codes
+(`GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, …) are kept as they are. With
+`graphql.introspection` off — the production default — an `INTERNAL_SERVER_ERROR` loses its message and
+its stack trace.
+
+### Screen → operations, as shipped
+
+**Overview** `activitySummary + endpoints + creditBalance`; **Models** `models` (public) `+ endpoints`;
+**Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` / `evidenceDigestHistory` +
+`refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
+`activitySummary` / `activitySeries` / `topKeys` / `usageByModel`; **Logs** `generations` (+ the CSV
+download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
+**Gatekeeper** `gatekeeperRelease`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
+`usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
+`updatePreferences` / `exportEvidence`.

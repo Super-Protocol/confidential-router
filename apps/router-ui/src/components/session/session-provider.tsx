@@ -7,26 +7,31 @@ import { graphql } from '../../generated';
 import type { SessionQuery } from '../../generated/graphql';
 import { isUnauthenticatedError } from '../../lib/apollo-client';
 
+/**
+ * One query for the whole shell: identity and every workspace the viewer may
+ * act in. `me` is the console's first call on every page load, and the ids it
+ * returns are what every workspace-scoped query downstream is filtered by.
+ */
 export const SESSION_QUERY = graphql(`
   query Session {
-    viewer {
+    me {
       id
       email
       name
       avatarUrl
-    }
-    workspaces {
-      id
-      name
-      slug
-      role
-      balance
+      workspaces {
+        id
+        name
+        slug
+        role
+        balanceMicros
+      }
     }
   }
 `);
 
-export type Viewer = SessionQuery['viewer'];
-export type Workspace = SessionQuery['workspaces'][number];
+export type Viewer = SessionQuery['me'];
+export type Workspace = SessionQuery['me']['workspaces'][number];
 
 export interface SessionValue {
   viewer: Viewer | null;
@@ -62,7 +67,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const [activeWorkspaceId, setActiveWorkspaceId] = React.useState<string | null>(null);
 
-  const workspaces = React.useMemo(() => data?.workspaces ?? [], [data]);
+  const workspaces = React.useMemo(() => data?.me.workspaces ?? [], [data]);
 
   const activeWorkspace = React.useMemo(
     () => workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null,
@@ -71,7 +76,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const value = React.useMemo<SessionValue>(
     () => ({
-      viewer: data?.viewer ?? null,
+      viewer: data?.me ?? null,
       workspaces,
       activeWorkspace,
       setActiveWorkspaceId,
