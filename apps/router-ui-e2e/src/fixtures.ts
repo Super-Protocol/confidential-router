@@ -21,26 +21,45 @@ export const SESSION_DATA = {
   },
 };
 
-/**
- * Answers the console's GraphQL calls from a fixture.
- *
- * A shell smoke test should not depend on a database, so the fixture answers
- * the `Session` query router-api serves (`apps/router-api/schema.graphql`).
- * Anything the shell does not know how to ask for fails loudly rather than
- * returning an empty object.
- */
-export async function mockGraphQL(page: Page, data: unknown = SESSION_DATA): Promise<void> {
-  await page.route('**/graphql', async (route) => {
-    const body = route.request().postDataJSON() as { operationName?: string };
+/** The `data` object of a GraphQL response. */
+export type OperationData = Record<string, unknown>;
 
-    if (body?.operationName !== 'Session') {
+/** A canned response, or one computed from the operation's variables. */
+export type OperationResponder = OperationData | ((variables: Record<string, unknown>) => OperationData);
+
+/** Operation name → the `data` the console gets back. */
+export type GraphQLFixtures = Record<string, OperationResponder>;
+
+/**
+ * Answers the console's GraphQL calls from fixtures, keyed by operation name.
+ *
+ * A UI test should not depend on a database, so each screen's spec supplies the
+ * operations it needs (`apps/router-api/schema.graphql` is the contract). An
+ * operation nobody mocked fails loudly rather than returning an empty object:
+ * a screen quietly rendering "no data" is exactly the bug these tests exist to
+ * catch. `Session` is mocked by default, because every console page asks for it.
+ */
+export async function mockGraphQL(page: Page, operations: GraphQLFixtures = {}): Promise<void> {
+  const responses: GraphQLFixtures = { Session: SESSION_DATA, ...operations };
+
+  await page.route('**/graphql', async (route) => {
+    const body = route.request().postDataJSON() as {
+      operationName?: string;
+      variables?: Record<string, unknown>;
+    };
+    const name = body?.operationName ?? '';
+
+    if (!(name in responses)) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ errors: [{ message: `Unmocked operation: ${body?.operationName}` }] }),
+        body: JSON.stringify({ errors: [{ message: `Unmocked operation: ${name}` }] }),
       });
       return;
     }
+
+    const responder = responses[name];
+    const data = typeof responder === 'function' ? responder(body.variables ?? {}) : responder;
 
     await route.fulfill({
       status: 200,
@@ -58,7 +77,7 @@ export async function mockGraphQL(page: Page, data: unknown = SESSION_DATA): Pro
  * it, and a test that pretended otherwise would be testing a boundary the UI
  * does not own.
  */
-export async function signIn(page: Page, baseURL: string): Promise<void> {
+export async function signIn(page: Page, baseURL: string, operations: GraphQLFixtures = {}): Promise<void> {
   await page.context().addCookies([
     {
       name: SESSION_COOKIE_NAME,
@@ -66,5 +85,5 @@ export async function signIn(page: Page, baseURL: string): Promise<void> {
       url: baseURL,
     },
   ]);
-  await mockGraphQL(page);
+  await mockGraphQL(page, operations);
 }
