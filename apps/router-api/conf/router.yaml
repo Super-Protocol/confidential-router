@@ -50,10 +50,15 @@ auth:
   # No secret here on purpose: outside production the process mints an ephemeral
   # one and says so. Set CR_API_AUTH__SECRET for a stable dev session.
   magicLink:
+    # `none` switches magic-link sign-in off, for a deployment with no mail
+    # provider at all — which is the only way such a one can boot in production.
     mailer: console
     from: no-reply@confidential-router.local
   # OAuth is optional in development; magic link alone is enough to sign in.
   # github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
+  # First sign-in where there is neither. Unset here — a laptop reads its magic
+  # link out of the log. See docs/router.md, "First sign-in on a fresh deployment".
+  # bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}
 
 log:
   level: info

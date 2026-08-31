@@ -1,8 +1,9 @@
-import type { BetterAuthOptions } from 'better-auth';
+import type { BetterAuthOptions, BetterAuthPlugin } from 'better-auth';
 import { magicLink } from 'better-auth/plugins/magic-link';
 import Database from 'better-sqlite3';
 import { Pool } from 'pg';
 import type { RouterConfig } from '../config.schema.js';
+import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
 import type { MagicLinkMailer } from './magic-link-mailer.js';
 
 /** Session cookie name fixed by ADR-004 §4. */
@@ -82,12 +83,35 @@ export function buildAuthOptions({ config, mailer, database, onUserCreated }: Au
           },
         }
       : undefined,
-    plugins: [
+    plugins: authPlugins(auth, mailer),
+  };
+}
+
+/**
+ * The plugins this deployment's configuration asks for, and only those.
+ *
+ * Both are conditional on purpose. An unregistered plugin's routes 404 from
+ * Better Auth's own router, which is a stronger statement than a handler that
+ * exists and refuses: there is no `/auth/bootstrap` to probe on a deployment
+ * that configured no token, and no `/auth/sign-in/magic-link` to request a mail
+ * from on one that has no mailer.
+ */
+function authPlugins(auth: RouterConfig['auth'], mailer: MagicLinkMailer): BetterAuthPlugin[] {
+  const plugins: BetterAuthPlugin[] = [];
+
+  if (auth.magicLink.mailer !== 'none') {
+    plugins.push(
       magicLink({
         sendMagicLink: async ({ email, url, token }) => {
           await mailer.send({ email, url, token });
         },
       }),
-    ],
-  };
+    );
+  }
+
+  if (auth.bootstrapToken !== undefined) {
+    plugins.push(bootstrapAdmin({ token: auth.bootstrapToken, email: auth.bootstrapEmail }));
+  }
+
+  return plugins;
 }

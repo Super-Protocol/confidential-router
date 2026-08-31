@@ -25,6 +25,20 @@ export class ConsoleMagicLinkMailer implements MagicLinkMailer {
   }
 }
 
+/**
+ * Refuses to send anything: `mailer: none` means the deployment has no mail at
+ * all.
+ *
+ * `buildAuthOptions` already leaves the magic-link plugin unregistered in that
+ * case, so nothing can reach this. It exists so that a future caller which does
+ * reach it fails loudly instead of appearing to send a link nobody will get.
+ */
+export class DisabledMagicLinkMailer implements MagicLinkMailer {
+  async send(): Promise<void> {
+    throw new Error('Magic-link sign-in is disabled on this deployment (auth.magicLink.mailer: none).');
+  }
+}
+
 /** Resend's REST API is a single POST, so it needs no SDK. */
 export class ResendMagicLinkMailer implements MagicLinkMailer {
   constructor(
@@ -56,6 +70,8 @@ export function createMagicLinkMailer(auth: AuthConfig, nodeEnv = process.env.NO
   const { mailer, from, resendApiKey } = auth.magicLink;
 
   switch (mailer) {
+    case 'none':
+      return new DisabledMagicLinkMailer();
     case 'console':
       if (nodeEnv === 'production') {
         throw new Error(

@@ -3,6 +3,7 @@ import { GraphQLSchemaBuilderModule, GraphQLSchemaFactory } from '@nestjs/graphq
 import { type GraphQLSchema, lexicographicSortSchema, printSchema } from 'graphql';
 import { ActivityResolver } from './activity/activity.resolver.js';
 import { ApiKeysResolver } from './api-keys/api-keys.resolver.js';
+import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
 import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
 import { CreditsResolver } from './credits/credits.resolver.js';
@@ -28,6 +29,7 @@ export const CONSOLE_RESOLVERS = [
   EvidenceResolver,
   GatekeeperResolver,
   PreferencesResolver,
+  SignInOptionsResolver,
   ViewerResolver,
 ] as const;
 

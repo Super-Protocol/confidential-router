@@ -99,9 +99,14 @@ auth:
   github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
   magicLink:
-    mailer: resend
+    mailer: resend                 # `none` on a deployment with no mail provider at all
     from: no-reply@tee.swarm.cloud
     resendApiKey: ${CR_API_RESEND_KEY}
+  # First sign-in where there is no mailer and no OAuth app: while this is set
+  # and no user exists, POST /auth/bootstrap trades it for the first account.
+  # See docs/router.md, "First sign-in on a fresh deployment".
+  bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}
+  bootstrapEmail: admin@tee.swarm.cloud
 
 billing:
   minTopUpMicros: 5000000        # $5

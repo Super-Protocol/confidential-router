@@ -1,9 +1,36 @@
+import type { Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { CONSOLE_OPERATIONS } from './evidence-fixtures';
 import { mockGraphQL, signIn } from './fixtures';
 
+/**
+ * The screen asks the API which sign-in paths this deployment offers before it
+ * renders any of them, so every case here has to say what it is a deployment
+ * of. The default is the development one: both OAuth apps, a mailer, and no
+ * bootstrap window because somebody has already signed in.
+ */
+async function deployment(
+  page: Page,
+  offers: Partial<{ bootstrap: boolean; github: boolean; google: boolean; magicLink: boolean }> = {},
+): Promise<void> {
+  await mockGraphQL(page, {
+    SignInOptions: {
+      signInOptions: {
+        __typename: 'SignInOptions',
+        bootstrap: false,
+        github: true,
+        google: true,
+        magicLink: true,
+        ...offers,
+      },
+    },
+  });
+}
+
 test.describe('sign-in', () => {
   test('sends a signed-out visitor to the sign-in screen and remembers the destination', async ({ page }) => {
+    await deployment(page);
+
     await page.goto('/logs');
 
     await expect(page).toHaveURL(/\/login\?next=%2Flogs$/);
@@ -11,14 +38,18 @@ test.describe('sign-in', () => {
   });
 
   test('offers both providers and the magic link', async ({ page }) => {
+    await deployment(page);
+
     await page.goto('/login');
 
     await expect(page.getByRole('button', { name: /Continue with GitHub/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /Continue with Google/ })).toBeVisible();
     await expect(page.getByLabel('Email')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Have a bootstrap token?' })).toBeHidden();
   });
 
   test('mails a magic link and confirms it was sent', async ({ page }) => {
+    await deployment(page);
     let requestBody: unknown;
     await page.route('**/auth/sign-in/magic-link', async (route) => {
       requestBody = route.request().postDataJSON();
@@ -34,6 +65,7 @@ test.describe('sign-in', () => {
   });
 
   test('follows a provider redirect', async ({ page }) => {
+    await deployment(page);
     await page.route('**/auth/sign-in/social', async (route) => {
       await route.fulfill({
         status: 200,
@@ -46,6 +78,54 @@ test.describe('sign-in', () => {
     await page.getByRole('button', { name: /Continue with GitHub/ }).click();
 
     await expect(page).toHaveURL(/provider=github/);
+  });
+
+  test('offers only the bootstrap path on a fresh deployment with no mailer or OAuth app', async ({ page }) => {
+    await deployment(page, { bootstrap: true, github: false, google: false, magicLink: false });
+
+    await page.goto('/login');
+
+    await expect(page.getByRole('button', { name: /Continue with/ })).toBeHidden();
+    await expect(page.getByLabel('Email')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Have a bootstrap token?' })).toBeVisible();
+  });
+
+  test('trades a bootstrap token for a session and lands on the console', async ({ page, baseURL }) => {
+    await deployment(page, { bootstrap: true, github: false, google: false, magicLink: false });
+    let requestBody: unknown;
+    await page.route('**/auth/bootstrap', async (route) => {
+      requestBody = route.request().postDataJSON();
+      // What the router does on success: the session arrives as a cookie.
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'set-cookie': 'cr_session=e2e-bootstrap-session; Path=/; HttpOnly' },
+        body: JSON.stringify({ user: { id: 'user-1', email: 'admin@example.com' } }),
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Have a bootstrap token?' }).click();
+    await page.getByLabel('Bootstrap token').fill('bootstrap-token-32-characters-ok');
+    await page.getByRole('button', { name: 'Create the first account' }).click();
+
+    expect(requestBody).toEqual({ token: 'bootstrap-token-32-characters-ok' });
+    await expect(page).toHaveURL(`${baseURL}/`);
+  });
+
+  test('says a deployment that has already been set up is not bootstrappable', async ({ page }) => {
+    await deployment(page, { bootstrap: true, github: false, google: false, magicLink: false });
+    await page.route('**/auth/bootstrap', async (route) => {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+    });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Have a bootstrap token?' }).click();
+    await page.getByLabel('Bootstrap token').fill('bootstrap-token-32-characters-ok');
+    await page.getByRole('button', { name: 'Create the first account' }).click();
+
+    // By id, not by role: Next's route announcer is also `role="alert"`.
+    await expect(page.locator('#bootstrap-error')).toContainText('already has an account');
   });
 
   test('signs in and lands on Overview', async ({ page, baseURL }) => {

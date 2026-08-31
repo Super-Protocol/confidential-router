@@ -129,6 +129,45 @@ describe('loadRouterConfig', () => {
     expect(() => loadRouterConfig({ env: env({ CR_API_SERVER__PROT: '4000' }) })).toThrow(/prot/i);
   });
 
+  it('reads the bootstrap token from the environment', () => {
+    const config = loadRouterConfig({ env: env({ CR_API_AUTH__BOOTSTRAP_TOKEN: 'b'.repeat(32) }) });
+
+    expect(config.auth.bootstrapToken).toBe('b'.repeat(32));
+    expect(config.auth.bootstrapEmail).toBe('admin@confidential-router.local');
+  });
+
+  it('reads a blank bootstrap token as unset rather than failing the boot', () => {
+    // A Helm chart renders an unset optional value as an empty string. Refusing
+    // to boot on that would make an optional feature mandatory to configure.
+    expect(loadRouterConfig({ env: env({ CR_API_AUTH__BOOTSTRAP_TOKEN: '' }) }).auth.bootstrapToken).toBeUndefined();
+    expect(loadRouterConfig({ env: env({ CR_API_AUTH__BOOTSTRAP_TOKEN: '   ' }) }).auth.bootstrapToken).toBeUndefined();
+  });
+
+  it('rejects a bootstrap token short enough to guess', () => {
+    expect(() => loadRouterConfig({ env: env({ CR_API_AUTH__BOOTSTRAP_TOKEN: 'short' }) })).toThrow(
+      /bootstrapToken.*16 characters/s,
+    );
+  });
+
+  it('leaves the bootstrap token unset by default', () => {
+    expect(loadRouterConfig({ env: env() }).auth.bootstrapToken).toBeUndefined();
+  });
+
+  it('accepts the mailer being switched off entirely', () => {
+    // The one setting that lets a production deployment with no mail provider
+    // boot at all; `console` is refused there and `resend` needs a key.
+    const config = loadRouterConfig({
+      env: {
+        NODE_ENV: 'production',
+        CR_API_CONFIG_FILE: configFile,
+        CR_API_AUTH__SECRET: SECRET,
+        CR_API_AUTH__MAGIC_LINK__MAILER: 'none',
+      },
+    });
+
+    expect(config.auth.magicLink.mailer).toBe('none');
+  });
+
   it('warns when no models are configured', () => {
     const warnings: string[] = [];
     loadRouterConfig({ env: env(), onWarning: (message) => warnings.push(message) });
