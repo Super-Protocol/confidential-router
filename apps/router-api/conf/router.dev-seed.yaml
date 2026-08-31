@@ -11,29 +11,35 @@
 #
 # The endpoint hostnames are the production ones because the bundle a publisher
 # serves must name the host it is published for, and the console shows that name.
-# `evidenceUrl` points the poller at the local mock evidence publisher instead
-# (docker/docker-compose.dev.yml, SUP-84); with nothing listening there the
-# endpoints simply read "Not published", which is the honest state.
+# `evidenceUrl` points the poller at the mock evidence publisher instead; with
+# nothing listening there the endpoints simply read "Not published", which is the
+# honest state.
+#
+# The two backend addresses are placeholders so that one file serves both a
+# laptop (the defaults: 127.0.0.1) and the compose demo stack, which sets
+# `CR_DEMO_LITELLM_URL` and `CR_DEMO_EVIDENCE_BASE` to service names on the
+# compose network. Neither is a `CR_API_*` variable: they are substituted into
+# this file, not read as configuration.
 version: 1
 
 backends:
   litellm:
-    # docker/docker-compose.dev.yml's mock LiteLLM (SUP-84).
-    baseUrl: http://127.0.0.1:4000
+    # `docker compose --profile demo up` runs one (docker/demo/mock-litellm.mjs).
+    baseUrl: ${CR_DEMO_LITELLM_URL:-http://127.0.0.1:4000}
 
 endpoints:
   - name: llama-33-70b
     hostname: llama-33-70b.tee.swarm.cloud
     tee: Intel TDX + H100 CC
-    evidenceUrl: http://127.0.0.1:8081/llama-33-70b/.well-known/swarm-evidence
+    evidenceUrl: ${CR_DEMO_EVIDENCE_BASE:-http://127.0.0.1:8081}/llama-33-70b/.well-known/swarm-evidence
   - name: qwen25-72b
     hostname: qwen25-72b.tee.swarm.cloud
     tee: AMD SEV-SNP
-    evidenceUrl: http://127.0.0.1:8081/qwen25-72b/.well-known/swarm-evidence
+    evidenceUrl: ${CR_DEMO_EVIDENCE_BASE:-http://127.0.0.1:8081}/qwen25-72b/.well-known/swarm-evidence
   - name: deepseek-v3
     hostname: deepseek-v3.tee.swarm.cloud
     tee: Intel TDX + H100 CC
-    evidenceUrl: http://127.0.0.1:8081/deepseek-v3/.well-known/swarm-evidence
+    evidenceUrl: ${CR_DEMO_EVIDENCE_BASE:-http://127.0.0.1:8081}/deepseek-v3/.well-known/swarm-evidence
 
 # Prices are micro-USD per 1M tokens: $0.28 / 1M prompt tokens is 280000.
 models:
