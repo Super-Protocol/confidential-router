@@ -293,3 +293,56 @@ endpoints:
 		t.Errorf("problems = %v, want only the listen address", invalid.Errors)
 	}
 }
+
+func TestValidateKeepsTheAdminAPILocal(t *testing.T) {
+	// The admin API answers with verdicts, digests and hostnames. Binding it to
+	// a routable address would publish the user's trust decisions to the
+	// network, so it is refused rather than warned about.
+	for _, listen := range []string{
+		"unix:/run/user/1000/gatekeeper.sock", "127.0.0.1:9465", "localhost:9465", "[::1]:9465",
+	} {
+		cfg := mustParse(t, "version: 1\n"+rootsAndOneEndpoint+"admin:\n  listen: \""+listen+"\"\n")
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("admin.listen %q: %v", listen, err)
+		}
+	}
+	for _, listen := range []string{"0.0.0.0:9465", "10.0.0.4:9465", "gatekeeper.internal:9465", "unix:"} {
+		cfg := mustParse(t, "version: 1\n"+rootsAndOneEndpoint+"admin:\n  listen: \""+listen+"\"\n")
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("admin.listen %q was accepted", listen)
+			continue
+		}
+		if !strings.Contains(err.Error(), "admin.listen") {
+			t.Errorf("admin.listen %q: error does not name the field: %v", listen, err)
+		}
+	}
+}
+
+func TestValidateRequiresAnAuditFile(t *testing.T) {
+	cfg := mustParse(t, "version: 1\n"+rootsAndOneEndpoint+"audit:\n  file: \"\"\n")
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "audit.file") {
+		t.Fatalf("err = %v, want audit.file to be required", err)
+	}
+
+	ok := mustParse(t, "version: 1\n"+rootsAndOneEndpoint+"audit:\n  file: ./audit.jsonl\n")
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if ok.Audit == nil || ok.Audit.File != "./audit.jsonl" {
+		t.Errorf("Audit = %+v, want the configured path", ok.Audit)
+	}
+}
+
+func TestAdminUnixReportsTheSocketPath(t *testing.T) {
+	cfg := mustParse(t, "version: 1\n"+rootsAndOneEndpoint+"admin:\n  listen: unix:/tmp/gk.sock\n")
+	path, isUnix := cfg.Admin.Unix()
+	if !isUnix || path != "/tmp/gk.sock" {
+		t.Errorf("Unix() = %q, %v, want the socket path", path, isUnix)
+	}
+	tcp := mustParse(t, "version: 1\n"+rootsAndOneEndpoint+"admin:\n  listen: 127.0.0.1:9465\n")
+	if _, isUnix := tcp.Admin.Unix(); isUnix {
+		t.Error("a host:port listener was reported as a unix socket")
+	}
+}

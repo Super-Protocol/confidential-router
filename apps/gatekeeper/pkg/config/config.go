@@ -19,8 +19,12 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// unixPrefix marks an `admin.listen` value as a unix socket path.
+const unixPrefix = "unix:"
 
 // SchemaVersion is the only `version` value this build understands.
 const SchemaVersion = 1
@@ -55,6 +59,8 @@ type Config struct {
 	Endpoints    []Endpoint     `yaml:"endpoints"`
 	Log          Log            `yaml:"log,omitempty"`
 	Metrics      *Metrics       `yaml:"metrics,omitempty"`
+	Admin        *Admin         `yaml:"admin,omitempty"`
+	Audit        *Audit         `yaml:"audit,omitempty"`
 
 	// Path is the file this config was read from, empty when it was built in
 	// memory. Relative `pemFile` and policy `file` paths resolve against its
@@ -94,6 +100,28 @@ type Log struct {
 // Metrics is the optional local Prometheus listener.
 type Metrics struct {
 	Listen string `yaml:"listen"`
+}
+
+// Admin is the optional local status API of a running gatekeeper: the surface
+// `gatekeeper status` reads from another process, and the one a desktop shell
+// would poll. It carries verdicts, so it is loopback- or unix-socket-only by
+// construction — [Config.Validate] refuses anything else.
+type Admin struct {
+	// Listen is `unix:<path>` or a loopback `host:port`.
+	Listen string `yaml:"listen"`
+}
+
+// Unix reports whether the admin listener is a unix socket, and returns its
+// path.
+func (a Admin) Unix() (path string, ok bool) {
+	return strings.TrimPrefix(a.Listen, unixPrefix), strings.HasPrefix(a.Listen, unixPrefix)
+}
+
+// Audit is the optional audit log: one JSON object per line, appended, holding
+// every verdict and every blocked request. Request and response bodies are
+// never written to it.
+type Audit struct {
+	File string `yaml:"file"`
 }
 
 // EndpointTuning holds the knobs that may be set globally under `defaults` and

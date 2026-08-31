@@ -115,10 +115,17 @@ sent upstream** (no request header, no query parameter, no separate call).
   handshake, fresh bundle fetch). Requests are admitted against the **last verdict**; the data plane never
   blocks on verification except for the very first request, which waits for the initial verdict
   (`initialTimeout`, default `15s`).
-- `verdictCacheTtl` (default `60s`): an on-demand re-check (e.g. `gatekeeper verify`, TUI "Re-attest now")
-  reuses a verdict younger than the TTL; keyed by
-  `(hostname, observedTlsFingerprint, trustedRootsDigest, maxBundleAge, policyHash)` — the policy hash makes
-  a policy or pin edit take effect on the next check instead of waiting out the TTL.
+- `verdictCacheTtl` (default `60s`): a re-check the data plane triggers **on its own** — the first request
+  of an endpoint's life, or a connection whose certificate did not match the pin — reuses a verdict younger
+  than the TTL, so a burst of failures cannot become a burst of handshakes against the upstream. An
+  **explicit** re-check does not: `gatekeeper verify` and the dashboard's "Re-attest now" bypass the cache,
+  which is what `status.Supervisor.Reattest` promises and what a user who has just edited a pin is asking
+  for. *(Amended 2026-08-31, SUP-71: this bullet previously had the explicit re-check reusing the cached
+  verdict, which contradicted both the interface contract and the shipped TUI help.)* The cache is keyed by
+  `(hostname, observedTlsFingerprint, trustedRootsDigest, maxBundleAge, policyHash)`; in the implementation
+  the last three are covered by rebuilding the verifier — and with it the cached verdict — whenever the
+  configuration is reloaded, so a policy or pin edit takes effect on the next check instead of waiting out
+  the TTL.
 - `maxBundleAge` (default `24h`, matching the desktop gatekeeper): bundles older than this fail at `jws`;
   a 60 s clock-skew tolerance is allowed for future-dated bundles.
 - A **change of the observed TLS leaf** between re-attestations (cert rotation) invalidates the verdict
@@ -133,6 +140,14 @@ sent upstream** (no request header, no query parameter, no separate call).
 `schemas/gatekeeper-config.schema.json`, example `schemas/examples/gatekeeper-config.example.yaml`. Secrets
 never live in the file: the gatekeeper does not hold the router API key — the client sends
 `Authorization: Bearer sk-tee-…` through the proxy untouched.
+
+Two optional sections belong to the running proxy (SUP-71). `admin.listen` (`unix:<path>` or a **loopback**
+`host:port`, enforced) exposes the read-only status API — `/healthz`, `/status`, `/endpoints`, `/verdicts`,
+`/metrics` — which is how `gatekeeper status` reports on a gatekeeper running in another process; there is
+deliberately no route that can start, stop, pin or re-attest. `audit.file` appends one JSON object per line
+for every verdict change, every refused request and every request a `failMode: open` endpoint forwarded
+without one — and never a request body, a response body or a query string. `metrics.listen` keeps serving
+`/metrics` and `/healthz` only, since a scrape endpoint reaches further than the verdict routes should.
 
 ## Consequences
 

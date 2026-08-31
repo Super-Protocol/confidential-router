@@ -127,6 +127,30 @@ describe('gatekeeper-config rules', () => {
     expect(validate(cfg2)).toBe(false);
   });
 
+  it('keeps the admin API local: unix sockets and loopback only', () => {
+    for (const listen of ['unix:/run/user/1000/gatekeeper.sock', '127.0.0.1:9465', 'localhost:9465', '[::1]:9465']) {
+      const cfg = base();
+      cfg.admin = { listen };
+      expect(validate(cfg), listen).toBe(true);
+    }
+    // The admin API answers with verdicts, digests and hostnames. Binding it to
+    // a routable address would publish the user's trust decisions to the network.
+    for (const listen of ['0.0.0.0:9465', '10.0.0.4:9465', 'gatekeeper.internal:9465', ':9465']) {
+      const cfg = base();
+      cfg.admin = { listen };
+      expect(validate(cfg), listen).toBe(false);
+    }
+  });
+
+  it('requires a file when an audit log is configured', () => {
+    const cfg = base();
+    cfg.audit = {};
+    expect(validate(cfg)).toBe(false);
+    const cfg2 = base();
+    cfg2.audit = { file: './audit.jsonl' };
+    expect(validate(cfg2), errorsOf(validate)).toBe(true);
+  });
+
   it('rejects unknown keys (typos never silently pass)', () => {
     const cfg = base();
     cfg.endpoints[0].trustedEvidenceDigests = cfg.endpoints[0].trustedEvidence;

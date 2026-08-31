@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"regexp"
 	"slices"
 	"sort"
@@ -232,6 +233,53 @@ func (c *Config) validateObservability(p *problems) {
 	if c.Metrics != nil {
 		validateListen(p, "metrics.listen", c.Metrics.Listen)
 	}
+	if c.Admin != nil {
+		validateAdminListen(p, "admin.listen", c.Admin.Listen)
+	}
+	if c.Audit != nil && strings.TrimSpace(c.Audit.File) == "" {
+		p.addf("audit.file", "is required")
+	}
+}
+
+// validateAdminListen accepts a unix socket path or a loopback host:port, and
+// nothing else.
+//
+// The admin API answers with verdicts, evidence digests and traffic counters
+// for every endpoint. Binding it to a routable address would publish the user's
+// trust decisions to the network, so the refusal is here rather than in a
+// warning: there is no configuration in which a remote admin listener is what
+// someone meant.
+func validateAdminListen(p *problems, path, addr string) {
+	if socket, ok := strings.CutPrefix(addr, unixPrefix); ok {
+		if strings.TrimSpace(socket) == "" {
+			p.addf(path, "unix socket path is empty")
+		}
+		return
+	}
+	m := listenPattern.FindStringSubmatch(addr)
+	if m == nil {
+		p.addf(path, "must be unix:<path> or a loopback host:port, e.g. 127.0.0.1:9465, got %q", addr)
+		return
+	}
+	port, err := strconv.Atoi(m[2])
+	if err != nil || port < 1 || port > 65535 {
+		p.addf(path, "port must be between 1 and 65535, got %q", m[2])
+	}
+	if !isLoopbackHost(m[1]) {
+		p.addf(path, "must bind a loopback address — the admin API exposes verdicts and is local-only, got %q", m[1])
+	}
+}
+
+// isLoopbackHost reports whether a host from a listen address can only be
+// reached from this machine.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // namer maps a tuning field to how the layer being validated spells it, so a

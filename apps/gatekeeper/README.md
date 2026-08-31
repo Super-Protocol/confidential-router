@@ -10,16 +10,16 @@ The router never learns whether, when, or by whom it was attested — it only
 
 ## Status
 
-Everything up to the verdict is here: the configuration, trust store and policy
-engine (SUP-69), the verification pipeline (SUP-68), and the CLI and dashboard
-(SUP-72). `gatekeeper verify` runs the whole thing against a live endpoint and
-tells you whether it would be let through, and why.
+Complete end to end: the configuration, trust store and policy engine (SUP-69),
+the verification pipeline (SUP-68), the CLI and dashboard (SUP-72), and the data
+plane that carries traffic (SUP-71). `gatekeeper run` binds a listener per
+endpoint, keeps each one attested, and forwards only what its verdict admits;
+`gatekeeper verify` answers the same question once, for one endpoint, without
+starting anything.
 
-What is still missing is the data plane — the listeners that carry traffic
-(SUP-71). `run` and `status` therefore have nothing to run or report on, say so,
-and exit 69 rather than pretending. `gatekeeper run --demo` drives the dashboard
-from invented data so it can be used and reviewed today; nothing it shows was
-fetched or verified, and it says so on every screen.
+`gatekeeper run --demo` still drives the dashboard from invented data, for
+screenshots and for reviewing the UI without a router to point at. Nothing it
+shows was fetched or verified, and it says so on every screen.
 
 ```bash
 pnpm nx run gatekeeper:build   # -> apps/gatekeeper/bin/gatekeeper
@@ -46,7 +46,7 @@ parsing tables. Advice and warnings go to stderr; stdout is the document.
 | `policy list` | The Rego packages that would be evaluated (`--show-trust-module` dumps the generated one). |
 | `policy test <bundle.json>` | Evaluate your policies against a saved bundle, offline. Policy-only: see below. |
 | `run` | Start the gatekeeper: the dashboard, or `--headless` for a container. |
-| `status` | What a running gatekeeper is doing. |
+| `status` | What a running gatekeeper is doing. Needs an `admin:` socket to reach it. |
 | `version` | Build identity. |
 
 `verify` is the command that answers "would this be let through". `policy test`
@@ -243,6 +243,7 @@ cannot drift from the code. What still needs a human at a terminal:
 | `pkg/config/`            | YAML configuration: load (defaults → file → env → flags), validate, and rewrite in place. |
 | `pkg/trust/`             | Trusted roots and per-endpoint pinned `evidenceDigest` values. Digest spelling is decided by `pkg/attestation`, which this package delegates to. |
 | `pkg/policy/`            | Embedded OPA: the generated trust module, the built-in pin policy, user policies. |
+| `pkg/proxy/`             | The data plane: listeners, admission, re-attestation, the connection pools, metrics, the audit log and the admin socket. |
 | `pkg/policy/testing/`    | Offline evaluation of a saved bundle — what `gatekeeper policy test` runs; `NewVerifier` wires the real `pkg/attestation` pipeline in. |
 | `pkg/version/`           | Build identity, stamped by GoReleaser via `-ldflags`.                    |
 
@@ -340,6 +341,87 @@ answers "would this be let through".
 keys only in `actual` are ignored. It is a port of the Rust gatekeeper's
 built-in of the same name, so policies move over unchanged.
 
+## Data plane (`pkg/proxy`)
+
+`gatekeeper run` binds one listener per endpoint. A request reaching one is
+forwarded only if that endpoint holds a verdict admitting it; the very first
+request waits for the first verdict (`initialTimeout`), and every later one is
+decided against the last one the background loop produced (`reattestInterval`).
+Verification never happens on the request path.
+
+Three things make it more than a reverse proxy with a check in front:
+
+- **The verdict is bound to a certificate, not to a hostname.** Verification
+  observes the TLS leaf on its own dedicated handshake, and every proxied
+  connection is held to that same leaf. A pool that presents a different
+  certificate is refused with `stage: tls-fingerprint` and a re-verification is
+  scheduled — which is the path a certificate rotation, or a TLS-terminating
+  interceptor, takes between two background re-attestations. Connections
+  admitted under the old leaf are closed, in flight or not.
+- **Nothing about the verdict is ever sent upstream.** `X-Gatekeeper-*` request
+  headers are stripped, and `X-Gatekeeper-Verdict` is written on the way back to
+  the local client only (ADR-003 §6). The client's own `Authorization: Bearer
+  sk-tee-…` passes through untouched — the gatekeeper never holds the API key.
+- **Streaming is not buffered.** Responses are flushed per write, so
+  `text/event-stream` reaches the client chunk by chunk; WebSocket upgrades and
+  long-lived requests pass through, and no timeout bounds a response body.
+
+Without a verdict, `failMode: closed` (the default) answers `503` with
+
+```json
+{
+  "error": { "type": "gatekeeper_error", "code": "attestation_failed",
+             "message": "untrusted-root: the chain terminates in …" },
+  "stage": "untrusted-root",
+  "reason": "the chain terminates in …"
+}
+```
+
+and never opens an upstream connection. `failMode: open` forwards anyway, logs
+at `warn`, tags the client-facing response `X-Gatekeeper-Verdict: deny <stage>:
+<reason>`, and carries that traffic on a *separate* connection pool, so nothing
+a verdict covered is ever reused for traffic it did not.
+
+### Admin socket
+
+`admin.listen` is `unix:<path>` or a loopback `host:port` — and only those: the
+API answers with verdicts, digests and hostnames, and there is no configuration
+in which publishing them to the network is what someone meant. It is read-only;
+there is no route that can start, stop, pin or re-attest anything.
+
+| Route | Answers |
+| --- | --- |
+| `GET /healthz` | Liveness, plus how many endpoints are configured, listening and confidential. |
+| `GET /status` | The full `status.Snapshot` — the same document `gatekeeper status --json` prints. |
+| `GET /endpoints` | Just the endpoint array. |
+| `GET /verdicts` | One entry per endpoint: its decision and the report behind it. |
+| `GET /metrics` | Prometheus. |
+
+`metrics.listen` serves `/metrics` and `/healthz` and deliberately nothing else:
+a scrape endpoint tends to end up reachable from more places than its operator
+remembers, and the verdict routes name hostnames and digests.
+
+Metrics are per endpoint: `gatekeeper_requests_total{outcome}` (allowed,
+unverified, blocked, upstream-error), `gatekeeper_bytes_total{direction}`,
+`gatekeeper_request_duration_seconds`, `gatekeeper_request_ttfb_seconds`,
+`gatekeeper_verdict_transitions_total{from,to}`,
+`gatekeeper_attestations_total{result}`, `gatekeeper_endpoint_admitted` and
+`gatekeeper_endpoint_listening`. Every series exists from startup, at zero, so
+"nothing was blocked" and "the endpoint does not exist" are not the same scrape.
+
+### Audit log
+
+`audit.file` appends one JSON object per line: every verdict change, every
+request refused, and every request a `failMode: open` endpoint forwarded without
+one. It records **no request or response bodies and no query strings** — the
+gatekeeper carries prompts and API keys, and neither may outlive the process in
+a file.
+
+```json
+{"at":"…","event":"verdict","endpoint":"llama-33-70b","admitted":true,"evidenceDigest":"sha256/…","observedTlsFingerprint":"sha256/…","root":"swarm-cloud-prod"}
+{"at":"…","event":"blocked","endpoint":"llama-33-70b","admitted":false,"stage":"policy","reason":"…","method":"POST","path":"/v1/chat/completions","status":503,"failMode":"closed"}
+```
+
 ### The two runtime seams (`pkg/status`)
 
 The CLI and the dashboard never talk to the proxy or the verifier directly. They
@@ -353,11 +435,17 @@ are written against two interfaces in `pkg/status`:
   restart.
 
 `pkg/verifier` implements `Verifier` by joining `pkg/attestation` with
-`pkg/policy`; `cli.Env` is where a build overrides either seam, which is what
-lets the whole binary be exercised in tests with neither a network nor a
-terminal. `status.Demo` implements both from a config alone; it is what
-`run --demo` uses, and every report it produces carries a `DEMO DATA` warning so
-nothing it invents can be mistaken for a verdict.
+`pkg/policy`, and `pkg/proxy` implements `Supervisor` and `Reloader`; `cli.Env`
+is where a build overrides either seam, which is what lets the whole binary be
+exercised in tests with neither a network nor a terminal. `status.Demo`
+implements both from a config alone; it is what `run --demo` uses, and every
+report it produces carries a `DEMO DATA` warning so nothing it invents can be
+mistaken for a verdict.
+
+`gatekeeper status` runs in a *different process* from `gatekeeper run`, so it
+reaches the supervisor through `proxy.Client` over the admin socket. Without an
+`admin:` section there is nothing to reach, and the command says so (exit 69)
+rather than printing an empty table.
 
 ## Toolchain
 

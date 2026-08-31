@@ -85,6 +85,20 @@ func (h *harness) write(name, content string) string {
 	return path
 }
 
+// appendConfig adds YAML to the end of the config file, for the sections no
+// command writes.
+func (h *harness) appendConfig(yaml string) {
+	h.t.Helper()
+	f, err := os.OpenFile(h.configPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		h.t.Fatalf("opening config: %v", err)
+	}
+	defer f.Close() //nolint:errcheck // test helper
+	if _, err := f.WriteString(yaml); err != nil {
+		h.t.Fatalf("appending to config: %v", err)
+	}
+}
+
 // config returns the current contents of the config file.
 func (h *harness) config() string {
 	h.t.Helper()

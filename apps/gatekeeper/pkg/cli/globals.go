@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/proxy"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/verifier"
@@ -142,13 +143,51 @@ func (g *globals) verifier(ctx context.Context) (status.Verifier, error) {
 	return built, nil
 }
 
-// requireSupervisor returns the running proxy's control surface, or explains
-// its absence.
-func (g *globals) requireSupervisor() error {
-	if g.env.Supervisor == nil {
-		return failf(ExitUnavailable,
-			"this build has no proxy data plane wired in, so there is nothing to report on\n"+
-				"       (try `gatekeeper run --demo` to see the dashboard; see apps/gatekeeper/README.md)")
+// supervisor returns the data plane `run` drives: whatever the caller injected,
+// or a real one built from the configuration.
+//
+// Building it binds no endpoint listener — `run` starts them one at a time so a
+// port that is already taken shows up as one broken endpoint rather than a
+// failed startup.
+func (g *globals) supervisor(ctx context.Context, cfg *config.Config) (status.Supervisor, error) {
+	if g.env.Supervisor != nil {
+		return g.env.Supervisor, nil
 	}
-	return nil
+	built, err := proxy.New(ctx, proxy.Options{Config: cfg})
+	if err != nil {
+		return nil, wrap(ExitConfig, err)
+	}
+	return built, nil
+}
+
+// runningGatekeeper returns the control surface of a gatekeeper that is running
+// *now* — this process's own when one was injected, otherwise the admin socket
+// of the `gatekeeper run` in another terminal.
+//
+// The two failures a user can act on are told apart on purpose: a configuration
+// with no `admin:` section can never be reported on, while one that has it may
+// simply have nothing running yet.
+func (g *globals) runningGatekeeper(ctx context.Context) (status.Supervisor, error) {
+	if g.env.Supervisor != nil {
+		return g.env.Supervisor, nil
+	}
+	cfg, err := g.load()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Admin == nil {
+		return nil, failf(ExitUnavailable,
+			"a running gatekeeper is only reachable through its admin socket, and none is configured\n"+
+				"       (add an `admin:` section to %s, or read the dashboard `gatekeeper run` already shows)",
+			g.path())
+	}
+	client, err := proxy.NewClient(cfg.Admin.Listen)
+	if err != nil {
+		return nil, wrap(ExitConfig, err)
+	}
+	if _, err := client.Ping(ctx); err != nil {
+		return nil, failf(ExitUnavailable,
+			"nothing is answering on %s — is `gatekeeper run` up? (%v)", cfg.Admin.Listen, err)
+	}
+	return client, nil
 }

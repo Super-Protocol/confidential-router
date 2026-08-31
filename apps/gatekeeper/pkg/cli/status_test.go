@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -65,17 +66,34 @@ func TestStatusFlagsFailOpenTrafficWithoutAVerdict(t *testing.T) {
 	}
 }
 
-func TestStatusAndRunSayWhenThereIsNoDataPlane(t *testing.T) {
-	h := configured(t)
-	for _, args := range [][]string{{"status"}, {"run"}} {
-		got := h.run(args...)
+func TestStatusSaysWhyItCannotReachAGatekeeper(t *testing.T) {
+	// `status` reports on a gatekeeper running somewhere else, and the admin
+	// socket is the only way to reach one. Both ways of not having it are told
+	// apart, because the fix is different: add the section, or start the proxy.
+	t.Run("no admin socket is configured", func(t *testing.T) {
+		h := configured(t)
+		got := h.run("status")
 		if got.code != cli.ExitUnavailable {
-			t.Errorf("%v: exit = %d, want %d", args, got.code, cli.ExitUnavailable)
+			t.Errorf("exit = %d, want %d (stderr: %s)", got.code, cli.ExitUnavailable, got.stderr)
 		}
-		if !strings.Contains(got.stderr, "--demo") {
-			t.Errorf("%v: stderr = %q, want it to point at something that does work", args, got.stderr)
+		if !strings.Contains(got.stderr, "admin socket") {
+			t.Errorf("stderr = %q, want it to name what is missing", got.stderr)
 		}
-	}
+	})
+
+	t.Run("nothing is listening on it", func(t *testing.T) {
+		h := configured(t)
+		socket := filepath.Join(h.dir, "gatekeeper.sock")
+		h.appendConfig("\nadmin:\n  listen: unix:" + socket + "\n")
+
+		got := h.run("status")
+		if got.code != cli.ExitUnavailable {
+			t.Errorf("exit = %d, want %d (stderr: %s)", got.code, cli.ExitUnavailable, got.stderr)
+		}
+		if !strings.Contains(got.stderr, "is `gatekeeper run` up?") {
+			t.Errorf("stderr = %q, want it to point at the thing that is not running", got.stderr)
+		}
+	})
 }
 
 func TestStatusUnknownEndpointIsAUsageError(t *testing.T) {

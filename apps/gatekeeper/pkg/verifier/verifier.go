@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
@@ -32,10 +33,12 @@ type Verifier struct {
 	store  *trust.Store
 	engine *policy.Engine
 
-	// now overrides the clock, and fetch the transport. Both exist for tests;
-	// the zero values are the real ones.
+	// now overrides the clock, fetch the whole retrieval step, and dial the
+	// connection the real retrieval runs over. All three exist for tests and
+	// embedders; the zero values are the real ones.
 	now   func() time.Time
 	fetch attestation.Fetcher
+	dial  func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // New compiles the trust store and the policy engine from a loaded config.
@@ -68,6 +71,15 @@ func (v *Verifier) WithClock(now func() time.Time) *Verifier {
 // producer-asserted binding the gatekeeper does not accept.
 func (v *Verifier) WithFetcher(fetch attestation.Fetcher) *Verifier {
 	v.fetch = fetch
+	return v
+}
+
+// WithDialer routes the evidence fetch's TCP connection through dial, leaving
+// the TLS handshake — and therefore the observed channel binding — exactly as
+// it is. It is what a caller reaching an upstream over its own transport wants;
+// [Verifier.WithFetcher] replaces the handshake too and loses the binding.
+func (v *Verifier) WithDialer(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *Verifier {
+	v.dial = dial
 	return v
 }
 
@@ -133,8 +145,10 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 		TrustedRoots: v.trustedRoots(),
 		MaxBundleAge: tuning.MaxBundleAge,
 		Now:          v.clock(),
-		Fetch:        attestation.FetchOptions{Port: port, Timeout: tuning.InitialTimeout},
-		Fetcher:      capture,
+		Fetch: attestation.FetchOptions{
+			Port: port, Timeout: tuning.InitialTimeout, DialContext: v.dial,
+		},
+		Fetcher: capture,
 	})
 
 	report.ObservedTLSFingerprint = result.ObservedTLSFingerprint

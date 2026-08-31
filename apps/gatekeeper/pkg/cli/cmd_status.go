@@ -26,10 +26,11 @@ func newStatusCommand(g *globals) *cobra.Command {
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "show the full report for one endpoint")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		if err := g.requireSupervisor(); err != nil {
+		supervisor, err := g.runningGatekeeper(cmd.Context())
+		if err != nil {
 			return err
 		}
-		snapshot := g.env.Supervisor.Snapshot(cmd.Context())
+		snapshot := supervisor.Snapshot(cmd.Context())
 		p := g.printer(cmd, *asJSON)
 		now := g.env.now()
 
