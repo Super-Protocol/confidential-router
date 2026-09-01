@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME } from './lib/env';
+import { SESSION_COOKIE_NAME } from './lib/session-cookie';
 
 /**
  * Keeps a signed-out browser off the console and a signed-in one off the sign-in

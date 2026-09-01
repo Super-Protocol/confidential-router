@@ -11,11 +11,27 @@ pnpm nx run @confidential-router/router-ui-e2e:e2e     # Playwright smoke + axe 
 pnpm nx run @confidential-router/router-ui:codegen     # regenerate the GraphQL client
 ```
 
-Configuration is three `NEXT_PUBLIC_*` variables — see [`.env.example`](./.env.example).
-They are inlined at build time, so a container image is bound to one API origin:
-[`router-ui.dockerfile`](../../router-ui.dockerfile) takes them as build args,
-and setting them on a running container would be read by the server and ignored
-by the browser.
+## Configuration
+
+Three variables, all optional, all read from the environment **on every request**
+— see [`.env.example`](./.env.example). `ROUTER_UI_API_ORIGIN` is the one a
+deployment normally sets; `ROUTER_UI_GRAPHQL_HTTP` and
+`ROUTER_UI_AUTH_CALLBACK_URL` default from it.
+
+They used to be `NEXT_PUBLIC_*`, which `next build` inlines into the client
+bundle — one image, one API origin, and a new origin meant a new image. A
+marketplace listing cannot work that way: it pins the image by digest so the
+deployment's evidence stays computable from the definition, and the customer
+still picks their own hostname. So the values moved to run time (SUP-100):
+
+- `src/lib/public-config.ts` resolves them and emits an inline script;
+- the root layout is `force-dynamic` and writes that script into `<head>`, ahead
+  of every bundle, so a prerender cannot bake in the build host's environment;
+- `publicConfig()` reads it lazily at each use — assigning the result to a module
+  constant would re-create the old binding one layer down.
+
+`apps/router-ui-e2e/playwright.image.config.ts` is what holds this: two
+containers from one image, two origins, and the browser has to call each.
 
 ## Routes
 

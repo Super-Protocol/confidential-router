@@ -105,8 +105,8 @@ deployment:
 - **Committed credentials.** The PostgreSQL password and `CR_API_AUTH__SECRET`
   are in the file. `CR_API_AUTH__SECRET` signs session cookies and magic-link
   tokens; generate your own with `openssl rand -hex 32`.
-- **One host.** The console image is built against `http://localhost:3000`, and
-  the API's CORS and Better Auth trusted origins name `http://localhost:3001`.
+- **One host.** The console is pointed at `http://localhost:3000`, and the API's
+  CORS and Better Auth trusted origins name `http://localhost:3001`.
 
 ## Running the published images
 
@@ -121,11 +121,15 @@ ROUTER_UI_IMAGE=ghcr.io/super-protocol/confidential-router/router-ui:latest \
 docker compose -f docker/docker-compose.yml up -d --no-build --wait
 ```
 
-The published console image is built against `http://localhost:3000`:
-`NEXT_PUBLIC_*` is inlined by `next build`, so a console image is bound to one
-API origin. Deploying on another origin means building your own image with
-`--build-arg NEXT_PUBLIC_API_ORIGIN=…` (or setting the `ROUTER_PUBLIC_API_ORIGIN`
-repository variable, which the release workflow reads).
+The published console image is not bound to an API origin: it reads
+`ROUTER_UI_API_ORIGIN` from the environment on every request and writes it into
+the document it serves. The compose file passes `ROUTER_API_PUBLIC_URL` through,
+so deploying on another origin is a value in `docker/.env` and a restart:
+
+```bash
+docker run -e ROUTER_UI_API_ORIGIN=https://api.example.com -p 3001:3001 \
+  ghcr.io/super-protocol/confidential-router/router-ui:latest
+```
 
 ## Deploying `router-api`
 
@@ -158,9 +162,7 @@ bind-mounts its own and points `CR_API_CONFIG_FILE` at it.
 ```bash
 make images                                     # both, tagged :local
 docker build -f router-api.dockerfile -t router-api .
-docker build -f router-ui.dockerfile -t router-ui \
-  --build-arg NEXT_PUBLIC_API_ORIGIN=https://api.example.com \
-  --build-arg NEXT_PUBLIC_GRAPHQL_HTTP=https://api.example.com/graphql .
+docker build -f router-ui.dockerfile -t router-ui .
 ```
 
 The build context is the repository root for both — the Nx graph needs the whole

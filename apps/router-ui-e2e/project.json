@@ -7,6 +7,13 @@
         "@confidential-router/router-api:build"
       ]
     },
+    "e2e-image": {
+      "command": "playwright test --config playwright.image.config.ts",
+      "options": {
+        "cwd": "{projectRoot}"
+      },
+      "cache": false
+    },
     "typecheck": {
       "command": "tsc -p tsconfig.json",
       "options": {

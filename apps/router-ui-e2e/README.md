@@ -37,12 +37,24 @@ workspace, so parallel workers would fight over the same ledger.
 
 ### The fixed port
 
-`NEXT_PUBLIC_*` is inlined by `next build`, so the console cannot be pointed at
-another API after it is built. The `cross-app` project therefore pins the router
-to `127.0.0.1:3000` — what `apps/router-ui/src/lib/env.ts` defaults to — rather
-than taking a free port like every other suite here. `ROUTER_API_E2E_PORT`
-overrides it if something else already owns 3000, but the console then has to be
-rebuilt against the same value.
+The `cross-app` project pins the router to `127.0.0.1:3000` rather than taking a
+free port like every other suite here: both `webServer` commands are built when
+`playwright.config.ts` loads, before either process exists to be asked what port
+it got. `ROUTER_API_E2E_PORT` overrides it if something else already owns 3000 —
+the console is handed the same value as `ROUTER_UI_API_ORIGIN`, so nothing has to
+be rebuilt.
+
+## The image suite
+
+`playwright.image.config.ts` is the one suite here that needs Docker: it runs the
+*published* console image twice, with two different `ROUTER_UI_API_ORIGIN`, and
+asserts the browser calls each — the acceptance test for one pinned digest
+serving any origin (SUP-100). CI runs it in the job that builds the images.
+
+```bash
+make images                                              # or ROUTER_UI_IMAGE=ghcr.io/…
+pnpm nx run @confidential-router/router-ui-e2e:e2e-image
+```
 
 ## Recording the flows
 

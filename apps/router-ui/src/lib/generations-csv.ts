@@ -1,5 +1,5 @@
 import type { GenerationStatus } from '../generated/graphql';
-import { API_ORIGIN } from './env';
+import { publicConfig } from './public-config';
 
 export interface GenerationCsvParams {
   workspaceId: string;
@@ -23,7 +23,7 @@ export interface GenerationCsvParams {
  * SDL enum. Sending the wrong casing is a 400, so the mapping lives in one place.
  */
 export function generationsCsvUrl(params: GenerationCsvParams): string {
-  const url = new URL('/activity/generations.csv', API_ORIGIN);
+  const url = new URL('/activity/generations.csv', publicConfig().apiOrigin);
   url.searchParams.set('workspaceId', params.workspaceId);
 
   if (params.from) url.searchParams.set('from', params.from);

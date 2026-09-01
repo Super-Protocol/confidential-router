@@ -1,14 +1,33 @@
-import { describe, expect, it } from 'vitest';
-import { API_ORIGIN } from './env';
+import { afterEach, describe, expect, it } from 'vitest';
 import { generationsCsvUrl } from './generations-csv';
+import { PUBLIC_CONFIG_GLOBAL } from './public-config';
+
+const injected = globalThis as unknown as Record<string, unknown>;
+
+afterEach(() => {
+  delete injected[PUBLIC_CONFIG_GLOBAL];
+});
 
 describe('generationsCsvUrl', () => {
-  it('points at router-api and always carries the workspace', () => {
+  it('always carries the workspace', () => {
     const url = new URL(generationsCsvUrl({ workspaceId: 'ws-1' }));
 
-    expect(url.origin).toBe(new URL(API_ORIGIN).origin);
     expect(url.pathname).toBe('/activity/generations.csv');
     expect(url.searchParams.get('workspaceId')).toBe('ws-1');
+  });
+
+  // A literal origin, not `publicConfig().apiOrigin`: comparing the result to the
+  // same source it was built from would pass however the link was assembled.
+  // The download has to follow the origin *this page* was configured with — the
+  // export is a browser navigation, so a stale host is a 404 the viewer sees.
+  it('follows the origin the page was configured with, not one fixed at build time', () => {
+    injected[PUBLIC_CONFIG_GLOBAL] = {
+      apiOrigin: 'https://api.example.com',
+      graphqlHttp: 'https://api.example.com/graphql',
+      authCallbackUrl: '/',
+    };
+
+    expect(new URL(generationsCsvUrl({ workspaceId: 'ws-1' })).origin).toBe('https://api.example.com');
   });
 
   it('omits every filter that is not set, so the export is not narrowed by accident', () => {
