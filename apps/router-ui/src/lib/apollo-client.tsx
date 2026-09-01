@@ -4,7 +4,7 @@ import { ApolloClient, ApolloLink, CombinedGraphQLErrors, HttpLink, InMemoryCach
 import { ErrorLink } from '@apollo/client/link/error';
 import { ApolloProvider } from '@apollo/client/react';
 import * as React from 'react';
-import { GRAPHQL_HTTP_URL } from './env';
+import { publicConfig } from './public-config';
 
 /**
  * router-api rejects an unauthenticated operation with a GraphQL error, not a
@@ -38,7 +38,7 @@ export function createApolloClient(link?: ApolloLink, onUnauthenticated?: () => 
   const terminatingLink =
     link ??
     new HttpLink({
-      uri: GRAPHQL_HTTP_URL,
+      uri: publicConfig().graphqlHttp,
       // The session cookie lives on the API origin.
       credentials: 'include',
     });

@@ -3,16 +3,17 @@
 # router-ui — the Confidential Router console (Next.js standalone output).
 # Build from the repository root; the whole workspace is the build context.
 #
-#   docker build -f router-ui.dockerfile -t router-ui \
-#     --build-arg NEXT_PUBLIC_API_ORIGIN=https://api.example.com \
-#     --build-arg NEXT_PUBLIC_GRAPHQL_HTTP=https://api.example.com/graphql .
+#   docker build -f router-ui.dockerfile -t router-ui .
 #
-# The console's three `NEXT_PUBLIC_*` settings are inlined into the client bundle
-# by `next build`, so **an image is bound to one API origin** (see
-# apps/router-ui/README.md). Deploying on another origin means rebuilding with
-# these build args, not setting environment variables on the container — a
-# variable set at run time would be read by the server and ignored by the
-# browser, which is worse than not offering it.
+# The build takes no configuration: the console reads its public settings from
+# the environment on every request and writes them into the document it serves
+# (apps/router-ui/src/lib/public-config.ts), so **one image serves any API
+# origin**. Point a container at one with `ROUTER_UI_API_ORIGIN`:
+#
+#   docker run -e ROUTER_UI_API_ORIGIN=https://api.example.com -p 3001:3001 router-ui
+#
+# That is what lets a marketplace listing pin this image by digest and still let
+# the customer choose their own hostname at deploy time (SUP-100).
 
 ARG NODE_IMAGE=node:24-alpine
 
@@ -39,13 +40,7 @@ COPY apps ./apps
 COPY tools ./tools
 RUN pnpm install --frozen-lockfile --offline
 
-ARG NEXT_PUBLIC_API_ORIGIN=http://localhost:3000
-ARG NEXT_PUBLIC_GRAPHQL_HTTP=http://localhost:3000/graphql
-ARG NEXT_PUBLIC_AUTH_CALLBACK_URL=/
-ENV NEXT_PUBLIC_API_ORIGIN=${NEXT_PUBLIC_API_ORIGIN} \
-    NEXT_PUBLIC_GRAPHQL_HTTP=${NEXT_PUBLIC_GRAPHQL_HTTP} \
-    NEXT_PUBLIC_AUTH_CALLBACK_URL=${NEXT_PUBLIC_AUTH_CALLBACK_URL} \
-    NEXT_TELEMETRY_DISABLED=1 \
+ENV NEXT_TELEMETRY_DISABLED=1 \
     NX_DAEMON=false \
     NX_CACHE_DIRECTORY=/tmp/nx-cache
 RUN pnpm nx run @confidential-router/router-ui:build
@@ -56,8 +51,13 @@ RUN pnpm nx run @confidential-router/router-ui:build
 FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 
+# `ROUTER_UI_API_ORIGIN` is the one setting a deployment normally supplies;
+# `ROUTER_UI_GRAPHQL_HTTP` and `ROUTER_UI_AUTH_CALLBACK_URL` default from it.
+# The default here is the compose demo's API, so an unconfigured container is
+# still the one the quickstart describes.
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    ROUTER_UI_API_ORIGIN=http://localhost:3000 \
     PORT=3001 \
     HOSTNAME=0.0.0.0
 

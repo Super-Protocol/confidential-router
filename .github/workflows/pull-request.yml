@@ -267,7 +267,7 @@ jobs:
   images:
     name: Container images build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -285,13 +285,51 @@ jobs:
           push: false
           cache-from: type=gha,scope=router-api
 
+      # Loaded into the daemon rather than discarded: the origins suite below
+      # runs this image.
       - name: Build router-ui
         uses: docker/build-push-action@v6
         with:
           context: .
           file: router-ui.dockerfile
           push: false
+          load: true
+          tags: confidential-router/router-ui:local
           cache-from: type=gha,scope=router-ui
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Not `--ignore-scripts`: the workspace's own Nx plugin is compiled by the
+      # root `prepare`, and `nx run` cannot load the graph without it.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The acceptance test for SUP-100: the same image run twice with different
+      # `ROUTER_UI_API_ORIGIN`, and a browser that has to call each. It lives
+      # here rather than in the `e2e` job because it is the only suite that needs
+      # a built image, and this is the job that has one.
+      - name: The console image serves two API origins
+        run: pnpm nx run @confidential-router/router-ui-e2e:e2e-image --outputStyle=static
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-image-origins
+          path: |
+            apps/router-ui-e2e/playwright-report
+            test-output/playwright
+          retention-days: 7
 
   go:
     name: Go checks (gatekeeper)

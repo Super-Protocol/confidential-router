@@ -4,18 +4,21 @@ const PORT = Number(process.env.ROUTER_UI_PORT ?? 4300);
 const BASE_URL = process.env.ROUTER_UI_BASE_URL ?? `http://127.0.0.1:${PORT}`;
 
 /**
- * The port the console was *built* against.
+ * Where the router binds, and what the console is pointed at.
  *
- * `NEXT_PUBLIC_*` is inlined by `next build`, so the console cannot be pointed
- * at another API afterwards — which is why the cross-app project pins the
- * router here rather than taking a free port like every other suite.
- * `apps/router-ui/src/lib/env.ts` holds the default this mirrors.
+ * The console takes its API origin from the environment now (SUP-100), so this
+ * is one value read twice below rather than a build-time binding. It is still a
+ * fixed port and not a free one: both `webServer` commands are built when this
+ * file loads, before either process exists to be asked what it got.
  */
 const API_PORT = Number(process.env.ROUTER_API_E2E_PORT ?? 3000);
 const API_URL = `http://127.0.0.1:${API_PORT}`;
 
-/** `cross-app` runs against a live stack; every other spec mocks the API. */
+/** `cross-app` runs against a live stack; every other spec here mocks the API. */
 const CROSS_APP = 'cross-app.spec.ts';
+
+/** Owned by `playwright.image.config.ts`: it needs Docker and a built image. */
+const IMAGE_ORIGINS = 'image-origins.spec.ts';
 
 /**
  * The suite runs against a production build rather than `next dev`: the proxy
@@ -43,7 +46,7 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: CROSS_APP,
+      testIgnore: [CROSS_APP, IMAGE_ORIGINS],
     },
     {
       // Serial, and after the mocked project: it shares one router-api process
@@ -60,6 +63,7 @@ export default defineConfig({
     {
       command: `pnpm exec next start --port ${PORT} --hostname 127.0.0.1`,
       cwd: new URL('../router-ui', import.meta.url).pathname,
+      env: { ROUTER_UI_API_ORIGIN: API_URL },
       url: BASE_URL,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

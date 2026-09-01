@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
-import { SESSION_COOKIE_NAME } from './lib/env';
+import { SESSION_COOKIE_NAME } from './lib/session-cookie';
 import proxy from './proxy';
 
 function requestFor(path: string, options: { session?: boolean } = {}): NextRequest {

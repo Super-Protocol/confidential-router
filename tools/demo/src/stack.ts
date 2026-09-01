@@ -54,9 +54,9 @@ export interface RouterStackOptions {
   /** Sign this address in; each stack gets its own by default. */
   email?: string;
   /**
-   * Bind the router here instead of on a free port. The console is built with
-   * its API origin inlined (`NEXT_PUBLIC_*`), so a browser-driven suite needs
-   * the router on the address that build was made against.
+   * Bind the router here instead of on a free port. A browser-driven suite has
+   * to tell the console where the API is before either process starts, so the
+   * address cannot be discovered afterwards.
    */
   routerPort?: number;
   /** Origins allowed to call the API with credentials, beyond {@link CONSOLE_ORIGIN}. */

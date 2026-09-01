@@ -99,18 +99,17 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # `NEXT_PUBLIC_*` is inlined by `next build`, so the console image is bound to
-  # the API origin it was built against (apps/router-ui/README.md). Change
-  # ROUTER_API_PUBLIC_URL and this image has to be rebuilt, not just restarted.
+  # The console reads its API origin from the environment at run time, so the
+  # image is not bound to one (apps/router-ui/README.md). Change
+  # ROUTER_API_PUBLIC_URL and `docker compose up -d ui` is enough.
   ui:
     image: ${ROUTER_UI_IMAGE:-confidential-router/router-ui:local}
     build:
       context: ..
       dockerfile: router-ui.dockerfile
-      args:
-        NEXT_PUBLIC_API_ORIGIN: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}
-        NEXT_PUBLIC_GRAPHQL_HTTP: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}/graphql
     restart: unless-stopped
+    environment:
+      ROUTER_UI_API_ORIGIN: ${ROUTER_API_PUBLIC_URL:-http://localhost:3000}
     ports:
       - '${ROUTER_UI_PORT:-3001}:3001'
     depends_on:

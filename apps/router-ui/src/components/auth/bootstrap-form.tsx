@@ -7,7 +7,7 @@ import { Label } from '@confidential-router/ui/components/label';
 import { KeyRound } from 'lucide-react';
 import * as React from 'react';
 import { AuthRequestError, signInWithBootstrapToken } from '../../lib/auth';
-import { AUTH_CALLBACK_URL } from '../../lib/env';
+import { publicConfig } from '../../lib/public-config';
 
 /**
  * The router answers 404 once the deployment has an owner. That is the expected
@@ -56,7 +56,7 @@ export function BootstrapForm({ onCancel }: BootstrapFormProps) {
       // A full navigation rather than a router push: the session cookie was
       // just set on the API origin, and every cached Apollo result on this page
       // was fetched without one.
-      window.location.assign(AUTH_CALLBACK_URL);
+      window.location.assign(publicConfig().authCallbackUrl);
     } catch (caught) {
       setError(messageOf(caught));
       setPending(false);

@@ -1,7 +1,7 @@
 # Thin convenience wrapper over the pnpm/Nx targets. Everything here has a
 # `pnpm` equivalent; the Makefile exists for people who reach for `make` first.
 .DEFAULT_GOAL := help
-.PHONY: help install verify lint lint-fix typecheck build test e2e demo format gatekeeper dev-up dev-down images up up-core down clean
+.PHONY: help install verify lint lint-fix typecheck build test e2e e2e-image demo format gatekeeper dev-up dev-down images up up-core down clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,9 @@ test: ## Run every unit test suite
 
 e2e: ## Run every e2e suite (API as a process, the console, the demo)
 	pnpm nx run-many -t e2e
+
+e2e-image: ## Run the console image against two API origins (needs `make images`)
+	pnpm nx run @confidential-router/router-ui-e2e:e2e-image
 
 demo: ## The end-to-end story: gatekeeper -> router -> model, with a live rotation
 	pnpm nx run gatekeeper:e2e
