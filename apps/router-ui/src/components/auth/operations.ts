@@ -15,6 +15,8 @@ export const SIGN_IN_OPTIONS_QUERY = graphql(`
       github
       google
       magicLink
+      password
+      passwordMinLength
     }
   }
 `);

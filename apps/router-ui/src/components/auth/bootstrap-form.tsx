@@ -6,8 +6,9 @@ import { Input } from '@confidential-router/ui/components/input';
 import { Label } from '@confidential-router/ui/components/label';
 import { KeyRound } from 'lucide-react';
 import * as React from 'react';
-import { AuthRequestError, signInWithBootstrapToken } from '../../lib/auth';
+import { signInWithBootstrapToken } from '../../lib/auth';
 import { publicConfig } from '../../lib/public-config';
+import { messageOf } from './messages';
 
 /**
  * The router answers 404 once the deployment has an owner. That is the expected
@@ -15,18 +16,10 @@ import { publicConfig } from '../../lib/public-config';
  * token from a deployment that has already been set up — so it deserves a
  * sentence rather than the generic failure text.
  */
-function messageOf(error: unknown): string {
-  if (!(error instanceof AuthRequestError)) {
-    return 'Sign-in failed. Please try again.';
-  }
-  if (error.status === 404) {
-    return 'This deployment already has an account. Sign in with it instead.';
-  }
-  if (error.status === 401) {
-    return 'That token does not match this deployment’s bootstrap token.';
-  }
-  return error.message;
-}
+const BOOTSTRAP_MESSAGES = {
+  401: 'That token does not match this deployment’s bootstrap token.',
+  404: 'This deployment already has an account. Sign in with it instead.',
+};
 
 export interface BootstrapFormProps {
   /** Returns to the ordinary sign-in card. */
@@ -58,7 +51,7 @@ export function BootstrapForm({ onCancel }: BootstrapFormProps) {
       // was fetched without one.
       window.location.assign(publicConfig().authCallbackUrl);
     } catch (caught) {
-      setError(messageOf(caught));
+      setError(messageOf(caught, BOOTSTRAP_MESSAGES));
       setPending(false);
     }
   };

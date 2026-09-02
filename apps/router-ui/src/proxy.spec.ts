@@ -38,6 +38,19 @@ describe('proxy', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
+  it('lets a signed-out browser reach the sign-up screen', () => {
+    const response = proxy(requestFor('/signup'));
+
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('sends a signed-in browser away from the sign-up screen too', () => {
+    const response = proxy(requestFor('/signup', { session: true }));
+    const location = new URL(response.headers.get('location') as string);
+
+    expect(location.pathname).toBe('/');
+  });
+
   it('sends a signed-in browser away from the sign-in screen', () => {
     const response = proxy(requestFor('/login', { session: true }));
     const location = new URL(response.headers.get('location') as string);

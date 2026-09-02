@@ -29,7 +29,14 @@ async function auditPage(page: import('@playwright/test').Page) {
 /** The sign-in screen renders from this, so an audit of it has to say what it is. */
 async function signInOptions(
   page: import('@playwright/test').Page,
-  offers: Partial<{ bootstrap: boolean; github: boolean; google: boolean; magicLink: boolean }>,
+  offers: Partial<{
+    bootstrap: boolean;
+    github: boolean;
+    google: boolean;
+    magicLink: boolean;
+    password: boolean;
+    passwordMinLength: number;
+  }>,
 ): Promise<void> {
   await mockGraphQL(page, {
     SignInOptions: {
@@ -39,6 +46,8 @@ async function signInOptions(
         github: true,
         google: true,
         magicLink: false,
+        password: false,
+        passwordMinLength: 12,
         ...offers,
       },
     },
@@ -76,6 +85,18 @@ test.describe('accessibility', () => {
     await page.goto('/login');
     await page.getByRole('button', { name: 'Have a bootstrap token?' }).click();
     await expect(page.getByLabel('Bootstrap token')).toBeVisible();
+
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
+
+  test('the sign-up screen has no serious axe violations', async ({ page }) => {
+    // The screen everyone after the first account uses on a mailer-less
+    // deployment, and the only one in the console with two labelled secrets.
+    await signInOptions(page, { github: false, google: false, password: true });
+
+    await page.goto('/signup');
+    await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();
 
     const violations = await auditPage(page);
     expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);

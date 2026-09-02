@@ -12,6 +12,29 @@ export const SESSION_COOKIE_NAME = 'cr_session';
 /** Better Auth is mounted here; `/auth/sign-in/*`, `/auth/callback/*`, … */
 export const AUTH_BASE_PATH = '/auth';
 
+/**
+ * Better Auth's email-and-password routes, relative to {@link AUTH_BASE_PATH}.
+ *
+ * They are core routes rather than a plugin, so they are mounted whether or not
+ * the provider is enabled — `emailAndPassword.enabled: false` only makes them
+ * answer 400 "not enabled". `disabledPaths` turns that into the 404 magic link
+ * and bootstrap already give when they are not configured: on this deployment a
+ * sign-in path that is switched off is not a thing that exists.
+ */
+export const PASSWORD_PATHS = ['/sign-up/email', '/sign-in/email', '/change-password', '/verify-password'];
+
+/**
+ * Password reset, off on every deployment.
+ *
+ * It is a mail round trip, and password sign-in exists here precisely for the
+ * deployment that has no mail — so it could only ever answer "reset password
+ * isn't enabled". `/reset-password/:token` is not in the list because a path
+ * parameter cannot be matched by an exact-path check; it is unreachable anyway,
+ * since `/request-password-reset` is the only thing that mints a token it would
+ * accept.
+ */
+export const PASSWORD_RESET_PATHS = ['/request-password-reset', '/reset-password'];
+
 export interface AuthOptionsDeps {
   config: RouterConfig;
   mailer: MagicLinkMailer;
@@ -47,8 +70,21 @@ export function buildAuthOptions({ config, mailer, database, onUserCreated }: Au
     // usage pings to a third party by default would be a poor first impression.
     telemetry: { enabled: false },
     trustedOrigins: server.validClientOrigins,
-    // No passwords anywhere: OAuth and magic link only (ADR-004 §1).
-    emailAndPassword: { enabled: false },
+    // Off unless the deployment asked for it (ADR-004 §1, amended by SUP-112):
+    // OAuth and magic link are better, and this is the only path that works
+    // when neither is available.
+    emailAndPassword: {
+      enabled: auth.password.enabled,
+      minPasswordLength: auth.password.minLength,
+      // The whole point of this provider is a deployment with no mail. A
+      // verification round trip nobody can complete would lock out every
+      // account it created.
+      requireEmailVerification: false,
+      // Signing up answers with the session cookie, rather than asking for the
+      // password that was just chosen a second time.
+      autoSignIn: true,
+    },
+    disabledPaths: auth.password.enabled ? PASSWORD_RESET_PATHS : [...PASSWORD_PATHS, ...PASSWORD_RESET_PATHS],
     socialProviders: {
       ...(auth.github ? { github: { clientId: auth.github.clientId, clientSecret: auth.github.clientSecret } } : {}),
       ...(auth.google ? { google: { clientId: auth.google.clientId, clientSecret: auth.google.clientSecret } } : {}),

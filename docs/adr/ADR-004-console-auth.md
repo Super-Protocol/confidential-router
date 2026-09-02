@@ -13,6 +13,12 @@ card; a wallet flow and a second database are friction with no upside.
 ## Decision
 
 1. **Providers:** OAuth **GitHub** and **Google**, plus **email magic link**. No SIWE, no passwords.
+   *(Amended 2026-09-02, SUP-112: **email and password** is available behind `auth.password.enabled`,
+   off by default. A deployment with no mail provider and no OAuth app can let its first account in with
+   a bootstrap token (SUP-95) and nobody else at all — a marketplace install is exactly that, and the
+   password provider is the only sign-in path that needs nothing outside the cluster. It ships without
+   email verification and without password reset, because both are the mail round trip this exists to
+   avoid; the routes are 404 wherever they are not offered. SIWE is still out.)*
 2. **One database.** Sessions, accounts and verification tokens live in the router's **PostgreSQL**
    (SQLite in dev). No auth-service, no MongoDB.
 3. **Library:** [Better Auth](https://www.better-auth.com/) (already used in-house in swarm-cloud's

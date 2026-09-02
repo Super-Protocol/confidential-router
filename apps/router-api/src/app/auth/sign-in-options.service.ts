@@ -12,6 +12,10 @@ export interface SignInOptions {
   github: boolean;
   google: boolean;
   magicLink: boolean;
+  /** Email and password, the one path that needs nothing outside the cluster. */
+  password: boolean;
+  /** `auth.password.minLength`, so the sign-up form states the real rule. */
+  passwordMinLength: number;
 }
 
 /**
@@ -42,6 +46,8 @@ export class SignInOptionsService {
       github: auth.github !== undefined,
       google: auth.google !== undefined,
       magicLink: auth.magicLink.mailer !== 'none',
+      password: auth.password.enabled,
+      passwordMinLength: auth.password.minLength,
     };
   }
 

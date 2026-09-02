@@ -7,13 +7,16 @@ import { Input } from '@confidential-router/ui/components/input';
 import { Label } from '@confidential-router/ui/components/label';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import { MailCheck } from 'lucide-react';
+import Link from 'next/link';
 import * as React from 'react';
-import { AuthRequestError, type SocialProvider, signInWithMagicLink, signInWithProvider } from '../../lib/auth';
+import { type SocialProvider, signInWithMagicLink, signInWithPassword, signInWithProvider } from '../../lib/auth';
+import { publicConfig } from '../../lib/public-config';
 import { BootstrapForm } from './bootstrap-form';
+import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 import { GitHubIcon, GoogleIcon } from './provider-icons';
 
-type Pending = SocialProvider | 'magic-link' | null;
+type Pending = SocialProvider | 'magic-link' | 'password' | null;
 
 /**
  * What to offer when the API cannot be reached.
@@ -24,23 +27,42 @@ type Pending = SocialProvider | 'magic-link' | null;
  * stays off — it is the one path that is normally unavailable, and offering it
  * blindly would suggest a fresh deployment where there may be none.
  */
-const OFFER_EVERYTHING = { bootstrap: false, github: true, google: true, magicLink: true };
+const OFFER_EVERYTHING = {
+  bootstrap: false,
+  github: true,
+  google: true,
+  magicLink: true,
+  password: true,
+  passwordMinLength: 0,
+};
 
-function messageOf(error: unknown): string {
-  // Only errors this app raised are safe to render; anything else could be a
-  // network stack detail with an internal hostname in it.
-  return error instanceof AuthRequestError ? error.message : 'Sign-in failed. Please try again.';
-}
+/**
+ * A password sign-in the router refused. 401 is the only one of these the
+ * viewer can act on; the rest describe the deployment, not what was typed.
+ */
+const SIGN_IN_MESSAGES = {
+  401: 'That email and password do not match an account here.',
+  404: 'Password sign-in is not enabled on this deployment.',
+};
 
 export function SignInForm() {
   const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
   const [pending, setPending] = React.useState<Pending>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [linkSent, setLinkSent] = React.useState(false);
   const [bootstrapping, setBootstrapping] = React.useState(false);
+  // Which of the two email paths the card is showing. `null` until the answer
+  // arrives, because the deployment decides which one is the default.
+  const [emailPath, setEmailPath] = React.useState<'password' | 'magic-link' | null>(null);
 
   const { data, loading } = useQuery(SIGN_IN_OPTIONS_QUERY, { fetchPolicy: 'cache-and-network' });
   const options = data?.signInOptions ?? OFFER_EVERYTHING;
+  // A password is the sturdier of the two on a deployment that offers both: it
+  // signs the viewer in here rather than sending them to an inbox.
+  const path = emailPath ?? (options.password ? 'password' : 'magic-link');
+  const showsPassword = options.password && path === 'password';
+  const showsMagicLink = options.magicLink && path === 'magic-link';
 
   const handleProvider = async (provider: SocialProvider) => {
     setError(null);
@@ -64,6 +86,22 @@ export function SignInForm() {
     } catch (caught) {
       setError(messageOf(caught));
     } finally {
+      setPending(null);
+    }
+  };
+
+  const handlePassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setPending('password');
+    try {
+      await signInWithPassword(email, password);
+      // A full navigation rather than a router push: the session cookie was
+      // just set on the API origin, and every cached Apollo result on this page
+      // was fetched without one.
+      window.location.assign(publicConfig().authCallbackUrl);
+    } catch (caught) {
+      setError(messageOf(caught, SIGN_IN_MESSAGES));
       setPending(null);
     }
   };
@@ -102,15 +140,18 @@ export function SignInForm() {
     { id: 'github' as const, label: 'Continue with GitHub', icon: GitHubIcon, enabled: options.github },
     { id: 'google' as const, label: 'Continue with Google', icon: GoogleIcon, enabled: options.google },
   ].filter((provider) => provider.enabled);
+  const nothingOffered = providers.length === 0 && !options.magicLink && !options.password && !options.bootstrap;
 
   return (
     <Card>
       <CardHeader>
         <h1 className="font-semibold leading-none">Sign in</h1>
         <CardDescription>
-          {options.magicLink
-            ? 'No passwords. Use a provider, or have a one-time link mailed to you.'
-            : 'No passwords, and no mailer on this deployment.'}
+          {options.password
+            ? 'Use your email and password, or a provider.'
+            : options.magicLink
+              ? 'No passwords. Use a provider, or have a one-time link mailed to you.'
+              : 'No passwords, and no mailer on this deployment.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -138,7 +179,7 @@ export function SignInForm() {
               </div>
             ) : null}
 
-            {providers.length > 0 && options.magicLink ? (
+            {providers.length > 0 && (options.magicLink || options.password) ? (
               <div className="flex items-center gap-3" aria-hidden="true">
                 <span className="h-px flex-1 bg-border" />
                 <span className="text-muted-foreground text-xs uppercase tracking-wide">or</span>
@@ -146,8 +187,13 @@ export function SignInForm() {
               </div>
             ) : null}
 
-            {options.magicLink ? (
-              <form className="flex flex-col gap-2" onSubmit={(event) => void handleMagicLink(event)}>
+            {/* One form for both email paths: they ask for the same address,
+                and only the password field and the verb differ. */}
+            {showsPassword || showsMagicLink ? (
+              <form
+                className="flex flex-col gap-2"
+                onSubmit={(event) => void (showsPassword ? handlePassword(event) : handleMagicLink(event))}
+              >
                 <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
@@ -161,13 +207,35 @@ export function SignInForm() {
                   aria-describedby={error ? 'sign-in-error' : undefined}
                   aria-invalid={error !== null || undefined}
                 />
+                {showsPassword ? (
+                  <>
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      aria-describedby={error ? 'sign-in-error' : undefined}
+                      aria-invalid={error !== null || undefined}
+                    />
+                  </>
+                ) : null}
                 <Button
                   type="submit"
                   variant="brand"
                   className="w-full"
-                  disabled={pending !== null || email.length === 0}
+                  disabled={pending !== null || email.length === 0 || (showsPassword && password.length === 0)}
                 >
-                  {pending === 'magic-link' ? 'Sending…' : 'Email me a link'}
+                  {showsPassword
+                    ? pending === 'password'
+                      ? 'Signing in…'
+                      : 'Sign in'
+                    : pending === 'magic-link'
+                      ? 'Sending…'
+                      : 'Email me a link'}
                 </Button>
               </form>
             ) : null}
@@ -178,12 +246,37 @@ export function SignInForm() {
               </p>
             ) : null}
 
+            {/* Only where both are configured. The address is kept across the
+                switch, because it is the same address either way. */}
+            {options.password && options.magicLink ? (
+              <Button
+                variant="ghost"
+                className="w-full"
+                disabled={pending !== null}
+                onClick={() => {
+                  setError(null);
+                  setEmailPath(path === 'password' ? 'magic-link' : 'password');
+                }}
+              >
+                {path === 'password' ? 'Email me a link instead' : 'Use a password instead'}
+              </Button>
+            ) : null}
+
+            {options.password ? (
+              <p className="text-center text-muted-foreground text-sm">
+                No account yet?{' '}
+                <Link href="/signup" className="font-medium text-foreground underline underline-offset-4">
+                  Create one
+                </Link>
+              </p>
+            ) : null}
+
             {/* A fresh deployment has no other way in, so this is the primary
                 action there and a footnote nowhere else — the API only reports
                 it while the token is configured and no account exists. */}
             {options.bootstrap ? (
               <Button
-                variant={providers.length === 0 && !options.magicLink ? 'brand' : 'outline'}
+                variant={providers.length === 0 && !options.magicLink && !options.password ? 'brand' : 'outline'}
                 className="w-full"
                 onClick={() => setBootstrapping(true)}
               >
@@ -191,10 +284,10 @@ export function SignInForm() {
               </Button>
             ) : null}
 
-            {providers.length === 0 && !options.magicLink && !options.bootstrap ? (
+            {nothingOffered ? (
               <p role="alert" className="text-muted-foreground text-sm">
-                This deployment has no sign-in method configured. Set an OAuth app, a mailer, or a bootstrap token in
-                the router configuration.
+                This deployment has no sign-in method configured. Set an OAuth app, a mailer, a password provider, or a
+                bootstrap token in the router configuration.
               </p>
             ) : null}
           </>

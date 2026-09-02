@@ -311,6 +311,23 @@
           "default": "720h",
           "description": "Rolling session lifetime (ADR-004 \u00a74)."
         },
+        "password": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Email and password sign-in, for a deployment with no mail delivery at all. No email verification and no password reset: both need a mailer.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "minLength": {
+              "type": "integer",
+              "minimum": 8,
+              "maximum": 128,
+              "default": 12
+            }
+          }
+        },
         "bootstrapToken": {
           "type": "string",
           "description": "While this is set and no user exists, POST /auth/bootstrap trades it for the first account and a session. Blank counts as unset; otherwise at least 16 characters."

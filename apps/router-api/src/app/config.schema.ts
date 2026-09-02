@@ -150,6 +150,28 @@ const AuthSchema = z.strictObject({
     })
     .prefault({}),
   /**
+   * Email and password, for the deployment that has no mail delivery at all.
+   *
+   * Off by default: ADR-004 §1 chose OAuth and magic link, and both are better
+   * than a password. But a bootstrap token creates exactly *one* account, so on
+   * a mailer-less deployment everyone after the first has no way in — and this
+   * is the only sign-in path that needs nothing outside the cluster.
+   *
+   * There is no email verification and no password reset, deliberately: both
+   * are a mail round trip, and a deployment with a mailer would be using the
+   * magic link instead.
+   */
+  password: z
+    .strictObject({
+      enabled: booleanish().prefault(false),
+      /**
+       * Better Auth hashes with scrypt, so length is the rule worth having;
+       * composition rules buy less than the characters they cost.
+       */
+      minLength: integerish().pipe(z.number().int().min(8).max(128)).prefault(12),
+    })
+    .prefault({}),
+  /**
    * Lets the first admin in on a deployment that has neither a mailer nor an
    * OAuth app. While it is set *and* no user exists, `POST /auth/bootstrap`
    * trades this token for the first account and a session; the endpoint is a

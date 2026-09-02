@@ -102,6 +102,12 @@ auth:
     mailer: resend                 # `none` on a deployment with no mail provider at all
     from: no-reply@tee.swarm.cloud
     resendApiKey: ${CR_API_RESEND_KEY}
+  # Email and password, for a deployment with no mail delivery at all. Off here
+  # because this example has a mailer; the marketplace listing turns it on.
+  # No verification mail, no reset mail — see docs/router.md.
+  password:
+    enabled: false
+    minLength: 12
   # First sign-in where there is no mailer and no OAuth app: while this is set
   # and no user exists, POST /auth/bootstrap trades it for the first account.
   # See docs/router.md, "First sign-in on a fresh deployment".
