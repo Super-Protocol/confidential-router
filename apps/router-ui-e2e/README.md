@@ -44,6 +44,10 @@ it got. `ROUTER_API_E2E_PORT` overrides it if something else already owns 3000 �
 the console is handed the same value as `ROUTER_UI_API_ORIGIN`, so nothing has to
 be rebuilt.
 
+The router itself still binds `127.0.0.1`, and the handoff carries both addresses:
+`apiBaseUrl` for a request made from Node, `apiOrigin` for the one the browser
+uses. Only the browser is taught the hostnames.
+
 ## The image suite
 
 `playwright.image.config.ts` is the one suite here that needs Docker: it runs the
@@ -65,6 +69,27 @@ A failing test keeps its video and, on a retry, its trace. To record every test
 PLAYWRIGHT_VIDEO=on pnpm exec playwright test --project=cross-app
 # → test-output/playwright/router-ui/<test>/video.webm
 ```
+
+## Two hostnames
+
+Both projects serve the console and the API under **different hostnames** —
+`console.localtest.me:4300` and `api.localtest.me:3000`, both mapped to loopback
+inside Chromium by `--host-resolver-rules`, so nothing is resolved over the
+network. `src/origins.ts` owns the values and the reasoning; `ROUTER_UI_E2E_CONSOLE_HOST`
+and `ROUTER_UI_E2E_API_HOST` override them.
+
+It is not cosmetic. Cookies are keyed by host and ignore ports, so a suite that
+ran both on `127.0.0.1` handed the console every `Set-Cookie` the API sent, and
+each "the browser is signed in" assertion passed for a reason production does not
+have — which is how SUP-113 shipped a console that gated on a cookie only the
+tests could see. The names share a registrable domain on purpose: two hosts under
+`localtest.me` are cross-origin but *same-site*, exactly like a deployment, so the
+API's `SameSite=Lax` session cookie still travels while staying unreadable from
+the console.
+
+The one thing it costs: a named http origin is not a secure context, so the
+browser withholds `navigator.clipboard`. `mockClipboard` in `src/fixtures.ts`
+stands in for it, and says why.
 
 ## Both
 

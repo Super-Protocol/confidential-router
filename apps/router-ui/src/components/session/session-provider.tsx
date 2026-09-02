@@ -6,6 +6,7 @@ import * as React from 'react';
 import { graphql } from '../../generated';
 import type { SessionQuery } from '../../generated/graphql';
 import { isUnauthenticatedError } from '../../lib/apollo-client';
+import { clearSignedIn } from '../../lib/signed-in-cookie';
 
 /**
  * One query for the whole shell: identity and every workspace the viewer may
@@ -89,11 +90,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [data, workspaces, activeWorkspace, loading, error, refetch],
   );
 
-  // A session can expire while the tab is open. The middleware only guards
+  // A session can expire while the tab is open. The proxy only guards
   // navigations, so a query that comes back unauthenticated is the first place
-  // the app learns the cookie is gone.
+  // the app learns the cookie is gone — and the routing marker has to come down
+  // with it, or the redirect below would be bounced straight back here.
   React.useEffect(() => {
-    if (error && isUnauthenticatedError(error)) router.replace('/login');
+    if (error && isUnauthenticatedError(error)) {
+      clearSignedIn();
+      router.replace('/login');
+    }
   }, [error, router]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

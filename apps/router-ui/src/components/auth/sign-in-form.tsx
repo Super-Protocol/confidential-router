@@ -9,8 +9,13 @@ import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import { MailCheck } from 'lucide-react';
 import Link from 'next/link';
 import * as React from 'react';
-import { type SocialProvider, signInWithMagicLink, signInWithPassword, signInWithProvider } from '../../lib/auth';
-import { publicConfig } from '../../lib/public-config';
+import {
+  completeSignIn,
+  type SocialProvider,
+  signInWithMagicLink,
+  signInWithPassword,
+  signInWithProvider,
+} from '../../lib/auth';
 import { BootstrapForm } from './bootstrap-form';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
@@ -96,10 +101,7 @@ export function SignInForm() {
     setPending('password');
     try {
       await signInWithPassword(email, password);
-      // A full navigation rather than a router push: the session cookie was
-      // just set on the API origin, and every cached Apollo result on this page
-      // was fetched without one.
-      window.location.assign(publicConfig().authCallbackUrl);
+      completeSignIn();
     } catch (caught) {
       setError(messageOf(caught, SIGN_IN_MESSAGES));
       setPending(null);

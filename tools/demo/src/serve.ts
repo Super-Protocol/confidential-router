@@ -16,12 +16,23 @@
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { HANDOFF_FILE, type StackHandoff, TRUSTED_ROOT_FILE } from './handoff.js';
-import { CONSOLE_ORIGIN, startRouterStack } from './stack.js';
+import { startRouterStack } from './stack.js';
 
 /** Where the console is served from in `apps/router-ui-e2e/playwright.config.ts`. */
 const CONSOLE_E2E_ORIGIN = process.env.ROUTER_UI_BASE_URL ?? 'http://127.0.0.1:4300';
 /** What `playwright.config.ts` points the console at, and therefore where the API must be. */
 const ROUTER_PORT = Number(process.env.ROUTER_API_E2E_PORT ?? 3000);
+/**
+ * The API's *browser-facing* origin: the same process, under a different
+ * hostname from the console's, so the browser keeps the two sets of cookies
+ * apart exactly as a deployment does (`apps/router-ui-e2e/src/origins.ts`).
+ *
+ * Only the browser uses this name. The router's own `baseUrl` stays on loopback
+ * because everything here reaches it from Node — the magic link out of the log,
+ * the checkout redirect — and glibc resolves `*.localhost` to `::1`, where
+ * nothing is listening.
+ */
+const API_E2E_ORIGIN = process.env.ROUTER_API_E2E_ORIGIN ?? `http://127.0.0.1:${ROUTER_PORT}`;
 
 const stack = await startRouterStack({
   routerPort: ROUTER_PORT,
@@ -34,6 +45,7 @@ const stack = await startRouterStack({
 
 const handoff: StackHandoff = {
   apiBaseUrl: stack.router.baseUrl,
+  apiOrigin: API_E2E_ORIGIN,
   consoleOrigin: CONSOLE_E2E_ORIGIN,
   sessionCookie: stack.session.cookie,
   workspaceId: stack.session.workspaceId,
@@ -51,7 +63,9 @@ mkdirSync(dirname(HANDOFF_FILE), { recursive: true });
 copyFileSync(stack.trustedRootFile, TRUSTED_ROOT_FILE);
 writeFileSync(HANDOFF_FILE, JSON.stringify(handoff, null, 2), 'utf8');
 
-console.log(`[demo-stack] router-api    ${handoff.apiBaseUrl}   (console origin ${CONSOLE_ORIGIN})`);
+console.log(
+  `[demo-stack] router-api    ${handoff.apiBaseUrl}   (browser ${API_E2E_ORIGIN}, console ${CONSOLE_E2E_ORIGIN})`,
+);
 console.log(`[demo-stack] evidence host ${handoff.evidenceHostUrl}   digest ${handoff.evidenceDigest}`);
 console.log(`[demo-stack] trusted root  ${TRUSTED_ROOT_FILE}`);
 console.log(`[demo-stack] handoff       ${HANDOFF_FILE}`);

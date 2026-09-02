@@ -1,23 +1,26 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME } from './lib/session-cookie';
+import { isPublicPath } from './lib/public-paths';
+import { SIGNED_IN_COOKIE_NAME } from './lib/signed-in-cookie';
 
 /**
  * Keeps a signed-out browser off the console and a signed-in one off the sign-in
  * screen. (`proxy.ts` is Next 16's name for what used to be `middleware.ts`.)
  *
- * This is a routing convenience, **not** an authorisation boundary: the cookie
- * is opaque and only router-api can say whether it names a live session. Every
- * piece of data still comes from a GraphQL call that the API authorises on its
- * own. Presence of the cookie is all that is checked here.
+ * What it reads is the console's own marker cookie, never router-api's session
+ * cookie: that one is HttpOnly and lives on the API's hostname, which this
+ * middleware runs nowhere near (`lib/signed-in-cookie.ts` has the whole story).
+ *
+ * This is a routing convenience, **not** an authorisation boundary. The marker
+ * is a browser's own claim about itself; every piece of data still comes from a
+ * GraphQL call that the API authorises on its own, and an unauthenticated answer
+ * to any of them clears the marker again.
  */
-const PUBLIC_PATHS = ['/login', '/signup'];
-
 export default function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const hasSession = request.cookies.has(SESSION_COOKIE_NAME);
-  const isPublic = PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const signedIn = request.cookies.has(SIGNED_IN_COOKIE_NAME);
+  const isPublic = isPublicPath(pathname);
 
-  if (!hasSession && !isPublic) {
+  if (!signedIn && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = '';
@@ -26,7 +29,7 @@ export default function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (hasSession && isPublic) {
+  if (signedIn && isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
     url.search = '';

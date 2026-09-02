@@ -8,16 +8,17 @@ import {
   ROTATING_HOST,
   UNPUBLISHED_HOST,
 } from './evidence-fixtures';
-import { signIn } from './fixtures';
+import { mockClipboard, signIn } from './fixtures';
 
 /**
  * Copying is one of the two actions the evidence modal exists for, so the suite
  * reads the clipboard back rather than trusting the button's own confirmation.
- * `127.0.0.1` is a secure context as far as the Clipboard API is concerned, so
- * no HTTPS is needed — only the permission.
+ * The console's origin is a named http one and therefore not a secure context,
+ * so the clipboard is a stand-in rather than the browser's — `mockClipboard`
+ * explains the trade.
  */
 async function enterConsole(page: Page, baseURL: string, path: string): Promise<void> {
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL });
+  await mockClipboard(page);
   await signIn(page, baseURL, CONSOLE_OPERATIONS);
   await page.goto(path);
 }

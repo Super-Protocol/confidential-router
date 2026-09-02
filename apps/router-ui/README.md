@@ -107,20 +107,29 @@ rotating" state — a bundle exists but is outside the freshness window.
 
 ## Session handling
 
-Sign-in is Better Auth on router-api (ADR-004): OAuth (GitHub / Google) and an
-emailed magic link, no passwords. `src/lib/auth.ts` posts to `<api>/auth/*`;
-the API sets an HttpOnly `cr_session` cookie on its own origin, so every request
-from the console goes out with `credentials: 'include'`.
+Sign-in is Better Auth on router-api (ADR-004): OAuth (GitHub / Google), an
+emailed magic link, a password, and the one-shot bootstrap token. `src/lib/auth.ts`
+posts to `<api>/auth/*`; the API sets an HttpOnly session cookie **on its own
+origin**, so every request from the console goes out with `credentials: 'include'`.
 
-Two layers, doing different jobs:
+That cookie is invisible here. A deployment puts the console and the API on
+different hostnames, cookies are keyed by host, and over https Better Auth
+prefixes the name — so the console has to keep its own marker to route on
+(`src/lib/signed-in-cookie.ts`, SUP-113):
 
-- `src/proxy.ts` (Next 16's name for middleware) checks only that the cookie is
+- `src/lib/auth.ts` raises `cr_signed_in` on the console's host when a sign-in
+  the console performed succeeds, and clears it on sign-out.
+- `src/proxy.ts` (Next 16's name for middleware) checks only that the marker is
   **present**, and redirects accordingly. It is a routing convenience, not an
-  authorisation boundary — the cookie is opaque and only router-api can say
-  whether it names a live session.
-- `SessionProvider` runs the `Session` query. If it comes back unauthenticated —
-  which is how a session that expired mid-visit shows up — the viewer is sent to
-  `/login`.
+  authorisation boundary — the marker is a browser's claim about itself, and only
+  router-api can say whether there is a session.
+- `SessionProvider` and the root Apollo error handler clear the marker on the
+  first unauthenticated answer — which is how a session that expired mid-visit
+  shows up — and send the viewer to `/login`.
+- `<ResumeSession />` on the sign-in screen covers the other direction: a magic
+  link and an OAuth callback come back as a redirect from router-api, so nothing
+  raised the marker. It asks the API, raises the marker, and forwards to `?next=`
+  or the configured callback.
 
 ## GraphQL
 
