@@ -57,7 +57,13 @@
           "description": "Present only when the chain's terminal root was checked against its own TEE evidence, which happens when the manual trustedRoots list did not match it. Absent for a root the user pinned, so a policy can require one or the other.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["attested", "inRegistry", "reportIntegrity", "keyBinding", "teeFlags"],
+          "required": [
+            "attested",
+            "inRegistry",
+            "reportIntegrity",
+            "keyBinding",
+            "teeFlags"
+          ],
           "properties": {
             "attested": {
               "type": "boolean",

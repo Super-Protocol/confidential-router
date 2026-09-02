@@ -4,7 +4,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 )
+
+// maxVCPUs bounds the vCPU count a producer may claim. It is far above any
+// real SEV-SNP guest — AMD's own limit is an order of magnitude lower — and its
+// only job is to keep an attacker-supplied number from sizing the work the
+// verifier does before it can reject the evidence.
+const maxVCPUs = 4096
 
 // EvidenceType is the kind of hardware evidence a root certificate carries. The
 // numbers are the `TeeEvidenceType` enum of the platform's TeeEvidence.proto,
@@ -119,6 +126,14 @@ func ParseEvidence(serialized []byte) (*Evidence, error) {
 		if wire != wireBytes {
 			return nil
 		}
+		// The schema's branches are alternatives, and which one is present
+		// selects both the verifier and the registry folder the measurement is
+		// looked up in. A message carrying two of them has no single answer to
+		// either question, so it is rejected rather than resolved by field
+		// order.
+		if (field == 1 || field == 2 || field == 3) && out.Type != EvidenceUnspecified {
+			return errors.New("evidence carries more than one hardware branch")
+		}
 		switch field {
 		case 1:
 			snp, err := parseSevSnpEvidence(value)
@@ -173,8 +188,19 @@ func parseSnpReport(b []byte, out *SevSnpEvidence) error {
 		case field == 1 && wire == wireBytes:
 			out.RawReport = value
 		case field == 2 && wire == wireVarint:
+			if varint > math.MaxUint32 {
+				return fmt.Errorf("snpReport: cpuSig %d does not fit in the 32-bit CPUID field", varint)
+			}
 			out.CPUSig = uint32(varint)
 		case field == 3 && wire == wireVarint:
+			// Bounded here, before anything acts on it: the vCPU count drives a
+			// per-vCPU hashing loop in the launch measurement, and this value is
+			// the producer's word. Evidence naming a real build and a billion
+			// cores would otherwise keep the verifier hashing long past the
+			// point where it was going to deny anyway.
+			if varint == 0 || varint > maxVCPUs {
+				return fmt.Errorf("snpReport: cores is %d, expected 1..%d", varint, maxVCPUs)
+			}
 			out.Cores = int(varint)
 		case field == 4 && wire == wireBytes:
 			out.CmdLineHash = value
@@ -191,6 +217,9 @@ func parseSnpCert(b []byte, out *SevSnpEvidence) error {
 	err := eachField(b, func(field int, wire wireType, value []byte, varint uint64) error {
 		switch {
 		case field == 1 && wire == wireVarint:
+			if varint > math.MaxInt32 {
+				return fmt.Errorf("snpCert: certificate role %d is not one this schema defines", varint)
+			}
 			role = SevSnpCertType(varint)
 		case field == 2 && wire == wireBytes:
 			der = value

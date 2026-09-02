@@ -38,8 +38,9 @@ const (
 // detail, not a secret.
 const (
 	defaultFirmwareAccessKeyID = "jxekrow2wxmjps6pr2jv22hamtha"
-	defaultFirmwareSecretKey   = "jztnpl532njcljtdolnpbszq66lgqmwmgkbh747342hwc72grkohi"
-	defaultFirmwareRegion      = "us-east-1"
+	//nolint:gosec // G101: published read-only credential, not a secret — see above.
+	defaultFirmwareSecretKey = "jztnpl532njcljtdolnpbszq66lgqmwmgkbh747342hwc72grkohi"
+	defaultFirmwareRegion    = "us-east-1"
 )
 
 // emptyInitrdDigest is SHA-256 of an empty byte string — what a build with no

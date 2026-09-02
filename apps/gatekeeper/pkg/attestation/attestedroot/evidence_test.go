@@ -2,6 +2,7 @@ package attestedroot
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,8 @@ func TestParseRealEvidence(t *testing.T) {
 // TestParseEvidenceRejectsMalformedInput covers the shapes a hostile or broken
 // producer can serve.
 func TestParseEvidenceRejectsMalformedInput(t *testing.T) {
+	realEvidence := swarmRootEvidence(t)
+
 	for _, tc := range []struct {
 		name  string
 		input []byte
@@ -57,12 +60,67 @@ func TestParseEvidenceRejectsMalformedInput(t *testing.T) {
 		{name: "an unknown wire type", input: []byte{0x0b, 0x00}},
 		{name: "no recognised branch", input: []byte{0x22, 0x00}},
 		{name: "a SEV-SNP branch with no report", input: []byte{0x0a, 0x00}},
+		{
+			// Which branch is present selects both the verifier and the
+			// registry folder; two of them answer neither question.
+			name:  "two hardware branches at once",
+			input: concat(realEvidence, field(2, concat(field(1, []byte("a quote"))))),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := ParseEvidence(tc.input); err == nil {
 				t.Fatal("malformed evidence was accepted")
 			}
 		})
+	}
+}
+
+// TestParseEvidenceBoundsProducerSuppliedNumbers is about work, not about
+// parsing: `cores` sizes a per-vCPU hashing loop in the launch measurement and
+// is the producer's word, so it has to be bounded before anything acts on it.
+func TestParseEvidenceBoundsProducerSuppliedNumbers(t *testing.T) {
+	// TeeEvidence.amdSevSnpQemu → SNPReport, with a report body long enough to
+	// look real so the case that fails is the number and not the shape.
+	report := func(fields ...[]byte) []byte {
+		body := concat(append([][]byte{field(1, make([]byte, 1184))}, fields...)...)
+		return field(1, field(1, body))
+	}
+
+	for _, tc := range []struct {
+		name  string
+		input []byte
+		want  string
+	}{
+		{name: "a vCPU count of zero", input: report(varintField(3, 0)), want: "cores is 0"},
+		{
+			name:  "a vCPU count past any real guest",
+			input: report(varintField(3, 1<<40)),
+			want:  "cores is 1099511627776",
+		},
+		{
+			name:  "a CPU signature wider than the CPUID field",
+			input: report(varintField(2, 1<<40)),
+			want:  "does not fit in the 32-bit CPUID field",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseEvidence(tc.input)
+			if err == nil {
+				t.Fatal("an out-of-range value was accepted")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+
+	// The real evidence's own values must still pass, or the bound is wrong.
+	evidence, err := ParseEvidence(swarmRootEvidence(t))
+	if err != nil {
+		t.Fatalf("the bound rejected real evidence: %v", err)
+	}
+	if evidence.SevSnp.Cores > maxVCPUs {
+		t.Errorf("the fixture claims %d cores, above the bound", evidence.SevSnp.Cores)
 	}
 }
 
@@ -127,6 +185,12 @@ func field(number int, value []byte) []byte {
 	out := appendVarint(nil, uint64(number)<<3|uint64(wireBytes))
 	out = appendVarint(out, uint64(len(value)))
 	return append(out, value...)
+}
+
+// varintField encodes one varint protobuf field.
+func varintField(number int, value uint64) []byte {
+	out := appendVarint(nil, uint64(number)<<3|uint64(wireVarint))
+	return appendVarint(out, value)
 }
 
 func appendVarint(dst []byte, v uint64) []byte {

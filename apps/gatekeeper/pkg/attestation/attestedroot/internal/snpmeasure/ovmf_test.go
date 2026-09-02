@@ -207,7 +207,7 @@ func TestLaunchDigestDependsOnItsInputs(t *testing.T) {
 func TestCPUSig(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
-		family, model, stepping int
+		family, model, stepping uint32
 		want                    uint32
 	}{
 		{name: "EPYC (Naples)", family: 23, model: 1, stepping: 2, want: 0x800f12},

@@ -11,17 +11,17 @@ import (
 // (AMD publication 25481). It is the value QEMU leaves in RDX at reset, so it
 // is measured — and it is why the same image on two CPU models does not
 // produce the same launch digest.
-func CPUSig(family, model, stepping int) uint32 {
-	familyLow, familyHigh := family, 0
+func CPUSig(family, model, stepping uint32) uint32 {
+	familyLow, familyHigh := family, uint32(0)
 	if family > 0xf {
 		familyLow = 0xf
 		familyHigh = (family - 0xf) & 0xff
 	}
-	return uint32(familyHigh<<20 |
+	return familyHigh<<20 |
 		((model>>4)&0xf)<<16 |
 		(familyLow&0xf)<<8 |
 		(model&0xf)<<4 |
-		stepping&0xf)
+		stepping&0xf
 }
 
 // MilanCPUSig is the canonical CPU the normalised measurement is computed for:

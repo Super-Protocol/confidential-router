@@ -38,7 +38,7 @@ const (
 
 // fourGB is the top of the 32-bit address space; OVMF is mapped so that its
 // last byte sits just below it.
-const fourGB = 0x1_0000_0000
+const fourGB uint64 = 0x1_0000_0000
 
 // The GUIDs of the OVMF footer table entries the measurement needs. They are
 // written little-endian in the image (RFC 4122 mixed-endian), which is what
@@ -91,6 +91,11 @@ func ParseFirmware(image []byte) (*Firmware, error) {
 	if len(image)%pageSize != 0 {
 		return nil, fmt.Errorf("ovmf image length %d is not a multiple of the 4096-byte page size", len(image))
 	}
+	// The image is mapped so its last byte sits just below 4 GiB, so one that
+	// large has no base address to be mapped at.
+	if uint64(len(image)) >= fourGB {
+		return nil, fmt.Errorf("ovmf image is %d bytes, which does not fit below the 4 GiB mapping", len(image))
+	}
 
 	table, err := parseFooterTable(image)
 	if err != nil {
@@ -113,7 +118,7 @@ func ParseFirmware(image []byte) (*Firmware, error) {
 	// The seed is the launch digest of the firmware pages alone, mapped so the
 	// image ends at 4 GiB.
 	seed := newDigest(nil)
-	if err := seed.normalPages(uint64(fourGB-len(image)), image); err != nil {
+	if err := seed.normalPages(fourGB-uint64(len(image)), image); err != nil {
 		return nil, err
 	}
 
