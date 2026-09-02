@@ -108,7 +108,11 @@ func EvaluateFile(ctx context.Context, bundlePath, configPath string, opts Optio
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := config.Load(config.Options{Path: configPath})
+	// Editable: `policy test` answers "would my policies admit this bundle?"
+	// offline, which is a question worth asking before the endpoint it is about
+	// has been pinned. An unpinned endpoint is not an obstacle to evaluating
+	// it — it is one of the answers.
+	cfg, err := config.Load(config.Options{Path: configPath, Editable: true})
 	if err != nil {
 		return nil, err
 	}
