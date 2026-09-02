@@ -1,11 +1,17 @@
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
-import { SESSION_COOKIE_NAME } from './lib/session-cookie';
+import { SIGNED_IN_COOKIE_NAME } from './lib/signed-in-cookie';
 import proxy from './proxy';
 
-function requestFor(path: string, options: { session?: boolean } = {}): NextRequest {
+function requestFor(path: string, options: { session?: boolean; apiCookies?: boolean } = {}): NextRequest {
   const request = new NextRequest(new URL(path, 'https://console.example.com'));
-  if (options.session) request.cookies.set(SESSION_COOKIE_NAME, 'opaque-token');
+  if (options.session) request.cookies.set(SIGNED_IN_COOKIE_NAME, '1');
+  // What a browser would carry if router-api shared the console's hostname —
+  // which is the assumption that produced SUP-113.
+  if (options.apiCookies) {
+    request.cookies.set('cr_session', 'opaque-token');
+    request.cookies.set('__Secure-cr_session', 'opaque-token');
+  }
   return request;
 }
 
@@ -56,6 +62,18 @@ describe('proxy', () => {
     const location = new URL(response.headers.get('location') as string);
 
     expect(location.pathname).toBe('/');
+  });
+
+  it('routes on the console\u2019s own marker, never on router-api\u2019s session cookie', () => {
+    // The API's cookie is HttpOnly, host-only to the API's hostname, and named
+    // `__Secure-cr_session` wherever it is worth having. On a deployment that
+    // splits the two hosts it never reaches this middleware at all, so reading
+    // it here can only ever be wrong \u2014 in either direction (SUP-113).
+    const denied = proxy(requestFor('/models', { apiCookies: true }));
+    expect(new URL(denied.headers.get('location') as string).pathname).toBe('/login');
+
+    const allowed = proxy(requestFor('/models', { session: true, apiCookies: false }));
+    expect(allowed.headers.get('location')).toBeNull();
   });
 
   it('lets a signed-in browser through to the console', () => {

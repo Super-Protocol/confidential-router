@@ -2,6 +2,7 @@ import type { MockLink } from '@apollo/client/testing';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearSignedIn, SIGNED_IN_COOKIE_NAME } from '../../lib/signed-in-cookie';
 import { renderWithApollo } from '../../test-utils';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 import { SignInForm } from './sign-in-form';
@@ -17,6 +18,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearSignedIn();
   vi.unstubAllGlobals();
 });
 
@@ -300,6 +302,20 @@ describe('SignInForm, the password path', () => {
     expect(JSON.parse(init.body)).toMatchObject({ email: 'dev@example.com', password: 'correct-horse-battery' });
     expect(init.credentials).toBe('include');
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
+  });
+
+  it('raises the console\u2019s routing marker before it leaves the page', async () => {
+    // router-api's session cookie is set on the API's hostname and is invisible
+    // here; the marker on the console's own host is what `proxy.ts` reads, and
+    // without it the browser bounces straight back to `/login` (SUP-113).
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(document.cookie).toContain(`${SIGNED_IN_COOKIE_NAME}=1`));
   });
 
   it('never puts the password in the URL', async () => {

@@ -6,8 +6,7 @@ import { Input } from '@confidential-router/ui/components/input';
 import { Label } from '@confidential-router/ui/components/label';
 import { KeyRound } from 'lucide-react';
 import * as React from 'react';
-import { signInWithBootstrapToken } from '../../lib/auth';
-import { publicConfig } from '../../lib/public-config';
+import { completeSignIn, signInWithBootstrapToken } from '../../lib/auth';
 import { messageOf } from './messages';
 
 /**
@@ -46,10 +45,7 @@ export function BootstrapForm({ onCancel }: BootstrapFormProps) {
     setPending(true);
     try {
       await signInWithBootstrapToken(token);
-      // A full navigation rather than a router push: the session cookie was
-      // just set on the API origin, and every cached Apollo result on this page
-      // was fetched without one.
-      window.location.assign(publicConfig().authCallbackUrl);
+      completeSignIn();
     } catch (caught) {
       setError(messageOf(caught, BOOTSTRAP_MESSAGES));
       setPending(false);

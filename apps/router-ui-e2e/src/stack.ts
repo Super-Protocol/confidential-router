@@ -15,13 +15,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
-import { SESSION_COOKIE_NAME } from './fixtures';
+import { SESSION_COOKIE_NAME, SIGNED_IN_COOKIE_NAME } from './fixtures';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HANDOFF_FILE = join(HERE, '..', '..', '..', 'test-output', 'demo-stack.json');
 
 export interface StackHandoff {
   apiBaseUrl: string;
+  apiOrigin: string;
   consoleOrigin: string;
   sessionCookie: string;
   workspaceId: string;
@@ -46,11 +47,20 @@ export function readHandoff(): StackHandoff {
   }
 }
 
-/** Puts the browser in the state a completed magic-link sign-in leaves it in. */
+/**
+ * Puts the browser in the state a completed magic-link sign-in leaves it in.
+ *
+ * The session cookie belongs to the API's host and the routing marker to the
+ * console's — the split a real deployment has, and the one this suite now
+ * serves (`origins.ts`).
+ */
 export async function useSession(page: Page, baseURL: string, handoff: StackHandoff): Promise<void> {
   const [name, value] = handoff.sessionCookie.split('=');
   if (name !== SESSION_COOKIE_NAME) {
     throw new Error(`the handoff carries a "${name}" cookie, expected ${SESSION_COOKIE_NAME}`);
   }
-  await page.context().addCookies([{ name, value, url: baseURL }]);
+  await page.context().addCookies([
+    { name, value, url: handoff.apiOrigin },
+    { name: SIGNED_IN_COOKIE_NAME, value: '1', url: baseURL },
+  ]);
 }

@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import { signIn } from './fixtures';
+import { CONSOLE_ORIGIN } from './origins';
 
 /** Same bar as `accessibility.spec.ts`: nothing serious or critical. */
 const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
@@ -136,7 +137,7 @@ test.describe('Credits', () => {
           __typename: 'CheckoutSession',
           // Not a real Stripe URL: the test asserts the redirect, and following
           // one to stripe.com from CI would be a network call, not a test.
-          url: 'http://127.0.0.1:4300/credits?topup=success',
+          url: `${CONSOLE_ORIGIN}/credits?topup=success`,
           ref: 'cs_test_1',
         },
       }),
@@ -205,7 +206,7 @@ test.describe('Preferences', () => {
         return {
           exportEvidence: {
             __typename: 'EvidenceExport',
-            url: 'http://127.0.0.1:4300/exports/evidence.zip?token=e2e',
+            url: `${CONSOLE_ORIGIN}/exports/evidence.zip?token=e2e`,
             expiresAt: '2026-08-31T10:15:00.000Z',
           },
         };
