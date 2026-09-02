@@ -9,10 +9,16 @@ import { mockGraphQL, signIn } from './fixtures';
  * of. The default is the development one: both OAuth apps, a mailer, and no
  * bootstrap window because somebody has already signed in.
  */
-async function deployment(
-  page: Page,
-  offers: Partial<{ bootstrap: boolean; github: boolean; google: boolean; magicLink: boolean }> = {},
-): Promise<void> {
+type Offers = Partial<{
+  bootstrap: boolean;
+  github: boolean;
+  google: boolean;
+  magicLink: boolean;
+  password: boolean;
+  passwordMinLength: number;
+}>;
+
+async function deployment(page: Page, offers: Offers = {}): Promise<void> {
   await mockGraphQL(page, {
     SignInOptions: {
       signInOptions: {
@@ -21,11 +27,16 @@ async function deployment(
         github: true,
         google: true,
         magicLink: true,
+        password: false,
+        passwordMinLength: 12,
         ...offers,
       },
     },
   });
 }
+
+/** A marketplace install: no mailer, no OAuth app, passwords on. */
+const MAILER_LESS: Offers = { github: false, google: false, magicLink: false, password: true };
 
 test.describe('sign-in', () => {
   test('sends a signed-out visitor to the sign-in screen and remembers the destination', async ({ page }) => {
@@ -161,6 +172,93 @@ test.describe('sign-in', () => {
     await page.goto('/nope');
 
     await expect(page.getByText('Page not found')).toBeVisible();
+  });
+
+  test('asks for a password on a deployment that offers one', async ({ page }) => {
+    await deployment(page, MAILER_LESS);
+
+    await page.goto('/login');
+
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect(page.getByLabel('Password')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Email me a link' })).toBeHidden();
+  });
+
+  test('signs in with a password and lands on the console', async ({ page, baseURL }) => {
+    await deployment(page, MAILER_LESS);
+    let requestBody: unknown;
+    await page.route('**/auth/sign-in/email', async (route) => {
+      requestBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'set-cookie': 'cr_session=e2e-password-session; Path=/; HttpOnly' },
+        body: JSON.stringify({ user: { id: 'user-1', email: 'developer@example.com' } }),
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByLabel('Email').fill('developer@example.com');
+    await page.getByLabel('Password').fill('correct-horse-battery');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    expect(requestBody).toMatchObject({ email: 'developer@example.com', password: 'correct-horse-battery' });
+    await expect(page).toHaveURL(`${baseURL}/`);
+  });
+
+  test('explains a rejected email and password without naming which half', async ({ page }) => {
+    await deployment(page, MAILER_LESS);
+    await page.route('**/auth/sign-in/email', async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Invalid email or password' }),
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByLabel('Email').fill('developer@example.com');
+    await page.getByLabel('Password').fill('wrong-password-here');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    // By id, not by role: Next's route announcer is also `role="alert"`.
+    await expect(page.locator('#sign-in-error')).toContainText('do not match an account here');
+  });
+
+  test('creates an account from the sign-up screen and lands on the console', async ({ page, baseURL }) => {
+    await deployment(page, MAILER_LESS);
+    let requestBody: unknown;
+    await page.route('**/auth/sign-up/email', async (route) => {
+      requestBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'set-cookie': 'cr_session=e2e-signup-session; Path=/; HttpOnly' },
+        body: JSON.stringify({ user: { id: 'user-2', email: 'newcomer@example.com' } }),
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByRole('link', { name: 'Create one' }).click();
+    await expect(page).toHaveURL(/\/signup$/);
+
+    await page.getByLabel('Name (optional)').fill('New Comer');
+    await page.getByLabel('Email').fill('newcomer@example.com');
+    await page.getByLabel('Password').fill('correct-horse-battery');
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    // No inbox in between: the session arrives with the sign-up itself.
+    expect(requestBody).toMatchObject({ email: 'newcomer@example.com', name: 'New Comer' });
+    await expect(page).toHaveURL(`${baseURL}/`);
+  });
+
+  test('says so on a deployment that does not offer password sign-up', async ({ page }) => {
+    await deployment(page);
+
+    await page.goto('/signup');
+
+    await expect(page.getByText('does not offer password sign-up')).toBeVisible();
+    await expect(page.getByLabel('Password')).toBeHidden();
   });
 
   test('renders the component gallery without a session', async ({ page }) => {

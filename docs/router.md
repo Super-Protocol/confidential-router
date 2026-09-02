@@ -16,6 +16,7 @@ about publication, never a verdict.
 - [Evidence](#evidence)
 - [Auth](#auth)
 - [First sign-in on a fresh deployment](#first-sign-in-on-a-fresh-deployment)
+- [Email and password, where there is no mail](#email-and-password-where-there-is-no-mail)
 - [Billing and Stripe](#billing-and-stripe)
 - [The OpenAI-compatible surface](#the-openai-compatible-surface)
 - [Running it](#running-it)
@@ -149,8 +150,9 @@ screens are empty. That is the honest state, and it is what a laptop shows.
 
 ## Auth
 
-OAuth and magic link only; no passwords anywhere. Sessions live in the database.
-Better Auth owns four tables and its own migration (ADR-004).
+OAuth and magic link, and — where a deployment has neither — a bootstrap token
+and email with a password. Sessions live in the database. Better Auth owns four
+tables and its own migration (ADR-004).
 
 ```yaml
 auth:
@@ -178,8 +180,8 @@ response.
 
 The console asks `signInOptions` — the one public query it makes before there is
 a session — for which of these paths this deployment actually offers, and renders
-only those. A "Continue with GitHub" button on a deployment with no GitHub app
-can only end in an error.
+only those, `password` and `passwordMinLength` among them. A "Continue with
+GitHub" button on a deployment with no GitHub app can only end in an error.
 
 ## First sign-in on a fresh deployment
 
@@ -233,9 +235,71 @@ What the endpoint promises:
 
 Afterwards the account is an ordinary one: it owns its workspace and it is the
 account a magic link to `bootstrapEmail` signs into, so a deployment that later
-configures a mailer or an OAuth app is not left with a stranded admin. There is
+configures a mailer or an OAuth app is not left with a stranded admin. It is
+also the *only* account the token can make — everyone after the first gets in
+through OAuth, a magic link, or
+[email and password](#email-and-password-where-there-is-no-mail). There is
 no separate "admin" role — this product's only role is workspace ownership.
 Clearing `bootstrapToken` is optional; the endpoint is already closed.
+
+## Email and password, where there is no mail
+
+A bootstrap token creates exactly one account. On a deployment that also has no
+mailer and no OAuth app, everyone after that first person has no way in at all —
+which is what `auth.password.enabled` is for. It is the only sign-in path that
+needs nothing outside the cluster.
+
+```yaml
+auth:
+  password:
+    enabled: true      # default false; the marketplace listing turns it on
+    minLength: 12      # the router's rule, reported to the console
+  magicLink:
+    mailer: none       # no mail on this deployment, and none needed
+```
+
+With it on, `POST /auth/sign-up/email` creates the account, its personal
+workspace and a session in one request, and `POST /auth/sign-in/email` signs it
+in afterwards. The console renders both forms — `/login` and `/signup` — from
+`signInOptions.password`.
+
+```bash
+curl -i -X POST https://api.example.com/auth/sign-up/email \
+  -H 'content-type: application/json' \
+  -H 'origin: https://console.example.com' \
+  -d '{"email":"someone@example.com","password":"…","name":"Some One"}'
+# 200, Set-Cookie: cr_session=…
+```
+
+What this path deliberately does **not** have:
+
+- **No email verification.** The address is never proven, because proving it is
+  a mail round trip and the whole premise here is that there is no mail. Treat
+  addresses on such a deployment as self-asserted labels, not as identities.
+- **No password reset.** `/auth/request-password-reset` and
+  `/auth/reset-password` are 404 on every deployment, enabled or not, for the
+  same reason. A forgotten password on a mailer-less deployment is a new
+  account, and the sign-up form says so.
+- **No open door where it is off.** `enabled: false` is the default, and then
+  `/auth/sign-up/email`, `/auth/sign-in/email`, `/auth/change-password` and
+  `/auth/verify-password` are all 404 — not "provider disabled", because an
+  unavailable path here is not a thing that exists.
+
+Two consequences worth deciding about before turning it on:
+
+- **Anyone who can reach the console can create an account.** There are no
+  invitations in v1, so a deployment on a public hostname with passwords on is
+  open for sign-up. It is no risk to anyone else's data — a new account gets its
+  own empty workspace, no credit and no access to anybody's keys — but it is
+  rows in your database. Put something in front of the hostname if that matters.
+- **The bootstrap window closes on the first account, whoever created it.**
+  `POST /auth/bootstrap` is gated on the deployment having no user at all. Claim
+  the deployment with the token before publishing the hostname, not after.
+
+Passwords are hashed with Better Auth's scrypt; `auth.password.minLength` is the
+only rule the router enforces, and the console reads it from `signInOptions`
+rather than restating it, so raising it does not leave the form advertising a
+floor the API refuses.
 
 ## Billing and Stripe
 

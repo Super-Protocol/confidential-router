@@ -10,7 +10,7 @@ function build(auth: Partial<RouterConfigType['auth']>, hasUser = false) {
   const exists = vi.fn().mockResolvedValue(hasUser);
   const dataSource = { getRepository: () => ({ exists }) } as unknown as DataSource;
   const config = {
-    auth: { magicLink: { mailer: 'console' }, ...auth },
+    auth: { magicLink: { mailer: 'console' }, password: { enabled: false, minLength: 12 }, ...auth },
   } as RouterConfigType;
 
   return { service: new SignInOptionsService(dataSource, config), exists };
@@ -47,6 +47,16 @@ describe('SignInOptionsService', () => {
 
     await expect(service.get()).resolves.toMatchObject({ bootstrap: false });
     expect(exists).not.toHaveBeenCalled();
+  });
+
+  it('reports the password provider, and the minimum it enforces', async () => {
+    const { service } = build({ password: { enabled: true, minLength: 20 } });
+
+    await expect(service.get()).resolves.toMatchObject({ password: true, passwordMinLength: 20 });
+  });
+
+  it('reports passwords as unavailable by default — this is opt-in', async () => {
+    await expect(build({}).service.get()).resolves.toMatchObject({ password: false });
   });
 
   it('never reports the token itself', async () => {

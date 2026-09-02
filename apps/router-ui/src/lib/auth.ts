@@ -64,6 +64,31 @@ export async function signInWithMagicLink(email: string): Promise<void> {
 }
 
 /**
+ * Creates an account from an address and a password, and signs it in.
+ *
+ * No verification mail is sent and none is waited for: this path exists for the
+ * deployment that cannot send one, so the session arrives with the sign-up
+ * itself. Only reachable while `signInOptions.password` is true — the router
+ * answers 404 on a deployment that did not enable passwords.
+ *
+ * `name` is optional to the console and required by Better Auth's body schema,
+ * which accepts an empty string; the console lets it be filled in later.
+ */
+export async function signUpWithPassword(input: { email: string; password: string; name?: string }): Promise<void> {
+  await postToAuth('/sign-up/email', {
+    email: input.email,
+    password: input.password,
+    name: input.name?.trim() ?? '',
+    callbackURL: publicConfig().authCallbackUrl,
+  });
+}
+
+/** Signs an existing account in with its password. The session arrives as a cookie. */
+export async function signInWithPassword(email: string, password: string): Promise<void> {
+  await postToAuth('/sign-in/email', { email, password, callbackURL: publicConfig().authCallbackUrl });
+}
+
+/**
  * Trades the deployment's bootstrap token for the first account and a session.
  *
  * Only reachable while `signInOptions.bootstrap` is true: the router registers
