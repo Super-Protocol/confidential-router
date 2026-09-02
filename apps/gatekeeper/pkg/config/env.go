@@ -225,7 +225,7 @@ func (c *Config) applyEndpointEnv(key, rest, value string) error {
 		case "UPSTREAM":
 			c.Endpoints[idx].Upstream = value
 		case "TRUSTED_EVIDENCE":
-			c.Endpoints[idx].TrustedEvidence = splitList(value)
+			c.Endpoints[idx].TrustedEvidence = DigestList(splitList(value))
 		}
 		return nil
 	}
