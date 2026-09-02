@@ -5,18 +5,52 @@
   "description": "YAML config of the user-side attesting proxy (default path ~/.config/confidential-gatekeeper/config.yaml). See docs/adr/ADR-003-gatekeeper-trust-model.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "trustedRoots", "endpoints"],
+  "required": ["version", "endpoints"],
   "properties": {
     "version": {
       "const": 1,
       "description": "Config schema version."
     },
     "trustedRoots": {
-      "description": "Global list of trusted (TEE-attested) PKI roots \u2014 the 'Trusted Clouds'. A bundle's certChain must terminate in one of them (matched by SHA-256 of the DER).",
+      "description": "Global list of manually trusted PKI roots \u2014 the 'Trusted Clouds'. A bundle's certChain must terminate in one of them (matched by SHA-256 of the DER), or in a root that `attestedRoots` accepts on its own TEE evidence. May be empty while `attestedRoots.enabled` is true.",
       "type": "array",
-      "minItems": 1,
       "items": {
         "$ref": "#/$defs/trustedRoot"
+      },
+      "default": []
+    },
+    "attestedRoots": {
+      "description": "Second trust anchor: accept a root certificate whose own TEE evidence proves it is a Super Swarm root, without the user listing it. The hardware report must verify against the CPU vendor's built-in root, its reportData must commit to the certificate's public key, and the normalised mrEnclave must carry a Super Protocol signature checked against a key pinned in the binary. Fails closed: a registry that cannot be consulted denies.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Whether the anchor is active.",
+          "type": "boolean",
+          "default": true
+        },
+        "registryBaseUrl": {
+          "description": "Base URL of the signed-measurement registry. This only moves the mirror: the signing key is pinned in the binary either way.",
+          "type": "string",
+          "pattern": "^https?://[^?#]+$",
+          "default": "https://raw.githubusercontent.com/Super-Protocol/sp-vm/main/signatures"
+        },
+        "cacheTtl": {
+          "description": "How long one root's verdict is reused before the check runs again.",
+          "$ref": "#/$defs/duration",
+          "default": "10m"
+        },
+        "requireNetworkType": {
+          "description": "Whether the root's declared network type must be \"trusted\". Today's Swarm Cloud root declares \"untrusted\" \u2014 the platform's own network split, not a judgement about the CA \u2014 so the default accepts either and reports which one it was.",
+          "type": "string",
+          "enum": ["any", "trusted"],
+          "default": "any"
+        },
+        "checkRevocations": {
+          "description": "Also consult the CPU vendor's certificate revocation lists. This needs the network and is reported separately from report integrity, so it is opt-in.",
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "policies": {

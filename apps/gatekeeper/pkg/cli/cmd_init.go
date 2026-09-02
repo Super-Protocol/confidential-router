@@ -49,10 +49,12 @@ func newInitCommand(g *globals) *cobra.Command {
 				return
 			}
 			fmt.Fprintf(w, "Wrote %s\n\nNext:\n", path)
-			fmt.Fprintf(w, "  gatekeeper trust roots add <name> --pem-file <root.pem>\n")
 			fmt.Fprintf(w, "  gatekeeper endpoint add <name> --listen 127.0.0.1:8443 --upstream https://<host>\n")
 			fmt.Fprintf(w, "  gatekeeper endpoint trust add <name> --from-upstream\n")
 			fmt.Fprintf(w, "  gatekeeper config validate\n")
+			fmt.Fprintf(w, "\nA Swarm cloud needs no `trust roots add`: its certificate authority is\n")
+			fmt.Fprintf(w, "accepted on its own TEE evidence. Add one with `gatekeeper trust roots add`\n")
+			fmt.Fprintf(w, "to pin a particular cloud, or to trust a CA that publishes no evidence.\n")
 		})
 	}
 	return cmd

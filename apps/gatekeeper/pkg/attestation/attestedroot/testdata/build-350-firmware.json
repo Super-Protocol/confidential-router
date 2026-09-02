@@ -1,0 +1,45 @@
+{
+  "build": "build-350",
+  "seed": "b4d8e3fe1dbb9677980fd6ecc44088b562ec6f53f56939ad94e50d0ec8628e3985964aaf439f4aa9dabac375c717b4e4",
+  "resetEip": "0x80b004",
+  "hashesTableGpa": "0x810c00",
+  "sections": [
+    {
+      "gpa": "0x800000",
+      "size": "0x9000",
+      "type": 1
+    },
+    {
+      "gpa": "0x80a000",
+      "size": "0x3000",
+      "type": 1
+    },
+    {
+      "gpa": "0x80d000",
+      "size": "0x1000",
+      "type": 2
+    },
+    {
+      "gpa": "0x80e000",
+      "size": "0x1000",
+      "type": 3
+    },
+    {
+      "gpa": "0x80f000",
+      "size": "0x1000",
+      "type": 4
+    },
+    {
+      "gpa": "0x811000",
+      "size": "0xf000",
+      "type": 1
+    },
+    {
+      "gpa": "0x810000",
+      "size": "0x1000",
+      "type": 16
+    }
+  ],
+  "kernelSha256": "d09b58597c380b3e104166f6d48c638ebecfb60d9196f04fc7c452c0d5f98b50",
+  "initrdSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
