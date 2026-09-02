@@ -46,6 +46,8 @@ jobs:
   nx:
     name: Lint, typecheck, build & test (Nx)
     runs-on: ubuntu-latest
+    # A title/body edit re-runs nothing of substance — skip the heavy jobs (commitlint still runs).
+    if: github.event.action != 'edited'
     # Hard ceiling for the job. Without it, GitHub's 360 min default lets a hung
     # step spin for hours.
     timeout-minutes: 30
@@ -104,6 +106,8 @@ jobs:
   router-api-postgres:
     name: router-api migrations (PostgreSQL)
     runs-on: ubuntu-latest
+    # A title/body edit re-runs nothing of substance — skip the heavy jobs (commitlint still runs).
+    if: github.event.action != 'edited'
     timeout-minutes: 20
     # `nx affected` runs the unit and e2e suites on SQLite. This job is the one
     # that proves the same migrations apply to the database production uses.
@@ -169,6 +173,8 @@ jobs:
   e2e:
     name: Console e2e (Playwright)
     runs-on: ubuntu-latest
+    # A title/body edit re-runs nothing of substance — skip the heavy jobs (commitlint still runs).
+    if: github.event.action != 'edited'
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -228,6 +234,8 @@ jobs:
   demo:
     name: End-to-end demo (gatekeeper → router → model)
     runs-on: ubuntu-latest
+    # A title/body edit re-runs nothing of substance — skip the heavy jobs (commitlint still runs).
+    if: github.event.action != 'edited'
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -267,6 +275,8 @@ jobs:
   images:
     name: Container images build
     runs-on: ubuntu-latest
+    # A title/body edit re-runs nothing of substance — skip the heavy jobs (commitlint still runs).
+    if: github.event.action != 'edited'
     timeout-minutes: 40
     steps:
       - name: Checkout
@@ -334,6 +344,8 @@ jobs:
   go:
     name: Go checks (gatekeeper)
     runs-on: ubuntu-latest
+    # A title/body edit re-runs nothing of substance — skip the heavy jobs (commitlint still runs).
+    if: github.event.action != 'edited'
     timeout-minutes: 15
     steps:
       - name: Checkout
