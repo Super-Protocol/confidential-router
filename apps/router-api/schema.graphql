@@ -668,6 +668,16 @@ type SignInOptions {
 
   """A mailer is configured, so a one-time link can be sent."""
   magicLink: Boolean!
+
+  """
+  Email and password sign-in and sign-up are enabled. There is no email verification and no password reset: this path exists for deployments with no mail delivery at all.
+  """
+  password: Boolean!
+
+  """
+  The shortest password this deployment accepts, so the sign-up form can state the rule instead of discovering it. Meaningless while `password` is false.
+  """
+  passwordMinLength: Int!
 }
 
 enum SortDirection {

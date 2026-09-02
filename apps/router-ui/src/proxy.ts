@@ -10,7 +10,7 @@ import { SESSION_COOKIE_NAME } from './lib/session-cookie';
  * piece of data still comes from a GraphQL call that the API authorises on its
  * own. Presence of the cookie is all that is checked here.
  */
-const PUBLIC_PATHS = ['/login'];
+const PUBLIC_PATHS = ['/login', '/signup'];
 
 export default function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

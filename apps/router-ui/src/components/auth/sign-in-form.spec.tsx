@@ -24,8 +24,20 @@ function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 400) {
   return { ok, status, json: async () => body } as unknown as Response;
 }
 
-/** Everything on, which is how the development deployment is configured. */
-function optionsMock(overrides: Partial<Record<'bootstrap' | 'github' | 'google' | 'magicLink', boolean>> = {}) {
+type Offers = Partial<{
+  bootstrap: boolean;
+  github: boolean;
+  google: boolean;
+  magicLink: boolean;
+  password: boolean;
+  passwordMinLength: number;
+}>;
+
+/**
+ * The development deployment: both providers and a mailer, no passwords —
+ * ADR-004's original set, which is still what `nx serve` runs.
+ */
+function optionsMock(overrides: Offers = {}) {
   return {
     request: { query: SIGN_IN_OPTIONS_QUERY },
     result: {
@@ -36,6 +48,8 @@ function optionsMock(overrides: Partial<Record<'bootstrap' | 'github' | 'google'
           github: true,
           google: true,
           magicLink: true,
+          password: false,
+          passwordMinLength: 12,
           ...overrides,
         },
       },
@@ -180,6 +194,7 @@ describe('SignInForm, on what the deployment offers', () => {
 
     expect(await screen.findByRole('button', { name: /Continue with GitHub/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
     // Except bootstrap: unlike the others it is normally unavailable, so a
     // failed query must not advertise it.
     expect(screen.queryByRole('button', { name: 'Have a bootstrap token?' })).not.toBeInTheDocument();
@@ -257,5 +272,112 @@ describe('SignInForm, the bootstrap path', () => {
     expect(screen.getByRole('button', { name: 'Create the first account' })).toBeDisabled();
     await userEvent.type(screen.getByLabelText('Bootstrap token'), 'x');
     expect(screen.getByRole('button', { name: 'Create the first account' })).toBeEnabled();
+  });
+});
+
+describe('SignInForm, the password path', () => {
+  /** A marketplace deployment: passwords, and nothing else but the token. */
+  const MAILER_LESS: Offers = { github: false, google: false, magicLink: false, password: true };
+
+  it('asks for a password when the deployment offers one', async () => {
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    expect(await screen.findByLabelText('Email')).toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Email me a link' })).not.toBeInTheDocument();
+  });
+
+  it('signs in and reloads onto the console', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/auth\/sign-in\/email$/);
+    expect(JSON.parse(init.body)).toMatchObject({ email: 'dev@example.com', password: 'correct-horse-battery' });
+    expect(init.credentials).toBe('include');
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
+  });
+
+  it('never puts the password in the URL', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(fetchMock.mock.calls[0][0]).not.toContain('correct-horse-battery');
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+    expect(assign.mock.calls[0][0]).not.toContain('correct-horse-battery');
+  });
+
+  it('says a rejected pair was rejected, without naming which half', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'Invalid email or password' }, false, 401));
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'wrong-password-here');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('do not match an account here');
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('links to sign-up where accounts can be created', async () => {
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    expect(await screen.findByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/signup');
+  });
+
+  it('does not, where they cannot', async () => {
+    renderForm();
+
+    await screen.findByRole('button', { name: /Continue with GitHub/ });
+    expect(screen.queryByRole('link', { name: 'Create one' })).not.toBeInTheDocument();
+  });
+
+  it('offers the magic link as the alternative when the deployment has both', async () => {
+    renderForm([optionsMock({ password: true })]);
+
+    // Password first: it signs the viewer in here rather than via an inbox.
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a link instead' }));
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email me a link' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use a password instead' }));
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+  });
+
+  it('keeps the address across the switch — it is the same address either way', async () => {
+    renderForm([optionsMock({ password: true })]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a link instead' }));
+
+    expect(screen.getByLabelText('Email')).toHaveValue('dev@example.com');
+  });
+
+  it('offers no switch when the deployment has only one of the two', async () => {
+    renderForm([optionsMock(MAILER_LESS)]);
+
+    await screen.findByLabelText('Password');
+    expect(screen.queryByRole('button', { name: /instead/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps the submit button disabled until both fields are filled', async () => {
+    renderForm([optionsMock(MAILER_LESS)]);
+    const submit = await screen.findByRole('button', { name: 'Sign in' });
+
+    expect(submit).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('Email'), 'dev@example.com');
+    expect(submit).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    expect(submit).toBeEnabled();
   });
 });
