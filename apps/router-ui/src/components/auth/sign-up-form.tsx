@@ -8,8 +8,7 @@ import { Label } from '@confidential-router/ui/components/label';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import Link from 'next/link';
 import * as React from 'react';
-import { signUpWithPassword } from '../../lib/auth';
-import { publicConfig } from '../../lib/public-config';
+import { completeSignIn, signUpWithPassword } from '../../lib/auth';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 
@@ -52,9 +51,7 @@ export function SignUpForm() {
     setPending(true);
     try {
       await signUpWithPassword({ email, password, name });
-      // The session cookie was just set on the API origin, so this is a full
-      // navigation rather than a router push.
-      window.location.assign(publicConfig().authCallbackUrl);
+      completeSignIn();
     } catch (caught) {
       setError(messageOf(caught, SIGN_UP_MESSAGES));
       setPending(false);

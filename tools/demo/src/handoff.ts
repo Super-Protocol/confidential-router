@@ -14,7 +14,14 @@ export const HANDOFF_FILE = join(REPO_ROOT, 'test-output', 'demo-stack.json');
 export const TRUSTED_ROOT_FILE = join(REPO_ROOT, 'test-output', 'demo-cloud-root.pem');
 
 export interface StackHandoff {
+  /** Loopback address of the router, for a request made from Node. */
   apiBaseUrl: string;
+  /**
+   * The origin the *browser* is pointed at. A separate hostname from the
+   * console's, so cookies are kept apart exactly as they are on a deployment
+   * (SUP-113); it resolves to the same loopback address as `apiBaseUrl`.
+   */
+  apiOrigin: string;
   consoleOrigin: string;
   /** `cr_session=…`, exactly as a browser would hold it. */
   sessionCookie: string;
