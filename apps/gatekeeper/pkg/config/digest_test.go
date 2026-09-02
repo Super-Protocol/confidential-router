@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
@@ -118,5 +119,108 @@ func sharedFixtures(t *testing.T) string {
 			t.Fatalf("could not find %s above %s", sharedFixturesDir, dir)
 		}
 		dir = parent
+	}
+}
+
+// oneEndpointConfig is a single endpoint whose trustedEvidence is spelled by
+// the caller, so a test can make exactly one shape wrong.
+func oneEndpointConfig(trustedEvidence string) string {
+	return `version: 1
+trustedRoots: []
+endpoints:
+  - name: llama
+    listen: 127.0.0.1:8443
+    upstream: https://llama.tee.swarm.cloud
+    trustedEvidence: ` + trustedEvidence + "\n"
+}
+
+// TestTrustedEvidenceShapeErrorsNameTheShape covers the message a user gets for
+// writing a pin the wrong way round. yaml.v3's own "cannot unmarshal !!str into
+// []string" names a Go type nobody typed; the file is what they have to edit.
+func TestTrustedEvidenceShapeErrorsNameTheShape(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+		// line is where the offending node sits in oneEndpointConfig.
+		line string
+	}{
+		{"one pin without the list", "sha256/axNB3kHhDGtF3v2P8lY6pWbBqzX0cR9kT1uJm4sN7dE", "got a string", "line 7"},
+		{"a mapping", "{sha256: axNB}", "got a mapping", "line 7"},
+		{"a number", "12345", "got a number", "line 7"},
+		{"a nested list", "\n      - - sha256/axNB", "item 0 is a list", "line 8"},
+		{"an empty item", "\n      -", "item 0 is empty", "line 8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := config.Load(config.Options{Path: writeConfig(t, oneEndpointConfig(tc.value))})
+			if err == nil {
+				t.Fatal("Load accepted a trustedEvidence that is not a list of digests")
+			}
+			message := err.Error()
+			if !strings.Contains(message, "must be a list of digest strings") {
+				t.Errorf("error = %q, want it to say what a pin list is", message)
+			}
+			if !strings.Contains(message, tc.want) {
+				t.Errorf("error = %q, want it to name the shape it found (%q)", message, tc.want)
+			}
+			// The line is what turns the message into an edit.
+			if !strings.Contains(message, tc.line) {
+				t.Errorf("error = %q, want the offending line", message)
+			}
+		})
+	}
+}
+
+// TestTrustedEvidenceAcceptsTheShapesThatAreRight guards the other side: an
+// absent, null or empty list is a pin-less endpoint, which is a legal file.
+func TestTrustedEvidenceAcceptsTheShapesThatAreRight(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, value string }{
+		{"an empty flow list", "[]"},
+		{"an explicit null", "null"},
+		{"a block list", "\n      - sha256/axNB3kHhDGtF3v2P8lY6pWbBqzX0cR9kT1uJm4sN7dE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Editable, because a pin-less endpoint is exactly what `endpoint
+			// add` writes: the shape is right, the file is unfinished.
+			cfg, err := config.Load(config.Options{
+				Path: writeConfig(t, oneEndpointConfig(tc.value)), Editable: true,
+			})
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if len(cfg.Endpoints) != 1 {
+				t.Fatalf("endpoints = %d, want 1", len(cfg.Endpoints))
+			}
+		})
+	}
+}
+
+// TestTrustedEvidenceResolvesAnAnchor keeps a shared pin list working: it
+// arrives as an alias node, which a naive shape check would reject.
+func TestTrustedEvidenceResolvesAnAnchor(t *testing.T) {
+	t.Parallel()
+	body := `version: 1
+trustedRoots: []
+endpoints:
+  - name: llama
+    listen: 127.0.0.1:8443
+    upstream: https://llama.tee.swarm.cloud
+    trustedEvidence: &shared
+      - sha256/axNB3kHhDGtF3v2P8lY6pWbBqzX0cR9kT1uJm4sN7dE
+  - name: qwen
+    listen: 127.0.0.1:8444
+    upstream: https://qwen.tee.swarm.cloud
+    trustedEvidence: *shared
+`
+	cfg, err := config.Load(config.Options{Path: writeConfig(t, body), Editable: true})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Endpoints[1].TrustedEvidence) != 1 {
+		t.Errorf("qwen trustedEvidence = %v, want the anchored pin", cfg.Endpoints[1].TrustedEvidence)
 	}
 }

@@ -32,11 +32,13 @@ type Options struct {
 	// but a file that is not *finished* — no trusted roots yet, an endpoint
 	// without pins yet — still loads.
 	//
-	// It exists for the commands that only look at a live host: `verify`,
-	// `endpoint discover` and `endpoint trust add --from-upstream`. Those are
-	// how a config gets finished, so requiring a finished config to run them
-	// makes the sequence `gatekeeper init` prints impossible to follow. Nothing
-	// that opens a listener loads this way.
+	// It exists for the commands that inspect rather than serve: `verify`,
+	// `endpoint discover`, `endpoint trust add --from-upstream`, `policy list`
+	// and `policy test`. Those are how a config gets finished and checked, so
+	// requiring a finished config to run them makes the sequence `gatekeeper
+	// init` prints impossible to follow. Nothing that opens a listener loads
+	// this way: only `run` — and the SIGHUP reload behind it — insists the file
+	// is complete, because only `run` can admit traffic.
 	Editable bool
 }
 

@@ -144,7 +144,12 @@ type Endpoint struct {
 	// TrustedEvidence holds the pinned evidenceDigest values accepted for this
 	// endpoint, as written in the file. [Config.Validate] checks the format;
 	// the trust store normalises them to canonical `sha256/<base64url>`.
-	TrustedEvidence []string       `yaml:"trustedEvidence"`
+	//
+	// An endpoint with no pins is a legal *file* — it is what `endpoint add`
+	// writes and what `endpoint trust add --from-upstream` then fills in — but
+	// it can never admit traffic, which is what [Config.Validate] reports and
+	// [Config.ValidateEditable] tolerates.
+	TrustedEvidence DigestList     `yaml:"trustedEvidence"`
 	Tuning          EndpointTuning `yaml:",inline"`
 }
 

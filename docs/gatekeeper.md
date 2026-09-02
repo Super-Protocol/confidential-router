@@ -51,6 +51,12 @@ the report, and asks before writing; a bundle that fails any stage is never
 pinned. What it does *not* check is whether the deployment it found is one you
 want — that is the question you are answering by saying yes.
 
+An unfinished file is not a broken one. Every command above except `run` reads
+it happily — that is how the file gets finished, and `endpoint add` writes an
+endpoint with no pins on purpose so that `endpoint trust add --from-upstream`
+can supply the first one. Only `run` insists the configuration is complete,
+because only `run` can admit traffic.
+
 Every command takes `--json`, and every one exits with a meaningful status:
 
 | Exit | Meaning |

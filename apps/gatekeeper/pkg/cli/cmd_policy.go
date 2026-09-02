@@ -53,7 +53,11 @@ func newPolicyListCommand(g *globals) *cobra.Command {
 		"also print the generated gatekeeper.trust module")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		cfg, err := g.load()
+		// Editable: listing the policies that would run is how someone checks
+		// their policy set *while* setting the gatekeeper up, before any
+		// endpoint has its first pin. Compiling them decides nothing and
+		// admits nothing.
+		cfg, err := g.loadEditable()
 		if err != nil {
 			return err
 		}
