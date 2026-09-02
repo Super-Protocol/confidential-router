@@ -8,11 +8,27 @@
 version: 1
 
 # Trusted roots ("Trusted Clouds"). An endpoint's certificate chain must end in
-# one of these, matched by the SHA-256 of the root's DER. There is no built-in
-# trust: an empty list denies everything.
+# one of these, matched by the SHA-256 of the root's DER.
 #
 #   gatekeeper trust roots add swarm-cloud-prod --pem-file ./roots/prod.pem
+#
+# For a Swarm cloud this list is optional: attestedRoots below accepts that
+# cloud's own certificate authority on its TEE evidence. Add a root here to pin
+# one cloud and nothing else, or to trust a CA that publishes no evidence.
 trustedRoots: []
+
+# Second trust anchor: accept a root certificate when its own TEE evidence
+# proves it is a Super Swarm root — the hardware report has to be signed by the
+# CPU vendor, bound to that certificate's key, and its normalised measurement
+# has to be one Super Protocol signed. The signing key is pinned in the binary,
+# and the check fails closed when the registry cannot be reached.
+#
+# attestedRoots:
+#   enabled: true                 # the default
+#   requireNetworkType: any       # or "trusted"; today's Swarm root says "untrusted"
+#   cacheTtl: 10m
+#   checkRevocations: false       # consult the CPU vendor's CRLs too
+#   registryBaseUrl: https://raw.githubusercontent.com/Super-Protocol/sp-vm/main/signatures
 
 # Optional user policies (Rego v1). Every one of them is ANDed with the built-in
 # evidenceDigest pin policy, so a policy can narrow trust but never widen it.

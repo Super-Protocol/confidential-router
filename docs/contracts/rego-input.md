@@ -13,11 +13,31 @@ to `endpoint` and the attestation block extended. Rego v1 syntax, evaluated by e
   "attestation": {
     "verified": true,                               // always true when Rego runs (pipeline stages 1–6 passed)
     "channelBinding": "observed",                   // gatekeeper never uses producer-asserted
-    "root": "swarm-cloud-prod",                     // matched trustedRoots[].name
+    "root": "swarm-cloud-prod",                     // matched trustedRoots[].name, or `attested:<mrEnclave>`
     "rootFingerprint": "sha256/…",                  // SHA-256 of the matched root DER
     "observedTlsFingerprint": "sha256/…",
     "verifiedAt": "2026-08-30T10:11:04Z",
-    "quoteFormat": "intel-tdx-quote-v5"             // bundle.rootCaTeeQuote.format, if present
+    "quoteFormat": "intel-tdx-quote-v5",            // bundle.rootCaTeeQuote.format, if present
+    "rootAttestation": {                            // only when the root was checked on its TEE evidence
+      "attested": true,                             // false ⇒ the root was accepted elsewhere, or denied
+      "evidenceType": "AMD SEV-SNP (QEMU)",
+      "networkType": "untrusted",                   // what the certificate declares; reported, not enforced
+      "measurement": "842c5f2e…",                   // normalised mrEnclave, hex
+      "inRegistry": true,                           // Super Protocol signed that measurement
+      "reportIntegrity": true,
+      "revocationChecked": false,                   // false ⇒ not run, never "clean"
+      "notRevoked": false,
+      "keyBinding": true,                           // reportData commits to this certificate's key
+      "cpuGeneration": "Genoa",
+      "teeFlags": {                                 // as the hardware reports them; nothing here is enforced
+        "vmpl": 0,
+        "debugAllowed": false,
+        "ciphertextHiding": false,
+        "pageSwapDisabled": false,
+        "snpFirmwareTcb": 27,
+        "reportVersion": 5
+      }
+    }
   },
   "evidence": {                                     // the verified JWS payload, plus convenience fields
     "version": "1",
@@ -37,6 +57,29 @@ to `endpoint` and the attestation block extended. Rego v1 syntax, evaluated by e
 `evidence.evidence` is opaque to the gatekeeper; policies that inspect it use `walk()` or
 `object.get`. `containerImages` is the flattened list of every string `image` field in the snapshot
 (swarm-cloud `collectImages`), deduplicated, order-insensitive.
+
+`attestation.rootAttestation` is **absent** for a root the user pinned in `trustedRoots[]`, and present
+whenever the attested-root anchor was consulted (ADR-003 §2a) — including when it denied. That is what lets
+a policy require one anchor or the other, and what lets an operator police the TEE flags the gatekeeper
+deliberately does not judge:
+
+```rego
+package gatekeeper.hardened
+
+import rego.v1
+
+default allow := false
+
+# Only clouds whose root CA is a registered Super Protocol image, with debug off
+# and ciphertext hiding on.
+allow if {
+	flags := input.attestation.rootAttestation.teeFlags
+	input.attestation.rootAttestation.attested
+	input.attestation.rootAttestation.inRegistry
+	not flags.debugAllowed
+	flags.ciphertextHiding
+}
+```
 
 ## `data.gatekeeper.trust` (generated from config, read-only)
 

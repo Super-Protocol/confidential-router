@@ -233,3 +233,80 @@ func TestVerifyRefusesToIgnoreTheEndpointFlag(t *testing.T) {
 		t.Errorf("request = %+v, want %+v", verifier.requests, want)
 	}
 }
+
+// attestedRootReport is what a Swarm cloud looks like when nobody pinned its
+// certificate authority: the root is trusted because its own TEE evidence says
+// what it is.
+func attestedRootReport() *status.Report {
+	report := admittedReport()
+	report.Root = "attested:842c5f2eb016c04fa61e0ac3d0ff48bae16b4c08c61d80cdfdaf332a9b3625c2"
+	report.RootAttested = true
+	report.AttestedRoot = &status.AttestedRoot{
+		Attested:          true,
+		EvidenceType:      "AMD SEV-SNP (QEMU)",
+		NetworkType:       "untrusted",
+		ReportIntegrity:   true,
+		RevocationChecked: true,
+		NotRevoked:        true,
+		CPUGeneration:     "Genoa",
+		KeyBinding:        true,
+		KeyDigest:         "676553c0333cf07df4c861431dd564f63e88b101e43ab276ffd276e197ab5c8d",
+		Measurement:       "842c5f2eb016c04fa61e0ac3d0ff48bae16b4c08c61d80cdfdaf332a9b3625c2",
+		InRegistry:        true,
+		SnpFirmwareTCB:    27,
+		ReportVersion:     5,
+	}
+	return report
+}
+
+// TestVerifyPrintsTheAttestedRootPanel is the parity check with the platform's
+// browser panel: the same rows, in the same order, from the gatekeeper's own
+// verification.
+func TestVerifyPrintsTheAttestedRootPanel(t *testing.T) {
+	h := configured(t)
+	h.env.Verifier = &fakeVerifier{report: attestedRootReport()}
+
+	got := h.mustRun("verify", "llama-33-70b")
+	golden(t, "verify-attested-root", got.stdout)
+
+	for _, want := range []string{
+		"attested, not from trustedRoots",
+		"(in trusted registry)",
+		"matches the report data",
+	} {
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("output does not mention %q", want)
+		}
+	}
+}
+
+// TestVerifyExplainsARejectedAttestedRoot keeps the two failures apart: a
+// measurement nobody signed reads differently from a report that did not
+// verify, and both have to survive into the output.
+func TestVerifyExplainsARejectedAttestedRoot(t *testing.T) {
+	h := configured(t)
+	report := attestedRootReport()
+	report.Verified, report.Admitted, report.RootAttested = false, false, false
+	report.Root, report.RootFingerprint = "", "sha256/4rDDqk4QaXWLKrWi1GJt1yqZaFoZmQGxU6HcvHAGdKQ"
+	report.Stage, report.Reason = "untrusted-root",
+		"sha256/4rDDqk4QaXWLKrWi1GJt1yqZaFoZmQGxU6HcvHAGdKQ not in trusted store "+
+			"(attested-root check: measurement 842c… is not in the Super Protocol trusted registry)"
+	report.AttestedRoot.Attested = false
+	report.AttestedRoot.InRegistry = false
+	report.AttestedRoot.Reason = "measurement 842c… is not in the Super Protocol trusted registry"
+	h.env.Verifier = &fakeVerifier{report: report}
+
+	got := h.run("verify", "llama-33-70b")
+	if got.code != cli.ExitDenied {
+		t.Fatalf("exit = %d, want %d", got.code, cli.ExitDenied)
+	}
+	for _, want := range []string{
+		"NOT attested",
+		"NOT in trusted registry",
+		"Report integrity    ok",
+	} {
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("output does not mention %q\n%s", want, got.stdout)
+		}
+	}
+}

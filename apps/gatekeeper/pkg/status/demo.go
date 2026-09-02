@@ -178,6 +178,22 @@ func demoReport(ep Endpoint, health Health, at time.Time) *Report {
 		report.Pinned = true
 		report.Root = "demo-root"
 		report.Policies = []PolicyResult{{Package: "gatekeeper.default", Allow: true}}
+		// A confidential endpoint in the demo shows the second anchor at work,
+		// so the pane that renders it is reviewable without a real Swarm cloud.
+		report.RootAttested = true
+		report.AttestedRoot = &AttestedRoot{
+			Attested:        true,
+			EvidenceType:    "AMD SEV-SNP (QEMU)",
+			NetworkType:     "untrusted",
+			ReportIntegrity: true,
+			CPUGeneration:   "Genoa",
+			KeyBinding:      true,
+			KeyDigest:       "676553c0333cf07df4c861431dd564f63e88b101e43ab276ffd276e197ab5c8d",
+			Measurement:     "842c5f2eb016c04fa61e0ac3d0ff48bae16b4c08c61d80cdfdaf332a9b3625c2",
+			InRegistry:      true,
+			SnpFirmwareTCB:  27,
+			ReportVersion:   5,
+		}
 	}
 	return report
 }

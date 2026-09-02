@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +131,8 @@ func printReport(w io.Writer, r *status.Report, now time.Time) {
 	)
 	fields(w, pairs)
 
+	printAttestedRoot(w, r.AttestedRoot)
+
 	if len(r.Chain) > 0 {
 		fmt.Fprintln(w, "\nCertificate chain (leaf → root)")
 		rows := make([][]string, 0, len(r.Chain))
@@ -180,6 +183,91 @@ func printReport(w io.Writer, r *status.Report, now time.Time) {
 	}
 }
 
+// printAttestedRoot renders what the root's own TEE evidence proved, in the
+// order the platform's browser panel shows it — report first, then the
+// hardware's own claims, then the two bindings that make the report be about
+// this certificate and about a Super Protocol image.
+//
+// It is printed whenever the check ran, including for a root it rejected: a
+// measurement that is sound but absent from the registry and a report that does
+// not verify are different problems with different fixes.
+func printAttestedRoot(w io.Writer, a *status.AttestedRoot) {
+	if a == nil {
+		return
+	}
+	fmt.Fprintln(w, "\nRoot certificate TEE evidence")
+
+	pairs := [][2]string{
+		{"  Verdict", attestedVerdict(a)},
+		{"  Evidence type", orDash(a.EvidenceType)},
+		{"  Report integrity", okFailed(a.ReportIntegrity)},
+		{"  Chain revocation", a.RevocationLabel()},
+	}
+	if a.CPUGeneration != "" {
+		pairs = append(pairs, [2]string{"  CPU generation", a.CPUGeneration})
+	}
+	if a.SnpFirmwareTCB != 0 {
+		pairs = append(pairs, [2]string{"  SNP firmware TCB", strconv.Itoa(int(a.SnpFirmwareTCB))})
+	}
+	pairs = append(pairs,
+		[2]string{"  Debug mode", enabledDisabled(a.DebugAllowed)},
+		[2]string{"  Ciphertext hiding", enabledDisabled(a.CiphertextHiding)},
+		[2]string{"  Page swap disabled", enabledDisabled(a.PageSwapDisabled)},
+		[2]string{"  Network type", orDash(a.NetworkType)},
+		[2]string{"  Measurement", measurementLine(a)},
+		[2]string{"  Key binding", keyBindingLine(a)},
+	)
+	fields(w, pairs)
+
+	if !a.Attested && a.Reason != "" {
+		fmt.Fprintf(w, "\n  ! %s\n", a.Reason)
+	}
+}
+
+func attestedVerdict(a *status.AttestedRoot) string {
+	if a.Attested {
+		return "attested — this is a Super Swarm root"
+	}
+	return "NOT attested"
+}
+
+func measurementLine(a *status.AttestedRoot) string {
+	if a.Measurement == "" {
+		return "—"
+	}
+	if a.InRegistry {
+		return a.Measurement + " (in trusted registry)"
+	}
+	return a.Measurement + " (NOT in trusted registry)"
+}
+
+func keyBindingLine(a *status.AttestedRoot) string {
+	if a.KeyDigest == "" {
+		return "—"
+	}
+	if a.KeyBinding {
+		return a.KeyDigest + " (matches the report data)"
+	}
+	return a.KeyDigest + " (does NOT match this certificate's key)"
+}
+
+func okFailed(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "FAILED"
+}
+
+// enabledDisabled reports a TEE flag as the hardware states it. The gatekeeper
+// deliberately does not label any of these good or bad: which combination an
+// operator requires is a policy question, answered in Rego.
+func enabledDisabled(on bool) string {
+	if on {
+		return "enabled"
+	}
+	return "disabled"
+}
+
 // verdictLine is the one line someone skimming the output has to read.
 func verdictLine(r *status.Report) string {
 	switch {
@@ -194,6 +282,8 @@ func verdictLine(r *status.Report) string {
 
 func rootLine(r *status.Report) string {
 	switch {
+	case r.Root != "" && r.RootAttested:
+		return fmt.Sprintf("%s (%s) — attested, not from trustedRoots", r.Root, r.RootFingerprint)
 	case r.Root != "":
 		return fmt.Sprintf("%s (%s)", r.Root, r.RootFingerprint)
 	case r.RootFingerprint != "":

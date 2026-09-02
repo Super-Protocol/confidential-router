@@ -23,7 +23,7 @@ export const SETUP_STEPS: SetupStep[] = [
     command: 'gatekeeper init',
     title: 'Write a starter config',
     detail:
-      'Creates ~/.config/confidential-gatekeeper/config.yaml with the default policy and an empty trusted-roots list. Nothing is contacted.',
+      'Creates ~/.config/confidential-gatekeeper/config.yaml with the default policy. No root to paste: a Swarm cloud\u2019s certificate authority is accepted on its own TEE evidence. Nothing is contacted.',
   },
   {
     command: `gatekeeper endpoint add ${ENDPOINT_NAME} --upstream https://<hostname> --listen ${GATEKEEPER_LISTEN}`,

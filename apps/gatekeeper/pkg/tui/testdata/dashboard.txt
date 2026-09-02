@@ -11,21 +11,21 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ llama-33-70b  confidential                                                                     │
 │                                                                                                │
-│ root                    demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                  │
+│ root                    demo-root  sha256/kw3eZGpcCR…CJ9tOPFo  (attested)                      │
 │ observed TLS leaf       sha256/hf1GyYDQLx…SsEbA-QE                                             │
 │ signed certFingerprint  sha256/hf1GyYDQLx…SsEbA-QE                                             │
 │ evidenceDigest          sha256/q6kP-YVuoi…BmHXlMPg  pinned                                     │
 │ root CA TEE quote       tdx-v4 (not validated)                                                 │
 │                                                                                                │
+│ root TEE evidence  attested                                                                    │
+│   evidence              AMD SEV-SNP (QEMU)                                                     │
+│   report integrity      ok                                                                     │
+│   measurement           842c5f2eb0…9b3625c2  in trusted registry                               │
+│   flags                 debug off · ciphertext hiding off · page swap disabled off             │
+│                                                                                                │
 │ chain (leaf → root)                                                                            │
 │   ├─ CN=llama-33-70b.tee.swarm.cloud  sha256/hf1GyYDQLx…SsEbA-QE                               │
 │   ├─ CN=demo-intermediate  sha256/F4tTs2djw7…iMDCUMT4                                          │
-│   └─ CN=demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                                  │
-│                                                                                                │
-│ images                                                                                         │
-│   ghcr.io/super-protocol/vllm@sha256:8f1c...c2a1                                               │
-│   ghcr.io/super-protocol/router-sidecar@sha256:41ab...9d7e                                     │
-│                                                                                                │
 │ …                                                                                              │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 showing detail · 2 endpoint(s)                                                                    
