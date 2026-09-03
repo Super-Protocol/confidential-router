@@ -28,6 +28,12 @@ export default defineConfig({
         find: /^@confidential-router\/attestation-fixtures$/,
         replacement: `${repoRoot}/libs/attestation-fixtures/src/index.ts`,
       },
+      // Reached through `tools/demo`, which formats digests for its assertions.
+      // Every workspace package this suite pulls in needs an entry here: the
+      // `conditions` above do not reach a bare import from an aliased package,
+      // so without one vite falls back to `libs/types/dist/` — which the `e2e`
+      // target never builds.
+      { find: /^@confidential-router\/types$/, replacement: `${repoRoot}/libs/types/src/index.ts` },
     ],
   },
   test: {
