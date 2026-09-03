@@ -15,18 +15,18 @@ Checked        30s ago
 Evidence kind  DeploymentEvidence
 Issued         4m ago
 
-Trusted root            swarm-cloud-prod (sha256/4rDDqk4QaXWLKrWi1GJt1yqZaFoZmQGxU6HcvHAGdKQ)
-Observed TLS leaf       sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0
-Signed certFingerprint  sha256/4fSxZzcnad7Qy_256p4Hlw7zm-jHTEhgjN31bRF-di0
+Trusted root            swarm-cloud-prod (sha256:e2b0c3aa4e1069758b2ab5a2d4626dd72a99685a199901b153a1dcbc700674a4)
+Observed TLS leaf       sha256:e1f4b167372769ded0cbfdb9ea9e07970ef39be8c74c48608cddf56d117e762d
+Signed certFingerprint  sha256:e1f4b167372769ded0cbfdb9ea9e07970ef39be8c74c48608cddf56d117e762d
 Root CA TEE quote       intel-tdx-quote-v5 (displayed, not validated)
 
-evidenceDigest            sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490
+evidenceDigest            sha256:4b04a5f2792a2ec3479fdaec5bb0df7a4f6619378378f9bc32c1cf43767ee3dd
 Pinned for this endpoint  yes
 
 Certificate chain (leaf → root)
   ROLE  SUBJECT                          FINGERPRINT             EXPIRES
-  leaf  CN=llama-33-70b.tee.swarm.cloud  sha256/4fSxZzcn…RF-di0  2026-10-29
-  root  CN=swarm-cloud-prod-root         sha256/4rDDqk4Q…HAGdKQ  2037-08-12
+  leaf  CN=llama-33-70b.tee.swarm.cloud  sha256:e1f4b167…7e762d  2026-10-29
+  root  CN=swarm-cloud-prod-root         sha256:e2b0c3aa…0674a4  2037-08-12
 
 Container images
   ghcr.io/super-protocol/sidecar@sha256:bbbb

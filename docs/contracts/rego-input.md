@@ -28,11 +28,17 @@ to `endpoint` and the attestation block extended. Rego v1 syntax, evaluated by e
     "evidenceDigest": "sha256/…",                   // normalised to canonical form
     "evidence": { "version": 2, "resources": [ … ] }, // canonical deployment snapshot as published
     "containerImages": ["ghcr.io/…/router-api@sha256:…", "ghcr.io/…/vllm-tdx@sha256:…"],
-    "evidenceDigestHex": "6b1f…9c04",
+    "evidenceDigestHex": "6b1f…9c04",             // the spelling every screen and command shows
     "certFingerprintHex": "…"
   }
 }
 ```
+
+The `*Hex` fields are the ergonomic comparands: a constant in a policy is
+usually a string someone copied out of the router console or off a `gatekeeper
+verify` report, and both print `sha256:<hex>`. Compare against `evidenceDigestHex`
+with the scheme dropped, or against `evidenceDigest` if the canonical
+`sha256/<base64url>` form the bundle carries is what you already hold.
 
 `evidence.evidence` is opaque to the gatekeeper; policies that inspect it use `walk()` or
 `object.get`. `containerImages` is the flattened list of every string `image` field in the snapshot

@@ -264,12 +264,15 @@ export function ComponentGallery() {
               Show toast
             </Button>
             <CopyButton
-              value="sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs"
+              value="sha256:f579367d3d6942f03b05d138acbd1e426dd7913a59f2f35cd58b16b87809a00b"
               label="Copy the evidence digest"
               variant="outline"
               showLabel
             />
-            <CopyButton value="sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs" label="Copy the evidence digest" />
+            <CopyButton
+              value="sha256:f579367d3d6942f03b05d138acbd1e426dd7913a59f2f35cd58b16b87809a00b"
+              label="Copy the evidence digest"
+            />
           </div>
         </Section>
 

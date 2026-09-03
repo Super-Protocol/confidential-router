@@ -175,16 +175,16 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ llama-33-70b  confidential                                                                     │
 │                                                                                                │
-│ root                    demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                  │
-│ observed TLS leaf       sha256/hf1GyYDQLx…SsEbA-QE                                             │
-│ signed certFingerprint  sha256/hf1GyYDQLx…SsEbA-QE                                             │
-│ evidenceDigest          sha256/q6kP-YVuoi…BmHXlMPg  pinned                                     │
+│ root                    demo-root  sha256:930dde646a…a7db4e3c                                  │
+│ observed TLS leaf       sha256:85fd46c980…c46c0f90                                             │
+│ signed certFingerprint  sha256:85fd46c980…c46c0f90                                             │
+│ evidenceDigest          sha256:aba90ff985…75e530fe  pinned                                     │
 │ root CA TEE quote       tdx-v4 (not validated)                                                 │
 │                                                                                                │
 │ chain (leaf → root)                                                                            │
-│   ├─ CN=llama-33-70b.tee.swarm.cloud  sha256/hf1GyYDQLx…SsEbA-QE                               │
-│   ├─ CN=demo-intermediate  sha256/F4tTs2djw7…iMDCUMT4                                          │
-│   └─ CN=demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                                  │
+│   ├─ CN=llama-33-70b.tee.swarm.cloud  sha256:85fd46c980…c46c0f90                               │
+│   ├─ CN=demo-intermediate  sha256:178b53b367…c0c250f8                                          │
+│   └─ CN=demo-root  sha256:930dde646a…a7db4e3c                                                  │
 │                                                                                                │
 │ images                                                                                         │
 │   ghcr.io/super-protocol/vllm@sha256:8f1c...c2a1                                               │
@@ -437,9 +437,17 @@ survive — and saves atomically.
 ### Trust store (`pkg/trust`)
 
 Global trusted roots (matched by the SHA-256 of the root DER) and, per endpoint,
-the pinned `evidenceDigest` values. Digests are canonical `sha256/<base64url>`;
-`sha256/<hex>`, `sha256:<hex>` and bare hex are accepted on input and
-normalised, so a pin copied out of a log matches one copied out of the console.
+the pinned `evidenceDigest` values.
+
+Every digest the gatekeeper *prints* — reports, tables, the dashboard, error
+messages, the audit log — and every digest it *writes* into the config is
+`sha256:<hex>`, the spelling the router console and the browser extension show
+too. The canonical `sha256/<base64url>` form is the wire form: it is what the
+producer signs, what a pin is compared as, and what `--json` reports alongside
+the hex one in its `*Canonical` fields. On input all four spellings load
+(`sha256:<hex>`, `sha256/<base64url>`, `sha256/<hex>`, bare hex), so an existing
+config keeps working and a pin copied out of a log matches one copied out of the
+console.
 
 There is one digest parser in the binary: `trust.ParseDigest` delegates to
 `attestation.NormalizeEvidenceDigest`, the implementation the shared vectors in
@@ -571,7 +579,7 @@ gatekeeper carries prompts and API keys, and neither may outlive the process in
 a file.
 
 ```json
-{"at":"…","event":"verdict","endpoint":"llama-33-70b","admitted":true,"evidenceDigest":"sha256/…","observedTlsFingerprint":"sha256/…","root":"swarm-cloud-prod"}
+{"at":"…","event":"verdict","endpoint":"llama-33-70b","admitted":true,"evidenceDigest":"sha256:…","observedTlsFingerprint":"sha256:…","root":"swarm-cloud-prod"}
 {"at":"…","event":"blocked","endpoint":"llama-33-70b","admitted":false,"stage":"policy","reason":"…","method":"POST","path":"/v1/chat/completions","status":503,"failMode":"closed"}
 ```
 

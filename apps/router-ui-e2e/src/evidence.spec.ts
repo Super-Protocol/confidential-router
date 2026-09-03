@@ -1,7 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
   CONSOLE_OPERATIONS,
-  PUBLISHED_DIGEST,
+  PUBLISHED_DIGEST_HEX,
   PUBLISHED_HOST,
   PUBLISHED_JWS,
   REFRESHED_JWS,
@@ -46,7 +46,7 @@ test.describe('Overview', () => {
 
     await page.getByRole('button', { name: `Copy evidence digest for ${PUBLISHED_HOST}` }).click();
 
-    expect(await clipboardText(page)).toBe(PUBLISHED_DIGEST);
+    expect(await clipboardText(page)).toBe(PUBLISHED_DIGEST_HEX);
   });
 
   test('opens the evidence modal from a row and copies the JWS', async ({ page, baseURL }) => {

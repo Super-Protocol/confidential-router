@@ -95,8 +95,15 @@ enum Bucket {
 
 """One certificate of the published chain, leaf → root."""
 type CertSummary {
-  """sha256/<base64url> of the certificate DER."""
+  """
+  sha256/<base64url> of the certificate DER — the form the bundle carries.
+  """
   fingerprint: String!
+
+  """
+  The same fingerprint in hex, which is how the console and the gatekeeper show it.
+  """
+  fingerprintHex: String!
 
   """True for the terminal certificate of the published chain."""
   isRoot: Boolean!
@@ -248,6 +255,9 @@ type EvidenceSnapshot {
 
   """sha256/<base64url> of the TLS leaf the bundle asserts."""
   certFingerprint: String!
+
+  """The same fingerprint in hex, which is what the console renders."""
+  certFingerprintHex: String!
   chain: [CertSummary!]!
 
   """Enclave image digests from the canonical snapshot."""

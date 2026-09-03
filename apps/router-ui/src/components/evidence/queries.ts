@@ -19,6 +19,7 @@ export const EVIDENCE_SNAPSHOT_FIELDS = graphql(`
     evidenceDigest
     evidenceDigestHex
     certFingerprint
+    certFingerprintHex
     containerImages
     measurements {
       name
@@ -29,6 +30,7 @@ export const EVIDENCE_SNAPSHOT_FIELDS = graphql(`
       issuer
       notAfter
       fingerprint
+      fingerprintHex
       isRoot
     }
     jws

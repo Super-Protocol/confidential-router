@@ -15,7 +15,8 @@ import {
 import { Loader2, RefreshCw } from 'lucide-react';
 import * as React from 'react';
 import type { EndpointEvidenceFieldsFragment, EvidenceSnapshotFieldsFragment } from '../../generated/graphql';
-import { formatQuoteAge, formatTimestamp, shortenDigest } from '../../lib/format';
+import { formatQuoteAge, formatTimestamp } from '../../lib/format';
+import { DigestValue } from './digest-value';
 import { evidencePresentation } from './evidence-state';
 import { REFRESH_EVIDENCE } from './queries';
 
@@ -185,10 +186,12 @@ function EvidenceDetails({
           </Field>
           <Field label="Retrieved">{formatTimestamp(snapshot.fetchedAt)}</Field>
           <Field label="Evidence digest">
-            <span className="inline-flex flex-wrap items-center gap-2">
-              <span title={snapshot.evidenceDigest}>{shortenDigest(snapshot.evidenceDigest, 10)}</span>
-              <CopyButton value={snapshot.evidenceDigest} label={`Copy evidence digest for ${endpoint.hostname}`} />
-            </span>
+            <DigestValue
+              hex={snapshot.evidenceDigestHex}
+              canonical={snapshot.evidenceDigest}
+              copyLabel={`Copy evidence digest for ${endpoint.hostname}`}
+              keep={10}
+            />
           </Field>
         </FieldGrid>
       </section>
@@ -221,7 +224,8 @@ function EvidenceDetails({
                   {cert.subject}
                 </p>
                 <p className="break-all font-mono text-muted-foreground text-xs">
-                  {shortenDigest(cert.fingerprint, 10)} · expires {formatTimestamp(cert.notAfter)}
+                  <DigestValue hex={cert.fingerprintHex} canonical={cert.fingerprint} keep={10} /> · expires{' '}
+                  {formatTimestamp(cert.notAfter)}
                 </p>
               </div>
             </li>
@@ -240,13 +244,12 @@ function EvidenceDetails({
         <div className="mt-4">
           <FieldGrid>
             <Field label="certFingerprint">
-              <span className="inline-flex flex-wrap items-center gap-2">
-                <span title={snapshot.certFingerprint}>{shortenDigest(snapshot.certFingerprint, 10)}</span>
-                <CopyButton
-                  value={snapshot.certFingerprint}
-                  label={`Copy TLS certificate fingerprint for ${endpoint.hostname}`}
-                />
-              </span>
+              <DigestValue
+                hex={snapshot.certFingerprintHex}
+                canonical={snapshot.certFingerprint}
+                copyLabel={`Copy TLS certificate fingerprint for ${endpoint.hostname}`}
+                keep={10}
+              />
             </Field>
           </FieldGrid>
           <p className="mt-2 text-muted-foreground text-xs">

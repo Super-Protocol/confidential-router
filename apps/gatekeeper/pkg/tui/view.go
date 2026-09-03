@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 )
 
@@ -398,16 +399,23 @@ func pinnedSuffix(s styles, r *status.Report) string {
 	return s.warn.Render("  not pinned")
 }
 
-// short abbreviates a fingerprint to something that fits a pane.
+// short renders a fingerprint the way every human-facing surface of the product
+// shows one — `sha256:<hex>` — abbreviated to fit a pane. The canonical
+// `sha256/<base64url>` form the bundle carries never reaches the dashboard.
 func short(digest string) string {
-	body := strings.TrimPrefix(digest, "sha256/")
-	if body == "" {
+	shown := attestation.FormatDigestHex(digest)
+	scheme, body := "", shown
+	if sep := strings.IndexAny(shown, ":/"); sep >= 0 {
+		scheme, body = shown[:sep+1], shown[sep+1:]
+	}
+	switch {
+	case body == "":
 		return "—"
+	case len(body) <= 20:
+		return shown
+	default:
+		return scheme + body[:10] + "…" + body[len(body)-8:]
 	}
-	if len(body) <= 20 {
-		return digest
-	}
-	return "sha256/" + body[:10] + "…" + body[len(body)-8:]
 }
 
 // truncate shortens a rendered line to a display width, counting the printable

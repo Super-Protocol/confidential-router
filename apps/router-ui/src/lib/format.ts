@@ -100,12 +100,30 @@ export function formatTimestamp(iso: string): string {
   return `${TIMESTAMP_FORMAT.format(date).replace(',', '')} UTC`;
 }
 
-/** Truncates a `sha256/<base64url>` digest for display, keeping both ends. */
+/** The scheme every digest this console shows carries. */
+const DIGEST_HEX_PREFIX = 'sha256:';
+
+/**
+ * The one spelling of a digest the whole product shows: `sha256:<hex>`.
+ *
+ * Hex is what the browser extension, the gatekeeper CLI and its dashboard all
+ * print, and what a gatekeeper config file records, so a digest copied here is
+ * a digest that can be pasted into `gatekeeper endpoint trust add` and read
+ * back off a verification report unchanged (SUP-115). The API sends both
+ * spellings of every fingerprint; the canonical `sha256/<base64url>` one is the
+ * fallback for the rare row whose hex form the server could not derive.
+ */
+export function formatDigest(hex: string, canonical: string): string {
+  return hex ? `${DIGEST_HEX_PREFIX}${hex}` : canonical;
+}
+
+/** Truncates a digest for display, keeping its scheme and both ends. */
 export function shortenDigest(digest: string, keep = 6): string {
-  const [algorithm, encoded] = digest.includes('/') ? digest.split('/', 2) : ['', digest];
+  const separator = digest.search(/[:/]/);
+  const [algorithm, encoded] =
+    separator < 0 ? ['', digest] : [digest.slice(0, separator + 1), digest.slice(separator + 1)];
   if (!encoded || encoded.length <= keep * 2 + 1) return digest;
-  const short = `${encoded.slice(0, keep)}…${encoded.slice(-keep)}`;
-  return algorithm ? `${algorithm}/${short}` : short;
+  return `${algorithm}${encoded.slice(0, keep)}…${encoded.slice(-keep)}`;
 }
 
 /**
