@@ -104,7 +104,9 @@ endpoints:
     listen: 127.0.0.1:8443
     upstream: https://llama-33-70b.tee.swarm.cloud
     trustedEvidence:
-      - sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs
+      # The form every gatekeeper command prints and writes back; the canonical
+      # `sha256/<base64url>` spelling still loads.
+      - sha256:c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6ab
     # Any `defaults` key may be repeated here for this endpoint alone.
     reattestInterval: 2m
 
@@ -139,9 +141,17 @@ built-in defaults → the file → CR_GATEKEEPER_* → command-line flags
 
 An `evidenceDigest` is the SHA-256 of the canonical deployment snapshot: the
 images, their digests and the measurements that make up one deployment. Pinning
-one says "this exact deployment, and no other". Canonical form is
-`sha256/<base64url>`; `sha256:<hex>` and bare hex are accepted on input and
-normalised on write.
+one says "this exact deployment, and no other".
+
+**One digest, two spellings.** Everything you read or type is hex —
+`sha256:<64 hex chars>`. That is what every command prints, what the dashboard
+shows, what the router console displays and copies, what the browser extension
+shows, and what `endpoint trust add` writes into this file. The canonical
+`sha256/<base64url>` form is the wire form: it is what the producer signs into
+the bundle and what a pin is compared as, and it surfaces only in the
+`*Canonical` fields of `--json`. Input is generous — `sha256:<hex>`,
+`sha256/<base64url>`, `sha256/<hex>` and bare hex all load, and an existing
+config full of canonical pins keeps working untouched.
 
 The list is plural so a **rollout can be pre-approved**: pin the new digest next
 to the old one, deploy, then unpin the old one. Nothing is refused in between.
@@ -248,16 +258,21 @@ import rego.v1
 
 # The digest we are migrating to, and the one we are migrating from. Both are
 # pinned in the config; this narrows the old one to a deadline.
-current := "sha256/kR-S9pBaadyOX2W_-0OXhernK102Y7P-N0ee_fDA9jU"
-previous := "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs"
+#
+# Compared against `evidenceDigestHex`, so the constants are the strings you
+# copied out of the console or off a `gatekeeper verify` report, minus the
+# scheme. `input.evidence.evidenceDigest` carries the canonical
+# `sha256/<base64url>` form for a policy that would rather compare that.
+current := "911f92f6905a69dc8e5f65bffb439785eae72b5d3663b3fe37479efdf0c0f635"
+previous := "c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6ab"
 previous_accepted_until := time.parse_rfc3339_ns("2026-09-15T00:00:00Z")
 
 default allow := false
 
-allow if input.evidence.evidenceDigest == current
+allow if input.evidence.evidenceDigestHex == current
 
 allow if {
-  input.evidence.evidenceDigest == previous
+  input.evidence.evidenceDigestHex == previous
   time.parse_rfc3339_ns(input.attestation.verifiedAt) < previous_accepted_until
 }
 ```

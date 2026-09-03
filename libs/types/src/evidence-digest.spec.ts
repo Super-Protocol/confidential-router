@@ -1,8 +1,10 @@
 import { loadEvidenceDigestVectors } from '@confidential-router/attestation-fixtures';
 import { describe, expect, it } from 'vitest';
 import {
+  EVIDENCE_DIGEST_HEX_PREFIX,
   EVIDENCE_DIGEST_PREFIX,
   evidenceDigestEquals,
+  formatEvidenceDigestHex,
   InvalidEvidenceDigestError,
   isEvidenceDigest,
   normalizeEvidenceDigest,
@@ -49,6 +51,22 @@ describe('evidence digest', () => {
     expect(normalizeEvidenceDigest(canonical)).toBe(canonical);
   });
 
+  it('accepts the printed sha256:<hex> form back', () => {
+    expect(normalizeEvidenceDigest(`${EVIDENCE_DIGEST_HEX_PREFIX}${HEX}`)).toBe(
+      `${EVIDENCE_DIGEST_PREFIX}${BASE64URL}`,
+    );
+  });
+
+  it('renders any spelling as the human-facing sha256:<hex> one', () => {
+    for (const input of [HEX, HEX.toUpperCase(), `${EVIDENCE_DIGEST_PREFIX}${BASE64URL}`]) {
+      expect(formatEvidenceDigestHex(input)).toBe(`${EVIDENCE_DIGEST_HEX_PREFIX}${HEX}`);
+    }
+  });
+
+  it('refuses to render something that is not a digest', () => {
+    expect(() => formatEvidenceDigestHex('not-a-digest')).toThrow(InvalidEvidenceDigestError);
+  });
+
   it('rejects anything that is not a 32-byte digest', () => {
     for (const bad of ['', 'sha256/', 'sha256/short', 'deadbeef', `${EVIDENCE_DIGEST_PREFIX}${BASE64URL}extra`]) {
       expect(() => normalizeEvidenceDigest(bad)).toThrow(InvalidEvidenceDigestError);
@@ -71,6 +89,22 @@ describe('evidence digest conformance vectors', () => {
       } else {
         expect(() => normalizeEvidenceDigest(testCase.input)).toThrow(InvalidEvidenceDigestError);
       }
+    },
+  );
+
+  /**
+   * The display half of the same contract, asserted here exactly as the Go side
+   * asserts it over these vectors (`TestConformanceDisplayFormIsTheHexSpelling`
+   * in `apps/gatekeeper/pkg/trust`): the console and the gatekeeper show one
+   * string for one deployment, and that string is itself accepted input.
+   */
+  it.each(vectors.cases.filter((c) => c.valid).map((c) => [c.note, c] as const))(
+    'renders and reads back the hex form of %s',
+    (_note, testCase) => {
+      const shown = formatEvidenceDigestHex(testCase.input);
+
+      expect(shown).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(normalizeEvidenceDigest(shown)).toBe(testCase.canonical);
     },
   );
 });

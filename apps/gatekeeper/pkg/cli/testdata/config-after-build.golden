@@ -52,7 +52,7 @@ endpoints:
     listen: 127.0.0.1:8443
     upstream: https://llama-33-70b.tee.swarm.cloud
     trustedEvidence:
-      - sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490
+      - sha256:4b04a5f2792a2ec3479fdaec5bb0df7a4f6619378378f9bc32c1cf43767ee3dd
 log:
   level: info
   format: text

@@ -208,8 +208,8 @@ func (c *Config) validateEndpoints(p *problems) {
 			// TypeScript tooling — also reads as a digest.
 			if !IsEvidenceDigest(digest) {
 				p.addf(dpath,
-					"is not an evidenceDigest (expected sha256/<43 canonical base64url chars>, "+
-						"sha256/<64 hex>, sha256:<64 hex> or bare 64 hex), got %q", digest)
+					"is not an evidenceDigest (expected sha256:<64 hex> — the form the CLI prints — "+
+						"or sha256/<43 canonical base64url chars>, sha256/<64 hex>, bare 64 hex), got %q", digest)
 				continue
 			}
 			if prev, dup := pinned[digest]; dup {

@@ -16,6 +16,7 @@
  * verified changes underneath it is the property the whole product rests on,
  * and nothing short of a live rotation demonstrates it.
  */
+import { formatEvidenceDigestHex } from '@confidential-router/types';
 import OpenAI from 'openai';
 import { VERDICT_HEADER } from './constants.js';
 import { createGatekeeper, type Gatekeeper, type RunningGatekeeper } from './gatekeeper.js';
@@ -42,7 +43,10 @@ export interface StoryOptions {
 }
 
 export interface StoryResult {
-  /** The digest pinned first, and the one the rotation produced. */
+  /**
+   * The digest pinned first, and the one the rotation produced — as they are
+   * printed everywhere, `sha256:<hex>` (SUP-115).
+   */
   firstDigest: string;
   rotatedDigest: string;
   /** The denial the rotation caused, as the client saw it. */
@@ -98,7 +102,10 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
     const pinned = await gatekeeper.mustRun('endpoint', 'trust', 'add', 'router', '--from-upstream', '--yes');
     detail(pinned.stdout.trim());
     const firstDigest = stack.evidenceHost.evidenceDigest();
-    expect(pinned.stdout.includes(firstDigest), `the pinned digest should be the published one (${firstDigest})`);
+    // The gatekeeper prints and pins the hex spelling of the digest the host
+    // published — the same string the console shows for it (SUP-115).
+    const firstShown = formatEvidenceDigestHex(firstDigest);
+    expect(pinned.stdout.includes(firstShown), `the pinned digest should be the published one (${firstShown})`);
     detail(await firstLine(gatekeeper.mustRun('config', 'validate')));
 
     step('Run the gatekeeper');
@@ -137,8 +144,8 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
     step('Redeploy the endpoint — the pinned digest is no longer what it publishes');
     const rotatedDigest = await stack.evidenceHost.rotateDeployment('sup-84-demo');
     expect(rotatedDigest !== firstDigest, 'the rotation should have produced a different digest');
-    detail(`was  ${firstDigest}`);
-    detail(`now  ${rotatedDigest}`);
+    detail(`was  ${firstShown}`);
+    detail(`now  ${formatEvidenceDigestHex(rotatedDigest)}`);
 
     step('The next call is refused — fail-closed, with the stage that refused it');
     const denial = await waitForDenial(baseURL, stack.credential.secret, VERDICT_FLIP_TIMEOUT_MS);
@@ -161,8 +168,8 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
     const after = await waitForMetering(stack, metered.count + 1);
 
     return {
-      firstDigest,
-      rotatedDigest,
+      firstDigest: firstShown,
+      rotatedDigest: formatEvidenceDigestHex(rotatedDigest),
       denial,
       metered: after,
       durationMs: Date.now() - startedAt,

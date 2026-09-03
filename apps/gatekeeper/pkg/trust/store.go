@@ -271,9 +271,10 @@ func (s *Store) RemoveRoot(name string) (bool, error) {
 	return true, nil
 }
 
-// AddPin pins another evidenceDigest on an endpoint, writing the canonical
-// form. It reports false when the digest is already pinned, whatever spelling
-// the file uses for it.
+// AddPin pins another evidenceDigest on an endpoint, writing the `sha256:<hex>`
+// form the CLI prints and the console copies, so a pin in the file can be read
+// against a report without a second translation. It reports false when the
+// digest is already pinned, whatever spelling the file uses for it.
 func (s *Store) AddPin(endpoint string, d Digest) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -290,7 +291,7 @@ func (s *Store) AddPin(endpoint string, d Digest) (bool, error) {
 	if ep.IsPinned(d) {
 		return false, nil
 	}
-	if _, err := s.doc.AddTrustedEvidence(endpoint, d.String()); err != nil {
+	if _, err := s.doc.AddTrustedEvidence(endpoint, d.Display()); err != nil {
 		return false, err
 	}
 	if err := s.persist(); err != nil {

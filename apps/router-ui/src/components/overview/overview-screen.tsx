@@ -1,7 +1,6 @@
 'use client';
 
 import { useQuery } from '@apollo/client/react';
-import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import { EmptyState } from '@confidential-router/ui/components/empty-state';
 import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
@@ -18,7 +17,8 @@ import Link from 'next/link';
 import * as React from 'react';
 import { graphql } from '../../generated';
 import { formatBucketLabel, lastUtcDays } from '../../lib/date-range';
-import { formatCompact, formatPercent, formatUsd, microsToUsd, shortenDigest } from '../../lib/format';
+import { formatCompact, formatPercent, formatUsd, microsToUsd } from '../../lib/format';
+import { DigestValue } from '../evidence/digest-value';
 import { EvidenceBadge } from '../evidence/evidence-badge';
 import { useSession } from '../session/session-provider';
 import { StatTile } from '../stat-tile';
@@ -195,18 +195,14 @@ export function OverviewScreen() {
                     <TableCell className="text-muted-foreground text-xs">{endpoint.tee}</TableCell>
                     <TableCell>
                       {endpoint.latestEvidence ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="font-mono text-xs" title={endpoint.latestEvidence.evidenceDigest}>
-                            {shortenDigest(endpoint.latestEvidence.evidenceDigest)}
-                          </span>
-                          {/*
-                            The digest is the value a user pins in their
-                            gatekeeper (`endpoint trust add`), so it is shown
-                            truncated and copied in full.
-                          */}
-                          <CopyButton
-                            value={endpoint.latestEvidence.evidenceDigest}
-                            label={`Copy evidence digest for ${endpoint.hostname}`}
+                        // The digest is the value a user pins in their
+                        // gatekeeper (`endpoint trust add`), so it is shown
+                        // truncated and copied in full.
+                        <span className="font-mono text-xs">
+                          <DigestValue
+                            hex={endpoint.latestEvidence.evidenceDigestHex}
+                            canonical={endpoint.latestEvidence.evidenceDigest}
+                            copyLabel={`Copy evidence digest for ${endpoint.hostname}`}
                           />
                         </span>
                       ) : (

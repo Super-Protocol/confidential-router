@@ -38,7 +38,7 @@ func newVerifyCommand(g *globals) *cobra.Command {
 		}
 
 		p := g.printer(cmd, *asJSON)
-		if err := p.emit(report, func(w io.Writer) {
+		if err := p.emit(documentOf(report), func(w io.Writer) {
 			printReport(w, report, g.env.now())
 		}); err != nil {
 			return err
@@ -117,15 +117,15 @@ func printReport(w io.Writer, r *status.Report, now time.Time) {
 	pairs = append(pairs,
 		[2]string{"", ""},
 		[2]string{"Trusted root", rootLine(r)},
-		[2]string{"Observed TLS leaf", orDash(r.ObservedTLSFingerprint)},
-		[2]string{"Signed certFingerprint", orDash(r.CertFingerprint)},
+		[2]string{"Observed TLS leaf", orDash(hexDigest(r.ObservedTLSFingerprint))},
+		[2]string{"Signed certFingerprint", orDash(hexDigest(r.CertFingerprint))},
 	)
 	if r.QuoteFormat != "" {
 		pairs = append(pairs, [2]string{"Root CA TEE quote", r.QuoteFormat + " (displayed, not validated)"})
 	}
 	pairs = append(pairs,
 		[2]string{"", ""},
-		[2]string{"evidenceDigest", orDash(r.EvidenceDigest)},
+		[2]string{"evidenceDigest", orDash(hexDigest(r.EvidenceDigest))},
 		[2]string{"Pinned for this endpoint", yesNo(r.Pinned)},
 	)
 	fields(w, pairs)
@@ -142,7 +142,7 @@ func printReport(w io.Writer, r *status.Report, now time.Time) {
 				role = "leaf"
 			}
 			rows = append(rows, []string{
-				role, cert.Subject, shortDigest(cert.Fingerprint), cert.NotAfter.Format(time.DateOnly),
+				role, cert.Subject, shortHexDigest(cert.Fingerprint), cert.NotAfter.Format(time.DateOnly),
 			})
 		}
 		table(w, []string{"  ROLE", "SUBJECT", "FINGERPRINT", "EXPIRES"}, indent(rows))
@@ -195,9 +195,9 @@ func verdictLine(r *status.Report) string {
 func rootLine(r *status.Report) string {
 	switch {
 	case r.Root != "":
-		return fmt.Sprintf("%s (%s)", r.Root, r.RootFingerprint)
+		return fmt.Sprintf("%s (%s)", r.Root, hexDigest(r.RootFingerprint))
 	case r.RootFingerprint != "":
-		return r.RootFingerprint + " — NOT a trusted root"
+		return hexDigest(r.RootFingerprint) + " — NOT a trusted root"
 	default:
 		return "—"
 	}

@@ -127,7 +127,9 @@ This runs the whole pipeline once — fetch the bundle, validate the chain, matc
 a trusted root, verify the JWS and its freshness, bind the verdict to the TLS
 certificate it saw itself — and prints what it found: the chain, the TEE quote
 format, the container images in the deployment snapshot, and the
-`evidenceDigest`. Read it. That digest is the thing you are about to trust.
+`evidenceDigest`. Read it. That digest is the thing you are about to trust — it
+is printed as `sha256:<hex>`, the same string the router console shows and
+copies for the same deployment.
 
 ```bash
 gatekeeper endpoint trust add router --from-upstream
@@ -204,7 +206,7 @@ does not have to guess whether this is a rotation, an expiry or an attack.
 Accept the new deployment, and traffic resumes:
 
 ```bash
-gatekeeper endpoint trust add router sha256/<the new digest>
+gatekeeper endpoint trust add router sha256:<the new digest>
 kill -HUP $(pgrep -f 'gatekeeper.*run')     # or restart it
 ```
 

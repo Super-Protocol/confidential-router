@@ -8,10 +8,15 @@ import (
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 )
 
-// pinA and pinB are stable evidenceDigest values.
+// pinA and pinB are stable evidenceDigest values in the canonical wire form;
+// pinAShown and pinBShown are the same digests as the CLI prints them and as
+// the config file records them (SUP-115).
 var (
-	pinA = trust.Sum([]byte("deployment A")).String()
-	pinB = trust.Sum([]byte("deployment B")).String()
+	digestA   = trust.Sum([]byte("deployment A"))
+	digestB   = trust.Sum([]byte("deployment B"))
+	pinA      = digestA.String()
+	pinB      = digestB.String()
+	pinBShown = digestB.Display()
 )
 
 // configured builds a harness whose config is complete: one root, one pinned
@@ -95,10 +100,14 @@ func TestPinsAreNormalisedAndMatchedAcrossSpellings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Pinned as hex; the file records the canonical form.
+	// Pinned as bare hex; the file records the `sha256:<hex>` form the CLI
+	// prints, never the canonical one.
 	h.mustRun("endpoint", "trust", "add", "llama-33-70b", digest.Hex())
-	if !strings.Contains(h.config(), pinB) {
+	if !strings.Contains(h.config(), digest.Display()) {
 		t.Error("the hex pin was not normalised on the way into the file")
+	}
+	if strings.Contains(h.config(), pinB) {
+		t.Error("the pin was written in the canonical form rather than the printed one")
 	}
 
 	// Adding the same digest again, spelled differently, changes nothing.
@@ -110,7 +119,7 @@ func TestPinsAreNormalisedAndMatchedAcrossSpellings(t *testing.T) {
 
 	// And it can be removed by any spelling too.
 	h.mustRun("endpoint", "trust", "rm", "llama-33-70b", digest.Hex())
-	if strings.Contains(h.config(), pinB) {
+	if strings.Contains(h.config(), digest.Display()) {
 		t.Error("the pin survived its removal")
 	}
 }

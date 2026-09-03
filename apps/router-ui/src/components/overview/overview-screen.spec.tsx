@@ -79,11 +79,12 @@ describe('OverviewScreen', () => {
       name: /llama-33-70b\.tee\.swarm\.cloud/,
     });
     expect(within(row).getByText('Intel TDX + H100 CC')).toBeInTheDocument();
-    expect(within(row).getByText('sha256/9Xk2fT…HgJoAs')).toBeInTheDocument();
+    // Hex, the spelling every Super Protocol surface shows (SUP-115).
+    expect(within(row).getByText('sha256:f57936…09a00b')).toBeInTheDocument();
     expect(within(row).getByText('598M')).toBeInTheDocument();
   });
 
-  it('copies the full digest, not the truncated one on screen', async () => {
+  it('copies the full hex digest, not the truncated one on screen', async () => {
     const user = userEvent.setup();
     renderOverview([overviewMock(overviewData())]);
 
@@ -91,7 +92,10 @@ describe('OverviewScreen', () => {
       await screen.findByRole('button', { name: 'Copy evidence digest for llama-33-70b.tee.swarm.cloud' }),
     );
 
-    await expect(navigator.clipboard.readText()).resolves.toBe(publishedEndpoint().latestEvidence?.evidenceDigest);
+    // What lands on the clipboard is what `gatekeeper endpoint trust add` takes.
+    await expect(navigator.clipboard.readText()).resolves.toBe(
+      `sha256:${publishedEndpoint().latestEvidence?.evidenceDigestHex}`,
+    );
   });
 
   it('opens the evidence modal from a row', async () => {
