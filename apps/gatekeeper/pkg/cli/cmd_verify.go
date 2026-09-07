@@ -283,7 +283,7 @@ func verdictLine(r *status.Report) string {
 func rootLine(r *status.Report) string {
 	switch {
 	case r.Root != "" && r.RootAttested:
-		return fmt.Sprintf("%s (%s) — attested, not from trustedRoots", r.Root, r.RootFingerprint)
+		return fmt.Sprintf("%s (%s) — attested, not from trustedRoots", r.Root, hexDigest(r.RootFingerprint))
 	case r.Root != "":
 		return fmt.Sprintf("%s (%s)", r.Root, hexDigest(r.RootFingerprint))
 	case r.RootFingerprint != "":
