@@ -10,7 +10,7 @@
     "@apollo/client": "^4.2.12",
     "@confidential-router/ui": "workspace:*",
     "@graphql-typed-document-node/core": "^3.2.0",
-    "graphql": "^16.13.1",
+    "graphql": "^17.0.2",
     "lucide-react": "^1.37.0",
     "next": "^16.3.3",
     "react": "^19.2.0",
