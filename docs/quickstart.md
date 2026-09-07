@@ -97,12 +97,14 @@ export CR_GATEKEEPER_CONFIG=$PWD/.tmp/gatekeeper.yaml
 gatekeeper init
 ```
 
-The file it writes is deliberately not runnable: no trusted roots, no endpoints.
-There is no trust-on-first-use anywhere in this product.
+The file it writes is deliberately not runnable: no endpoints. There is no
+trust-on-first-use anywhere in this product.
 
-Add the root the demo stack's evidence chain terminates at. In production this
-is your cloud's published root, obtained out of band; here the stack wrote it to
-a file for you:
+The demo stack's root is a throwaway CA on your own machine, not a TEE-attested
+Swarm root, so it has to be trusted by hand — which is also how you would pin a
+single cloud in production. Against a real Swarm cloud this step is not needed:
+the gatekeeper checks the root's own hardware evidence instead
+(`docs/gatekeeper.md`, "Roots that prove what they are").
 
 ```bash
 gatekeeper trust roots add swarm-cloud-demo --pem-file "$ROOT_PEM"
@@ -223,7 +225,8 @@ pnpm stack:up          # docker compose --profile demo up -d --build --wait
 - sign in with a magic link: submit an address, then read the URL out of
   `docker compose -f docker/docker-compose.yml logs api`
 - the demo root CA is at `http://localhost:8081/roots/demo-root.pem` — that is
-  what you would `gatekeeper trust roots add`
+  what you `gatekeeper trust roots add`, because a local throwaway CA has no
+  hardware evidence for the gatekeeper to check
 
 `pnpm stack:down` when you are done. Read `docker/README.md` before borrowing
 any of it: the credentials are committed and the API runs outside production

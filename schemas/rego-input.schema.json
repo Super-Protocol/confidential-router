@@ -43,7 +43,7 @@
         },
         "root": {
           "type": "string",
-          "description": "trustedRoots[].name that the chain terminated in."
+          "description": "Name of the root the chain terminated in: a trustedRoots[].name, or `attested:<mrEnclave>` for a root accepted on its own TEE evidence (see rootAttestation)."
         },
         "rootFingerprint": { "$ref": "#/$defs/fingerprint" },
         "observedTlsFingerprint": { "$ref": "#/$defs/fingerprint" },
@@ -52,6 +52,75 @@
           "type": "string",
           "enum": ["intel-tdx-quote-v5", "amd-sev-snp-report"],
           "description": "bundle.rootCaTeeQuote.format when present (displayed, not validated)."
+        },
+        "rootAttestation": {
+          "description": "Present only when the chain's terminal root was checked against its own TEE evidence, which happens when the manual trustedRoots list did not match it. Absent for a root the user pinned, so a policy can require one or the other.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attested",
+            "inRegistry",
+            "reportIntegrity",
+            "keyBinding",
+            "teeFlags"
+          ],
+          "properties": {
+            "attested": {
+              "type": "boolean",
+              "description": "Whether the root was accepted on its evidence. False here means the verdict came from somewhere else, or was a denial."
+            },
+            "evidenceType": {
+              "type": "string",
+              "description": "Hardware the certificate authority enrolled from, e.g. \"AMD SEV-SNP (QEMU)\"."
+            },
+            "networkType": {
+              "type": "string",
+              "enum": ["trusted", "untrusted"],
+              "description": "The network the root certificate declares. Reported, not enforced, unless attestedRoots.requireNetworkType says otherwise."
+            },
+            "measurement": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "Normalised mrEnclave of the certificate authority's VM, in hex."
+            },
+            "inRegistry": {
+              "type": "boolean",
+              "description": "Whether Super Protocol has signed that measurement."
+            },
+            "reportIntegrity": {
+              "type": "boolean",
+              "description": "Whether the hardware report's signature and its chain to the CPU vendor's root verified."
+            },
+            "revocationChecked": {
+              "type": "boolean",
+              "description": "Whether the vendor CRLs were consulted. False means they were not, never that the chain is clean."
+            },
+            "notRevoked": {
+              "type": "boolean",
+              "description": "Result of that check, meaningful only when revocationChecked is true."
+            },
+            "keyBinding": {
+              "type": "boolean",
+              "description": "Whether the report's reportData commits to this certificate's public key."
+            },
+            "cpuGeneration": {
+              "type": "string",
+              "description": "CPU line the verified vendor chain belongs to, e.g. \"Genoa\"."
+            },
+            "teeFlags": {
+              "description": "Report fields describing how the VM was allowed to run. Reported as read: which combination is acceptable is what this policy is for.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "vmpl": { "type": "number" },
+                "debugAllowed": { "type": "boolean" },
+                "ciphertextHiding": { "type": "boolean" },
+                "pageSwapDisabled": { "type": "boolean" },
+                "snpFirmwareTcb": { "type": "number" },
+                "reportVersion": { "type": "number" }
+              }
+            }
+          }
         }
       }
     },

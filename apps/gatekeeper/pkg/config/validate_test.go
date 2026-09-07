@@ -30,9 +30,21 @@ func TestValidateReportsEveryProblemWithItsPath(t *testing.T) {
 			want: []string{"version: must be 1, got 2"},
 		},
 		{
-			name: "no trusted roots",
-			yaml: "version: 1\ntrustedRoots: []\n" + oneEndpoint,
+			// An empty manual list is only a gap once the attested-root anchor
+			// is off; with it on, a Swarm cloud needs no manually pinned root.
+			name: "no trusted roots and no attested ones",
+			yaml: "version: 1\ntrustedRoots: []\nattestedRoots:\n  enabled: false\n" + oneEndpoint,
 			want: []string{"trustedRoots: at least one trusted root is required"},
+		},
+		{
+			name: "an unknown attested-root network policy",
+			yaml: "version: 1\n" + roots + "attestedRoots:\n  requireNetworkType: sometimes\n" + oneEndpoint,
+			want: []string{`attestedRoots.requireNetworkType: must be "any" or "trusted"`},
+		},
+		{
+			name: "a registry mirror that is not a URL",
+			yaml: "version: 1\n" + roots + "attestedRoots:\n  registryBaseUrl: \"mirror.local/signatures\"\n" + oneEndpoint,
+			want: []string{"attestedRoots.registryBaseUrl: must be an http:// or https:// base URL"},
 		},
 		{
 			name: "no endpoints",
@@ -260,8 +272,10 @@ endpoints: []
 	if !errors.As(err, &invalid) {
 		t.Fatalf("Validate returned %T, want *config.ValidationError", err)
 	}
-	if len(invalid.Errors) != 2 {
-		t.Fatalf("problems = %v, want two", invalid.Errors)
+	// Only the endpoint list is missing: the attested-root anchor is on by
+	// default, so an empty `trustedRoots` is a finished configuration.
+	if len(invalid.Errors) != 1 {
+		t.Fatalf("problems = %v, want one", invalid.Errors)
 	}
 	for _, fe := range invalid.Errors {
 		if !fe.Incomplete {

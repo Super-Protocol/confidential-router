@@ -160,11 +160,22 @@ func newTrustRootsRemoveCommand(g *globals) *cobra.Command {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Removed trusted root %q from %s\n", name, store.Path())
 		// Removing the last root is allowed — resetting the trust store is a
-		// real operation — but it leaves a gatekeeper that denies everything,
-		// which is worth saying out loud rather than discovering at runtime.
+		// real operation — but what is left behind differs enough to be worth
+		// saying out loud rather than discovering at runtime.
 		if len(store.Roots()) == 0 {
-			fmt.Fprintln(cmd.ErrOrStderr(),
-				"warning: no trusted roots remain; every endpoint will be denied at the untrusted-root stage")
+			// A config that no longer parses cannot be reported on, and the
+			// removal itself already succeeded; assume the default (on), which
+			// is what an unreadable config would run with anyway.
+			cfg, cfgErr := g.loadEditable()
+			if cfgErr != nil || cfg.AttestedRootsEnabled() {
+				fmt.Fprintln(cmd.ErrOrStderr(),
+					"warning: no trusted roots remain; only roots that prove they are Super Swarm roots "+
+						"will be accepted (attestedRoots)")
+			} else {
+				fmt.Fprintln(cmd.ErrOrStderr(),
+					"warning: no trusted roots remain and attestedRoots is off; "+
+						"every endpoint will be denied at the untrusted-root stage")
+			}
 		}
 		return nil
 	}

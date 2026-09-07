@@ -118,13 +118,33 @@ describe('gatekeeper-config rules', () => {
     expect(validate(cfg)).toBe(false);
   });
 
-  it('requires at least one trusted root and exactly one of pem|pemFile', () => {
+  it('allows an empty trusted-root list, because attestedRoots is the other anchor', () => {
     const cfg = base();
     cfg.trustedRoots = [];
+    expect(validate(cfg), errorsOf(validate)).toBe(true);
+  });
+
+  it('requires exactly one of pem|pemFile on a trusted root', () => {
+    const cfg = base();
+    cfg.trustedRoots = [{ name: 'both', pem: base().trustedRoots[0].pem, pemFile: './x.pem' }];
     expect(validate(cfg)).toBe(false);
-    const cfg2 = base();
-    cfg2.trustedRoots = [{ name: 'both', pem: cfg2.trustedRoots[0].pem, pemFile: './x.pem' }];
-    expect(validate(cfg2)).toBe(false);
+  });
+
+  it('constrains attestedRoots to the knobs it defines', () => {
+    const cfg = base();
+    cfg.attestedRoots = { enabled: true, requireNetworkType: 'trusted', cacheTtl: '10m', checkRevocations: true };
+    expect(validate(cfg), errorsOf(validate)).toBe(true);
+
+    for (const bad of [
+      { requireNetworkType: 'sometimes' },
+      { registryBaseUrl: 'mirror.local/signatures' },
+      { cacheTtl: '10 minutes' },
+      { unknownKnob: true },
+    ]) {
+      const broken = base();
+      broken.attestedRoots = bad;
+      expect(validate(broken), JSON.stringify(bad)).toBe(false);
+    }
   });
 
   it('keeps the admin API local: unix sockets and loopback only', () => {
@@ -175,6 +195,44 @@ describe('rego-input rules', () => {
     const doc2 = base();
     doc2.evidence.evidenceDigest = 'a'.repeat(64); // hex must be normalised before evaluation
     expect(validate(doc2)).toBe(false);
+  });
+
+  it('accepts an attested root, and rejects a malformed one', () => {
+    const doc = base();
+    doc.attestation.rootAttestation = {
+      attested: true,
+      evidenceType: 'AMD SEV-SNP (QEMU)',
+      networkType: 'untrusted',
+      measurement: 'a'.repeat(64),
+      inRegistry: true,
+      reportIntegrity: true,
+      revocationChecked: false,
+      keyBinding: true,
+      cpuGeneration: 'Genoa',
+      teeFlags: {
+        vmpl: 0,
+        debugAllowed: false,
+        ciphertextHiding: false,
+        pageSwapDisabled: false,
+        snpFirmwareTcb: 27,
+        reportVersion: 5,
+      },
+    };
+    expect(validate(doc), errorsOf(validate)).toBe(true);
+
+    // The measurement is what a policy compares against a reference value, so a
+    // non-hex spelling of it has to be a schema error rather than a rule that
+    // silently never matches.
+    const bad = base();
+    bad.attestation.rootAttestation = {
+      attested: true,
+      inRegistry: true,
+      reportIntegrity: true,
+      keyBinding: true,
+      teeFlags: {},
+      measurement: 'not-hex',
+    };
+    expect(validate(bad)).toBe(false);
   });
 
   it('passes unknown payload fields through', () => {

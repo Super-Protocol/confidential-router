@@ -32,6 +32,9 @@ type Verifier struct {
 	cfg    *config.Config
 	store  *trust.Store
 	engine *policy.Engine
+	// attested is the second trust anchor (ADR-003 §2a), nil when the config
+	// turns it off.
+	attested AttestedRootVerifier
 
 	// now overrides the clock, fetch the whole retrieval step, and dial the
 	// connection the real retrieval runs over. All three exist for tests and
@@ -55,7 +58,15 @@ func New(ctx context.Context, cfg *config.Config) (*Verifier, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Verifier{cfg: cfg, store: store, engine: engine}, nil
+	return &Verifier{cfg: cfg, store: store, engine: engine, attested: newAttestedRootVerifier(cfg)}, nil
+}
+
+// WithAttestedRoots replaces the attested-root anchor; nil turns it off. It is
+// how a test — and the offline demo — supplies a verdict without a firmware
+// download and a registry round trip.
+func (v *Verifier) WithAttestedRoots(attested AttestedRootVerifier) *Verifier {
+	v.attested = attested
+	return v
 }
 
 // WithClock replaces the clock used for freshness and for the report's
@@ -155,11 +166,39 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	// The chain's terminus may be offered as a trust anchor only when the chain
 	// passed validation and the untrusted-root stage was the one that rejected
 	// it. Every other failure leaves `certChain` unvalidated.
-	v.describeBundle(report, fetched, result.Stage == attestation.StageUntrustedRoot)
+	untrustedRoot := !result.OK && result.Stage == attestation.StageUntrustedRoot
+	v.describeBundle(report, fetched, untrustedRoot)
+
+	// Second anchor: a root the user never listed is still trusted when its own
+	// TEE evidence proves it is a Super Swarm root. The manual store keeps
+	// precedence — this only runs once matching it has already failed — and the
+	// bundle is re-judged from the bytes already fetched, so the endpoint is not
+	// contacted twice and the verdict stays bound to the same handshake.
+	if untrustedRoot {
+		if attestedRoot := v.attestRoot(ctx, report); attestedRoot != nil {
+			result = attestation.VerifyBundle(fetched.Body, attestation.Params{
+				Hostname:               hostname,
+				TrustedRoots:           []attestation.TrustedRoot{*attestedRoot},
+				ObservedTLSFingerprint: result.ObservedTLSFingerprint,
+				MaxBundleAge:           tuning.MaxBundleAge,
+				Now:                    report.CheckedAt,
+			})
+			if result.OK {
+				report.RootAttested = true
+			}
+		}
+	}
 
 	if !result.OK {
 		report.Stage = string(result.Stage)
 		report.Reason = result.Reason
+		if report.AttestedRoot != nil && report.AttestedRoot.Reason != "" &&
+			result.Stage == attestation.StageUntrustedRoot {
+			// The manual store said "not listed"; say why the other anchor did
+			// not save it either, or the denial reads as though the attested
+			// path never ran.
+			report.Reason += " (attested-root check: " + report.AttestedRoot.Reason + ")"
+		}
 		return report, nil
 	}
 
@@ -208,6 +247,8 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 		ObservedTLSFingerprint: trust.Digest(result.ObservedTLSFingerprint),
 		VerifiedAt:             report.CheckedAt,
 		QuoteFormat:            report.QuoteFormat,
+		AttestedRoot:           report.AttestedRoot,
+		RootAttested:           report.RootAttested,
 		Payload:                payload,
 	})
 	if err != nil {

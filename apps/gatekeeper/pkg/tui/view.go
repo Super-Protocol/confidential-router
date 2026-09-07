@@ -280,6 +280,7 @@ func (m Model) detailView(height int) string {
 	if report.QuoteFormat != "" {
 		lines = append(lines, m.field("root CA TEE quote", report.QuoteFormat+" (not validated)"))
 	}
+	lines = append(lines, m.attestedRootLines(report.AttestedRoot)...)
 
 	if len(report.Chain) > 0 {
 		lines = append(lines, "", m.styles.label.Render("chain (leaf → root)"))
@@ -377,8 +378,70 @@ func (m Model) clip(lines []string, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+// attestedRootLines shows what the root's own TEE evidence proved, when the
+// second anchor was consulted. It is shown for a rejected root too: "the
+// measurement is not one Super Protocol signed" is the line that tells an
+// operator to look at the cloud's build rather than at their own config.
+func (m Model) attestedRootLines(a *status.AttestedRoot) []string {
+	if a == nil {
+		return nil
+	}
+	verdict := m.styles.good.Render("attested")
+	if !a.Attested {
+		verdict = m.styles.warn.Render("not attested")
+	}
+	lines := []string{
+		"",
+		m.styles.label.Render("root TEE evidence") + "  " + verdict,
+		m.field("  evidence", a.EvidenceType),
+		m.field("  report integrity", okLabel(m.styles, a.ReportIntegrity)),
+		m.field("  measurement", measurementLabel(m.styles, a)),
+		m.field("  flags", teeFlagsLabel(a)),
+	}
+	if !a.Attested && a.Reason != "" {
+		lines = append(lines, m.styles.muted.Render("  "+a.Reason))
+	}
+	return lines
+}
+
+func okLabel(s styles, ok bool) string {
+	if ok {
+		return s.good.Render("ok")
+	}
+	return s.warn.Render("failed")
+}
+
+func measurementLabel(s styles, a *status.AttestedRoot) string {
+	if a.Measurement == "" {
+		return "—"
+	}
+	if a.InRegistry {
+		return shortHex(a.Measurement) + s.good.Render("  in trusted registry")
+	}
+	return shortHex(a.Measurement) + s.warn.Render("  not in trusted registry")
+}
+
+// teeFlagsLabel names the flags the hardware reports, without judging them:
+// which combination an operator requires is a Rego question.
+func teeFlagsLabel(a *status.AttestedRoot) string {
+	flags := []string{"debug " + onOff(a.DebugAllowed)}
+	flags = append(flags,
+		"ciphertext hiding "+onOff(a.CiphertextHiding),
+		"page swap disabled "+onOff(a.PageSwapDisabled))
+	return strings.Join(flags, " · ")
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
+}
+
 func rootLabel(r *status.Report) string {
 	switch {
+	case r.Root != "" && r.RootAttested:
+		return r.Root + "  " + short(r.RootFingerprint) + "  (attested)"
 	case r.Root != "":
 		return r.Root + "  " + short(r.RootFingerprint)
 	case r.RootFingerprint != "":
@@ -399,6 +462,15 @@ func pinnedSuffix(s styles, r *status.Report) string {
 }
 
 // short abbreviates a fingerprint to something that fits a pane.
+// shortHex abbreviates a bare hex value — an mrEnclave, a key digest — which
+// carries no `sha256/` prefix and must not be given one.
+func shortHex(value string) string {
+	if len(value) <= 20 {
+		return value
+	}
+	return value[:10] + "…" + value[len(value)-8:]
+}
+
 func short(digest string) string {
 	body := strings.TrimPrefix(digest, "sha256/")
 	if body == "" {
