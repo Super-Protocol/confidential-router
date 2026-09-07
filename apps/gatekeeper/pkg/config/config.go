@@ -52,15 +52,19 @@ const (
 
 // Config is the whole configuration file.
 type Config struct {
-	Version      int            `yaml:"version"`
-	TrustedRoots []TrustedRoot  `yaml:"trustedRoots"`
-	Policies     []Policy       `yaml:"policies,omitempty"`
-	Defaults     EndpointTuning `yaml:"defaults,omitempty"`
-	Endpoints    []Endpoint     `yaml:"endpoints"`
-	Log          Log            `yaml:"log,omitempty"`
-	Metrics      *Metrics       `yaml:"metrics,omitempty"`
-	Admin        *Admin         `yaml:"admin,omitempty"`
-	Audit        *Audit         `yaml:"audit,omitempty"`
+	Version      int           `yaml:"version"`
+	TrustedRoots []TrustedRoot `yaml:"trustedRoots"`
+	// AttestedRoots configures the second trust anchor: roots the gatekeeper
+	// accepts on their own TEE evidence. Nil means the built-in defaults, which
+	// have it on.
+	AttestedRoots *AttestedRoots `yaml:"attestedRoots,omitempty"`
+	Policies      []Policy       `yaml:"policies,omitempty"`
+	Defaults      EndpointTuning `yaml:"defaults,omitempty"`
+	Endpoints     []Endpoint     `yaml:"endpoints"`
+	Log           Log            `yaml:"log,omitempty"`
+	Metrics       *Metrics       `yaml:"metrics,omitempty"`
+	Admin         *Admin         `yaml:"admin,omitempty"`
+	Audit         *Audit         `yaml:"audit,omitempty"`
 
 	// Path is the file this config was read from, empty when it was built in
 	// memory. Relative `pemFile` and policy `file` paths resolve against its

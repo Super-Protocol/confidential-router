@@ -28,7 +28,7 @@ fixtures.
 | ----------------- | ---------------------------------------------------------------------------------------------------- |
 | `fetch`           | The endpoint served a bundle of the documented shape, naming the host it was fetched from.             |
 | `cert-chain`      | Every certificate is inside its validity window; every issuer asserts `cA` (and `keyCertSign`, when it carries a KeyUsage) and respects its `pathLenConstraint`; each link's issuer name and signature check out; the chain terminates at a valid self-signed certificate. |
-| `untrusted-root`  | That terminal certificate's SHA-256 matches a root the caller configured.                              |
+| `untrusted-root`  | That terminal certificate's SHA-256 matches a root the caller configured — or `attestedroot` proves it is a Super Swarm root (ADR-003 §2a). |
 | `jws`             | The compact JWS verifies under the chain's **leaf** key — RS256 with a modulus of at least 2048 bits, or ES256K — and its payload agrees with the bundle on kind and hostname. |
 | `jws` (freshness) | `payload.issuedAt` is within `MaxBundleAge`, and no further into the future than `AllowedClockSkew` (60s). |
 | `tls-fingerprint` | `payload.certFingerprint` is the certificate the verifier actually saw on the wire.                    |
@@ -36,6 +36,22 @@ fixtures.
 Failure at any stage is a denial naming that stage. There is no partial success:
 callers — in particular the Rego layer — never see evidence that did not clear
 every gate.
+
+## `attestedroot`, the second anchor
+
+`attestation/attestedroot` answers the question the trust store cannot: is this
+certificate authority a Super Swarm one at all? It reads the TEE evidence the
+root's own X.509 carries, verifies the hardware report against the CPU vendor's
+built-in root, requires the report to commit to that certificate's public key,
+rebuilds the VM's launch measurement from the published build artefacts, and
+requires Super Protocol to have signed the normalised result — against a key
+pinned in the binary. See that package's doc comment and ADR-003 §2a.
+
+It is deliberately *not* wired into this package's pipeline: `pkg/verifier`
+calls it only after `VerifyHostname` has returned `untrusted-root`, which is the
+one state in which the chain has validated and the sole thing missing is
+membership of the trust store. Before that point `certChain` is an
+attacker-controlled array whose last element is a root in name only.
 
 ## Two decisions worth knowing about
 

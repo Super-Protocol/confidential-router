@@ -117,8 +117,10 @@ func TestConfigValidateJSONSeparatesInvalidFromIncomplete(t *testing.T) {
 	if !result.Valid || result.Ready {
 		t.Errorf("valid=%v ready=%v, want a valid but unfinished config", result.Valid, result.Ready)
 	}
-	if len(result.Problems) != 2 {
-		t.Fatalf("problems = %+v, want two", result.Problems)
+	// Only the endpoint list: with the attested-root anchor on by default, a
+	// config with no manually pinned roots is finished.
+	if len(result.Problems) != 1 {
+		t.Fatalf("problems = %+v, want one", result.Problems)
 	}
 	for _, problem := range result.Problems {
 		if !problem.Incomplete {

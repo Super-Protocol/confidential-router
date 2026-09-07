@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 )
 
@@ -13,9 +14,12 @@ import (
 const ChannelBindingObserved = "observed"
 
 // InputSource is everything the verifier learned, in the shape [BuildInput]
-// needs. It deliberately does not import the verifier's result type: the
-// policy layer only ever sees a payload that already passed stages 1–6, and
-// keeping the two packages independent means either can be tested alone.
+// needs. It deliberately does not import the verifier's result type: the policy
+// layer only ever sees a payload that already passed stages 1–6, and keeping the
+// two packages independent means either can be tested alone. [status] is the
+// exception, and only for its plain description of the attested-root check —
+// that package is the shared vocabulary of a verification, and restating a
+// dozen fields a third time would be worse than the dependency.
 type InputSource struct {
 	// Endpoint is endpoints[].name — the key policies look trust up under.
 	Endpoint string
@@ -32,6 +36,13 @@ type InputSource struct {
 	// QuoteFormat mirrors bundle.rootCaTeeQuote.format when present. The quote
 	// is displayed, never validated.
 	QuoteFormat string
+	// RootAttested marks a root accepted on its own TEE evidence rather than
+	// from the user's list, and AttestedRoot is what that check found. Both are
+	// nil/false for a root the user pinned, which is what lets a policy say
+	// "only manually pinned clouds" — or, the other way round, police the TEE
+	// flags of an attested one.
+	RootAttested bool
+	AttestedRoot *status.AttestedRoot
 	// Payload is the verified JWS payload, passed through unchanged apart from
 	// the normalisation and convenience fields documented on BuildInput.
 	Payload map[string]any
@@ -92,6 +103,9 @@ func BuildInput(src InputSource) (map[string]any, error) {
 	if src.QuoteFormat != "" {
 		attestation["quoteFormat"] = src.QuoteFormat
 	}
+	if root := attestedRootInput(src); root != nil {
+		attestation["rootAttestation"] = root
+	}
 
 	port := src.UpstreamPort
 	if port == 0 {
@@ -104,6 +118,41 @@ func BuildInput(src InputSource) (map[string]any, error) {
 		"attestation": attestation,
 		"evidence":    evidence,
 	}, nil
+}
+
+// attestedRootInput renders the attested-root check for Rego, or nil when the
+// root came from the user's list.
+//
+// The TEE flags are exposed as they were read, not as a verdict: an operator
+// who wants "Ciphertext Hiding must be on" writes that rule themselves, and one
+// who does not must not have it imposed. `attested` is separate from
+// `inRegistry` so a policy can distinguish "not one of Super Protocol's images"
+// from "the report itself did not hold up".
+func attestedRootInput(src InputSource) map[string]any {
+	if src.AttestedRoot == nil {
+		return nil
+	}
+	root := src.AttestedRoot
+	return map[string]any{
+		"attested":          src.RootAttested,
+		"evidenceType":      root.EvidenceType,
+		"networkType":       root.NetworkType,
+		"measurement":       root.Measurement,
+		"inRegistry":        root.InRegistry,
+		"reportIntegrity":   root.ReportIntegrity,
+		"revocationChecked": root.RevocationChecked,
+		"notRevoked":        root.NotRevoked,
+		"keyBinding":        root.KeyBinding,
+		"cpuGeneration":     root.CPUGeneration,
+		"teeFlags": map[string]any{
+			"vmpl":             float64(root.VMPL),
+			"debugAllowed":     root.DebugAllowed,
+			"ciphertextHiding": root.CiphertextHiding,
+			"pageSwapDisabled": root.PageSwapDisabled,
+			"snpFirmwareTcb":   float64(root.SnpFirmwareTCB),
+			"reportVersion":    float64(root.ReportVersion),
+		},
+	}
 }
 
 func digestField(payload map[string]any, field string) (trust.Digest, error) {

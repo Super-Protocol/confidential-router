@@ -1,8 +1,8 @@
 # ADR-003 — Trust model of the gatekeeper
 
 - **Status:** Accepted
-- **Date:** 2026-08-30
-- **Decided by:** Denis (decisions 2, 4, 6), CTO (Rego semantics, cache, re-attestation)
+- **Date:** 2026-08-30 (amended 2026-09-02, SUP-114: §2a, the second trust anchor)
+- **Decided by:** Denis (decisions 2, 4, 6, 2a), CTO (Rego semantics, cache, re-attestation)
 
 ## Context
 
@@ -19,6 +19,8 @@ evidence gate of `apps/gatekeeper-proxy/src/evidence.ts`.
 ```
 fetch bundle ─▶ cert chain leaf→root ─▶ root ∈ trustedRoots ─▶ JWS (RS256|ES256K) ─▶ freshness ─▶ channel binding ─▶ Rego
               (stage: fetch)   (cert-chain)   (untrusted-root)     (jws)           (jws)         (tls-fingerprint)  (policy)
+                                        │
+                                        └─ or: the root's own TEE evidence proves it is a Swarm root (§2a)
 ```
 
 - Stages 1–6 are the verifier (`pkg/attestation`, byte-for-byte the algorithm of swarm-cloud
@@ -35,6 +37,55 @@ fetch bundle ─▶ cert chain leaf→root ─▶ root ∈ trustedRoots ─▶ J
 desktop gatekeeper. A root is matched by the SHA-256 fingerprint of its DER. Roots are not
 per-endpoint: a root identifies a *cloud*, endpoints identify *deployments*. `rootCaTeeQuote` is parsed
 and shown, not validated (same as swarm-cloud today; a `quoteVerifier` hook is reserved).
+
+### 2a. Second anchor: roots that prove what they are
+
+*(Added 2026-09-02, SUP-114. Decision: Denis — "a user should not have to `trust roots add` a Swarm cloud
+by hand"; the browser extension already accepts the same root the same way.)*
+
+`trustedRoots[]` answers "did the user say they trust this cloud?". It cannot answer "is this a Swarm cloud
+at all?", and for a first-time user that gap is filled by pasting a certificate they have no way to check —
+trust-on-first-use with extra steps. So a root may also be trusted **because its own TEE evidence proves it
+is a Super Swarm root**.
+
+A Super Swarm Root CA runs inside an SEV-SNP or TDX VM built by `Super-Protocol/sp-vm`, and its X.509
+carries what that VM attested: the challenge type at OID `1.3.6.1.3.8888.1.1`, the network type at
+`1.3.6.1.3.8888.4`, and the serialised `TeeEvidence` at `0.6.9.42.840.113741.1337.6`. The check
+(`pkg/attestation/attestedroot`) is the one `tee-pki`'s `root-certificate-verifier` and the browser panel
+run, in the same order:
+
+1. **hardware report** — SEV-SNP via `go-sev-guest` (ARK/ASK/VCEK from the evidence, chained to AMD's
+   built-in root, TCB binding checked), TDX via `go-tdx-guest`. Vendor CRLs are a separate, opt-in step:
+   a CRL that cannot be fetched leaves revocation *unknown*, never *clean*;
+2. **key binding** — `reportData[0:32]` must equal SHA-256 of the certificate's SubjectPublicKeyInfo.
+   Without it a valid report from any Super Protocol VM would vouch for any certificate;
+3. **measurement** — the VM's launch digest is rebuilt from published artefacts (`vm.json` of the sp-vm
+   release, the OVMF image from the platform's object store, both content-addressed) and must reproduce the
+   report's own `MEASUREMENT`; it is then recomputed for the canonical single-Milan-core configuration and
+   wrapped into the 32-byte `mrEnclave` of `sp-vm/docs/04-vm-measurements.md`;
+4. **registry** — that `mrEnclave` must carry a Super Protocol signature, verified against an RSA-3072 key
+   **pinned in the binary** (the same `TRUSTED_PUBLIC_KEY_SPKI_B64` the platform's own clients pin). This is
+   the step that closes the chain: without it the check would prove only that *some* SEV-SNP VM issued the
+   certificate, which any tenant of any AMD host could arrange.
+
+Rules:
+
+- **The manual store wins.** The attested path only runs for a chain that has already validated and failed
+  *only* on membership of `trustedRoots[]` — the same precondition that gates the dashboard's "add this
+  root" affordance. Before that point `certChain` is an attacker-controlled array.
+- **Fail closed.** A registry that cannot be reached, artefacts that cannot be fetched, an unsupported
+  evidence type: all deny. Manual pins keep working offline, which is the escape hatch.
+- **Nothing is judged that the operator did not ask to be judged.** `debugAllowed`, `ciphertextHiding`,
+  `pageSwapDisabled`, the vMPL and the SNP firmware TCB are reported and exposed to Rego as
+  `input.attestation.rootAttestation.teeFlags`; the gatekeeper enforces none of them. The live Swarm Cloud
+  root declares network type `untrusted` — the platform's own network split, not a judgement about the CA —
+  so `requireNetworkType` defaults to `any` and surfaces the declaration rather than rejecting it silently.
+- Config: `attestedRoots: {enabled: true, registryBaseUrl, cacheTtl: 10m, requireNetworkType: any,
+  checkRevocations: false}`. With it on, `trustedRoots[]` may be empty, so `gatekeeper trust roots add`
+  becomes optional for a Swarm cloud rather than the first step of every setup.
+- The verdict names the root `attested:<mrEnclave>` and `gatekeeper verify` prints the same panel the
+  browser extension shows: report integrity, revocation, CPU generation, TCB, the flags, the measurement
+  and whether it is in the registry, and the key binding.
 
 ### 3. Per-endpoint pinned `evidenceDigest` list
 
@@ -152,7 +203,12 @@ without one — and never a request body, a response body or a query string. `me
 ## Consequences
 
 - Implementation tasks: SUP-68 (verifier), SUP-69 (config + trust store + OPA), SUP-71 (data plane),
-  SUP-72 (CLI/TUI). They all code against the schemas in `/schemas`.
+  SUP-72 (CLI/TUI), SUP-114 (§2a, the attested-root anchor). They all code against the schemas in
+  `/schemas`.
+- §2a adds two dependencies the gatekeeper did not have — `github.com/google/go-sev-guest` and
+  `github.com/google/go-tdx-guest` — and one thing it did not do: it reaches the network for artefacts and
+  for the registry. Both are confined to the attested path, both are content-addressed or signature-checked,
+  and both fail closed, so a gatekeeper configured with manual roots alone still works entirely offline.
 - The Rego engine is the real OPA (`github.com/open-policy-agent/opa/rego`), Rego v1 syntax; policies
   written for the gatekeeper run unchanged under `opa eval`.
 - One custom built-in ships in v1: `custom.tree_match(pattern, actual)`, a port of the Rust gatekeeper's

@@ -1,7 +1,9 @@
 # ~/.config/confidential-gatekeeper/config.yaml
 version: 1
 
-# Global trusted roots ("Trusted Clouds"). A bundle's certChain must end in one of these.
+# Global trusted roots ("Trusted Clouds"). A bundle's certChain must end in one of
+# these, or in a root that `attestedRoots` below accepts on its own TEE evidence.
+# For a Swarm cloud this list is optional.
 trustedRoots:
   - name: swarm-cloud-prod
     pem: |
@@ -11,6 +13,15 @@ trustedRoots:
       -----END CERTIFICATE-----
   - name: swarm-cloud-staging
     pemFile: ./roots/swarm-cloud-staging.pem
+
+# Second trust anchor: accept a certificate authority that proves, from its own
+# TEE evidence, that it is a Super Swarm root. On by default; the settings below
+# are the defaults spelled out.
+attestedRoots:
+  enabled: true
+  requireNetworkType: any
+  cacheTtl: 10m
+  checkRevocations: false
 
 # Optional user policies (Rego v1). ANDed with the built-in evidenceDigest pin policy.
 policies:
