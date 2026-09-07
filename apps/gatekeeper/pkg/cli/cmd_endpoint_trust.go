@@ -31,11 +31,16 @@ func newEndpointTrustCommand(g *globals) *cobra.Command {
 }
 
 // pinView is one pinned digest as `endpoint trust list` reports it.
+//
+// Digest is the human-facing `sha256:<hex>` form — the one string the console,
+// the reports and this table all show for a deployment. Canonical is the wire
+// form the bundle carries, Hex the bare body for a tool that adds its own
+// scheme, and Raw how the file happens to spell it.
 type pinView struct {
-	// Digest is the canonical form; Raw is how the file spells it.
-	Digest string `json:"digest"`
-	Hex    string `json:"hex"`
-	Raw    string `json:"raw"`
+	Digest    string `json:"digest"`
+	Canonical string `json:"digestCanonical"`
+	Hex       string `json:"hex"`
+	Raw       string `json:"raw"`
 }
 
 func newEndpointTrustListCommand(g *globals) *cobra.Command {
@@ -58,7 +63,12 @@ func newEndpointTrustListCommand(g *globals) *cobra.Command {
 
 		views := make([]pinView, 0, len(ep.Pins))
 		for _, pin := range ep.Pins {
-			views = append(views, pinView{Digest: pin.Digest.String(), Hex: pin.Digest.Hex(), Raw: pin.Raw})
+			views = append(views, pinView{
+				Digest:    pin.Digest.Display(),
+				Canonical: pin.Digest.String(),
+				Hex:       pin.Digest.Hex(),
+				Raw:       pin.Raw,
+			})
 		}
 
 		return g.printer(cmd, *asJSON).emit(views, func(w io.Writer) {
@@ -68,9 +78,11 @@ func newEndpointTrustListCommand(g *globals) *cobra.Command {
 			}
 			rows := make([][]string, 0, len(views))
 			for _, v := range views {
-				rows = append(rows, []string{v.Digest, v.Hex})
+				rows = append(rows, []string{v.Digest, shortDigest(v.Canonical)})
 			}
-			table(w, []string{"DIGEST", "HEX"}, rows)
+			// The canonical form is abbreviated: it is here so a pin can be
+			// matched against what a bundle carries, not to be copied.
+			table(w, []string{"DIGEST", "CANONICAL"}, rows)
 		})
 	}
 	return cmd
@@ -131,10 +143,10 @@ func newEndpointTrustAddCommand(g *globals) *cobra.Command {
 		}
 		out := cmd.OutOrStdout()
 		if !added {
-			fmt.Fprintf(out, "%s is already pinned for %q; nothing to do\n", digest, name)
+			fmt.Fprintf(out, "%s is already pinned for %q; nothing to do\n", digest.Display(), name)
 			return nil
 		}
-		fmt.Fprintf(out, "Pinned %s for %q in %s\n", digest, name, store.Path())
+		fmt.Fprintf(out, "Pinned %s for %q in %s\n", digest.Display(), name, store.Path())
 		return nil
 	}
 	return cmd
@@ -165,7 +177,7 @@ func discoveredDigest(cmd *cobra.Command, g *globals, ep trust.Endpoint, assumeY
 	printReport(cmd.ErrOrStderr(), report, g.env.now())
 	if !assumeYes {
 		agreed, err := confirm(g.env, cmd.ErrOrStderr(),
-			fmt.Sprintf("Pin %s for %q?", report.EvidenceDigest, ep.Name))
+			fmt.Sprintf("Pin %s for %q?", hexDigest(report.EvidenceDigest), ep.Name))
 		if err != nil {
 			return "", err
 		}
@@ -216,9 +228,9 @@ func newEndpointTrustRemoveCommand(g *globals) *cobra.Command {
 			return err
 		}
 		if !removed {
-			return failf(ExitError, "%s is not pinned for %q", digest, name)
+			return failf(ExitError, "%s is not pinned for %q", digest.Display(), name)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Unpinned %s from %q in %s\n", digest, name, store.Path())
+		fmt.Fprintf(cmd.OutOrStdout(), "Unpinned %s from %q in %s\n", digest.Display(), name, store.Path())
 		if ep, ok := store.Endpoint(name); ok && len(ep.Pins) == 0 {
 			fmt.Fprintf(cmd.ErrOrStderr(),
 				"warning: %q has no pins left and can no longer admit traffic\n", name)
@@ -246,11 +258,11 @@ func newEndpointDiscoverCommand(g *globals) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return g.printer(cmd, *asJSON).emit(report, func(w io.Writer) {
+		return g.printer(cmd, *asJSON).emit(documentOf(report), func(w io.Writer) {
 			printReport(w, report, g.env.now())
 			if report.Verified && report.EvidenceDigest != "" && !report.Pinned {
 				fmt.Fprintf(w, "\nTo accept this deployment:\n  gatekeeper endpoint trust add %s %s\n",
-					report.Endpoint, report.EvidenceDigest)
+					report.Endpoint, hexDigest(report.EvidenceDigest))
 			}
 		})
 	}

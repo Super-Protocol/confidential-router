@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 )
@@ -396,8 +397,8 @@ func (e *endpoint) applyVerdict(previous, current *verdict) {
 	e.sup.audit.record(AuditEntry{
 		At: current.At, Event: AuditVerdict, Endpoint: e.name,
 		Admitted: current.Admitted, Stage: nonAdmitted(current, stage), Reason: nonAdmitted(current, reason),
-		EvidenceDigest:         current.Report.EvidenceDigest,
-		ObservedTLSFingerprint: current.Leaf,
+		EvidenceDigest:         attestation.FormatDigestHex(current.Report.EvidenceDigest),
+		ObservedTLSFingerprint: attestation.FormatDigestHex(current.Leaf),
 		Root:                   current.Report.Root,
 		FailMode:               e.tuning.FailMode,
 	})

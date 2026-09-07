@@ -464,6 +464,9 @@ importers:
       '@confidential-router/mock-litellm':
         specifier: workspace:*
         version: link:../mock-litellm
+      '@confidential-router/types':
+        specifier: workspace:*
+        version: link:../../libs/types
       openai:
         specifier: ^7.8.0
         version: 7.8.0(undici@8.10.0)(ws@8.21.3)(zod@4.5.4)

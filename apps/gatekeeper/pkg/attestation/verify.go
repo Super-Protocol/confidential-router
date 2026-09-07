@@ -90,7 +90,7 @@ func VerifyHostname(ctx context.Context, params Params) Result {
 		params.ObservedTLSFingerprint = fetched.ObservedTLSFingerprint
 	} else if !FingerprintsEqual(params.ObservedTLSFingerprint, fetched.ObservedTLSFingerprint) {
 		result := fail(StageTLSFingerprint, "pinned observedTlsFingerprint %s is not the certificate served (%s)",
-			params.ObservedTLSFingerprint, fetched.ObservedTLSFingerprint)
+			FormatDigestHex(params.ObservedTLSFingerprint), FormatDigestHex(fetched.ObservedTLSFingerprint))
 		result.ObservedTLSFingerprint = fetched.ObservedTLSFingerprint
 		return result
 	}
@@ -248,7 +248,10 @@ func matchTrustedRoot(rootFingerprint string, trustedRoots []TrustedRoot) (*Matc
 			return &MatchedRoot{Name: root.Name, Fingerprint: fingerprint}, Result{}
 		}
 	}
-	return nil, fail(StageUntrustedRoot, "%s not in trusted store", rootFingerprint)
+	// Reported in hex: this message is what a user reads before deciding
+	// whether to add the root, and hex is the spelling every other surface —
+	// the console, the CLI, the config file — shows them.
+	return nil, fail(StageUntrustedRoot, "%s not in trusted store", FormatDigestHex(rootFingerprint))
 }
 
 func verifyPayload(bundle *Bundle, leaf *certparse.Certificate, expectedHostname string) (Payload, Result) {
@@ -298,7 +301,8 @@ func checkChannelBinding(payloadFingerprint, observedFingerprint, tlsLeafPEM str
 	if observedFingerprint != "" {
 		if !FingerprintsEqual(payloadFingerprint, observedFingerprint) {
 			return "", fail(StageTLSFingerprint,
-				"payload certFingerprint %s does not match observed %s", payloadFingerprint, observedFingerprint)
+				"payload certFingerprint %s does not match observed %s",
+				FormatDigestHex(payloadFingerprint), FormatDigestHex(observedFingerprint))
 		}
 		return BindingObserved, Result{}
 	}
@@ -311,7 +315,8 @@ func checkChannelBinding(payloadFingerprint, observedFingerprint, tlsLeafPEM str
 		derived := SHA256Fingerprint(cert.Raw)
 		if !FingerprintsEqual(payloadFingerprint, derived) {
 			return "", fail(StageTLSFingerprint,
-				"payload certFingerprint %s does not match bundle.tlsLeaf fingerprint %s", payloadFingerprint, derived)
+				"payload certFingerprint %s does not match bundle.tlsLeaf fingerprint %s",
+				FormatDigestHex(payloadFingerprint), FormatDigestHex(derived))
 		}
 		return BindingProducerAsserted, Result{}
 	}

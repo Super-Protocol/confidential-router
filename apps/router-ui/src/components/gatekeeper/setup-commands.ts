@@ -32,10 +32,10 @@ export const SETUP_STEPS: SetupStep[] = [
       'The hostname is the router endpoint you want to reach; the listen address is what your agents will point at. Take the hostname from Models, where each model names the endpoint that serves it.',
   },
   {
-    command: `gatekeeper endpoint trust add ${ENDPOINT_NAME} <evidenceDigest>`,
+    command: `gatekeeper endpoint trust add ${ENDPOINT_NAME} sha256:<evidenceDigest>`,
     title: 'Pin what you are willing to trust',
     detail:
-      'Copy the evidenceDigest from Overview. Only a bundle whose digest you pinned here passes — the router cannot add one, and a digest that changes is a deployment you have not approved.',
+      'Copy the evidenceDigest from Overview — the same sha256:<hex> string the gatekeeper prints back. Only a bundle whose digest you pinned here passes: the router cannot add one, and a digest that changes is a deployment you have not approved.',
   },
   {
     command: 'gatekeeper run',

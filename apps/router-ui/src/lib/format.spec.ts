@@ -4,6 +4,7 @@ import {
   formatCompact,
   formatContextLength,
   formatDate,
+  formatDigest,
   formatPercent,
   formatPricePer1m,
   formatQuoteAge,
@@ -43,9 +44,23 @@ describe('formatCompact', () => {
   });
 });
 
+describe('formatDigest', () => {
+  it('shows the hex spelling the gatekeeper prints and the config file records', () => {
+    expect(formatDigest('a'.repeat(64), 'sha256/canonical')).toBe(`sha256:${'a'.repeat(64)}`);
+  });
+
+  it('falls back to the canonical form when the API sent no hex spelling', () => {
+    expect(formatDigest('', 'sha256/canonical')).toBe('sha256/canonical');
+  });
+});
+
 describe('shortenDigest', () => {
   it('keeps the algorithm prefix and both ends of the digest', () => {
     expect(shortenDigest('sha256/abcdefghijklmnopqrstuvwxyz')).toBe('sha256/abcdef…uvwxyz');
+  });
+
+  it('keeps the hex scheme too', () => {
+    expect(shortenDigest('sha256:abcdefghijklmnopqrstuvwxyz')).toBe('sha256:abcdef…uvwxyz');
   });
 
   it('leaves a digest that is already short alone', () => {

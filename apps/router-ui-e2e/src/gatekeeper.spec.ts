@@ -71,7 +71,7 @@ test.describe('Gatekeeper', () => {
     await expect(page.getByText('Fail open')).toBeVisible();
     await expect(page.getByText('gatekeeper init', { exact: true })).toBeVisible();
     await expect(page.getByText('gatekeeper endpoint add router --upstream https://<hostname>')).toBeVisible();
-    await expect(page.getByText('gatekeeper endpoint trust add router <evidenceDigest>')).toBeVisible();
+    await expect(page.getByText('gatekeeper endpoint trust add router sha256:<evidenceDigest>')).toBeVisible();
     await expect(page.getByText('gatekeeper run', { exact: true })).toBeVisible();
   });
 

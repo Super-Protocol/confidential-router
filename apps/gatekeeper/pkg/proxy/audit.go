@@ -28,7 +28,11 @@ type AuditEntry struct {
 	Stage    string `json:"stage,omitempty"`
 	Reason   string `json:"reason,omitempty"`
 
-	// EvidenceDigest and ObservedTLSFingerprint identify what was judged.
+	// EvidenceDigest and ObservedTLSFingerprint identify what was judged, in
+	// the `sha256:<hex>` form every user-facing surface shows — an audit line
+	// is read next to a `gatekeeper verify` report or a console screen, and a
+	// digest that has to be re-encoded before the two can be compared is a
+	// digest nobody compares.
 	EvidenceDigest         string `json:"evidenceDigest,omitempty"`
 	ObservedTLSFingerprint string `json:"observedTlsFingerprint,omitempty"`
 	Root                   string `json:"root,omitempty"`

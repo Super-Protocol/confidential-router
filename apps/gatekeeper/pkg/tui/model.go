@@ -377,9 +377,9 @@ func (m Model) pinSelected() tea.Cmd {
 			return flashMsg{text: fmt.Sprintf("pinning %s: %v", ep.Name, err), isErr: true}
 		}
 		if !added {
-			return flashMsg{text: fmt.Sprintf("%s was already pinned for %s", digest, ep.Name)}
+			return flashMsg{text: fmt.Sprintf("%s was already pinned for %s", digest.Display(), ep.Name)}
 		}
-		return flashMsg{text: fmt.Sprintf("pinned %s for %s — press r to re-attest", digest, ep.Name)}
+		return flashMsg{text: fmt.Sprintf("pinned %s for %s — press r to re-attest", digest.Display(), ep.Name)}
 	}
 }
 

@@ -144,10 +144,10 @@ func TestTrustAddFromUpstreamPinsWhatWasPublished(t *testing.T) {
 	h.env.Verifier = &fakeVerifier{report: report}
 
 	got := h.mustRun("endpoint", "trust", "add", "llama-33-70b", "--from-upstream", "--yes")
-	if !strings.Contains(got.stdout, pinB) {
-		t.Errorf("stdout = %q, want the newly pinned digest", got.stdout)
+	if !strings.Contains(got.stdout, pinBShown) {
+		t.Errorf("stdout = %q, want the newly pinned digest in hex", got.stdout)
 	}
-	if !strings.Contains(h.config(), pinB) {
+	if !strings.Contains(h.config(), pinBShown) {
 		t.Error("the published digest did not reach the config")
 	}
 	// The report is printed for review before anything is written.
@@ -169,7 +169,7 @@ func TestTrustAddFromUpstreamRefusesAnUnverifiedEndpoint(t *testing.T) {
 	}
 	// A digest from a bundle that failed the cryptographic stages is not
 	// evidence of anything, so it must not be written.
-	if strings.Contains(h.config(), pinB) {
+	if strings.Contains(h.config(), pinBShown) {
 		t.Error("a digest from an unverifiable bundle was pinned")
 	}
 }
@@ -196,14 +196,14 @@ func TestTrustAddFromUpstreamNeedsConfirmation(t *testing.T) {
 	if got := h.run("endpoint", "trust", "add", "llama-33-70b", "--from-upstream"); got.code == cli.ExitOK {
 		t.Error("answering no still pinned the digest")
 	}
-	if strings.Contains(h.config(), pinB) {
+	if strings.Contains(h.config(), pinBShown) {
 		t.Error("answering no still wrote to the config")
 	}
 
 	h.stdin.Reset()
 	h.stdin.WriteString("y\n")
 	h.mustRun("endpoint", "trust", "add", "llama-33-70b", "--from-upstream")
-	if !strings.Contains(h.config(), pinB) {
+	if !strings.Contains(h.config(), pinBShown) {
 		t.Error("answering yes did not pin the digest")
 	}
 }

@@ -12,6 +12,16 @@ import (
 // FingerprintPrefix is the scheme every digest in the evidence contract carries.
 const FingerprintPrefix = "sha256/"
 
+// HexPrefix is the scheme every digest the gatekeeper *prints* carries.
+//
+// The two are a deliberate pair. `sha256/<base64url>` is the wire form: it is
+// what the producer signs into the bundle and what a pin is compared as. Hex is
+// what a human reads — the browser extension, the router console and every
+// registry show it — so it is what the CLI, the dashboard and the config file
+// spell, and `sha256:` says which hash without turning the value into a second
+// canonical form (ADR-002 §3).
+const HexPrefix = "sha256:"
+
 // sha256Bytes is the length of a SHA-256 digest.
 const sha256Bytes = 32
 
@@ -50,9 +60,13 @@ func (e *InvalidEvidenceDigestError) Error() string {
 	return fmt.Sprintf("not a valid evidence digest: %q", e.Value)
 }
 
-// NormalizeEvidenceDigest accepts `sha256/<base64url>`, `sha256/<hex>` or bare
-// hex and returns the canonical `sha256/<base64url>` form, mirroring
-// libs/types/src/evidence-digest.ts.
+// NormalizeEvidenceDigest accepts `sha256/<base64url>`, `sha256/<hex>`,
+// `sha256:<hex>` or bare hex and returns the canonical `sha256/<base64url>`
+// form, mirroring libs/types/src/evidence-digest.ts.
+//
+// `sha256:<hex>` is the form everything user-facing prints and the config file
+// records (see [HexPrefix]), so every parser in the product has to read it back;
+// it is unambiguous for the same reason bare hex is.
 //
 // Bare base64url is deliberately not accepted. Hex is unambiguous on sight, so
 // a value copied out of a log needs no scheme; a bare 43-character token is not,
@@ -72,7 +86,14 @@ func NormalizeEvidenceDigest(value string) (string, error) {
 			return FingerprintPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
 		}
 	}
-	hexBody := strings.TrimPrefix(trimmed, FingerprintPrefix)
+	hexBody := trimmed
+	// One scheme or the other, never both: `sha256/sha256:…` is not a spelling
+	// of anything.
+	if body, ok := strings.CutPrefix(trimmed, FingerprintPrefix); ok {
+		hexBody = body
+	} else if body, ok := strings.CutPrefix(trimmed, HexPrefix); ok {
+		hexBody = body
+	}
 	if raw, err := hex.DecodeString(strings.ToLower(hexBody)); err == nil && len(raw) == sha256Bytes {
 		return FingerprintPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
 	}
@@ -103,6 +124,21 @@ func EvidenceDigestEquals(a, b string) (bool, error) {
 		return false, err
 	}
 	return na == nb, nil
+}
+
+// FormatDigestHex renders any accepted spelling of a digest as the human-facing
+// `sha256:<lowercase hex>` form — the one string the gatekeeper, the console
+// and the docs all show for the same 32 bytes.
+//
+// It is a display helper, so it never fails: a value it cannot read is returned
+// unchanged. A fingerprint printed in an unexpected shape tells the reader what
+// happened; an empty cell in a verification report does not.
+func FormatDigestHex(value string) string {
+	body, err := EvidenceDigestHex(value)
+	if err != nil {
+		return value
+	}
+	return HexPrefix + body
 }
 
 // EvidenceDigestHex returns the lowercase hex spelling of a digest, the

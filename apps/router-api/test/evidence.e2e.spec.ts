@@ -173,11 +173,12 @@ describe('the console view', () => {
             evidenceDigest
             evidenceDigestHex
             certFingerprint
+            certFingerprintHex
             quoteFormat
             quoteAgeSeconds
             containerImages
             jws
-            chain { subject issuer fingerprint isRoot }
+            chain { subject issuer fingerprint fingerprintHex isRoot }
             measurements { name value }
           }
         }
@@ -191,7 +192,14 @@ describe('the console view', () => {
 
     expect(published).toMatchObject({ hostname: PUBLISHING, evidenceState: 'PUBLISHED', tokensRouted30d: 0 });
     expect(published.latestEvidence).toMatchObject({ evidenceDigest: DIGEST, quoteFormat: 'intel-tdx-quote-v5' });
+    // Every fingerprint is served in both spellings: the canonical one the
+    // bundle carries, and the hex one the console renders and copies so that a
+    // digest reads the same here and in the gatekeeper (SUP-115).
     expect(published.latestEvidence.evidenceDigestHex).toHaveLength(64);
+    expect(published.latestEvidence.certFingerprintHex).toMatch(/^[0-9a-f]{64}$/);
+    for (const cert of published.latestEvidence.chain) {
+      expect(cert.fingerprintHex).toMatch(/^[0-9a-f]{64}$/);
+    }
     expect(published.latestEvidence.quoteAgeSeconds).toBeGreaterThan(0);
     expect(published.latestEvidence.containerImages.length).toBeGreaterThan(0);
     expect(published.latestEvidence.jws.split('.')).toHaveLength(3);

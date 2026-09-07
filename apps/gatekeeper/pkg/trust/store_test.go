@@ -149,8 +149,13 @@ func TestStoreAddRemovePinRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(saved), pinB.String()) {
-		t.Errorf("the new pin was not persisted:\n%s", saved)
+	// Written in the printed form, not the canonical one: a config file should
+	// spell a pin the way the reports and the console spell it (SUP-115).
+	if !strings.Contains(string(saved), pinB.Display()) {
+		t.Errorf("the new pin was not persisted as sha256:<hex>:\n%s", saved)
+	}
+	if strings.Contains(string(saved), pinB.String()) {
+		t.Errorf("the new pin was persisted in the canonical form:\n%s", saved)
 	}
 	if !strings.Contains(string(saved), "# the production llama endpoint") {
 		t.Errorf("the comment was lost on save:\n%s", saved)

@@ -34,8 +34,10 @@ type endpointView struct {
 	Listen   string `json:"listen"`
 	Upstream string `json:"upstream"`
 	FailMode string `json:"failMode"`
-	// Pins are the canonical forms of the pinned evidenceDigest values.
-	Pins []string `json:"trustedEvidence"`
+	// Pins are the pinned evidenceDigest values as the CLI spells them,
+	// `sha256:<hex>`; PinsCanonical is the same list in the wire form.
+	Pins          []string `json:"trustedEvidence"`
+	PinsCanonical []string `json:"trustedEvidenceCanonical"`
 }
 
 func newEndpointListCommand(g *globals) *cobra.Command {
@@ -55,12 +57,14 @@ func newEndpointListCommand(g *globals) *cobra.Command {
 		views := make([]endpointView, 0, len(endpoints))
 		for _, ep := range endpoints {
 			pins := make([]string, 0, len(ep.Pins))
+			canonical := make([]string, 0, len(ep.Pins))
 			for _, pin := range ep.Pins {
-				pins = append(pins, pin.Digest.String())
+				pins = append(pins, pin.Digest.Display())
+				canonical = append(canonical, pin.Digest.String())
 			}
 			views = append(views, endpointView{
 				Name: ep.Name, Listen: ep.Listen, Upstream: ep.Upstream,
-				FailMode: ep.FailMode, Pins: pins,
+				FailMode: ep.FailMode, Pins: pins, PinsCanonical: canonical,
 			})
 		}
 
@@ -108,7 +112,7 @@ func newEndpointAddCommand(g *globals) *cobra.Command {
 	cmd.Flags().StringVar(&failMode, "fail-mode", "",
 		"`closed` or `open` for this endpoint; omit to inherit the global default")
 	cmd.Flags().StringArrayVar(&pins, "trust", nil,
-		"pinned evidenceDigest; repeatable, accepts sha256/<base64url>, sha256:<hex> or bare hex")
+		"pinned evidenceDigest; repeatable, accepts sha256:<hex>, sha256/<base64url> or bare hex")
 	_ = cmd.MarkFlagRequired("listen")
 	_ = cmd.MarkFlagRequired("upstream")
 
@@ -116,14 +120,15 @@ func newEndpointAddCommand(g *globals) *cobra.Command {
 		name := args[0]
 
 		// Normalise the pins here so that a typo is rejected before anything is
-		// written, and so the file always holds the canonical spelling.
-		canonical := make([]string, 0, len(pins))
+		// written, and so the file always holds one spelling — the `sha256:<hex>`
+		// one the CLI prints and the console copies.
+		normalised := make([]string, 0, len(pins))
 		for _, raw := range pins {
 			digest, err := trust.ParseDigest(raw)
 			if err != nil {
 				return failf(ExitUsage, "--trust %s", err)
 			}
-			canonical = append(canonical, digest.String())
+			normalised = append(normalised, digest.Display())
 		}
 
 		store, err := g.open()
@@ -132,13 +137,13 @@ func newEndpointAddCommand(g *globals) *cobra.Command {
 		}
 		if err := store.AddEndpoint(config.EndpointSpec{
 			Name: name, Listen: listen, Upstream: upstream,
-			FailMode: failMode, TrustedEvidence: canonical,
+			FailMode: failMode, TrustedEvidence: normalised,
 		}); err != nil {
 			return err
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Added endpoint %q (%s → %s) to %s\n", name, listen, upstream, store.Path())
-		if len(canonical) == 0 {
+		if len(normalised) == 0 {
 			fmt.Fprintf(cmd.ErrOrStderr(),
 				"warning: %q has no pinned evidenceDigest and cannot admit traffic yet; "+
 					"pin one with `gatekeeper endpoint trust add %s --from-upstream`\n", name, name)

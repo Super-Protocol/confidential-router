@@ -19,7 +19,9 @@ you if they disagree. Generated TypeScript types (`json-schema-to-typescript`) a
 
 Encoding rules shared by all schemas:
 
-- Fingerprints and digests: `sha256/<base64url, unpadded, 43 chars>` (canonical). `evidenceDigest` pins
+- Fingerprints and digests: `sha256/<base64url, unpadded, 43 chars>` (canonical on the wire, and what
+  these schemas describe). Everything user-facing — the gatekeeper CLI and dashboard, a gatekeeper
+  config file, the router console — instead shows `sha256:<hex>` (SUP-115). `evidenceDigest` pins
   additionally accept `sha256/<hex>`, `sha256:<hex>` / bare hex on input. The base64url form must be the
   canonical spelling of 32 bytes — the last character can only be one of `AEIMQUYcgkosw048` — because pins
   are compared as exact strings. `libs/attestation-fixtures/vectors/evidence-digest.json` is the vector set

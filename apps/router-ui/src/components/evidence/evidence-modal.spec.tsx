@@ -34,6 +34,25 @@ describe('EvidenceModal', () => {
     expect(dialog.textContent).not.toMatch(/verified|unverified|valid|trusted root/i);
   });
 
+  it('shows every fingerprint in hex, the spelling the gatekeeper prints', async () => {
+    const user = userEvent.setup();
+    open(publishedEndpoint());
+
+    const dialog = screen.getByRole('dialog');
+    const snapshot = evidenceSnapshot();
+    // Truncated on screen, whole on the clipboard — and the whole one is what
+    // `gatekeeper endpoint trust add` takes (SUP-115).
+    expect(within(dialog).getByText('sha256:f579367d3d…b87809a00b')).toBeInTheDocument();
+    expect(within(dialog).getByText('sha256:3e643b751d…a08795c0db')).toBeInTheDocument();
+    expect(within(dialog).getByText('sha256:389fd8f1ba…82712ec0b0')).toBeInTheDocument();
+    expect(dialog.textContent).not.toContain(snapshot.evidenceDigest);
+
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Copy evidence digest for llama-33-70b.tee.swarm.cloud' }),
+    );
+    await expect(navigator.clipboard.readText()).resolves.toBe(`sha256:${snapshot.evidenceDigestHex}`);
+  });
+
   it('lists the measurement registers the producer published', () => {
     open(publishedEndpoint());
 
