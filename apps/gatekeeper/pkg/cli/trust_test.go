@@ -62,12 +62,16 @@ func TestRemovingTheLastRootWarns(t *testing.T) {
 	h := configured(t)
 	got := h.mustRun("trust", "roots", "rm", "swarm-cloud-prod")
 	if !strings.Contains(got.stderr, "no trusted roots remain") {
-		t.Errorf("stderr = %q, want a warning that nothing can be verified now", got.stderr)
+		t.Errorf("stderr = %q, want a warning that the manual list is now empty", got.stderr)
 	}
-	// Removal is allowed, so the file is still editable — it is simply no
-	// longer runnable, which validate is what reports.
-	if code := h.run("config", "validate").code; code != cli.ExitConfig {
-		t.Errorf("config validate exit = %d, want %d", code, cli.ExitConfig)
+	if !strings.Contains(got.stderr, "attestedRoots") {
+		t.Errorf("stderr = %q, want it to say what is left: the attested-root anchor", got.stderr)
+	}
+	// A rootless config still runs, because the attested-root anchor can supply
+	// one. That is the point of the second anchor, and it is why removing the
+	// last root is no longer a config error.
+	if code := h.run("config", "validate").code; code != cli.ExitOK {
+		t.Errorf("config validate exit = %d, want %d", code, cli.ExitOK)
 	}
 	if code := h.run("trust", "roots", "list").code; code != cli.ExitOK {
 		t.Errorf("trust roots list exit = %d; a rootless config must still be readable", code)

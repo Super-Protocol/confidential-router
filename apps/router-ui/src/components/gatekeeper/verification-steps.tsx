@@ -16,7 +16,13 @@ const STEPS: { title: string; detail: React.ReactNode }[] = [
   },
   {
     title: 'Validate the certificate chain',
-    detail: <>Leaf to root, against the trusted roots in your own config. A root you did not add is not a root.</>,
+    detail: (
+      <>
+        Leaf to root. The root has to be one you trusted yourself, or one that proves it is a Super Swarm root: its
+        certificate carries the attestation of the TEE it runs in, and the measurement of that TEE has to be one Super
+        Protocol signed.
+      </>
+    ),
   },
   {
     title: 'Verify the signature',

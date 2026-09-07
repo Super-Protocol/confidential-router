@@ -90,6 +90,68 @@ type PolicyResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// AttestedRoot is what the chain's terminal certificate authority proved about
+// itself, when the gatekeeper checked its TEE evidence rather than looking it
+// up in the user's list. It mirrors attestation/attestedroot.Result without
+// importing it, so a report can be rendered without pulling in a verifier.
+//
+// Every field is reported even for a root that was rejected: "the report is
+// sound but the measurement is not one of Super Protocol's" and "the report is
+// forged" are different problems, and an operator has to be able to tell them
+// apart from the output alone.
+type AttestedRoot struct {
+	// Attested is the verdict; Reason explains a false one.
+	Attested bool   `json:"attested"`
+	Reason   string `json:"reason,omitempty"`
+
+	// EvidenceType is the hardware the CA enrolled from, as the platform's own
+	// UI labels it, and NetworkType is the network the certificate declares.
+	EvidenceType string `json:"evidenceType,omitempty"`
+	NetworkType  string `json:"networkType,omitempty"`
+
+	// ReportIntegrity covers the hardware report's signature and its chain to
+	// the CPU vendor's root. Revocation is separate and network-dependent:
+	// RevocationChecked false means it was not run, never that it was clean.
+	ReportIntegrity   bool   `json:"reportIntegrity"`
+	RevocationChecked bool   `json:"revocationChecked"`
+	NotRevoked        bool   `json:"notRevoked,omitempty"`
+	CPUGeneration     string `json:"cpuGeneration,omitempty"`
+
+	// KeyBinding is whether the report commits to this certificate's public
+	// key, and KeyDigest is the SHA-256 of that key as the report carries it.
+	KeyBinding bool   `json:"keyBinding"`
+	KeyDigest  string `json:"keyDigest,omitempty"`
+
+	// Measurement is the normalised mrEnclave in hex, and InRegistry whether
+	// Super Protocol has signed it.
+	Measurement string `json:"measurement,omitempty"`
+	InRegistry  bool   `json:"inRegistry"`
+
+	// TEE flags a policy may want to police. Named after the report fields
+	// rather than after any judgement about them.
+	VMPL             uint32 `json:"vmpl"`
+	DebugAllowed     bool   `json:"debugAllowed"`
+	CiphertextHiding bool   `json:"ciphertextHiding"`
+	PageSwapDisabled bool   `json:"pageSwapDisabled"`
+	SnpFirmwareTCB   uint8  `json:"snpFirmwareTcb,omitempty"`
+	ReportVersion    uint32 `json:"reportVersion,omitempty"`
+
+	// Logs are the steps the check ran, in order.
+	Logs []string `json:"logs,omitempty"`
+}
+
+// RevocationLabel renders the optional vendor-CRL check for a report.
+func (a *AttestedRoot) RevocationLabel() string {
+	switch {
+	case a == nil || !a.RevocationChecked:
+		return "not checked"
+	case a.NotRevoked:
+		return "ok"
+	default:
+		return "REVOKED or indeterminate"
+	}
+}
+
 // Report is one verification of one endpoint: the pretty report `gatekeeper
 // verify` prints and the TUI detail pane shows.
 //
@@ -110,10 +172,18 @@ type Report struct {
 	Stage  string `json:"stage,omitempty"`
 	Reason string `json:"reason,omitempty"`
 
-	// Root is the trustedRoots[] entry the chain terminated in, empty when the
-	// chain terminated somewhere untrusted.
+	// Root is the trustedRoots[] entry the chain terminated in, or the name the
+	// attested-root anchor gives it; empty when the chain terminated somewhere
+	// untrusted.
 	Root            string `json:"root,omitempty"`
 	RootFingerprint string `json:"rootFingerprint,omitempty"`
+	// RootAttested marks a root that was accepted on its own TEE evidence
+	// rather than because the user listed it. The manual list wins when both
+	// apply, so this is false for a root that is also pinned.
+	RootAttested bool `json:"rootAttested,omitempty"`
+	// AttestedRoot is the evidence behind that decision, populated whenever the
+	// check ran — including when it denied.
+	AttestedRoot *AttestedRoot `json:"attestedRoot,omitempty"`
 	// ObservedTLSFingerprint is the leaf the gatekeeper saw on its own
 	// handshake; CertFingerprint is what the signed payload claims. The
 	// verifier admits only bundles where the two agree.

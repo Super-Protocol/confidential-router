@@ -17,10 +17,15 @@ var (
 	namePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	listenPattern   = regexp.MustCompile(`^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):([0-9]{1,5})$`)
 	upstreamPattern = regexp.MustCompile(`^https://[^/?#]+/?$`)
-	pemPattern      = regexp.MustCompile(`(?s)^-----BEGIN CERTIFICATE-----.+-----END CERTIFICATE-----\s*$`)
-	logLevels       = []string{"debug", "info", "warn", "error"}
-	logFormats      = []string{"text", "json"}
-	failModes       = []string{FailClosed, FailOpen}
+	// A registry mirror may be a plain http:// one — it is commonly a local
+	// file server in an air-gapped deployment, and the signatures it serves are
+	// checked against a key pinned in the binary, so the transport carries no
+	// trust to protect.
+	registryURLPattern = regexp.MustCompile(`^https?://[^?#]+$`)
+	pemPattern         = regexp.MustCompile(`(?s)^-----BEGIN CERTIFICATE-----.+-----END CERTIFICATE-----\s*$`)
+	logLevels          = []string{"debug", "info", "warn", "error"}
+	logFormats         = []string{"text", "json"}
+	failModes          = []string{FailClosed, FailOpen}
 )
 
 // FieldError is one validation problem, addressed by its path in the document.
@@ -103,6 +108,7 @@ func (c *Config) validate(completeness bool) error {
 	}
 
 	c.validateRoots(p)
+	c.validateAttestedRoots(p)
 	c.validatePolicies(p)
 	validateTuning(p, yamlField("defaults"), c.Defaults)
 	c.validateEndpoints(p)
@@ -126,8 +132,15 @@ func (c *Config) validate(completeness bool) error {
 }
 
 func (c *Config) validateRoots(p *problems) {
-	if len(c.TrustedRoots) == 0 {
-		p.addIncompletef("trustedRoots", "at least one trusted root is required — the gatekeeper has no built-in trust")
+	// An empty manual list is only a gap when nothing else can supply a trust
+	// anchor. With attested roots on, a Swarm cloud's own certificate authority
+	// is checked against hardware and the signed-measurement registry, so a
+	// config with no `trustedRoots` is a complete one — that is the whole point
+	// of the anchor.
+	if len(c.TrustedRoots) == 0 && !c.AttestedRootsEnabled() {
+		p.addIncompletef("trustedRoots",
+			"at least one trusted root is required while attestedRoots.enabled is false — "+
+				"the gatekeeper has no other trust anchor")
 	}
 	seen := map[string]int{}
 	for i, root := range c.TrustedRoots {
@@ -146,6 +159,25 @@ func (c *Config) validateRoots(p *problems) {
 		case root.PEM != "" && !pemPattern.MatchString(strings.TrimSpace(root.PEM)+"\n"):
 			p.addf(path+".pem", "is not a PEM certificate block (expected -----BEGIN CERTIFICATE-----…-----END CERTIFICATE-----)")
 		}
+	}
+}
+
+func (c *Config) validateAttestedRoots(p *problems) {
+	if c.AttestedRoots == nil {
+		return
+	}
+	switch c.AttestedRoots.RequireNetworkType {
+	case "", NetworkTypeAny, NetworkTypeTrusted:
+	default:
+		p.addf("attestedRoots.requireNetworkType", "must be %q or %q, got %q",
+			NetworkTypeAny, NetworkTypeTrusted, c.AttestedRoots.RequireNetworkType)
+	}
+	if url := c.AttestedRoots.RegistryBaseURL; url != "" && !registryURLPattern.MatchString(url) {
+		p.addf("attestedRoots.registryBaseUrl",
+			"must be an http:// or https:// base URL without query or fragment, got %q", url)
+	}
+	if ttl := c.AttestedRoots.CacheTTL; ttl != nil && ttl.Std() <= 0 {
+		p.addf("attestedRoots.cacheTtl", "must be positive, got %s", ttl)
 	}
 }
 

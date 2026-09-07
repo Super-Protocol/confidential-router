@@ -33,14 +33,21 @@ From a clone: `pnpm nx run gatekeeper:build` → `apps/gatekeeper/bin/gatekeeper
 
 ```bash
 gatekeeper init                                             # write a starter config
-gatekeeper trust roots add <cloud> --pem-file root.pem      # trust a cloud
 gatekeeper endpoint add <name> --listen 127.0.0.1:8443 \
                                --upstream https://<host>    # add a listener
 gatekeeper endpoint discover <name>                         # look at what it publishes
 gatekeeper endpoint trust add <name> --from-upstream        # pin it, after review
 gatekeeper config validate                                  # ready to run?
 gatekeeper run                                              # dashboard, or --headless
+
+gatekeeper trust roots add <cloud> --pem-file root.pem      # optional: pin one cloud
 ```
+
+There is no `trust roots add` in the usual path, because a Swarm cloud's
+certificate authority proves what it is: it runs in a TEE, its certificate
+carries that hardware evidence, and the gatekeeper checks it (below). Add a root
+by hand to accept exactly one cloud and nothing else, or to trust a CA that
+publishes no evidence.
 
 `init` writes a file that is deliberately **not runnable**: no trusted roots, no
 endpoints, no pins. There is no trust-on-first-use anywhere in this product, and
@@ -78,12 +85,20 @@ edit this file in place and keep your comments.
 ```yaml
 version: 1
 
-# "Trusted Clouds". A bundle is accepted only if its certificate chain ends in
-# one of these, matched by the SHA-256 of the root's DER. An empty list denies
-# everything — a root identifies a cloud, not a deployment.
+# "Trusted Clouds". A bundle is accepted if its certificate chain ends in one of
+# these, matched by the SHA-256 of the root's DER — a root identifies a cloud,
+# not a deployment. May be empty, because of `attestedRoots` below.
 trustedRoots:
   - name: swarm-cloud-prod
     pemFile: ./roots/swarm-cloud-prod.pem     # or an inline `pem:` block
+
+# ...or the root proves it is a Swarm root on its own. On by default; these are
+# the defaults written out.
+attestedRoots:
+  enabled: true
+  requireNetworkType: any   # `trusted` also requires the root to say so
+  cacheTtl: 10m             # how long one root's verdict is reused
+  checkRevocations: false   # also consult the CPU vendor's CRLs (needs network)
 
 # Rego modules, ANDed with the built-in pin policy. A policy can narrow trust,
 # never widen it.
@@ -157,7 +172,7 @@ fetch → cert-chain → untrusted-root → jws (+ freshness) → tls-fingerprin
    no redirects, no connection reuse.
 2. **cert-chain** — the bundle's `certChain` is validated leaf → root.
 3. **untrusted-root** — the root must be one of your `trustedRoots`, by
-   fingerprint.
+   fingerprint, **or** it must prove it is a Super Swarm root (see below).
 4. **jws** — the payload's signature (RS256 or ES256K) is checked against the
    chain leaf, and `issuedAt` against `maxBundleAge`.
 5. **tls-fingerprint** — the signed `certFingerprint` is compared with the leaf
@@ -167,9 +182,60 @@ fetch → cert-chain → untrusted-root → jws (+ freshness) → tls-fingerprin
 6. **policy** — the built-in pin policy and every user policy must allow.
 
 The handshake deliberately does not consult your system trust store: trust is
-decided by that chain terminating at a root *you* configured, plus the
-fingerprint comparison. Swarm Cloud roots are not publicly trusted, and a
-system-pool check would reject every healthy endpoint while adding nothing.
+decided by that chain terminating at a root you configured or the gatekeeper
+attested, plus the fingerprint comparison. Swarm Cloud roots are not publicly
+trusted, and a system-pool check would reject every healthy endpoint while
+adding nothing.
+
+## Roots that prove what they are
+
+A Super Swarm Root CA runs inside a confidential VM, and its certificate carries
+what that VM attested. When the chain ends in a root you never listed, the
+gatekeeper checks that evidence rather than giving up:
+
+1. the hardware report has to verify against the CPU vendor's own root — AMD's
+   ARK for SEV-SNP, Intel's chain for TDX — with the certificates the evidence
+   carries;
+2. the report's `reportData` has to commit to *this* certificate's public key,
+   so the attestation is about this CA and not merely about some VM;
+3. the VM's launch measurement is rebuilt from the published `sp-vm` build
+   artefacts, has to reproduce the measurement the hardware signed, and is then
+   normalised to a value that does not depend on vCPU count or RAM size;
+4. that measurement has to carry a Super Protocol signature, checked against a
+   key **pinned in the gatekeeper binary**. Step 4 is what makes the chain
+   closed: without it, any tenant of any AMD host could produce steps 1–3.
+
+`gatekeeper verify` prints all of it:
+
+```
+Root certificate TEE evidence
+  Verdict             attested — this is a Super Swarm root
+  Evidence type       AMD SEV-SNP (QEMU)
+  Report integrity    ok
+  Chain revocation    not checked
+  CPU generation      Genoa
+  SNP firmware TCB    27
+  Debug mode          disabled
+  Ciphertext hiding   disabled
+  Page swap disabled  disabled
+  Network type        untrusted
+  Measurement         842c5f2e… (in trusted registry)
+  Key binding         676553c0… (matches the report data)
+```
+
+Two things the gatekeeper deliberately does **not** decide for you. The TEE
+flags — debug, ciphertext hiding, page-swap — are reported, never enforced;
+require what you want in Rego, through
+`input.attestation.rootAttestation.teeFlags`. And "network type", which is the
+platform's own trusted/untrusted network split rather than a judgement about the
+CA: today's Swarm Cloud root says `untrusted`, so the default accepts either and
+tells you which. Set `attestedRoots.requireNetworkType: trusted` to insist.
+
+The check fails closed. A registry that cannot be reached, artefacts that cannot
+be downloaded, an evidence type this build does not know: all deny, with the
+reason appended to the untrusted-root denial. Manually pinned roots keep working
+with no network at all, which is the offline escape hatch —
+`attestedRoots.enabled: false` turns the whole path off.
 
 ## Denials
 

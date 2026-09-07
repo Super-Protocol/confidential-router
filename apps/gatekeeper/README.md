@@ -86,7 +86,7 @@ parsing tables. Advice and warnings go to stderr; stdout is the document.
 | `init` | Write a starter configuration. It is deliberately not runnable yet. |
 | `config path` | Print the config file this invocation would use, and which layer decided. |
 | `config validate` | Apply every rule startup applies and list all problems at once. |
-| `trust roots list\|add\|rm` | The global trusted roots ("Trusted Clouds"). |
+| `trust roots list\|add\|rm` | The global trusted roots ("Trusted Clouds"). Optional for a Swarm cloud — see below. |
 | `endpoint list\|add\|rm` | Local listeners and their upstreams. |
 | `endpoint trust list\|add\|rm` | One endpoint's pinned `evidenceDigest` values. |
 | `endpoint discover <endpoint>` | Show what an upstream publishes, without trusting it. |
@@ -133,14 +133,12 @@ Wrote ~/.config/confidential-gatekeeper/config.yaml
 ...
 
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is not ready to run (2 problems):
+~/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
   - endpoints: at least one endpoint is required
-  - trustedRoots: at least one trusted root is required — the gatekeeper has no built-in trust
 
 Nothing in the file is wrong — it is not finished. See `gatekeeper trust roots add`
 and `gatekeeper endpoint add`.
 
-$ gatekeeper trust roots add swarm-cloud-prod --pem-file ./roots/prod.pem
 $ gatekeeper endpoint add llama-33-70b \
     --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
 $ gatekeeper endpoint discover llama-33-70b     # review what it publishes
@@ -148,6 +146,21 @@ $ gatekeeper endpoint trust add llama-33-70b --from-upstream
 $ gatekeeper config validate
 ~/.config/confidential-gatekeeper/config.yaml is valid and ready to run
 ```
+
+There is no `trust roots add` in that sequence. A Swarm cloud's certificate
+authority runs inside a TEE and its certificate carries the hardware evidence
+for it, so the gatekeeper checks that evidence — the report against the CPU
+vendor's own root, the report's `reportData` against the certificate's key, the
+VM's measurement against the artefacts the build published, and that measurement
+against a Super Protocol signature verified with a key pinned in this binary. A
+root that passes all four is trusted without anyone pasting a PEM.
+
+Add a root by hand to accept exactly one cloud and nothing else, to trust a CA
+that publishes no evidence, or to run with no network at all: manual roots are
+matched offline, and `attestedRoots.enabled: false` turns the other anchor off.
+Manual roots always win — the attested check only runs for a chain that
+terminated somewhere the manual list does not know. ADR-003 §2a is the model,
+`docs/gatekeeper.md` the user-facing version.
 
 Every edit goes through `config.Document`, so the comments and formatting of a
 hand-written file survive, and every save is atomic.
@@ -175,25 +188,25 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ llama-33-70b  confidential                                                                     │
 │                                                                                                │
-│ root                    demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                  │
+│ root                    demo-root  sha256/kw3eZGpcCR…CJ9tOPFo  (attested)                      │
 │ observed TLS leaf       sha256/hf1GyYDQLx…SsEbA-QE                                             │
 │ signed certFingerprint  sha256/hf1GyYDQLx…SsEbA-QE                                             │
 │ evidenceDigest          sha256/q6kP-YVuoi…BmHXlMPg  pinned                                     │
 │ root CA TEE quote       tdx-v4 (not validated)                                                 │
 │                                                                                                │
+│ root TEE evidence  attested                                                                    │
+│   evidence              AMD SEV-SNP (QEMU)                                                     │
+│   report integrity      ok                                                                     │
+│   measurement           842c5f2eb0…9b3625c2  in trusted registry                               │
+│   flags                 debug off · ciphertext hiding off · page swap disabled off             │
+│                                                                                                │
 │ chain (leaf → root)                                                                            │
 │   ├─ CN=llama-33-70b.tee.swarm.cloud  sha256/hf1GyYDQLx…SsEbA-QE                               │
 │   ├─ CN=demo-intermediate  sha256/F4tTs2djw7…iMDCUMT4                                          │
-│   └─ CN=demo-root  sha256/kw3eZGpcCR…CJ9tOPFo                                                  │
-│                                                                                                │
-│ images                                                                                         │
-│   ghcr.io/super-protocol/vllm@sha256:8f1c...c2a1                                               │
-│   ghcr.io/super-protocol/router-sidecar@sha256:41ab...9d7e                                     │
-│                                                                                                │
 │ …                                                                                              │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 showing detail · 2 endpoint(s)                                                                    
-↑/k up • ↓/j down • s start/stop • r re-attest • t trust this deployment • ? help • q quit
+↑/k up • ↓/j down • s start/stop • r re-attest • t trust this deployment • ? help • q quit        
 ```
 
 `l` swaps the lower pane for the live log tail:
