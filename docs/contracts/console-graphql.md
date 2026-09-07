@@ -44,7 +44,8 @@ enum EvidenceState { PUBLISHED STALE NOT_PUBLISHED }
 type EvidenceSnapshot {
   id: ID!, endpointId: ID!, fetchedAt: DateTime!, issuedAt: DateTime!
   quoteAgeSeconds: Int!                                              # now − issuedAt, for "issued 4 min ago"
-  evidenceDigest: String!, evidenceDigestHex: String!, certFingerprint: String!
+  evidenceDigest: String!, evidenceDigestHex: String!                 # canonical wire form + the hex the console shows
+  certFingerprint: String!, certFingerprintHex: String!
   quoteFormat: String                                                # rootCaTeeQuote.format, e.g. intel-tdx-quote-v5
   containerImages: [String!]!
   chain: [CertSummary!]!                                             # subject / issuer / notAfter / sha256 per cert
@@ -52,7 +53,7 @@ type EvidenceSnapshot {
   jws: String!                                                       # "Copy evidence JWS"
   bundle: JSON!                                                      # raw published bundle for export
 }
-type CertSummary { subject: String!, issuer: String!, notAfter: DateTime!, fingerprint: String!, isRoot: Boolean! }
+type CertSummary { subject: String!, issuer: String!, notAfter: DateTime!, fingerprint: String!, fingerprintHex: String!, isRoot: Boolean! }
 type Measurement { name: String!, value: String! }
 type Model {
   id: ID!, slug: String!, name: String!, contextLength: Int!, capabilities: [ModelCapability!]!

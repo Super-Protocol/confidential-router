@@ -39,12 +39,12 @@ func newStatusCommand(g *globals) *cobra.Command {
 			if !ok {
 				return failf(ExitUsage, "no endpoint named %q", endpoint)
 			}
-			return p.emit(ep, func(w io.Writer) {
+			return p.emit(endpointDocumentOf(ep), func(w io.Writer) {
 				printEndpointDetail(w, ep, now)
 			})
 		}
 
-		return p.emit(snapshot, func(w io.Writer) {
+		return p.emit(snapshotDocumentOf(snapshot), func(w io.Writer) {
 			printSnapshot(w, snapshot, now)
 		})
 	}

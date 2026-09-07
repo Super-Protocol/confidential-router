@@ -14,6 +14,8 @@
 const CANONICAL_BODY = /^[A-Za-z0-9_-]{43}$/;
 const HEX_BODY = /^[0-9a-fA-F]{64}$/;
 const PREFIX = 'sha256/';
+/** The scheme of the human-facing spelling — what the console shows and the gatekeeper prints. */
+const HEX_PREFIX = 'sha256:';
 
 export class EvidenceDigestError extends Error {
   constructor(input: string, reason: string) {
@@ -22,7 +24,7 @@ export class EvidenceDigestError extends Error {
   }
 }
 
-/** Both encodings of one digest; the console shows the hex, the gatekeeper pins the canonical. */
+/** Both encodings of one digest; the console shows the hex, the bundle carries the canonical. */
 export interface EvidenceDigest {
   /** `sha256/<base64url>`, unpadded. */
   canonical: string;
@@ -44,7 +46,9 @@ export function parseEvidenceDigest(input: unknown): EvidenceDigest {
   }
   const trimmed = input.trim();
   const prefixed = trimmed.startsWith(PREFIX);
-  const body = prefixed ? trimmed.slice(PREFIX.length) : trimmed;
+  // `sha256:<hex>` is the form every user-facing surface prints (SUP-115), so
+  // it has to be a form this reads back.
+  const body = prefixed ? trimmed.slice(PREFIX.length) : stripHexPrefix(trimmed);
 
   if (HEX_BODY.test(body)) {
     const hex = body.toLowerCase();
@@ -68,6 +72,28 @@ export function parseEvidenceDigest(input: unknown): EvidenceDigest {
     throw new EvidenceDigestError(trimmed, 'body does not decode to a canonical 32-byte digest');
   }
   return { canonical: `${PREFIX}${unpadded}`, hex: bytes.toString('hex') };
+}
+
+/**
+ * The hex spelling of a fingerprint, for the fields the console renders as
+ * `sha256:<hex>`.
+ *
+ * Returns an empty string for a value that is not a 32-byte digest. Every
+ * fingerprint stored on an `EvidenceSnapshot` passed the bundle's shape check
+ * on the way in, so this is a guard rather than a path — but a GraphQL query
+ * for a whole overview should not fail because one historical row holds
+ * something odd; the console falls back to the canonical form it also receives.
+ */
+export function fingerprintHex(value: string): string {
+  try {
+    return parseEvidenceDigest(value).hex;
+  } catch {
+    return '';
+  }
+}
+
+function stripHexPrefix(value: string): string {
+  return value.startsWith(HEX_PREFIX) ? value.slice(HEX_PREFIX.length) : value;
 }
 
 function base64UrlOfHex(hex: string): string {

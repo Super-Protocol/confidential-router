@@ -43,8 +43,10 @@ type leafMismatchError struct {
 }
 
 func (e *leafMismatchError) Error() string {
+	// Hex, like every other fingerprint a user reads: this message reaches them
+	// through the 503 body, the log and the audit log.
 	return fmt.Sprintf("the upstream presented %s, not the certificate this endpoint was attested over (%s)",
-		e.Got, e.Want)
+		attestation.FormatDigestHex(e.Got), attestation.FormatDigestHex(e.Want))
 }
 
 // pool is one http.Transport whose TLS handshakes are all held to the same

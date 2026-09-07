@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/proxy"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 )
@@ -77,8 +78,15 @@ func TestAuditLogRecordsVerdictsAndNeverBodies(t *testing.T) {
 			if entry.Admitted || entry.Stage != "policy" {
 				t.Errorf("verdict entry = %+v, want the policy denial", entry)
 			}
-			if entry.EvidenceDigest != published {
-				t.Errorf("evidenceDigest = %q, want what the upstream published", entry.EvidenceDigest)
+			// Recorded in the `sha256:<hex>` form every user-facing surface
+			// shows, so an audit line can be read against a verify report or
+			// the console without re-encoding it (SUP-115).
+			if want := attestation.FormatDigestHex(published); entry.EvidenceDigest != want {
+				t.Errorf("evidenceDigest = %q, want the hex spelling of what the upstream published (%q)",
+					entry.EvidenceDigest, want)
+			}
+			if strings.HasPrefix(entry.ObservedTLSFingerprint, "sha256/") {
+				t.Errorf("observedTlsFingerprint = %q, want the hex spelling", entry.ObservedTLSFingerprint)
 			}
 			if entry.ObservedTLSFingerprint == "" {
 				t.Error("the verdict entry does not record the channel it was bound to")

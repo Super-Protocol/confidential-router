@@ -105,6 +105,30 @@ func TestEvidenceDigestHexRoundTrips(t *testing.T) {
 	}
 }
 
+// TestFormatDigestHexRendersEverySpelling covers the display helper every
+// user-facing surface goes through: any accepted spelling of a digest comes out
+// as `sha256:<hex>`, and a value that is not a digest is passed through rather
+// than swallowed — a report that prints something unexpected is far more useful
+// than one with an empty field where a fingerprint should be.
+func TestFormatDigestHexRendersEverySpelling(t *testing.T) {
+	t.Parallel()
+	const (
+		hexBody   = "c1e31dc829f754d528b15d0cc5fe8fd43f225865d5c9367f77ee6f116e10f6ab"
+		canonical = "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs"
+		shown     = "sha256:" + hexBody
+	)
+	for _, input := range []string{canonical, canonical + "=", hexBody, strings.ToUpper(hexBody), shown, "sha256/" + hexBody} {
+		if got := attestation.FormatDigestHex(input); got != shown {
+			t.Errorf("FormatDigestHex(%q) = %q, want %q", input, got, shown)
+		}
+	}
+	for _, input := range []string{"", "not-a-digest", "sha256/short"} {
+		if got := attestation.FormatDigestHex(input); got != input {
+			t.Errorf("FormatDigestHex(%q) = %q, want it returned unchanged", input, got)
+		}
+	}
+}
+
 func TestFingerprintsEqual(t *testing.T) {
 	t.Parallel()
 	a := attestation.SHA256Fingerprint([]byte("a"))

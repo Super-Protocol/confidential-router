@@ -34,8 +34,11 @@ func newTrustCommand(g *globals) *cobra.Command {
 
 // rootView is one trusted root as `trust roots list` reports it.
 type rootView struct {
-	Name        string    `json:"name"`
+	Name string `json:"name"`
+	// Fingerprint is the human-facing `sha256:<hex>` form, Canonical the
+	// `sha256/<base64url>` one a bundle's chain is matched against.
 	Fingerprint string    `json:"fingerprint"`
+	Canonical   string    `json:"fingerprintCanonical"`
 	Subject     string    `json:"subject"`
 	NotBefore   time.Time `json:"notBefore"`
 	NotAfter    time.Time `json:"notAfter"`
@@ -63,7 +66,8 @@ func newTrustRootsListCommand(g *globals) *cobra.Command {
 		for _, root := range store.Roots() {
 			views = append(views, rootView{
 				Name:        root.Name,
-				Fingerprint: root.Fingerprint.String(),
+				Fingerprint: root.Fingerprint.Display(),
+				Canonical:   root.Fingerprint.String(),
 				Subject:     root.Certificate.Subject.String(),
 				NotBefore:   root.Certificate.NotBefore,
 				NotAfter:    root.Certificate.NotAfter,
@@ -127,11 +131,11 @@ func newTrustRootsAddCommand(g *globals) *cobra.Command {
 		if !added {
 			fingerprint, _ := trust.FingerprintPEM(pemBytes)
 			existing, _ := store.RootByFingerprint(fingerprint)
-			fmt.Fprintf(out, "Already trusted as %q (%s); nothing to do\n", existing.Name, fingerprint)
+			fmt.Fprintf(out, "Already trusted as %q (%s); nothing to do\n", existing.Name, fingerprint.Display())
 			return nil
 		}
 		fingerprint, _ := trust.FingerprintPEM(pemBytes)
-		fmt.Fprintf(out, "Added trusted root %q (%s) to %s\n", name, fingerprint, store.Path())
+		fmt.Fprintf(out, "Added trusted root %q (%s) to %s\n", name, fingerprint.Display(), store.Path())
 		return nil
 	}
 	return cmd

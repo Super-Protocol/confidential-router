@@ -10,6 +10,11 @@
 // on input and normalised on the way in. Comparisons are therefore exact string
 // comparisons on the canonical form — the same property the generated Rego
 // trust module relies on.
+//
+// What a *human* sees is the other spelling: [Digest.Display] renders
+// `sha256:<hex>`, which is what the CLI, the dashboard, the config file and the
+// router console all show for the same 32 bytes (SUP-115). Only the canonical
+// form crosses the wire; only the hex form crosses to a reader.
 package trust
 
 import (
@@ -46,8 +51,9 @@ func ParseDigest(s string) (Digest, error) {
 	canonical, err := config.ParseEvidenceDigest(s)
 	if err != nil {
 		return "", fmt.Errorf(
-			"%q is not a SHA-256 digest: expected %s<43 canonical base64url chars>, "+
-				"%s<64 hex chars>, sha256:<64 hex chars> or bare hex", s, Prefix, Prefix)
+			"%q is not a SHA-256 digest: expected %s<64 hex chars> — the form the CLI prints and "+
+				"the console copies — or %s<43 canonical base64url chars>, %s<64 hex chars>, bare hex",
+			s, attestation.HexPrefix, Prefix, Prefix)
 	}
 	return Digest(canonical), nil
 }
@@ -93,6 +99,12 @@ func (d Digest) Bytes() []byte {
 // Hex renders the lower-case hex form used by `input.evidence.evidenceDigestHex`
 // and by most registries.
 func (d Digest) Hex() string { return hex.EncodeToString(d.Bytes()) }
+
+// Display renders the human-facing `sha256:<hex>` form: what the CLI and the
+// dashboard print, what the config file is written with, and what the router
+// console shows for the same deployment. [Digest.String] stays the canonical
+// form the bundle carries and pins are compared as.
+func (d Digest) Display() string { return attestation.HexPrefix + d.Hex() }
 
 // String returns the canonical `sha256/<base64url>` form.
 func (d Digest) String() string { return string(d) }

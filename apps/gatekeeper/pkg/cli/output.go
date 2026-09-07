@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 )
 
 // jsonFlag adds `--json` to a read command and returns the bound value.
@@ -82,16 +84,32 @@ func fields(w io.Writer, pairs [][2]string) {
 	_ = tw.Flush()
 }
 
-// shortDigest abbreviates a `sha256/<43 chars>` fingerprint for a table cell.
+// hexDigest renders a digest the way every human-facing surface of the product
+// shows one: `sha256:<hex>`. The canonical `sha256/<base64url>` form stays what
+// the bundle carries and what a pin is compared as; it reaches the reader only
+// through the `*Canonical` fields of `--json`.
+func hexDigest(d string) string { return attestation.FormatDigestHex(d) }
+
+// shortDigest abbreviates a fingerprint for a table cell, keeping its scheme.
 // The full value is always available from --json or the detail view; a table
 // that wraps is worse than one that elides.
 func shortDigest(d string) string {
-	body := strings.TrimPrefix(d, "sha256/")
+	// Either scheme separator, so the same helper shortens the hex form it is
+	// normally given and a canonical one it is occasionally handed.
+	sep := strings.IndexAny(d, ":/")
+	if sep < 0 {
+		return d
+	}
+	scheme, body := d[:sep+1], d[sep+1:]
 	if len(body) <= 16 {
 		return d
 	}
-	return "sha256/" + body[:8] + "…" + body[len(body)-6:]
+	return scheme + body[:8] + "…" + body[len(body)-6:]
 }
+
+// shortHexDigest is [shortDigest] over the hex spelling — the pair used for
+// every fingerprint that appears in a table.
+func shortHexDigest(d string) string { return shortDigest(hexDigest(d)) }
 
 // ago renders a timestamp the way a dashboard should: how long ago, not when.
 func ago(now, then time.Time) string {

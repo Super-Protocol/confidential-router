@@ -2,7 +2,7 @@ import { ArgsType, Field, Float, ID, Int, ObjectType, registerEnumType } from '@
 import { IsDate, IsOptional, IsString } from 'class-validator';
 import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { Coverage, DigestChange } from '../../../evidence/index.js';
-import { type EvidenceState, quoteAgeMs } from '../../../evidence/index.js';
+import { type EvidenceState, fingerprintHex, quoteAgeMs } from '../../../evidence/index.js';
 import { PageInfoModel } from '../common/page-info.model.js';
 import { JSONObject } from '../scalars/json.scalar.js';
 
@@ -31,8 +31,13 @@ export class CertSummaryModel {
   @Field()
   notAfter!: string;
 
-  @Field(() => String, { description: 'sha256/<base64url> of the certificate DER.' })
+  @Field(() => String, { description: 'sha256/<base64url> of the certificate DER — the form the bundle carries.' })
   fingerprint!: string;
+
+  @Field(() => String, {
+    description: 'The same fingerprint in hex, which is how the console and the gatekeeper show it.',
+  })
+  fingerprintHex!: string;
 
   @Field(() => Boolean, { description: 'True for the terminal certificate of the published chain.' })
   isRoot!: boolean;
@@ -75,6 +80,9 @@ export class EvidenceSnapshotModel {
   @Field(() => String, { description: 'sha256/<base64url> of the TLS leaf the bundle asserts.' })
   certFingerprint!: string;
 
+  @Field(() => String, { description: 'The same fingerprint in hex, which is what the console renders.' })
+  certFingerprintHex!: string;
+
   @Field(() => String, { nullable: true, description: 'rootCaTeeQuote.format, e.g. intel-tdx-quote-v5.' })
   quoteFormat!: string | null;
 
@@ -103,10 +111,15 @@ export class EvidenceSnapshotModel {
       evidenceDigest: snapshot.evidenceDigest,
       evidenceDigestHex: snapshot.evidenceDigestHex,
       certFingerprint: snapshot.certFingerprint,
+      // Derived rather than stored: it is a second spelling of a column the row
+      // already has, and one the console asks for on every screen that shows a
+      // fingerprint (SUP-115).
+      certFingerprintHex: fingerprintHex(snapshot.certFingerprint),
       quoteFormat: snapshot.quoteFormat,
       containerImages: snapshot.containerImages,
       chain: snapshot.chainSummary.map((certificate, index) => ({
         ...certificate,
+        fingerprintHex: fingerprintHex(certificate.fingerprint),
         isRoot: index === snapshot.chainSummary.length - 1,
       })),
       measurements: Object.entries(snapshot.measurements ?? {}).map(([name, value]) => ({

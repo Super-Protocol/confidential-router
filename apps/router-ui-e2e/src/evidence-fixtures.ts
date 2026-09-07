@@ -24,6 +24,13 @@ export const REFRESHED_JWS = 'eyJhbGciOiJSUzI1NiJ9.eyJlbmRwb2ludCI6ImRlZXBzZWVrI
 export const PUBLISHED_DIGEST = 'sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs';
 export const ROTATING_DIGEST = 'sha256/Kd8sB4nR2wYvT6xQmL0aZc9Ef1JhUpGi3NrXoVeSbAo';
 
+/**
+ * The same two digests as the console shows and copies them: hex, the spelling
+ * the gatekeeper prints and its config file records (SUP-115).
+ */
+export const PUBLISHED_DIGEST_HEX = 'sha256:f579367d3d6942f03b05d138acbd1e426dd7913a59f2f35cd58b16b87809a00b';
+export const ROTATING_DIGEST_HEX = 'sha256:29df2c0789d1db062f4fac5098bd1a65cf447f52615291a2dcdad7a157926c0a';
+
 function snapshot(overrides: Record<string, unknown>) {
   return {
     __typename: 'EvidenceSnapshot',
@@ -34,8 +41,9 @@ function snapshot(overrides: Record<string, unknown>) {
     quoteAgeSeconds: 12,
     quoteFormat: 'intel-tdx-quote-v5',
     evidenceDigest: PUBLISHED_DIGEST,
-    evidenceDigestHex: 'f5793a7d4ec1',
+    evidenceDigestHex: PUBLISHED_DIGEST_HEX.slice('sha256:'.length),
     certFingerprint: 'sha256/PmQ7dR2xWvB9CkE5sM1fTnZ4aYh6UbLp0GjXoIeVwNs',
+    certFingerprintHex: '3e643b751db15af07d0a4139b0cd5f4e767869887a51b2e9d068d7a08795c0db',
     containerImages: ['vllm-tdx@sha256:6b1f9c04'],
     jws: PUBLISHED_JWS,
     measurements: [
@@ -49,7 +57,8 @@ function snapshot(overrides: Record<string, unknown>) {
         subject: `CN=${PUBLISHED_HOST}`,
         issuer: 'CN=swarm-pki-subroot',
         notAfter: '2026-11-29T00:00:00.000Z',
-        fingerprint: 'sha256/leafleafleafleafleafleaf',
+        fingerprint: 'sha256/OJ_Y8boMlSj9_dKFf9w8Si1muIFr6EAKgXCdgnEuwLA',
+        fingerprintHex: '389fd8f1ba0c9528fdfdd2857fdc3c4a2d66b8816be8400a81709d82712ec0b0',
         isRoot: false,
       },
       {
@@ -57,7 +66,8 @@ function snapshot(overrides: Record<string, unknown>) {
         subject: 'CN=swarm-cloud-prod',
         issuer: 'CN=swarm-cloud-prod',
         notAfter: '2031-01-01T00:00:00.000Z',
-        fingerprint: 'sha256/rootrootrootrootrootroot',
+        fingerprint: 'sha256/eN7J30KqI96yWxc5VLOpL5VPQYyBKAA2K3HhPBIBXgg',
+        fingerprintHex: '78dec9df42aa23deb25b173954b3a92f954f418c812800362b71e13c12015e08',
         isRoot: true,
       },
     ],
@@ -88,6 +98,7 @@ const ENDPOINTS = [
       endpointId: 'ep-2',
       quoteAgeSeconds: 740,
       evidenceDigest: ROTATING_DIGEST,
+      evidenceDigestHex: ROTATING_DIGEST_HEX.slice('sha256:'.length),
       jws: ROTATING_JWS,
     }),
     tokensRouted30d: 340_000,
@@ -177,6 +188,7 @@ export const CONSOLE_OPERATIONS = {
             quoteAgeSeconds: 3,
             issuedAt: '2026-08-31T10:00:00.000Z',
             evidenceDigest: ROTATING_DIGEST,
+            evidenceDigestHex: ROTATING_DIGEST_HEX.slice('sha256:'.length),
             jws: REFRESHED_JWS,
           })
         : null,

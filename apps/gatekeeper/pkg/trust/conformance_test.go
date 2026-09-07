@@ -82,10 +82,11 @@ func TestConformanceParseDigestFinalCharacters(t *testing.T) {
 	}
 }
 
-// TestParseDigestAcceptsThePrefixedHexSugar documents the one spelling this
-// package accepts on top of the vectors. Hex is unambiguous without a scheme,
-// so `sha256:<hex>` cannot collide with anything; `sha256:<base64url>` is a
-// bare token behind a scheme and stays rejected.
+// TestParseDigestAcceptsThePrefixedHexSugar documents the one spelling accepted
+// on top of the vectors — and the one everything user-facing prints, so it is
+// also the spelling a user is most likely to paste. Hex is unambiguous without
+// a scheme, so `sha256:<hex>` cannot collide with anything; `sha256:<base64url>`
+// is a bare token behind a scheme and stays rejected.
 func TestParseDigestAcceptsThePrefixedHexSugar(t *testing.T) {
 	t.Parallel()
 	const (
@@ -101,6 +102,49 @@ func TestParseDigestAcceptsThePrefixedHexSugar(t *testing.T) {
 	}
 	if got, err := trust.ParseDigest("sha256:weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs"); err == nil {
 		t.Errorf("ParseDigest(sha256:<base64url>) = %q, want a rejection", got)
+	}
+}
+
+// TestConformanceDisplayFormIsTheHexSpelling holds the *human-facing* half of
+// the contract to the same vectors: whatever spelling a digest arrives in, the
+// form the CLI prints, the dashboard shows, the config file records and the
+// router console copies is `sha256:<hex>` of the same 32 bytes — and pasting
+// that form back in yields the canonical digest it came from (SUP-115).
+//
+// The TypeScript side asserts the identical property over these vectors
+// (libs/types/src/evidence-digest.spec.ts), which is what makes "the console
+// and the gatekeeper show the same string" a tested claim rather than a hope.
+func TestConformanceDisplayFormIsTheHexSpelling(t *testing.T) {
+	t.Parallel()
+	vectors := readDigestVectors(t)
+
+	for _, c := range vectors.Cases {
+		if !c.Valid {
+			continue
+		}
+		t.Run(c.Note, func(t *testing.T) {
+			t.Parallel()
+			digest, err := trust.ParseDigest(c.Input)
+			if err != nil {
+				t.Fatalf("ParseDigest(%q): %v", c.Input, err)
+			}
+			shown := digest.Display()
+			if want := "sha256:" + digest.Hex(); shown != want {
+				t.Fatalf("Display() = %q, want %q", shown, want)
+			}
+			if len(digest.Hex()) != 64 || strings.ToLower(digest.Hex()) != digest.Hex() {
+				t.Fatalf("Hex() = %q, want 64 lower-case hex characters", digest.Hex())
+			}
+			// The printed form is itself an accepted input: what a user copies
+			// out of a report is what they can paste into `trust add`.
+			back, err := trust.ParseDigest(shown)
+			if err != nil {
+				t.Fatalf("ParseDigest(%q): %v", shown, err)
+			}
+			if back.String() != c.Canonical {
+				t.Fatalf("ParseDigest(%q) = %q, want %q", shown, back, c.Canonical)
+			}
+		})
 	}
 }
 

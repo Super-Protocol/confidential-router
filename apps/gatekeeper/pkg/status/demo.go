@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 )
@@ -165,7 +166,8 @@ func demoReport(ep Endpoint, health Health, at time.Time) *Report {
 	switch health {
 	case Broken:
 		report.Stage = "untrusted-root"
-		report.Reason = "the chain terminates in " + rootFP + ", which is not a trusted root"
+		report.Reason = "the chain terminates in " + attestation.FormatDigestHex(rootFP) +
+			", which is not a trusted root"
 		report.UntrustedRoot = rootFP
 	case NonConfidential:
 		report.Verified = true

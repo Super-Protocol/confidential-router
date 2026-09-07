@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@confidential-router/mock-evidence-host": "workspace:*",
+    "@confidential-router/types": "workspace:*",
     "@confidential-router/mock-litellm": "workspace:*",
     "openai": "^7.8.0"
   }

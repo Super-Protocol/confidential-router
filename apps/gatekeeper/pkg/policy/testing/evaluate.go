@@ -266,7 +266,7 @@ func matchRoot(store *trust.Store, chain []string, warnings *[]string) (string, 
 	root, ok := store.RootByFingerprint(fingerprint)
 	if !ok {
 		*warnings = append(*warnings,
-			"the chain terminates in "+fingerprint.String()+", which is not a trusted root")
+			"the chain terminates in "+fingerprint.Display()+", which is not a trusted root")
 		return "", fingerprint
 	}
 	return root.Name, fingerprint

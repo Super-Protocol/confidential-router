@@ -1,11 +1,14 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/cli"
 )
 
@@ -22,6 +25,9 @@ import (
 // complete, so every step below has to work on a config that is not.
 func TestPinlessEndpointFollowsTheWarningsOwnScript(t *testing.T) {
 	digest := testDigest("deployment A")
+	// What the reports print and the file records is the hex spelling of the
+	// same 32 bytes the bundle carries (SUP-115).
+	shown := attestation.FormatDigestHex(digest)
 	host := newEvidenceHost(t, digest)
 
 	h := newHarness(t)
@@ -68,16 +74,16 @@ func TestPinlessEndpointFollowsTheWarningsOwnScript(t *testing.T) {
 		t.Fatalf("verify exit = %d, want %d\nstdout: %s\nstderr: %s",
 			before.code, cli.ExitDenied, before.stdout, before.stderr)
 	}
-	if !strings.Contains(before.stdout, digest) {
-		t.Errorf("stdout = %q, want the published digest", before.stdout)
+	if !strings.Contains(before.stdout, shown) {
+		t.Errorf("stdout = %q, want the published digest in hex", before.stdout)
 	}
 
 	pinned := h.mustRun("endpoint", "trust", "add", "router", "--from-upstream", "--yes")
-	if !strings.Contains(pinned.stdout, digest) {
-		t.Errorf("stdout = %q, want the pinned digest", pinned.stdout)
+	if !strings.Contains(pinned.stdout, shown) {
+		t.Errorf("stdout = %q, want the pinned digest in hex", pinned.stdout)
 	}
-	if !strings.Contains(h.config(), digest) {
-		t.Error("the published digest did not reach the config file")
+	if !strings.Contains(h.config(), shown) {
+		t.Error("the published digest did not reach the config file in the printed form")
 	}
 
 	after := h.mustRun("verify", "router")
@@ -87,6 +93,78 @@ func TestPinlessEndpointFollowsTheWarningsOwnScript(t *testing.T) {
 
 	// And the file is now complete, which is what `run` needs.
 	h.mustRun("config", "validate")
+}
+
+// TestTheDigestPrintedIsTheDigestPinned walks the path a user actually takes
+// between two surfaces: read a digest off one, paste it into the other.
+//
+// `--json` reports the digest in both spellings — the hex one every screen
+// shows, and the canonical one the signed bundle carries — and the hex one is
+// accepted verbatim by `endpoint trust add`, which is what makes "copy the
+// digest from the console" a working instruction (SUP-115).
+func TestTheDigestPrintedIsTheDigestPinned(t *testing.T) {
+	digest := testDigest("deployment A")
+	host := newEvidenceHost(t, digest)
+
+	h := newHarness(t)
+	h.env.Now = time.Now
+	h.mustRun("init")
+	h.mustRun("trust", "roots", "add", "swarm-cloud-test", "--pem-file", h.write("root.pem", host.RootPEM))
+	h.mustRun("endpoint", "add", "router", "--listen", "127.0.0.1:8443", "--upstream", host.Upstream())
+
+	var report struct {
+		EvidenceDigest          string `json:"evidenceDigest"`
+		EvidenceDigestCanonical string `json:"evidenceDigestCanonical"`
+	}
+	discovered := h.mustRun("endpoint", "discover", "router", "--json")
+	if err := json.Unmarshal([]byte(discovered.stdout), &report); err != nil {
+		t.Fatalf("decoding the report: %v\n%s", err, discovered.stdout)
+	}
+	if want := attestation.FormatDigestHex(digest); report.EvidenceDigest != want {
+		t.Errorf("evidenceDigest = %q, want the hex spelling %q", report.EvidenceDigest, want)
+	}
+	if report.EvidenceDigestCanonical != digest {
+		t.Errorf("evidenceDigestCanonical = %q, want the published %q", report.EvidenceDigestCanonical, digest)
+	}
+
+	h.mustRun("endpoint", "trust", "add", "router", report.EvidenceDigest)
+	if !strings.Contains(h.config(), report.EvidenceDigest) {
+		t.Errorf("the config does not hold the digest as it was printed:\n%s", h.config())
+	}
+	if got := h.mustRun("verify", "router"); !strings.Contains(got.stdout, "ADMITTED") {
+		t.Errorf("stdout = %q, want the endpoint admitted by the pin it was given", got.stdout)
+	}
+}
+
+// TestAConfigPinnedInTheCanonicalFormStillAdmits is the compatibility half of
+// SUP-115: every config written before the gatekeeper started spelling pins in
+// hex holds `sha256/<base64url>` values, and those files must keep working
+// untouched — loading, admitting, and reading back as the hex the rest of the
+// product now shows.
+func TestAConfigPinnedInTheCanonicalFormStillAdmits(t *testing.T) {
+	digest := testDigest("deployment A")
+	host := newEvidenceHost(t, digest)
+
+	h := newHarness(t)
+	h.env.Now = time.Now
+	h.mustRun("init")
+	h.mustRun("trust", "roots", "add", "swarm-cloud-test", "--pem-file", h.write("root.pem", host.RootPEM))
+	h.mustRun("endpoint", "add", "router",
+		"--listen", "127.0.0.1:8443", "--upstream", host.Upstream(), "--trust", digest)
+
+	// Put the pin back in the spelling an older gatekeeper would have written.
+	old := strings.ReplaceAll(h.config(), attestation.FormatDigestHex(digest), digest)
+	if err := os.WriteFile(h.configPath, []byte(old), 0o600); err != nil {
+		t.Fatalf("rewriting the config: %v", err)
+	}
+
+	if got := h.mustRun("verify", "router"); !strings.Contains(got.stdout, "ADMITTED") {
+		t.Errorf("stdout = %q, want a canonical pin to still admit", got.stdout)
+	}
+	listed := h.mustRun("endpoint", "trust", "list", "router")
+	if !strings.Contains(listed.stdout, attestation.FormatDigestHex(digest)) {
+		t.Errorf("stdout = %q, want the canonical pin reported in hex", listed.stdout)
+	}
 }
 
 // TestPinlessEndpointVerifiesTheLiveChannelBinding is the same live path,

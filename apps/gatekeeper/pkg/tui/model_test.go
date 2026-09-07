@@ -34,6 +34,25 @@ func TestDashboardShowsEveryEndpointAndTheSelectedReport(t *testing.T) {
 	}
 }
 
+// TestTheDetailPaneShowsHexFingerprints holds the dashboard to the product-wide
+// rule: a digest is shown as `sha256:<hex>`, the same string `gatekeeper verify`
+// prints and the router console copies (SUP-115). The canonical
+// `sha256/<base64url>` form belongs to the bundle, not to a screen.
+func TestTheDetailPaneShowsHexFingerprints(t *testing.T) {
+	m := newModel(t, newFakeSupervisor(confidentialEndpoint("llama-33-70b")))
+	view := m.View()
+
+	// The evidenceDigest, the observed leaf and the matched root, abbreviated.
+	for _, want := range []string{"sha256:4b04a5f279…767ee3dd", "sha256:e1f4b16737…117e762d", "sha256:e2b0c3aa4e…700674a4"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view does not contain %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "sha256/") {
+		t.Errorf("the dashboard shows a canonical digest:\n%s", view)
+	}
+}
+
 func TestMovingTheCursorChangesTheDetailPane(t *testing.T) {
 	m := newModel(t, newFakeSupervisor(confidentialEndpoint("llama-33-70b"), confidentialEndpoint("qwen25-72b")))
 
