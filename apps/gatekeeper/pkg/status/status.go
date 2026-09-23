@@ -131,6 +131,10 @@ type AttestedRoot struct {
 	// operator listed it in `attestedRoots.trustedMeasurements`. Empty when
 	// nothing did, which is what the denial is about.
 	MeasurementSource string `json:"measurementSource,omitempty"`
+	// MeasurementUnknown means the registry answered and holds no signature for
+	// this measurement — as opposed to a registry that could not be consulted,
+	// which is not an answer and must not be acted on as one.
+	MeasurementUnknown bool `json:"measurementUnknown,omitempty"`
 
 	// TEE flags a policy may want to police. Named after the report fields
 	// rather than after any judgement about them.

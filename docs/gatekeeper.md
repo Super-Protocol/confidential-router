@@ -311,6 +311,11 @@ import rego.v1
 
 default allow := false
 
+# `rootAttestation` is absent entirely for a root you listed in `trustedRoots` —
+# that anchor is your own decision too, and a rule that only named the registry
+# would refuse every manually pinned cloud.
+allow if not input.attestation.rootAttestation
+
 allow if input.attestation.rootAttestation.measurementSource == "registry"
 ```
 

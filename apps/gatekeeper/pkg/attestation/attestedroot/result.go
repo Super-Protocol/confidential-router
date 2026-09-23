@@ -77,6 +77,15 @@ type Result struct {
 	// decision, and it is reported rather than folded into Attested so that a
 	// policy can tell the two apart.
 	MeasurementSource MeasurementSource `json:"measurementSource,omitempty"`
+	// MeasurementUnknown means the registry was reached and it holds no
+	// signature for this measurement.
+	//
+	// It is kept apart from a registry that could not be consulted, because only
+	// this one is a statement. "Not one of ours" is something an operator can
+	// decide to override; "I could not ask" is a transient failure, and treating
+	// the two alike would invite pinning an image during an outage that Super
+	// Protocol had signed all along.
+	MeasurementUnknown bool `json:"measurementUnknown,omitempty"`
 
 	// Logs are the steps that ran, in order, so a denial can be read without
 	// re-running the check with a debugger attached.
@@ -121,9 +130,10 @@ func (r *Result) Label() string {
 // It is the one denial an operator can clear by pinning, so it is what the
 // caller keys the "pin it with…" advice off. A report that failed earlier — a
 // bad signature, a key the report does not commit to — never derives a
-// measurement, and no pin would help it.
+// measurement, and no pin would help it; nor would one help a registry that
+// could not be reached, which is a failure to ask rather than an answer.
 func (r *Result) NeedsMeasurementAnchor() bool {
-	return r != nil && !r.Attested && len(r.Measurement) > 0 && r.MeasurementSource == ""
+	return r != nil && !r.Attested && r.MeasurementUnknown && r.MeasurementSource == ""
 }
 
 // RevocationLabel renders the optional CRL check for a report.

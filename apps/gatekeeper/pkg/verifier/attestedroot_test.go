@@ -392,19 +392,27 @@ func TestReportNamesTheAnchorThatAdmittedTheRoot(t *testing.T) {
 // the Rego input at all: a stricter deployment writes one rule and gets back
 // exactly the old guarantee, while a stand that needs the escape hatch keeps it.
 func TestAPolicyCanRefuseAnOperatorPinnedRoot(t *testing.T) {
+	// Verbatim the module docs/gatekeeper.md tells an operator to paste.
 	const module = `package gatekeeper.registryonly
 
 default allow := false
+
+allow if not input.attestation.rootAttestation
 
 allow if input.attestation.rootAttestation.measurementSource == "registry"
 `
 	for _, tc := range []struct {
 		name   string
 		result *attestedroot.Result
+		manual bool
 		admit  bool
 	}{
 		{name: "a registry-signed root passes", result: attestedOK(), admit: true},
 		{name: "an operator-pinned root does not", result: attestedByOperatorPin(), admit: false},
+		// `rootAttestation` is absent entirely for a root the operator listed, so
+		// a rule that only named the registry would refuse every manually pinned
+		// cloud — which is the mistake the documented module has to not make.
+		{name: "a manually listed root passes", result: attestedOK(), manual: true, admit: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ca := newTestCA(t)
@@ -412,7 +420,11 @@ allow if input.attestation.rootAttestation.measurementSource == "registry"
 			dir := t.TempDir()
 			writeFile(t, dir+"/registry-only.rego", module)
 
-			cfg := rootlessConfigIn(t, dir, "policies:\n  - name: registry-only\n    file: ./registry-only.rego\n")
+			policies := "policies:\n  - name: registry-only\n    file: ./registry-only.rego\n"
+			cfg := rootlessConfigIn(t, dir, policies)
+			if tc.manual {
+				cfg = configWithIn(t, dir, ca, []string{pinnedDigest}, policies)
+			}
 			v := newVerifier(t, cfg, ca.fetcher(document, ca.leafFingerprint())).
 				WithAttestedRoots(&stubAttestedRoots{result: tc.result})
 
@@ -426,7 +438,7 @@ allow if input.attestation.rootAttestation.measurementSource == "registry"
 			// Either way the root itself was accepted by the pipeline: the
 			// policy is narrowing a verified verdict, not standing in for it.
 			if !report.Verified {
-				t.Errorf("verified = false, want the attested root to have passed the pipeline")
+				t.Errorf("verified = false, want the root to have passed the pipeline")
 			}
 		})
 	}
@@ -467,6 +479,7 @@ func TestTheRegistryDenialNamesTheFix(t *testing.T) {
 	unvouched := attestedOK()
 	unvouched.Attested, unvouched.InRegistry = false, false
 	unvouched.MeasurementSource = ""
+	unvouched.MeasurementUnknown = true
 	unvouched.Reason = "measurement " + attestedMeasurement +
 		" is not in the Super Protocol trusted registry, and it is not listed in attestedRoots.trustedMeasurements"
 
@@ -490,27 +503,47 @@ func TestTheRegistryDenialNamesTheFix(t *testing.T) {
 	}
 }
 
-// TestADenialNoPinCanClearDoesNotOfferOne keeps the advice honest: a report that
-// failed its key binding never derived a measurement, so telling the operator to
-// pin one would send them after a fix that cannot work.
+// TestADenialNoPinCanClearDoesNotOfferOne keeps the advice honest. Pinning
+// clears exactly one denial — "the registry answered, and it has never heard of
+// this image" — and offering it for any other sends the operator after a fix
+// that cannot work.
 func TestADenialNoPinCanClearDoesNotOfferOne(t *testing.T) {
-	ca := newTestCA(t)
-	document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
-
 	unbound := attestedOK()
 	unbound.Attested, unbound.KeyBinding = false, false
-	unbound.MeasurementSource = ""
-	unbound.Measurement = nil
+	unbound.MeasurementSource, unbound.Measurement = "", nil
 	unbound.Reason = "the report's reportData does not commit to this certificate's public key"
 
-	v := newVerifier(t, rootlessConfig(t, ""), ca.fetcher(document, ca.leafFingerprint())).
-		WithAttestedRoots(&stubAttestedRoots{result: unbound})
+	// A registry that could not be reached is not an answer: the image may well
+	// be signed, and a pin taken during an outage is a permanent local decision
+	// made for a transient reason.
+	unreachable := attestedOK()
+	unreachable.Attested, unreachable.InRegistry = false, false
+	unreachable.MeasurementSource = ""
+	unreachable.Reason = "the trusted registry could not be consulted: dial tcp: no route to host"
 
-	report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-	if strings.Contains(report.Reason, "trust measurements add") {
-		t.Errorf("reason offers a pin for a denial pinning cannot clear:\n%s", report.Reason)
+	for _, tc := range []struct {
+		name   string
+		result *attestedroot.Result
+	}{
+		{name: "the report does not commit to this certificate's key", result: unbound},
+		{name: "the registry could not be consulted", result: unreachable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca := newTestCA(t)
+			document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+			v := newVerifier(t, rootlessConfig(t, ""), ca.fetcher(document, ca.leafFingerprint())).
+				WithAttestedRoots(&stubAttestedRoots{result: tc.result})
+
+			report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if report.Verified {
+				t.Fatal("a root nothing vouches for was accepted")
+			}
+			if strings.Contains(report.Reason, "trust measurements add") {
+				t.Errorf("reason offers a pin for a denial pinning cannot clear:\n%s", report.Reason)
+			}
+		})
 	}
 }
