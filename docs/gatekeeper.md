@@ -41,6 +41,8 @@ gatekeeper config validate                                  # ready to run?
 gatekeeper run                                              # dashboard, or --headless
 
 gatekeeper trust roots add <cloud> --pem-file root.pem      # optional: pin one cloud
+gatekeeper trust measurements add --from-upstream <name>    # optional: accept an
+                                                            # unsigned image yourself
 ```
 
 There is no `trust roots add` in the usual path, because a Swarm cloud's
@@ -99,6 +101,8 @@ attestedRoots:
   requireNetworkType: any   # `trusted` also requires the root to say so
   cacheTtl: 10m             # how long one root's verdict is reused
   checkRevocations: false   # also consult the CPU vendor's CRLs (needs network)
+  trustedMeasurements: []   # measurements you accept yourself; see "Roots that
+                            # prove what they are" below
 
 # Rego modules, ANDed with the built-in pin policy. A policy can narrow trust,
 # never widen it.
@@ -219,7 +223,7 @@ gatekeeper checks that evidence rather than giving up:
 
 ```
 Root certificate TEE evidence
-  Verdict             attested — this is a Super Swarm root
+  Verdict             attested (registry) — this is a Super Swarm root
   Evidence type       AMD SEV-SNP (QEMU)
   Report integrity    ok
   Chain revocation    not checked
@@ -246,6 +250,78 @@ be downloaded, an evidence type this build does not know: all deny, with the
 reason appended to the untrusted-root denial. Manually pinned roots keep working
 with no network at all, which is the offline escape hatch —
 `attestedRoots.enabled: false` turns the whole path off.
+
+### When the registry has never heard of the image
+
+Step 4 is the one leg that is not a property of the VM in front of you. It is a
+statement Super Protocol published, in `sp-vm/signatures`, about an image it
+built. That is exactly what makes it valuable — nobody can forge it and nobody
+can mint it locally — and exactly why a stand built outside that flow has nothing
+to find there. The denial reads:
+
+```
+DENIED — … not in trusted store (attested-root check: measurement bb6962eb… is
+not in the Super Protocol trusted registry, and it is not listed in
+attestedRoots.trustedMeasurements; pin it with `gatekeeper trust measurements add
+--from-upstream router`, or add the cloud's root with `gatekeeper trust roots add`)
+```
+
+The second fix is the older one and it is worse: you fetch that cloud's
+certificate out of band, trust it, and repeat the whole ritual the next time the
+stand is rebuilt with a new CA. The first is to accept the *measurement*:
+
+```bash
+gatekeeper trust measurements add --from-upstream router
+```
+
+It fetches the bundle, runs the whole attested-root check, prints the panel above
+— report integrity, TCB, the TEE flags, network type, the measurement — and asks
+before writing. `--yes` skips the question for a script. `list` and `rm` are the
+other two verbs, and `rm` takes the hex the reports print.
+
+**What a pin replaces.** One leg, step 4: "Super Protocol signed this image"
+becomes "I accept this image".
+
+**What it does not.** Steps 1–3 and everything around them:
+
+- the hardware report still has to verify against the CPU vendor's own root, with
+  the certificates the evidence carries — `trust measurements add` refuses to pin
+  a report that does not, and `verify` refuses the root;
+- the report's `reportData` still has to commit to *that* certificate's public
+  key, so a sound report about some other VM cannot be borrowed;
+- the measurement is still rebuilt from published artefacts and still has to
+  reproduce what the hardware signed — a pin accepts one image, and the value it
+  is compared against is derived, not asserted;
+- `attestedRoots.requireNetworkType` still applies;
+- every policy still runs, and the endpoint's own `trustedEvidence` pin still has
+  to match. A measurement admits a *cloud*; it never admits a deployment.
+
+**What it means.** A pinned measurement is your signature where Super Protocol's
+would have been. It says "I looked at this image's identity and I accept it", and
+it is only as good as that look. So the gatekeeper never lets it pass for the
+stronger claim: reports, the dashboard and the audit line say
+`attested (operator-pinned)` rather than `attested (registry)`, and Rego sees
+`input.attestation.rootAttestation.measurementSource`. A deployment that wants
+the closed chain and nothing else writes one rule:
+
+```rego
+package user.registryonly
+
+import rego.v1
+
+default allow := false
+
+# `rootAttestation` is absent entirely for a root you listed in `trustedRoots` —
+# that anchor is your own decision too, and a rule that only named the registry
+# would refuse every manually pinned cloud.
+allow if not input.attestation.rootAttestation
+
+allow if input.attestation.rootAttestation.measurementSource == "registry"
+```
+
+A measurement that *is* in the registry is always reported as `registry`, even if
+you pinned it too, so adding a belt-and-braces pin cannot quietly demote a
+legitimate cloud and trip that rule.
 
 ## Denials
 
@@ -431,7 +507,10 @@ Same evaluation, no network, per-package results. `gatekeeper verify <endpoint>
   through the `admin` socket. Without an `admin:` section there is nothing to
   report on, and it says so rather than looking broken.
 - **The audit log** is one JSON object per line: every verdict and every blocked
-  request, never a request or response body.
+  request, never a request or response body. Each verdict line carries
+  `rootAnchor` — `trustedRoots`, `attested (registry)` or
+  `attested (operator-pinned)` — so a review can tell what admitted a cloud
+  without reconstructing the configuration that was in force at the time.
 
 ## See also
 

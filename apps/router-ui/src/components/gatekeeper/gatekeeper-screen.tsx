@@ -12,7 +12,7 @@ import { DataFlowDiagram } from './data-flow-diagram';
 import { ComingLater, DownloadTable, InstallCommands, ReleaseMeta } from './downloads';
 import { FailModeExplainer } from './fail-mode-explainer';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
-import { SETUP_STEPS, setupScript } from './setup-commands';
+import { SETUP_STEPS, setupScript, UNSIGNED_MEASUREMENT_COMMAND, UNSIGNED_MEASUREMENT_NOTE } from './setup-commands';
 import { VerificationSteps } from './verification-steps';
 
 /**
@@ -115,6 +115,12 @@ export function GatekeeperScreen() {
               </li>
             ))}
           </ol>
+
+          <div className="rounded-lg border border-dashed p-4">
+            <p className="font-medium text-sm">If step 4 is denied for the whole cloud</p>
+            <p className="mt-1 mb-3 text-muted-foreground text-xs leading-relaxed">{UNSIGNED_MEASUREMENT_NOTE}</p>
+            <CodeBlock code={UNSIGNED_MEASUREMENT_COMMAND} copyLabel="Copy: accept this cloud's measurement" />
+          </div>
         </section>
       </div>
     </>
