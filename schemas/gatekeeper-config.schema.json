@@ -50,6 +50,16 @@
           "description": "Also consult the CPU vendor's certificate revocation lists. This needs the network and is reported separately from report integrity, so it is opt-in.",
           "type": "boolean",
           "default": false
+        },
+        "trustedMeasurements": {
+          "description": "VM launch measurements this operator accepts in addition to \u2014 never instead of \u2014 the registry-signed ones, as normalised mrEnclave hex. It replaces exactly one leg of the attested path (\"Super Protocol signed this image\"); the hardware report, the vendor chain, the reportData\u2194certificate-key binding, the measurement rebuild and requireNetworkType all still apply. A root admitted this way is reported as `attested (operator-pinned)`. Managed with `gatekeeper trust measurements add|rm|list`.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "uniqueItems": true,
+          "default": []
         }
       }
     },

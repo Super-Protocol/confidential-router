@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 )
 
@@ -387,7 +388,13 @@ func (m Model) attestedRootLines(a *status.AttestedRoot) []string {
 	if a == nil {
 		return nil
 	}
-	verdict := m.styles.good.Render("attested")
+	// Which anchor admitted the root is part of the verdict, not a detail: a
+	// root this operator pinned themselves and one Super Protocol signed are
+	// different claims, and the dashboard is where that is noticed.
+	verdict := m.styles.good.Render(a.SourceLabel())
+	if a.MeasurementSource == string(attestedroot.SourceOperatorPinned) {
+		verdict = m.styles.warn.Render(a.SourceLabel())
+	}
 	if !a.Attested {
 		verdict = m.styles.warn.Render("not attested")
 	}
@@ -419,6 +426,9 @@ func measurementLabel(s styles, a *status.AttestedRoot) string {
 	if a.InRegistry {
 		return shortHex(a.Measurement) + s.good.Render("  in trusted registry")
 	}
+	if a.MeasurementSource == string(attestedroot.SourceOperatorPinned) {
+		return shortHex(a.Measurement) + s.warn.Render("  operator-pinned, not in trusted registry")
+	}
 	return shortHex(a.Measurement) + s.warn.Render("  not in trusted registry")
 }
 
@@ -441,6 +451,8 @@ func onOff(v bool) string {
 
 func rootLabel(r *status.Report) string {
 	switch {
+	case r.Root != "" && r.RootAttested && r.AttestedRoot.SourceLabel() != "":
+		return r.Root + "  " + short(r.RootFingerprint) + "  (" + r.AttestedRoot.SourceLabel() + ")"
 	case r.Root != "" && r.RootAttested:
 		return r.Root + "  " + short(r.RootFingerprint) + "  (attested)"
 	case r.Root != "":

@@ -72,6 +72,11 @@ type Result struct {
 	Measurement []byte `json:"-"`
 	// InRegistry is whether Super Protocol signed this measurement.
 	InRegistry bool `json:"inRegistry"`
+	// MeasurementSource names what admitted the measurement, empty when nothing
+	// did. It is the difference between a closed chain and an operator's own
+	// decision, and it is reported rather than folded into Attested so that a
+	// policy can tell the two apart.
+	MeasurementSource MeasurementSource `json:"measurementSource,omitempty"`
 
 	// Logs are the steps that ran, in order, so a denial can be read without
 	// re-running the check with a debugger attached.
@@ -95,19 +100,30 @@ func (r *Result) SPKIDigestHex() string {
 	return hex.EncodeToString(r.ReportData[:32])
 }
 
-// Label is the short form a verdict line uses: the measurement when there is
-// one, the failure otherwise.
+// Label is the short form a verdict line uses: which anchor admitted the root
+// when one did, the failure otherwise.
 func (r *Result) Label() string {
 	switch {
 	case r == nil:
 		return ""
 	case r.Attested:
-		return "attested (" + r.MeasurementHex() + ")"
+		return "attested (" + string(r.MeasurementSource) + ")"
 	case r.Reason != "":
 		return "not attested: " + r.Reason
 	default:
 		return "not attested"
 	}
+}
+
+// NeedsMeasurementAnchor reports whether the check produced a sound measurement
+// and was refused only because nothing vouches for it.
+//
+// It is the one denial an operator can clear by pinning, so it is what the
+// caller keys the "pin it with…" advice off. A report that failed earlier — a
+// bad signature, a key the report does not commit to — never derives a
+// measurement, and no pin would help it.
+func (r *Result) NeedsMeasurementAnchor() bool {
+	return r != nil && !r.Attested && len(r.Measurement) > 0 && r.MeasurementSource == ""
 }
 
 // RevocationLabel renders the optional CRL check for a report.

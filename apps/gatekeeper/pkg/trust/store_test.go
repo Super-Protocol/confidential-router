@@ -472,3 +472,117 @@ func TestStoreRefusesToWriteAfterAFailedRollback(t *testing.T) {
 		t.Errorf("reopening a clean config: %v", err)
 	}
 }
+
+// measurementA and measurementB stand for two Swarm cloud images nobody signed.
+const (
+	measurementA = "bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab"
+	measurementB = "842c5f2e1d0b4a9c7e6f3d8b5a2c9e0f1b4d7a6c3e8f5b2d9a0c7e4f1b6d3a8c"
+)
+
+// TestStoreMeasurementRoundTrip is the store side of SUP-139: a measurement
+// pinned through the store reaches the file, reads back normalised, and comes
+// off again by the hex the reports print rather than by the spelling the file
+// happens to hold.
+func TestStoreMeasurementRoundTrip(t *testing.T) {
+	path := writeStoreConfig(t, selfSignedPEM(t, "prod"), oneEndpointYAML(pinA))
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if got := store.Measurements(); len(got) != 0 {
+		t.Fatalf("measurements = %v, want none on a fresh config", got)
+	}
+
+	// Pasted the way the console shows a digest, which is the mistake to absorb.
+	added, err := store.AddMeasurement("sha256:" + strings.ToUpper(measurementA))
+	if err != nil {
+		t.Fatalf("AddMeasurement: %v", err)
+	}
+	if !added {
+		t.Fatal("AddMeasurement reported no change")
+	}
+	if got := store.Measurements(); len(got) != 1 || got[0].Hex != measurementA {
+		t.Fatalf("measurements = %+v, want the normalised %s", got, measurementA)
+	}
+
+	again, err := store.AddMeasurement(measurementA)
+	if err != nil {
+		t.Fatalf("AddMeasurement: %v", err)
+	}
+	if again {
+		t.Error("the same measurement was pinned twice")
+	}
+
+	// The comments the file was written with have to survive, and the pin has to
+	// be there in the form the CLI prints.
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(saved), measurementA) {
+		t.Errorf("the measurement did not reach the file:\n%s", saved)
+	}
+	if !strings.Contains(string(saved), "# Trusted Clouds.") {
+		t.Errorf("a comment was lost:\n%s", saved)
+	}
+
+	removed, err := store.RemoveMeasurement(strings.ToUpper(measurementA))
+	if err != nil {
+		t.Fatalf("RemoveMeasurement: %v", err)
+	}
+	if !removed {
+		t.Fatal("RemoveMeasurement reported nothing removed")
+	}
+	if got := store.Measurements(); len(got) != 0 {
+		t.Errorf("measurements = %+v, want none left", got)
+	}
+
+	if gone, err := store.RemoveMeasurement(measurementB); err != nil || gone {
+		t.Errorf("RemoveMeasurement of an unpinned value = (%v, %v), want (false, nil)", gone, err)
+	}
+}
+
+// TestStoreRejectsAMalformedMeasurement keeps the store from writing something
+// the verifier could never compare.
+func TestStoreRejectsAMalformedMeasurement(t *testing.T) {
+	path := writeStoreConfig(t, selfSignedPEM(t, "prod"), oneEndpointYAML(pinA))
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := store.AddMeasurement("deadbeef"); err == nil {
+		t.Fatal("AddMeasurement accepted a value that is not a 32-byte measurement")
+	}
+	if got := store.Measurements(); len(got) != 0 {
+		t.Errorf("measurements = %+v, want the rejected value not to have been written", got)
+	}
+}
+
+// TestHashTracksMeasurements is why the pins are in the snapshot at all: the
+// hash keys the verdict cache, so pinning a measurement has to take effect on
+// the next check rather than after the TTL.
+func TestHashTracksMeasurements(t *testing.T) {
+	path := writeStoreConfig(t, selfSignedPEM(t, "prod"), oneEndpointYAML(pinA))
+	store, err := trust.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	before := store.Hash()
+	if _, err := store.AddMeasurement(measurementA); err != nil {
+		t.Fatal(err)
+	}
+	after := store.Hash()
+	if after == before {
+		t.Error("Hash did not change when a measurement was pinned; the verdict cache would serve a stale denial")
+	}
+	if got := store.Snapshot().Measurements; len(got) != 1 || got[0] != measurementA {
+		t.Errorf("snapshot measurements = %v, want just %s", got, measurementA)
+	}
+	if _, err := store.RemoveMeasurement(measurementA); err != nil {
+		t.Fatal(err)
+	}
+	if store.Hash() != before {
+		t.Error("Hash did not return to its old value when the pin was removed")
+	}
+}

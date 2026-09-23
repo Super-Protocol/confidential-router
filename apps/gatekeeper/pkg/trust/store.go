@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 )
 
@@ -40,6 +42,15 @@ type Root struct {
 type Pin struct {
 	Digest Digest
 	Raw    string
+}
+
+// Measurement is one VM measurement the operator pinned themselves under
+// `attestedRoots.trustedMeasurements`. Raw is how it is spelled in the config
+// file, which is what a removal has to delete even when the user names it in
+// normalised form.
+type Measurement struct {
+	Hex string
+	Raw string
 }
 
 // Endpoint is the trust state of one proxied upstream.
@@ -75,9 +86,10 @@ func (e Endpoint) Digests() []Digest {
 // state is the resolved trust state. It is built whole and swapped in, so a
 // failed edit can never leave the store half-updated.
 type state struct {
-	roots     []Root
-	endpoints []Endpoint
-	pool      *x509.CertPool
+	roots        []Root
+	endpoints    []Endpoint
+	measurements []Measurement
+	pool         *x509.CertPool
 }
 
 // Store is the resolved trust state. It is safe for concurrent use: the data
@@ -166,7 +178,20 @@ func buildState(cfg *config.Config) (*state, error) {
 		})
 	}
 
-	return &state{roots: roots, endpoints: endpoints, pool: pool}, nil
+	var pinned []string
+	if cfg.AttestedRoots != nil {
+		pinned = cfg.AttestedRoots.TrustedMeasurements
+	}
+	measurements := make([]Measurement, 0, len(pinned))
+	for _, raw := range pinned {
+		normalized, err := attestedroot.ParseMeasurement(raw)
+		if err != nil {
+			return nil, fmt.Errorf("attestedRoots.trustedMeasurements: %w", err)
+		}
+		measurements = append(measurements, Measurement{Hex: normalized, Raw: raw})
+	}
+
+	return &state{roots: roots, endpoints: endpoints, measurements: measurements, pool: pool}, nil
 }
 
 // Roots lists the trusted roots.
@@ -337,6 +362,78 @@ func (s *Store) RemovePin(endpoint string, d Digest) (bool, error) {
 	return true, nil
 }
 
+// Measurements lists the operator's own measurement pins.
+func (s *Store) Measurements() []Measurement {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]Measurement(nil), s.state.measurements...)
+}
+
+// AddMeasurement pins a VM measurement the operator accepts alongside the
+// registry-signed ones, writing the normalised hex the CLI and the reports
+// print. It reports false when the measurement is already pinned, whatever
+// spelling the file uses for it.
+func (s *Store) AddMeasurement(m string) (bool, error) {
+	normalized, err := attestedroot.ParseMeasurement(m)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
+	for _, pinned := range s.state.measurements {
+		if pinned.Hex == normalized {
+			return false, nil
+		}
+	}
+	if _, err := s.doc.AddTrustedMeasurement(normalized); err != nil {
+		return false, err
+	}
+	if err := s.persist(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RemoveMeasurement unpins a VM measurement, matching on the normalised value
+// so a pin written with a `sha256:` prefix or in upper case can be removed by
+// the hex the CLI prints.
+func (s *Store) RemoveMeasurement(m string) (bool, error) {
+	normalized, err := attestedroot.ParseMeasurement(m)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return false, ErrReadOnly
+	}
+	if s.poisoned != nil {
+		return false, s.poisoned
+	}
+	var raws []string
+	for _, pinned := range s.state.measurements {
+		if pinned.Hex == normalized {
+			raws = append(raws, pinned.Raw)
+		}
+	}
+	if len(raws) == 0 {
+		return false, nil
+	}
+	if _, err := s.doc.RemoveTrustedMeasurement(raws); err != nil {
+		return false, err
+	}
+	if err := s.persist(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) endpointLocked(name string) (Endpoint, bool) {
 	for _, ep := range s.state.endpoints {
 		if ep.Name == name {
@@ -403,8 +500,12 @@ func (s *Store) reload() {
 // Snapshot is the trust state in the shape the generated Rego module needs:
 // sorted, string-only, free of certificates.
 type Snapshot struct {
-	Roots     []RootSnapshot     `json:"roots"`
-	Endpoints []EndpointSnapshot `json:"endpoints"`
+	Roots []RootSnapshot `json:"roots"`
+	// Measurements are the operator's own attested-root pins. They are part of
+	// the snapshot because they are part of what may be admitted, so editing
+	// one has to move [Store.Hash] and expire the verdict cache with it.
+	Measurements []string           `json:"measurements"`
+	Endpoints    []EndpointSnapshot `json:"endpoints"`
 }
 
 // RootSnapshot is one trusted root in the generated module.
@@ -430,9 +531,15 @@ func (s *Store) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 
 	snap := Snapshot{
-		Roots:     make([]RootSnapshot, 0, len(s.state.roots)),
-		Endpoints: make([]EndpointSnapshot, 0, len(s.state.endpoints)),
+		Roots:        make([]RootSnapshot, 0, len(s.state.roots)),
+		Measurements: make([]string, 0, len(s.state.measurements)),
+		Endpoints:    make([]EndpointSnapshot, 0, len(s.state.endpoints)),
 	}
+	for _, m := range s.state.measurements {
+		snap.Measurements = append(snap.Measurements, m.Hex)
+	}
+	sort.Strings(snap.Measurements)
+	snap.Measurements = slices.Compact(snap.Measurements)
 	for _, r := range s.state.roots {
 		snap.Roots = append(snap.Roots, RootSnapshot{Name: r.Name, Fingerprint: r.Fingerprint.String()})
 	}
