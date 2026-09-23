@@ -52,7 +52,7 @@
           "default": false
         },
         "trustedMeasurements": {
-          "description": "VM launch measurements this operator accepts in addition to \u2014 never instead of \u2014 the registry-signed ones, as normalised mrEnclave hex. It replaces exactly one leg of the attested path (\"Super Protocol signed this image\"); the hardware report, the vendor chain, the reportData\u2194certificate-key binding, the measurement rebuild and requireNetworkType all still apply. A root admitted this way is reported as `attested (operator-pinned)`. Managed with `gatekeeper trust measurements add|rm|list`.",
+          "description": "VM launch measurements this operator accepts in addition to \u2014 never instead of \u2014 the registry-signed ones, as normalised mrEnclave hex. It replaces exactly one leg of the attested path (\"Super Protocol signed this image\"); the hardware report, the vendor chain, the reportData\u2194certificate-key binding, the measurement rebuild and requireNetworkType all still apply. A root admitted this way is reported as `attested (operator-pinned)`. Managed with `gatekeeper trust measurements add|rm|list`. `uniqueItems` compares the strings as written, so it catches only a byte-identical repeat; two spellings of one measurement are caught at load time, which normalises first and names both offending indices (as `trustedEvidence` does for pins).",
           "type": "array",
           "items": {
             "type": "string",

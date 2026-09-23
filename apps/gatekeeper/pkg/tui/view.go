@@ -391,9 +391,9 @@ func (m Model) attestedRootLines(a *status.AttestedRoot) []string {
 	// Which anchor admitted the root is part of the verdict, not a detail: a
 	// root this operator pinned themselves and one Super Protocol signed are
 	// different claims, and the dashboard is where that is noticed.
-	verdict := m.styles.good.Render(a.SourceLabel())
+	verdict := m.styles.good.Render(attestedLabel(a))
 	if a.MeasurementSource == string(attestedroot.SourceOperatorPinned) {
-		verdict = m.styles.warn.Render(a.SourceLabel())
+		verdict = m.styles.warn.Render(attestedLabel(a))
 	}
 	if !a.Attested {
 		verdict = m.styles.warn.Render("not attested")
@@ -410,6 +410,17 @@ func (m Model) attestedRootLines(a *status.AttestedRoot) []string {
 		lines = append(lines, m.styles.muted.Render("  "+a.Reason))
 	}
 	return lines
+}
+
+// attestedLabel names the anchor behind an attested root, falling back to the
+// bare word for a verdict recorded by a build that did not name one. Without the
+// fallback an older report renders an empty verdict, which reads as a bug in the
+// dashboard rather than as the missing field it is.
+func attestedLabel(a *status.AttestedRoot) string {
+	if label := a.SourceLabel(); label != "" {
+		return label
+	}
+	return "attested"
 }
 
 func okLabel(s styles, ok bool) string {
@@ -451,10 +462,8 @@ func onOff(v bool) string {
 
 func rootLabel(r *status.Report) string {
 	switch {
-	case r.Root != "" && r.RootAttested && r.AttestedRoot.SourceLabel() != "":
-		return r.Root + "  " + short(r.RootFingerprint) + "  (" + r.AttestedRoot.SourceLabel() + ")"
 	case r.Root != "" && r.RootAttested:
-		return r.Root + "  " + short(r.RootFingerprint) + "  (attested)"
+		return r.Root + "  " + short(r.RootFingerprint) + "  (" + attestedLabel(r.AttestedRoot) + ")"
 	case r.Root != "":
 		return r.Root + "  " + short(r.RootFingerprint)
 	case r.RootFingerprint != "":
