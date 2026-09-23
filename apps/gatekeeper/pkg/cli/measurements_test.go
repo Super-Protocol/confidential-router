@@ -117,6 +117,12 @@ func (l *liveVerifier) Verify(ctx context.Context, req status.VerifyRequest) (*s
 		return nil, err
 	}
 	l.hardware.cfg = cfg
+	// `enabled: false` removes the anchor rather than stubbing it, exactly as
+	// verifier.New does, so the commands see the nil report that setting
+	// produces in production.
+	if !cfg.AttestedRootsEnabled() {
+		return built.WithAttestedRoots(nil).Verify(ctx, req)
+	}
 	return built.WithAttestedRoots(l.hardware).Verify(ctx, req)
 }
 
@@ -365,5 +371,82 @@ func TestMeasurementRmRefusesWhatWasNeverPinned(t *testing.T) {
 	}
 	if !strings.Contains(got.stderr, "is not pinned") {
 		t.Errorf("stderr = %q, want it to say the measurement was not pinned", got.stderr)
+	}
+}
+
+// TestFromUpstreamRefusesEveryPinThatWouldNotHelp is the honesty rule for the
+// command that writes the pin: it exits 0 only when the pin it just took will
+// actually make the endpoint verify. Each case below is one where it would not,
+// and where succeeding would send the operator looking for the problem
+// somewhere else entirely.
+func TestFromUpstreamRefusesEveryPinThatWouldNotHelp(t *testing.T) {
+	t.Run("requireNetworkType outranks the pin", func(t *testing.T) {
+		h, _, _, _ := attestedStand(t)
+		setAttestedRoot(t, h, "requireNetworkType: trusted")
+
+		got := h.run("trust", "measurements", "add", "--from-upstream", "router", "--yes")
+		if got.code != cli.ExitDenied {
+			t.Fatalf("exit = %d, want %d\nstderr: %s", got.code, cli.ExitDenied, got.stderr)
+		}
+		for _, want := range []string{"requireNetworkType", "nothing was pinned"} {
+			if !strings.Contains(got.stderr, want) {
+				t.Errorf("stderr = %q, want it to mention %q", got.stderr, want)
+			}
+		}
+		if strings.Contains(h.config(), unsignedMeasurement) {
+			t.Errorf("a refused pin was written anyway:\n%s", h.config())
+		}
+	})
+
+	t.Run("the registry could not be consulted", func(t *testing.T) {
+		h, _, _, registry := attestedStand(t)
+		// A registry that is down says nothing about the image. Pinning on that
+		// basis is a permanent local decision taken for a transient reason —
+		// about a measurement Super Protocol may well have signed.
+		registry.server.Close()
+
+		got := h.run("trust", "measurements", "add", "--from-upstream", "router", "--yes")
+		if got.code != cli.ExitError {
+			t.Fatalf("exit = %d, want %d\nstderr: %s", got.code, cli.ExitError, got.stderr)
+		}
+		if !strings.Contains(got.stderr, "could not be consulted") {
+			t.Errorf("stderr = %q, want it to say the registry never answered", got.stderr)
+		}
+		if strings.Contains(h.config(), unsignedMeasurement) {
+			t.Errorf("a refused pin was written anyway:\n%s", h.config())
+		}
+	})
+
+	t.Run("the anchor is turned off entirely", func(t *testing.T) {
+		h, _, _, _ := attestedStand(t)
+		setAttestedRoot(t, h, "enabled: false")
+
+		got := h.run("trust", "measurements", "add", "--from-upstream", "router", "--yes")
+		if got.code != cli.ExitConfig {
+			t.Fatalf("exit = %d, want %d\nstderr: %s", got.code, cli.ExitConfig, got.stderr)
+		}
+		// The reason is local, so the message has to point at the config rather
+		// than at the upstream.
+		if !strings.Contains(got.stderr, "attestedRoots.enabled is false") {
+			t.Errorf("stderr = %q, want it to name the setting, not blame the endpoint", got.stderr)
+		}
+	})
+}
+
+// TestFromUpstreamIsIdempotent keeps a re-run from being a question: a script
+// that makes sure the pin is there should not have to know whether it already
+// was.
+func TestFromUpstreamIsIdempotent(t *testing.T) {
+	h, _, _, _ := attestedStand(t)
+	h.mustRun("trust", "measurements", "add", "--from-upstream", "router", "--yes")
+
+	again := h.mustRun("trust", "measurements", "add", "--from-upstream", "router")
+	if !strings.Contains(again.stdout, "already pinned") {
+		t.Errorf("stdout = %q, want the re-run reported as a no-op", again.stdout)
+	}
+	// Without --yes and without a terminal: it must not have asked, because
+	// there is nothing left to decide.
+	if strings.Contains(again.stderr, "interactive terminal") {
+		t.Errorf("stderr = %q, want no confirmation for a pin that is already in place", again.stderr)
 	}
 }

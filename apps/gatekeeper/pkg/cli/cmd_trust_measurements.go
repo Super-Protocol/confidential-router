@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 )
 
 func newTrustMeasurementsCommand(g *globals) *cobra.Command {
@@ -154,11 +155,18 @@ func newTrustMeasurementsAddCommand(g *globals) *cobra.Command {
 //
 // The verification is expected to *fail*: the whole point is a root nothing
 // vouches for yet, which is a denial at the untrusted-root stage. So the report
-// is read for its attested-root panel rather than for its verdict — and the
-// legs a pin does not replace are checked here explicitly, because a report
-// that did not hold up must not be pinnable no matter what it measured.
+// is read for its attested-root panel rather than for its verdict — and every
+// leg a pin does not replace is checked here explicitly, because a pin that does
+// not make the endpoint verify is worse than a refusal: the command would exit 0
+// and the operator would go looking for the problem somewhere else.
 func discoveredMeasurement(cmd *cobra.Command, g *globals, target string, assumeYes bool) (string, error) {
 	report, err := verifyTarget(cmd, g, target)
+	if err != nil {
+		return "", err
+	}
+	// Loaded the same way every editing command loads it: a config being filled
+	// in one command at a time is legitimately incomplete (SUP-111).
+	cfg, err := g.loadEditable()
 	if err != nil {
 		return "", err
 	}
@@ -169,10 +177,16 @@ func discoveredMeasurement(cmd *cobra.Command, g *globals, target string, assume
 		return "", failf(ExitError,
 			"%s already verifies against a trusted root, so no measurement was checked; nothing was pinned",
 			target)
+	case attested == nil && !cfg.AttestedRootsEnabled():
+		// Nothing was measured because nothing was asked to measure it. Blaming
+		// the upstream here would send the operator to the wrong machine.
+		return "", failf(ExitConfig,
+			"attestedRoots.enabled is false in %s, so no root was checked against its TEE evidence; "+
+				"a pinned measurement would have no effect", g.path())
 	case attested == nil:
 		return "", failf(ExitDenied,
-			"%s published no root certificate with TEE evidence to measure (%s: %s); nothing was pinned",
-			target, report.Stage, report.Reason)
+			"no TEE evidence was read from the root certificate of %s, so there is nothing to measure "+
+				"(%s: %s); nothing was pinned", target, report.Stage, report.Reason)
 	case !attested.ReportIntegrity:
 		return "", failf(ExitDenied,
 			"the hardware report of %s does not verify against the CPU vendor's root; nothing was pinned",
@@ -188,6 +202,27 @@ func discoveredMeasurement(cmd *cobra.Command, g *globals, target string, assume
 		return "", failf(ExitError,
 			"measurement %s is already signed by Super Protocol, so pinning it would only weaken "+
 				"how it is reported; nothing was pinned", attested.Measurement)
+	case attested.MeasurementSource == string(attestedroot.SourceOperatorPinned):
+		// Already accepted, by this very list. Re-running the command is how a
+		// script makes sure of that, so it is a no-op with nothing to review
+		// rather than a question about a decision that has been made.
+		return attestedroot.ParseMeasurement(attested.Measurement)
+	case !attested.MeasurementUnknown:
+		// The registry never answered. Pinning on that basis would be a
+		// permanent local decision taken because of a transient outage, about an
+		// image Super Protocol may well have signed.
+		return "", failf(ExitError,
+			"the trusted registry could not be consulted, so it is not known whether Super Protocol "+
+				"signed measurement %s (%s); nothing was pinned", attested.Measurement, attested.Reason)
+	case cfg.AttestedRootsRequireNetworkType() == config.NetworkTypeTrusted &&
+		attested.NetworkType != config.NetworkTypeTrusted:
+		// requireNetworkType is a leg a pin does not replace, so pinning here
+		// would leave the endpoint denied for a reason the operator just told
+		// the gatekeeper to enforce.
+		return "", failf(ExitDenied,
+			"the root of %s declares network type %q and attestedRoots.requireNetworkType is %q, "+
+				"so it would still be refused with the measurement pinned; nothing was pinned",
+			target, attested.NetworkType, config.NetworkTypeTrusted)
 	}
 
 	w := cmd.ErrOrStderr()

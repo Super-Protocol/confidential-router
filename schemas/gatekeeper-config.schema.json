@@ -56,7 +56,8 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
+            "pattern": "^(sha256:|0x)?[0-9a-fA-F]{64}$",
+            "description": "A normalised mrEnclave. Canonical form is bare lower-case hex \u2014 what the registry names a measurement by and what the CLI writes \u2014 and a `sha256:`/`0x` prefix or upper case is accepted and normalised at load time, because that is how one gets pasted."
           },
           "uniqueItems": true,
           "default": []

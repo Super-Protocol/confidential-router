@@ -94,6 +94,7 @@ func (v *Verifier) AdmitMeasurement(ctx context.Context, result *Result, evidenc
 	case v.isPinned(result.Measurement):
 		result.MeasurementSource = SourceOperatorPinned
 	case errors.Is(err, ErrNotInRegistry):
+		result.MeasurementUnknown = true
 		result.deny("measurement %s is not in the Super Protocol trusted registry, "+
 			"and it is not listed in attestedRoots.trustedMeasurements", result.MeasurementHex())
 		return false
