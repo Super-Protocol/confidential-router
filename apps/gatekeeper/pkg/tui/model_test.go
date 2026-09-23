@@ -407,13 +407,25 @@ func TestTheDashboardNamesTheAnchorThatAdmittedTheRoot(t *testing.T) {
 	}{
 		{
 			name: "registry-signed", source: "registry", inRegistry: true,
-			want:   []string{"attested (registry)", "in trusted registry"},
+			want:   []string{"root TEE evidence  attested (registry)", "in trusted registry"},
 			absent: "operator-pinned",
 		},
 		{
 			name: "operator-pinned", source: "operator-pinned", inRegistry: false,
-			want:   []string{"attested (operator-pinned)", "operator-pinned, not in trusted registry"},
+			want: []string{
+				"root TEE evidence  attested (operator-pinned)",
+				"operator-pinned, not in trusted registry",
+			},
 			absent: "in trusted registry\n",
+		},
+		{
+			// A verdict recorded by a build that did not name its anchor. Without
+			// a fallback the verdict renders empty, which reads as a broken
+			// dashboard rather than as the missing field it is.
+			name: "no source recorded", source: "", inRegistry: true,
+			want: []string{"root TEE evidence  attested ", "in trusted registry"},
+			// Exactly "attested", with no anchor invented for it.
+			absent: "attested (",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
