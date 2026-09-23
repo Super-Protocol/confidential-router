@@ -127,7 +127,9 @@ func BuildInput(src InputSource) (map[string]any, error) {
 // who wants "Ciphertext Hiding must be on" writes that rule themselves, and one
 // who does not must not have it imposed. `attested` is separate from
 // `inRegistry` so a policy can distinguish "not one of Super Protocol's images"
-// from "the report itself did not hold up".
+// from "the report itself did not hold up", and `measurementSource` names which
+// anchor admitted the measurement — `registry` or `operator-pinned` — so a
+// stricter deployment can refuse roots that only this operator vouches for.
 func attestedRootInput(src InputSource) map[string]any {
 	if src.AttestedRoot == nil {
 		return nil
@@ -139,6 +141,7 @@ func attestedRootInput(src InputSource) map[string]any {
 		"networkType":       root.NetworkType,
 		"measurement":       root.Measurement,
 		"inRegistry":        root.InRegistry,
+		"measurementSource": root.MeasurementSource,
 		"reportIntegrity":   root.ReportIntegrity,
 		"revocationChecked": root.RevocationChecked,
 		"notRevoked":        root.NotRevoked,

@@ -126,6 +126,11 @@ type AttestedRoot struct {
 	// Super Protocol has signed it.
 	Measurement string `json:"measurement,omitempty"`
 	InRegistry  bool   `json:"inRegistry"`
+	// MeasurementSource names which anchor admitted the measurement —
+	// `registry` when Super Protocol signed it, `operator-pinned` when this
+	// operator listed it in `attestedRoots.trustedMeasurements`. Empty when
+	// nothing did, which is what the denial is about.
+	MeasurementSource string `json:"measurementSource,omitempty"`
 
 	// TEE flags a policy may want to police. Named after the report fields
 	// rather than after any judgement about them.
@@ -138,6 +143,16 @@ type AttestedRoot struct {
 
 	// Logs are the steps the check ran, in order.
 	Logs []string `json:"logs,omitempty"`
+}
+
+// SourceLabel names the anchor that admitted the root, for the one place a
+// verdict line has room for: `attested (registry)` reads as the closed chain it
+// is, `attested (operator-pinned)` as the local decision it is.
+func (a *AttestedRoot) SourceLabel() string {
+	if a == nil || a.MeasurementSource == "" {
+		return ""
+	}
+	return "attested (" + a.MeasurementSource + ")"
 }
 
 // RevocationLabel renders the optional vendor-CRL check for a report.
@@ -216,6 +231,26 @@ type Report struct {
 	// arises.
 	UntrustedRoot    string `json:"untrustedRoot,omitempty"`
 	UntrustedRootPEM string `json:"untrustedRootPem,omitempty"`
+}
+
+// RootAnchor names what admitted the chain's terminal root: the operator's own
+// `trustedRoots` list, or — for a root the attested path accepted — which of its
+// two anchors vouched for the measurement.
+//
+// It exists because "attested" stopped being one claim: a registry-signed image
+// and one this operator pinned are different statements, and an audit line that
+// records only the root's name cannot tell a review which it was.
+func (r *Report) RootAnchor() string {
+	switch {
+	case r == nil || r.Root == "":
+		return ""
+	case !r.RootAttested:
+		return "trustedRoots"
+	case r.AttestedRoot != nil && r.AttestedRoot.MeasurementSource != "":
+		return "attested (" + r.AttestedRoot.MeasurementSource + ")"
+	default:
+		return "attested"
+	}
 }
 
 // Denied returns the one-line reason a report is not admitted, or "" when it is.

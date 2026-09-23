@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatekeeperScreen } from './gatekeeper-screen';
 import { INSTALL_COMMANDS } from './install-commands';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
-import { SETUP_STEPS, setupScript } from './setup-commands';
+import { SETUP_STEPS, setupScript, UNSIGNED_MEASUREMENT_COMMAND } from './setup-commands';
 
 const RELEASE = {
   __typename: 'GatekeeperRelease',
@@ -137,6 +137,21 @@ describe('GatekeeperScreen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Copy all four commands' }));
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(setupScript());
+  });
+
+  // The escape hatch for a stand the Super Protocol registry never signed. It is
+  // deliberately not a fifth step — the four steps are the path — but it has to
+  // be on the page, because the alternative an operator finds on their own is to
+  // fetch that cloud's certificate out of band and trust it blind.
+  it("names the command that accepts an unsigned cloud's measurement", async () => {
+    renderScreen();
+
+    expect(screen.getByText(UNSIGNED_MEASUREMENT_COMMAND)).toBeInTheDocument();
+    expect(screen.getByText(/attested \(operator-pinned\)/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: "Copy: accept this cloud's measurement" }));
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(UNSIGNED_MEASUREMENT_COMMAND);
   });
 
   it('shows the data flow, the four checks and both fail modes — the page is an explainer, not a control panel', () => {

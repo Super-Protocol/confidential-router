@@ -253,6 +253,7 @@ func attestedRootReport() *status.Report {
 		KeyDigest:         "676553c0333cf07df4c861431dd564f63e88b101e43ab276ffd276e197ab5c8d",
 		Measurement:       "842c5f2eb016c04fa61e0ac3d0ff48bae16b4c08c61d80cdfdaf332a9b3625c2",
 		InRegistry:        true,
+		MeasurementSource: "registry",
 		SnpFirmwareTCB:    27,
 		ReportVersion:     5,
 	}
@@ -270,12 +271,37 @@ func TestVerifyPrintsTheAttestedRootPanel(t *testing.T) {
 	golden(t, "verify-attested-root", got.stdout)
 
 	for _, want := range []string{
-		"attested, not from trustedRoots",
+		"attested (registry), not from trustedRoots",
 		"(in trusted registry)",
 		"matches the report data",
 	} {
 		if !strings.Contains(got.stdout, want) {
 			t.Errorf("output does not mention %q", want)
+		}
+	}
+}
+
+// TestVerifyDistinguishesAnOperatorPinnedRoot is the reporting half of SUP-139:
+// the same sound report, admitted by the operator's own pin rather than by a
+// Super Protocol signature, has to read as the weaker claim it is — everywhere a
+// human looks, not only in --json.
+func TestVerifyDistinguishesAnOperatorPinnedRoot(t *testing.T) {
+	h := configured(t)
+	report := attestedRootReport()
+	report.AttestedRoot.InRegistry = false
+	report.AttestedRoot.MeasurementSource = "operator-pinned"
+	h.env.Verifier = &fakeVerifier{report: report}
+
+	got := h.mustRun("verify", "llama-33-70b")
+	golden(t, "verify-attested-root-operator-pinned", got.stdout)
+
+	for _, want := range []string{
+		"attested (operator-pinned), not from trustedRoots",
+		"you pinned this measurement; Super Protocol has not signed it",
+		"pinned in attestedRoots.trustedMeasurements",
+	} {
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("output does not mention %q\n%s", want, got.stdout)
 		}
 	}
 }

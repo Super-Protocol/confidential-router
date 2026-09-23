@@ -36,14 +36,15 @@ func attestedOK() *attestedroot.Result {
 		measurement[i] = 0x11
 	}
 	result := &attestedroot.Result{
-		Attested:         true,
-		EvidenceTypeName: "AMD SEV-SNP (QEMU)",
-		NetworkType:      attestedroot.NetworkUntrusted,
-		ReportIntegrity:  true,
-		CPUGeneration:    "Genoa",
-		KeyBinding:       true,
-		InRegistry:       true,
-		SecurityFields:   attestedroot.SecurityFields{SnpFirmwareTCB: 27, ReportVersion: 5},
+		Attested:          true,
+		EvidenceTypeName:  "AMD SEV-SNP (QEMU)",
+		NetworkType:       attestedroot.NetworkUntrusted,
+		ReportIntegrity:   true,
+		CPUGeneration:     "Genoa",
+		KeyBinding:        true,
+		InRegistry:        true,
+		MeasurementSource: attestedroot.SourceRegistry,
+		SecurityFields:    attestedroot.SecurityFields{SnpFirmwareTCB: 27, ReportVersion: 5},
 	}
 	result.Measurement = mustMeasurement(attestedMeasurement)
 	return result
@@ -325,5 +326,191 @@ allow if {
 	}
 	if !report.Admitted {
 		t.Fatalf("a policy over the attested root denied a root that satisfies it: %s", report.Denied())
+	}
+}
+
+// attestedByOperatorPin is what the check returns for the case SUP-139 exists
+// for: the hardware held up, the registry has no signature for this image, and
+// the operator pinned the measurement themselves.
+func attestedByOperatorPin() *attestedroot.Result {
+	result := attestedOK()
+	result.InRegistry = false
+	result.MeasurementSource = attestedroot.SourceOperatorPinned
+	return result
+}
+
+// TestReportNamesTheAnchorThatAdmittedTheRoot is the reporting half of SUP-139:
+// "attested" is no longer one claim, so every surface has to say which of the
+// two it means.
+func TestReportNamesTheAnchorThatAdmittedTheRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		result     *attestedroot.Result
+		wantSource string
+		wantLabel  string
+	}{
+		{
+			name:       "signed by Super Protocol",
+			result:     attestedOK(),
+			wantSource: "registry",
+			wantLabel:  "attested (registry)",
+		},
+		{
+			name:       "pinned by this operator",
+			result:     attestedByOperatorPin(),
+			wantSource: "operator-pinned",
+			wantLabel:  "attested (operator-pinned)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca := newTestCA(t)
+			document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+			v := newVerifier(t, rootlessConfig(t, ""), ca.fetcher(document, ca.leafFingerprint())).
+				WithAttestedRoots(&stubAttestedRoots{result: tc.result})
+
+			report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if !report.Admitted {
+				t.Fatalf("not admitted: %s", report.Denied())
+			}
+			if got := report.AttestedRoot.MeasurementSource; got != tc.wantSource {
+				t.Errorf("measurementSource = %q, want %q", got, tc.wantSource)
+			}
+			if got := report.AttestedRoot.SourceLabel(); got != tc.wantLabel {
+				t.Errorf("SourceLabel() = %q, want %q", got, tc.wantLabel)
+			}
+			if got, want := report.AttestedRoot.InRegistry, tc.wantSource == "registry"; got != want {
+				t.Errorf("inRegistry = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestAPolicyCanRefuseAnOperatorPinnedRoot is the reason the distinction is in
+// the Rego input at all: a stricter deployment writes one rule and gets back
+// exactly the old guarantee, while a stand that needs the escape hatch keeps it.
+func TestAPolicyCanRefuseAnOperatorPinnedRoot(t *testing.T) {
+	const module = `package gatekeeper.registryonly
+
+default allow := false
+
+allow if input.attestation.rootAttestation.measurementSource == "registry"
+`
+	for _, tc := range []struct {
+		name   string
+		result *attestedroot.Result
+		admit  bool
+	}{
+		{name: "a registry-signed root passes", result: attestedOK(), admit: true},
+		{name: "an operator-pinned root does not", result: attestedByOperatorPin(), admit: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca := newTestCA(t)
+			document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+			dir := t.TempDir()
+			writeFile(t, dir+"/registry-only.rego", module)
+
+			cfg := rootlessConfigIn(t, dir, "policies:\n  - name: registry-only\n    file: ./registry-only.rego\n")
+			v := newVerifier(t, cfg, ca.fetcher(document, ca.leafFingerprint())).
+				WithAttestedRoots(&stubAttestedRoots{result: tc.result})
+
+			report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if report.Admitted != tc.admit {
+				t.Fatalf("admitted = %v, want %v (%s)", report.Admitted, tc.admit, report.Denied())
+			}
+			// Either way the root itself was accepted by the pipeline: the
+			// policy is narrowing a verified verdict, not standing in for it.
+			if !report.Verified {
+				t.Errorf("verified = false, want the attested root to have passed the pipeline")
+			}
+		})
+	}
+}
+
+// TestRequireNetworkTypeStillRefusesAPinnedRoot is the guarantee that pinning
+// replaces exactly one leg: `requireNetworkType: trusted` refuses today's
+// `untrusted` Swarm root whether the measurement is signed or pinned.
+func TestRequireNetworkTypeStillRefusesAPinnedRoot(t *testing.T) {
+	ca := newTestCA(t)
+	document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+	result := attestedByOperatorPin()
+	result.NetworkType = attestedroot.NetworkUntrusted
+
+	cfg := rootlessConfig(t, "attestedRoots:\n  requireNetworkType: trusted\n")
+	v := newVerifier(t, cfg, ca.fetcher(document, ca.leafFingerprint())).
+		WithAttestedRoots(&stubAttestedRoots{result: result})
+
+	report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if report.Verified || report.Admitted {
+		t.Fatalf("a pin overrode requireNetworkType: %+v", report.AttestedRoot)
+	}
+	if !strings.Contains(report.Reason, "requireNetworkType") {
+		t.Errorf("reason = %q, want it to name the setting that refused the root", report.Reason)
+	}
+}
+
+// TestTheRegistryDenialNamesTheFix is the message Denis has now hit three times.
+// A denial that only says "not in the registry" leaves the operator to discover
+// the escape hatch; this one hands them both commands.
+func TestTheRegistryDenialNamesTheFix(t *testing.T) {
+	ca := newTestCA(t)
+	document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+
+	unvouched := attestedOK()
+	unvouched.Attested, unvouched.InRegistry = false, false
+	unvouched.MeasurementSource = ""
+	unvouched.Reason = "measurement " + attestedMeasurement +
+		" is not in the Super Protocol trusted registry, and it is not listed in attestedRoots.trustedMeasurements"
+
+	v := newVerifier(t, rootlessConfig(t, ""), ca.fetcher(document, ca.leafFingerprint())).
+		WithAttestedRoots(&stubAttestedRoots{result: unvouched})
+
+	report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if report.Verified {
+		t.Fatal("a root nothing vouches for was accepted")
+	}
+	for _, want := range []string{
+		"gatekeeper trust measurements add --from-upstream llama-33-70b",
+		"gatekeeper trust roots add",
+	} {
+		if !strings.Contains(report.Reason, want) {
+			t.Errorf("reason does not offer %q:\n%s", want, report.Reason)
+		}
+	}
+}
+
+// TestADenialNoPinCanClearDoesNotOfferOne keeps the advice honest: a report that
+// failed its key binding never derived a measurement, so telling the operator to
+// pin one would send them after a fix that cannot work.
+func TestADenialNoPinCanClearDoesNotOfferOne(t *testing.T) {
+	ca := newTestCA(t)
+	document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+
+	unbound := attestedOK()
+	unbound.Attested, unbound.KeyBinding = false, false
+	unbound.MeasurementSource = ""
+	unbound.Measurement = nil
+	unbound.Reason = "the report's reportData does not commit to this certificate's public key"
+
+	v := newVerifier(t, rootlessConfig(t, ""), ca.fetcher(document, ca.leafFingerprint())).
+		WithAttestedRoots(&stubAttestedRoots{result: unbound})
+
+	report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if strings.Contains(report.Reason, "trust measurements add") {
+		t.Errorf("reason offers a pin for a denial pinning cannot clear:\n%s", report.Reason)
 	}
 }

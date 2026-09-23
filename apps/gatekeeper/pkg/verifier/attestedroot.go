@@ -27,10 +27,11 @@ func newAttestedRootVerifier(cfg *config.Config) AttestedRootVerifier {
 		return nil
 	}
 	return &attestedroot.Verifier{
-		Registry:         &attestedroot.HTTPRegistry{BaseURL: cfg.AttestedRootsRegistryBaseURL()},
-		Artifacts:        &attestedroot.HTTPArtifactSource{Client: &http.Client{Timeout: 2 * time.Minute}},
-		CacheTTL:         cfg.AttestedRootsCacheTTL(),
-		CheckRevocations: cfg.AttestedRootsCheckRevocations(),
+		Registry:            &attestedroot.HTTPRegistry{BaseURL: cfg.AttestedRootsRegistryBaseURL()},
+		Artifacts:           &attestedroot.HTTPArtifactSource{Client: &http.Client{Timeout: 2 * time.Minute}},
+		CacheTTL:            cfg.AttestedRootsCacheTTL(),
+		CheckRevocations:    cfg.AttestedRootsCheckRevocations(),
+		TrustedMeasurements: cfg.AttestedRootsTrustedMeasurements(),
 	}
 }
 
@@ -67,6 +68,14 @@ func (v *Verifier) attestRoot(ctx context.Context, report *status.Report) *attes
 	report.AttestedRoot = toStatusAttestedRoot(result)
 
 	if !result.Attested {
+		if result.NeedsMeasurementAnchor() {
+			// The report itself held up and the only missing thing is somebody
+			// vouching for the image. That is a denial with two concrete fixes,
+			// and naming them here is what keeps a rebuilt stand from costing a
+			// certificate fetched out of band.
+			report.AttestedRoot.Reason += "; pin it with `gatekeeper trust measurements add --from-upstream " +
+				pinTarget(report) + "`, or add the cloud's root with `gatekeeper trust roots add`"
+		}
 		return nil
 	}
 	// The network type is the platform's own trusted/untrusted network split,
@@ -95,6 +104,16 @@ func attestedRootName(result *attestedroot.Result) string {
 	return "attested:" + result.MeasurementHex()
 }
 
+// pinTarget is what the advice tells the operator to point the command at: the
+// endpoint when the report is about a configured one, the hostname otherwise —
+// both spellings `trust measurements add --from-upstream` accepts.
+func pinTarget(report *status.Report) string {
+	if report.Endpoint != "" {
+		return report.Endpoint
+	}
+	return report.Hostname
+}
+
 func toStatusAttestedRoot(result *attestedroot.Result) *status.AttestedRoot {
 	return &status.AttestedRoot{
 		Attested:          result.Attested,
@@ -109,6 +128,7 @@ func toStatusAttestedRoot(result *attestedroot.Result) *status.AttestedRoot {
 		KeyDigest:         result.SPKIDigestHex(),
 		Measurement:       result.MeasurementHex(),
 		InRegistry:        result.InRegistry,
+		MeasurementSource: string(result.MeasurementSource),
 		VMPL:              result.SecurityFields.VMPL,
 		DebugAllowed:      result.SecurityFields.DebugAllowed,
 		CiphertextHiding:  result.SecurityFields.CiphertextHiding,

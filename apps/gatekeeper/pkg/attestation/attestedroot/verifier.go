@@ -50,6 +50,11 @@ type Verifier struct {
 	// Registry decides whether Super Protocol vouches for a measurement.
 	// Defaults to [HTTPRegistry] against [DefaultRegistryBaseURL].
 	Registry Registry
+	// TrustedMeasurements are measurements the operator accepts in addition to
+	// the registry-signed ones, in any spelling [ParseMeasurement] takes. They
+	// replace exactly one leg of the check — "Super Protocol signed this image"
+	// — and nothing else; see [SourceOperatorPinned].
+	TrustedMeasurements []string
 	// Artifacts resolves sp-vm builds to the firmware a SEV-SNP measurement is
 	// rebuilt from. Defaults to [HTTPArtifactSource].
 	Artifacts ArtifactSource
@@ -150,18 +155,9 @@ func (v *Verifier) verify(ctx context.Context, cert *x509.Certificate) *Result {
 	out.logf("hardware report verified; measurement %s", out.MeasurementHex())
 	out.logf("certificate public key SHA-256 %s matches the report data", out.SPKIDigestHex())
 
-	switch err := v.registry().Verify(ctx, out.Measurement, evidence.Type); {
-	case err == nil:
-		out.InRegistry = true
-	case errors.Is(err, ErrNotInRegistry):
-		return out.deny("measurement %s is not in the Super Protocol trusted registry", out.MeasurementHex())
-	default:
-		// Unknown is not the same as untrusted, but it cannot be admitted
-		// either: an attacker who can cut off the registry must not thereby get
-		// a root accepted.
-		return out.deny("the trusted registry could not be consulted: %v", err)
+	if !v.AdmitMeasurement(ctx, out, evidence.Type) {
+		return out
 	}
-	out.logf("measurement %s is in the trusted registry", out.MeasurementHex())
 
 	out.Attested = true
 	return out

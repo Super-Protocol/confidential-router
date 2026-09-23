@@ -36,6 +36,11 @@ type AuditEntry struct {
 	EvidenceDigest         string `json:"evidenceDigest,omitempty"`
 	ObservedTLSFingerprint string `json:"observedTlsFingerprint,omitempty"`
 	Root                   string `json:"root,omitempty"`
+	// RootAnchor is what admitted that root: `trustedRoots`,
+	// `attested (registry)` or `attested (operator-pinned)`. The name alone does
+	// not answer it, and it is the question a review of an operator-pinned cloud
+	// is there to ask.
+	RootAnchor string `json:"rootAnchor,omitempty"`
 
 	// Method, Path and Status are set on the request events.
 	Method   string `json:"method,omitempty"`
