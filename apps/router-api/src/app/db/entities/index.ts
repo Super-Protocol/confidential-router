@@ -3,6 +3,7 @@ import { ApiKey } from './api-key.entity.js';
 import { CreditTransaction } from './credit-transaction.entity.js';
 import { Endpoint } from './endpoint.entity.js';
 import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
+import { FeedbackSubmission } from './feedback-submission.entity.js';
 import { Generation } from './generation.entity.js';
 import { InviteCode } from './invite-code.entity.js';
 import { InviteRedemption } from './invite-redemption.entity.js';
@@ -17,6 +18,7 @@ export * from './api-key.entity.js';
 export * from './credit-transaction.entity.js';
 export * from './endpoint.entity.js';
 export * from './evidence-snapshot.entity.js';
+export * from './feedback-submission.entity.js';
 export * from './generation.entity.js';
 export * from './invite-code.entity.js';
 export * from './invite-redemption.entity.js';
@@ -37,6 +39,7 @@ export const ENTITIES = [
   CreditTransaction,
   Endpoint,
   EvidenceSnapshot,
+  FeedbackSubmission,
   Generation,
   InviteCode,
   InviteRedemption,

@@ -415,6 +415,66 @@
         }
       }
     },
+    "feedback": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The second $100, earned by telling us how the first one went (SUP-149). Inert until `form` is set.",
+      "properties": {
+        "grantMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 100000000,
+          "description": "Micro-USD a completed form credits. $100 is 100000000."
+        },
+        "offerBelowMicros": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5000000,
+          "description": "Offer the form once the balance falls below this, so it arrives before the account is blocked."
+        },
+        "minMeteredTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1000,
+          "description": "Tokens the workspace must have spent first, so the grant cannot be farmed by an account that never used the first one."
+        },
+        "tokenTtl": {
+          "type": "string",
+          "pattern": "^[0-9]+(ms|s|m|h|d)$",
+          "default": "30m",
+          "description": "How long the signed token in the form's hidden fields stays valid. Minutes, not days."
+        },
+        "webhooksPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60,
+          "description": "Per-source-address budget on POST /v1/webhooks/typeform. The signature is the authority; this only bounds the work."
+        },
+        "form": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url", "webhookSecret"],
+          "description": "The hosted form. Omit it and the feature is off end to end.",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": ["typeform"],
+              "default": "typeform"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "description": "Where the console sends the user. The signed token is appended as a hidden field."
+            },
+            "webhookSecret": {
+              "type": "string",
+              "minLength": 16,
+              "description": "Shared with the provider by the typeform-setup workflow. Never committed."
+            }
+          }
+        }
+      }
+    },
     "log": {
       "type": "object",
       "additionalProperties": false,

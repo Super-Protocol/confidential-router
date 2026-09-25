@@ -67,6 +67,15 @@ invites:
   landingBaseUrl: https://router.superprotocol.com
   lookupsPerMinute: 30
 
+# The second $100, in exchange for feedback. Inert without `form`: no offer is
+# made and the webhook is a 404, which is what a laptop wants. Point `form.url`
+# at a real form and set `form.webhookSecret` to switch it on.
+feedback:
+  grantMicros: 100000000
+  offerBelowMicros: 5000000
+  minMeteredTokens: 1000
+  tokenTtl: 30m
+
 log:
   level: info
   pretty: true

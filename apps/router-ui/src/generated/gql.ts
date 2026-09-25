@@ -25,6 +25,7 @@ type Documents = {
     "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    certFingerprintHex\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      fingerprintHex\n      isRoot\n    }\n    jws\n  }\n": typeof types.EvidenceSnapshotFieldsFragmentDoc,
     "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    tee\n    evidenceState\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n": typeof types.EndpointEvidenceFieldsFragmentDoc,
     "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n": typeof types.RefreshEvidenceDocument,
+    "\n  query FeedbackOffer {\n    feedbackOffer {\n      eligible\n      reason\n      grantMicros\n      formUrl\n      granted {\n        creditTransactionId\n        grantMicros\n        appliedAt\n      }\n    }\n  }\n": typeof types.FeedbackOfferDocument,
     "\n  query GatekeeperRelease {\n    gatekeeperRelease {\n      version\n      notesUrl\n      checksumsUrl\n      publishedAt\n      fetchedAt\n      stale\n      downloads {\n        os\n        arch\n        name\n        url\n        sizeBytes\n      }\n    }\n  }\n": typeof types.GatekeeperReleaseDocument,
     "\n  fragment ApiKeyFields on ApiKey {\n    id\n    name\n    prefix\n    modelScope\n    createdAt\n    expiresAt\n    lastUsedAt\n    revokedAt\n    spendLimitMicros\n    spentTotalMicros\n    requestsPerMinute\n    tokensPerMinute\n  }\n": typeof types.ApiKeyFieldsFragmentDoc,
     "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n    }\n  }\n": typeof types.ApiKeysDocument,
@@ -55,6 +56,7 @@ const documents: Documents = {
     "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    certFingerprintHex\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      fingerprintHex\n      isRoot\n    }\n    jws\n  }\n": types.EvidenceSnapshotFieldsFragmentDoc,
     "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    tee\n    evidenceState\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n": types.EndpointEvidenceFieldsFragmentDoc,
     "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n": types.RefreshEvidenceDocument,
+    "\n  query FeedbackOffer {\n    feedbackOffer {\n      eligible\n      reason\n      grantMicros\n      formUrl\n      granted {\n        creditTransactionId\n        grantMicros\n        appliedAt\n      }\n    }\n  }\n": types.FeedbackOfferDocument,
     "\n  query GatekeeperRelease {\n    gatekeeperRelease {\n      version\n      notesUrl\n      checksumsUrl\n      publishedAt\n      fetchedAt\n      stale\n      downloads {\n        os\n        arch\n        name\n        url\n        sizeBytes\n      }\n    }\n  }\n": types.GatekeeperReleaseDocument,
     "\n  fragment ApiKeyFields on ApiKey {\n    id\n    name\n    prefix\n    modelScope\n    createdAt\n    expiresAt\n    lastUsedAt\n    revokedAt\n    spendLimitMicros\n    spentTotalMicros\n    requestsPerMinute\n    tokensPerMinute\n  }\n": types.ApiKeyFieldsFragmentDoc,
     "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n    }\n  }\n": types.ApiKeysDocument,
@@ -132,6 +134,10 @@ export function graphql(source: "\n  fragment EndpointEvidenceFields on Endpoint
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n"): (typeof documents)["\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query FeedbackOffer {\n    feedbackOffer {\n      eligible\n      reason\n      grantMicros\n      formUrl\n      granted {\n        creditTransactionId\n        grantMicros\n        appliedAt\n      }\n    }\n  }\n"): (typeof documents)["\n  query FeedbackOffer {\n    feedbackOffer {\n      eligible\n      reason\n      grantMicros\n      formUrl\n      granted {\n        creditTransactionId\n        grantMicros\n        appliedAt\n      }\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
