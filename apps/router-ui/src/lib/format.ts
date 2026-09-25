@@ -27,6 +27,18 @@ export function formatUsd(micros: string, options: Intl.NumberFormatOptions = {}
   }).format(microsToUsd(micros));
 }
 
+/**
+ * The same amount in a sentence rather than in a ledger.
+ *
+ * `formatUsd` always prints two decimals, which is right in a table of
+ * transactions and wrong in "$100.00 in credits will be added to your account".
+ * Cents are kept whenever there are any, so an odd grant is never rounded away.
+ */
+export function formatUsdShort(micros: string): string {
+  const whole = BigInt(micros) % MICROS_PER_USD === 0n;
+  return formatUsd(micros, whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {});
+}
+
 export function formatCompact(value: number): string {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }

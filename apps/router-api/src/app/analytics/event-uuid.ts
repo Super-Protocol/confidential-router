@@ -1,0 +1,29 @@
+import { createHash } from 'node:crypto';
+
+/**
+ * A stable event id, derived from the database row the event reports.
+ *
+ * PostHog deduplicates on the `uuid` an event arrives with, so the only thing
+ * that keeps a retried sign-up hook, a redelivered webhook or a replayed deploy
+ * from showing up as two conversions is sending the *same* value both times —
+ * which rules out `randomUUID()` (`docs/contracts/analytics-events.md`,
+ * convention 7).
+ *
+ * Derived rather than stored: every server-side event in the taxonomy already
+ * reports a row with a primary key, so the key plus the event name is the
+ * identity, and there is no second table to keep in step with the first.
+ *
+ * The digest is truncated to 16 bytes and stamped with RFC 4122's version-4
+ * bits. That is a lie about how the value was generated, and deliberately so:
+ * PostHog validates the shape and uses the value only as a deduplication key,
+ * while a string that is not a UUID is dropped by its ingest.
+ */
+export function eventUuid(...parts: string[]): string {
+  // NUL-separated, so ('a', 'bc') and ('ab', 'c') cannot collide.
+  const digest = createHash('sha256').update(parts.join('\u0000')).digest().subarray(0, 16);
+  digest[6] = (digest[6] & 0x0f) | 0x40;
+  digest[8] = (digest[8] & 0x3f) | 0x80;
+
+  const hex = digest.toString('hex');
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20, 32)].join('-');
+}

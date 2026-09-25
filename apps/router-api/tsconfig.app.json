@@ -32,6 +32,9 @@
     },
     {
       "path": "../../libs/attestation-fixtures/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/types/tsconfig.lib.json"
     }
   ]
 }
