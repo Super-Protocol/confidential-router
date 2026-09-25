@@ -10,8 +10,9 @@ export type GenerationStatus = 'ok' | 'error' | 'aborted';
 /**
  * One metered request. **No prompt or completion content, ever** — the router
  * forwards bodies to LiteLLM and never inspects or persists them
- * (`docs/threat-model.md`). `generation.entity.spec.ts` walks this entity's
- * metadata and fails if a column capable of holding message text is added.
+ * (`docs/threat-model.md`). `invariants.spec.ts` walks this entity's metadata
+ * and fails the build if a column capable of holding message text is added —
+ * by type, by length, or by name.
  */
 @Entity({ name: 'generations' })
 @Index('IDX_generations_workspaceId_createdAt', ['workspaceId', 'createdAt'])
