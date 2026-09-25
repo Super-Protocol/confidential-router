@@ -399,7 +399,7 @@ things. Four sources are read, in order:
 | `inviteCode` in the request body | `POST /auth/sign-up/email` — the console's own request |
 | `?invite=` on the request | the same, with the code appended to the URL |
 | `invite` inside `callbackURL` | magic link: `callbackURL` is the only thing of ours the verify request keeps |
-| the `cr_invite` cookie | OAuth: the provider builds the callback URL, so a cookie on this origin is all that survives |
+| the `cr_invite` cookie | OAuth: the provider builds the callback URL, so nothing of ours survives it except a cookie **scoped to cover both hosts** — see below |
 
 **A code that cannot be used never fails the registration.** The account is
 created, the grant is not, and the console finds out by asking: `inviteGrant`
@@ -428,7 +428,22 @@ alone.
 keeps a copy in `localStorage` so it survives the console's own navigations, and
 appends it to whichever sign-up path the deployment offers — the request body for
 a password sign-up, `callbackURL` for a magic link, the `cr_invite` cookie before
-an OAuth redirect. The form shows what the code is worth before the visitor
+an OAuth redirect.
+
+That cookie's `Domain` attribute is load-bearing rather than optional. A cookie
+written with no `Domain` is *host-only* (RFC 6265 §5.3): the browser returns it to
+the exact host that set it and to nothing else. The console and the API are
+different hosts on every real deployment, so a host-only `cr_invite` never reaches
+`/auth/callback/<provider>` and the grant is lost with no error anywhere. The
+console therefore scopes it to the longest suffix the two hosts share —
+`router.superprotocol.com` for `console.…` and `api.…` — which is the tightest
+scope both can be reached at. Where there is no such suffix (unrelated registrable
+domains, or an IP literal) the cookie stays host-only, OAuth sign-up carries no
+code, and the post-sign-up screen says so; password and magic-link sign-up are
+unaffected, because they carry the code in the request itself. This is the one
+attribute no local topology can check — compose and the e2e stack share a host,
+the single arrangement where host-only crosses — so it is pinned by a unit test on
+the cookie string and by a two-host Playwright case. The form shows what the code is worth before the visitor
 commits to anything, and keeps a small "have a code?" input for the one person who
 forwarded the mail to their work address and lost the link. After registration the
 browser lands on `/credits?welcome=invite`, where the balance is already there and

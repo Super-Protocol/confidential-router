@@ -14,6 +14,8 @@
  * for exists, and it is cleared the moment the grant is confirmed or refused.
  */
 
+import { publicConfig } from './public-config';
+
 /** The query parameter the invitation URL uses, on both surfaces. */
 export const INVITE_QUERY_PARAM = 'invite';
 
@@ -25,8 +27,10 @@ export const INVITE_STORAGE_KEY = 'cr_invite';
  *
  * An OAuth callback is a URL the provider built: none of our query parameters
  * survive it, and `localStorage` is not readable from the API origin that handles
- * it. A cookie on the API's own origin is the only thing that does — which is why
- * `sign-up-invite.ts` reads one. It is strictly necessary for the function the
+ * it. A cookie both hosts can be reached at is the only thing that is — which is
+ * why `sign-up-invite.ts` reads one, and why the `Domain` attribute is not
+ * optional (see {@link inviteCookieScope}). It is strictly necessary for the
+ * function the
  * visitor asked for and therefore consent-exempt; the landing page sets no cookie
  * at all, which is what keeps its own "no cookies" claim trivially true
  * (SUP-143 review ruling).
@@ -127,21 +131,128 @@ export function forgetInvite(): void {
   safeStorage()?.removeItem(INVITE_STORAGE_KEY);
 }
 
+export interface InviteCookieTarget {
+  /** The host serving this page — `location.hostname`, no port. */
+  consoleHost: string;
+  /** The host router-api answers on, from the runtime public config. */
+  apiHost: string;
+  /** Whether this page is https. A `Secure` cookie set from http is dropped silently. */
+  secure: boolean;
+}
+
+/**
+ * The widest scope a cookie set here can have that still reaches the API, or
+ * `null` for host-only.
+ *
+ * This is the whole difficulty of the OAuth hop. A cookie written with no
+ * `Domain` attribute is **host-only** (RFC 6265 §5.3): the browser sends it back
+ * to the exact host that set it and to nothing else. The console and the API are
+ * *different hosts* on every real deployment —
+ * `console.router.superprotocol.com` and `api.router.superprotocol.com` — so a
+ * host-only `cr_invite` never arrives at the callback that needs it and the grant
+ * is lost silently. It only appears to work where both apps share a host, which
+ * is exactly what the compose demo and the e2e suite's loopback topology do.
+ *
+ * So the attribute is the longest suffix the two hosts share: the tightest scope
+ * both can be reached at. `domain=router.superprotocol.com` is settable from the
+ * console (a host may scope a cookie to any domain it sits under) and sent to the
+ * API (a subdomain domain-matches it).
+ *
+ * `null` in three cases, all of which mean host-only is either right or the best
+ * available:
+ *
+ *  - **the hosts are equal** — host-only already reaches the API and is narrower;
+ *    this is the compose demo and `nx serve`;
+ *  - **fewer than two shared labels** — `com` is a public suffix and `localhost` a
+ *    bare name; browsers refuse a `Domain` of either;
+ *  - **an IP literal** — `127.0.0.1` is not a domain and cannot be scoped to one.
+ *
+ * A deployment that puts the console and the API on unrelated registrable domains
+ * lands in the second case: OAuth sign-up then carries no code, and the visitor is
+ * told so by the post-sign-up screen rather than silently losing $100. Password
+ * and magic-link sign-up are unaffected either way — they carry the code in the
+ * request itself.
+ */
+export function inviteCookieScope(consoleHost: string, apiHost: string): string | null {
+  const from = consoleHost.toLowerCase();
+  const to = apiHost.toLowerCase();
+  if (from.length === 0 || from === to) {
+    return null;
+  }
+
+  const left = from.split('.').reverse();
+  const right = to.split('.').reverse();
+  const shared: string[] = [];
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    if (left[index].length === 0 || left[index] !== right[index]) break;
+    shared.push(left[index]);
+  }
+
+  if (shared.length < 2 || shared.every((label) => /^\d+$/.test(label))) {
+    return null;
+  }
+  return shared.reverse().join('.');
+}
+
+/**
+ * The `document.cookie` string that publishes the code for the API to read.
+ *
+ * A pure function, because the attribute that matters is the one no local
+ * topology can exercise: both apps share a host under compose and in the e2e
+ * suite, which is the single arrangement where a host-only cookie crosses. The
+ * only way to hold `domain=` to a real deployment's topology is to assert on the
+ * string.
+ *
+ * `SameSite=Lax` is deliberate and sufficient: the OAuth callback reaches the API
+ * as a top-level GET navigation, which Lax permits, and nothing else should ever
+ * carry this cookie.
+ */
+export function inviteCookie(code: string, target: InviteCookieTarget): string {
+  const scope = inviteCookieScope(target.consoleHost, target.apiHost);
+
+  return [
+    `${INVITE_COOKIE_NAME}=${encodeURIComponent(normaliseInviteCode(code))}`,
+    `max-age=${COOKIE_MAX_AGE_SECONDS}`,
+    'path=/',
+    'samesite=lax',
+    ...(scope ? [`domain=${scope}`] : []),
+    ...(target.secure ? ['secure'] : []),
+  ].join('; ');
+}
+
 /**
  * Publishes the code as a cookie for the one hop the URL cannot cross.
  *
- * Set on the console's origin, not the API's — a page cannot set a cookie for
- * another host. It works because both are subdomains of one registrable domain on
- * every real deployment, so `domain` is left unset and the browser scopes it to
- * this host; where the two origins are unrelated, OAuth sign-up simply carries no
- * code and the visitor is told so by the post-sign-up screen rather than silently
- * losing $100.
+ * An OAuth callback is a URL the provider built: none of our query parameters
+ * survive it, and `localStorage` is not readable from the API origin that handles
+ * it. A cookie both hosts can be reached at is the only thing that is — see
+ * {@link inviteCookieScope} for why the `Domain` attribute is load-bearing rather
+ * than optional.
  */
 export function publishInviteCookie(code: string): void {
   if (typeof document === 'undefined') return;
-  const secure = globalThis.location?.protocol === 'https:' ? '; secure' : '';
+
   // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is Chromium-only, and this has to work in whatever browser the visitor opens
-  document.cookie = `${INVITE_COOKIE_NAME}=${encodeURIComponent(normaliseInviteCode(code))}; max-age=${COOKIE_MAX_AGE_SECONDS}; path=/; samesite=lax${secure}`;
+  document.cookie = inviteCookie(code, {
+    consoleHost: globalThis.location?.hostname ?? '',
+    apiHost: apiHostOf(),
+    secure: globalThis.location?.protocol === 'https:',
+  });
+}
+
+/**
+ * The API's host, or an empty string.
+ *
+ * `apiOrigin` is an operator's value and is a URL on every deployment; one that
+ * does not parse leaves the cookie host-only rather than throwing out of a
+ * sign-in the visitor has already started.
+ */
+function apiHostOf(): string {
+  try {
+    return new URL(publicConfig().apiOrigin).hostname;
+  } catch {
+    return '';
+  }
 }
 
 /**

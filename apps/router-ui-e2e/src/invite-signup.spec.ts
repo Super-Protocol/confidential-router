@@ -12,7 +12,7 @@
  */
 import { expect, type Page, test } from '@playwright/test';
 import { type GraphQLFixtures, mockGraphQL, SESSION_DATA, signIn, UNAUTHENTICATED } from './fixtures';
-import { API_ORIGIN } from './origins';
+import { API_HOST, API_ORIGIN, CONSOLE_HOST } from './origins';
 
 const CODE = 'ABCD-EFGH-JKLM';
 const NORMALISED = 'ABCDEFGHJKLM';
@@ -252,5 +252,59 @@ test.describe('signing up from an invitation URL', () => {
     await page.getByRole('button', { name: 'Apply' }).click();
 
     await expect(page.getByTestId('invite-grant-pending')).toContainText('$100 in credits');
+  });
+});
+
+/**
+ * The OAuth hop, in a browser, across two hosts.
+ *
+ * The one path where the invitation code cannot ride the request: the provider
+ * builds the callback URL, so nothing of ours survives it except a cookie. And a
+ * cookie is exactly what is easy to get wrong here — written with no `Domain` it
+ * is host-only, so it goes back to `console.…` and never to `api.…`, and the
+ * $100 is lost with no error anywhere.
+ *
+ * This suite is the only place that can catch that, because it is the only place
+ * with two hosts: `console.localtest.me` and `api.localtest.me` share a
+ * registrable domain exactly as a deployment's hosts do (`origins.ts`). A unit
+ * test can assert the attribute; only a browser can prove the cookie crosses.
+ */
+test.describe('an invitation carried through OAuth', () => {
+  test('sends the code to the API host the provider redirects to', async ({ page }) => {
+    // Chromium maps both names to loopback, but keys cookies by host — so this is
+    // a genuine cross-host hop, not a same-origin one.
+    expect(CONSOLE_HOST).not.toBe(API_HOST);
+
+    const callback = `${API_ORIGIN}/auth/callback/github?code=provider-stub&state=stub`;
+    let callbackCookies: string | undefined;
+
+    await page.route('**/auth/sign-in/social', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ url: callback }) }),
+    );
+    await page.route('**/auth/callback/github**', async (route) => {
+      // `allHeaders()` and not `headers()`: the synchronous form omits the
+      // browser-managed `Cookie` header, which is the only one this test is about.
+      callbackCookies = (await route.request().allHeaders()).cookie;
+      await route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>callback</body></html>' });
+    });
+    await mockGraphQL(page, {
+      SignInOptions: {
+        signInOptions: { ...SIGN_IN_OPTIONS.signInOptions, github: true, password: false },
+      },
+    });
+
+    await page.goto(`/login?invite=${encodeURIComponent(CODE)}`);
+    await page.getByRole('button', { name: 'Continue with GitHub' }).click();
+    await page.waitForURL(/\/auth\/callback\/github/);
+
+    // The assertion the whole `Domain` attribute exists for: the request the
+    // provider sent the browser to, on the *API* host, carried the code.
+    expect(callbackCookies, 'the callback request carried no cookies at all').toBeDefined();
+    expect(callbackCookies).toContain(`cr_invite=${NORMALISED}`);
+
+    // And the cookie really is scoped to the shared suffix, not to the console.
+    const stored = await page.context().cookies();
+    const invite = stored.find((cookie) => cookie.name === 'cr_invite');
+    expect(invite?.domain).toBe(`.${API_HOST.split('.').slice(1).join('.')}`);
   });
 });
