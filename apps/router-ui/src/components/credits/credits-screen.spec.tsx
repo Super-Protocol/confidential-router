@@ -246,6 +246,22 @@ describe('CreditsScreen', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 
+  it('shows an invitation grant as a credit, naming the campaign it came from', async () => {
+    const grant = transaction({
+      id: 'txn-invite',
+      kind: 'GRANT',
+      amountMicros: '100000000',
+      reference: 'launch-2026-10-devs',
+      description: 'Invitation credit · launch-2026-10-devs',
+    });
+
+    render([creditsMock(BALANCE, [grant])]);
+
+    expect(await screen.findByText('Invitation credit')).toBeInTheDocument();
+    expect(screen.getByText('Invitation credit · launch-2026-10-devs')).toBeInTheDocument();
+    expect(screen.getByText('+$100.00')).toBeInTheDocument();
+  });
+
   it('offers a way back when the balance cannot be read', async () => {
     renderWithSession(<CreditsScreen />, {
       mocks: [

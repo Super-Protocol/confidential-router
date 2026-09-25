@@ -1,3 +1,4 @@
+export * from './admin.guard.js';
 export * from './auth.module.js';
 export * from './auth.options.js';
 export * from './auth.service.js';
@@ -8,6 +9,7 @@ export * from './optional-session.guard.js';
 export * from './request-of.js';
 export * from './session.guard.js';
 export * from './sign-in-options.service.js';
+export * from './sign-up-provisioning.service.js';
 export * from './user-profile.service.js';
 export * from './workspace-provisioning.service.js';
 export * from './workspace-scope.service.js';

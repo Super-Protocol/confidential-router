@@ -27,6 +27,9 @@ const KIND_LABELS: Record<CreditTransactionKind, string> = {
   USAGE: 'Usage',
   REFUND: 'Refund',
   ADJUSTMENT: 'Adjustment',
+  // An invitation code redeemed at sign-up. Its campaign is in `description`,
+  // which the Description column shows as it is (SUP-142).
+  GRANT: 'Invitation credit',
 };
 
 export function TransactionTable({ transactions }: { transactions: readonly TransactionRow[] }) {

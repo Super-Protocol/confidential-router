@@ -45,7 +45,10 @@ describe('SQLite', () => {
     const dataSource = await sqliteDataSource();
     try {
       const applied = await dataSource.runMigrations();
-      expect(applied.map((migration) => migration.name)).toEqual(['InitialSchema1756600000000']);
+      expect(applied.map((migration) => migration.name)).toEqual([
+        'InitialSchema1756600000000',
+        'InviteCodes1758800000000',
+      ]);
     } finally {
       await dataSource.destroy();
     }
@@ -73,13 +76,19 @@ describe('SQLite', () => {
     }
   });
 
-  it('reverts cleanly', async () => {
+  it('reverts cleanly, one migration at a time', async () => {
     const dataSource = await sqliteDataSource();
     try {
       await dataSource.runMigrations();
-      await dataSource.undoLastMigration();
 
+      await dataSource.undoLastMigration();
       const queryRunner = dataSource.createQueryRunner();
+      expect(await queryRunner.hasTable('invite_redemptions')).toBe(false);
+      expect(await queryRunner.hasTable('invite_codes')).toBe(false);
+      // The tables the reverted migration did not create are untouched.
+      expect(await queryRunner.hasTable('workspaces')).toBe(true);
+
+      await dataSource.undoLastMigration();
       expect(await queryRunner.hasTable('workspaces')).toBe(false);
       expect(await queryRunner.hasTable('generations')).toBe(false);
       await queryRunner.release();
@@ -117,7 +126,10 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     const dataSource = await postgresDataSource();
     try {
       const applied = await dataSource.runMigrations({ transaction: 'all' });
-      expect(applied.map((migration) => migration.name)).toEqual(['InitialSchema1756600000000']);
+      expect(applied.map((migration) => migration.name)).toEqual([
+        'InitialSchema1756600000000',
+        'InviteCodes1758800000000',
+      ]);
 
       const { upQueries } = await dataSource.driver.createSchemaBuilder().log();
       expect(upQueries.map((query) => query.query)).toEqual([]);
@@ -131,8 +143,10 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     try {
       await dataSource.runMigrations({ transaction: 'all' });
       await dataSource.undoLastMigration({ transaction: 'all' });
+      await dataSource.undoLastMigration({ transaction: 'all' });
 
       const queryRunner = dataSource.createQueryRunner();
+      expect(await queryRunner.hasTable('invite_codes')).toBe(false);
       expect(await queryRunner.hasTable('workspaces')).toBe(false);
       await queryRunner.release();
     } finally {

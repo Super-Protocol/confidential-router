@@ -24,9 +24,36 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/embeddings` | optional | only if the model's `capabilities` include `embeddings` |
 | `GET /v1/generation?id=` | required | metering record of one generation (OpenRouter-style) |
 | `GET /v1/evidence/{endpoint}` | required | raw passthrough of the endpoint's latest published bundle; no key |
+| `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
+
+### `GET /v1/invites/{code}`
+
+The one path under `/v1` that is neither OpenAI-compatible nor key-authenticated, because its caller has
+not got an account yet: the landing page and the sign-up form use it to say "your $100 credit is ready"
+before the visitor commits to anything. Answers Nest's ordinary JSON, not the OpenAI envelope. Always
+`Cache-Control: no-store` — a grant that has just been spent must stop reading as available.
+
+The code is matched case-insensitively with separators ignored, so `abcd-efgh-jkmn`, `ABCDEFGHJKMN` and
+`ABCD EFGH JKMN` are one code.
+
+```json
+{ "valid": true, "grantMicros": "100000000", "campaign": "launch-2026-10-devs" }
+{ "valid": false, "reason": "unavailable" }
+```
+
+`unavailable` is the **only** reason it ever gives. Expired, exhausted, withdrawn and never-existed are one
+answer here on purpose: distinguishing them would confirm to an anonymous caller that a guessed code is a
+real one, which is most of the work of stealing a grant. Operators get the real reason from
+`node dist/cli/invites.js stats` and the `inviteCampaigns` query.
+
+`429` with `Retry-After` past `invites.lookupsPerMinute` per source address, on a budget of its own — a
+tenant's `/v1` traffic and the landing page's lookups do not spend each other's.
+
+Redemption is **not** on this surface, and there is no endpoint for it: a code is spent inside account
+creation (`docs/router.md`, "Invitation codes"), which is what makes a grant unreplayable.
 
 ### `POST /v1/chat/completions`
 

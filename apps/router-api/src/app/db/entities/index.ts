@@ -4,6 +4,8 @@ import { CreditTransaction } from './credit-transaction.entity.js';
 import { Endpoint } from './endpoint.entity.js';
 import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
 import { Generation } from './generation.entity.js';
+import { InviteCode } from './invite-code.entity.js';
+import { InviteRedemption } from './invite-redemption.entity.js';
 import { Model } from './model.entity.js';
 import { User } from './user.entity.js';
 import { UserPreferences } from './user-preferences.entity.js';
@@ -16,6 +18,8 @@ export * from './credit-transaction.entity.js';
 export * from './endpoint.entity.js';
 export * from './evidence-snapshot.entity.js';
 export * from './generation.entity.js';
+export * from './invite-code.entity.js';
+export * from './invite-redemption.entity.js';
 export * from './model.entity.js';
 export * from './user.entity.js';
 export * from './user-preferences.entity.js';
@@ -34,6 +38,8 @@ export const ENTITIES = [
   Endpoint,
   EvidenceSnapshot,
   Generation,
+  InviteCode,
+  InviteRedemption,
   Model,
   User,
   UserPreferences,

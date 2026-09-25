@@ -337,6 +337,15 @@
           "format": "email",
           "default": "admin@confidential-router.local",
           "description": "The address the bootstrapped first account is created under."
+        },
+        "adminEmails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email"
+          },
+          "default": [],
+          "description": "Addresses allowed to read the operator-only parts of the console schema (invitation-campaign aggregates). Empty means nobody: the user table belongs to Better Auth, so there is no role column to put this on."
         }
       }
     },
@@ -384,6 +393,25 @@
               "default": "usd"
             }
           }
+        }
+      }
+    },
+    "invites": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Invitation codes that grant credit. Inert until codes are generated.",
+      "properties": {
+        "landingBaseUrl": {
+          "type": "string",
+          "format": "uri",
+          "default": "https://router.superprotocol.com",
+          "description": "Origin the generated invitation URLs point at: the campaign landing page, not this service."
+        },
+        "lookupsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "Per-source-address budget on the public GET /v1/invites/{code}."
         }
       }
     },

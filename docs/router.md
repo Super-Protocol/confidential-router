@@ -351,6 +351,71 @@ did not ask for it. **Prompt and completion content is never stored** — the
 generation row holds token counts, cost, latency and status, and nothing you
 sent.
 
+## Invitation codes
+
+A mailed campaign hands out credit without the recipient ever typing a code
+(SUP-140). The invitation is a link — `https://router.superprotocol.com/?invite=ABCD-EFGH-JKMN&utm_…` —
+the landing page carries the code to sign-up, and creating the account is what
+spends it.
+
+```yaml
+invites:
+  landingBaseUrl: https://router.superprotocol.com   # only the generation CLI reads this
+  lookupsPerMinute: 30                               # per source address on the public lookup
+auth:
+  adminEmails: [ops@example.com]                     # who may read the campaign aggregates
+```
+
+Nothing switches the feature on: with no codes generated it is inert.
+
+**Generating a campaign.** There is no API for minting codes, deliberately — an
+endpoint that creates credit is a thing to be attacked, and a CLI behind an
+operator's database access is not.
+
+```bash
+node apps/router-api/dist/cli/invites.js generate \
+  --count 5000 --grant 100 --campaign launch-2026-10-devs \
+  --expires 2026-12-31 --out codes.csv
+node apps/router-api/dist/cli/invites.js stats --campaign launch-2026-10-devs
+```
+
+`--grant` is USD, not micros. `--expires 2026-12-31` means "valid through the
+31st". `--out` refuses to overwrite an existing file unless `--force` is given:
+the CSV is the only copy of the codes outside the database. The two columns are
+`code,url`, which is what the mailing tool consumes.
+
+**Redeeming.** The code is spent inside account creation — Better Auth's
+`user.create.after` hook — and nowhere else. There is no redeem endpoint and no
+redeem mutation, so there is nothing a client can replay, call for someone else's
+account, or call twice. In one transaction: a seat is claimed on the code, a
+`grant` row is appended to the ledger, and the redemption is recorded.
+
+Because redemption lives in the creating request, the code has to be recovered
+from whichever request created the user, and the sign-in paths carry different
+things. Four sources are read, in order:
+
+| Source | The path it covers |
+| --- | --- |
+| `inviteCode` in the request body | `POST /auth/sign-up/email` — the console's own request |
+| `?invite=` on the request | the same, with the code appended to the URL |
+| `invite` inside `callbackURL` | magic link: `callbackURL` is the only thing of ours the verify request keeps |
+| the `cr_invite` cookie | OAuth: the provider builds the callback URL, so a cookie on this origin is all that survives |
+
+**A code that cannot be used never fails the registration.** The account is
+created, the grant is not, and the console finds out by asking: `inviteGrant`
+answers `null`. Anything else would mean a mailing-list mistake costing a visitor
+their account.
+
+Three database constraints make a double grant impossible, and none of them is a
+check in application code: the relative `UPDATE … WHERE redemptionCount <
+maxRedemptions`, the unique index on `invite_redemptions.userId` ("one grant per
+account, ever"), and the ledger's unique `idempotencyKey`,
+`invite:<codeId>:<userId>`. See `docs/contracts/data-model.md` invariant 6.
+
+The grant is an ordinary ledger entry, so it shows up on the Credits screen with
+its campaign in `reference` — a campaign's spend is answerable from the ledger
+alone.
+
 ## Running it
 
 ```bash

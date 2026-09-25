@@ -88,6 +88,7 @@ const KINDS: Record<CreditTransactionKind, CreditTransactionKindEnum> = {
   refund: CreditTransactionKindEnum.REFUND,
   adjustment: CreditTransactionKindEnum.ADJUSTMENT,
   auto_topup: CreditTransactionKindEnum.AUTO_TOPUP,
+  grant: CreditTransactionKindEnum.GRANT,
 };
 
 function transactionModel(entry: CreditTransaction): CreditTransactionModel {
