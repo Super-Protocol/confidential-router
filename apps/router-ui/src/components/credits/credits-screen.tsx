@@ -10,6 +10,7 @@ import { Receipt } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import * as React from 'react';
 import { toast } from 'sonner';
+import { FeedbackOfferCard } from '../feedback/feedback-offer-card';
 import { NoWorkspace } from '../no-workspace';
 import { NextStepCard } from '../onboarding/next-step-card';
 import { PageHeader } from '../page-header';
@@ -55,6 +56,12 @@ export function CreditsScreen() {
   // the viewer is still reading.
   const [welcomed] = React.useState(() => searchParams.get('welcome') === 'invite');
   useWelcomeParameterCleared(welcomed);
+
+  // A stable identity, so the feedback card's "grant landed" effect does not
+  // re-run every time Apollo hands back a new `refetch`.
+  const refetchBalance = React.useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   const balance = data?.creditBalance ?? null;
   const page = data?.creditTransactions;
@@ -134,6 +141,8 @@ export function CreditsScreen() {
         <BalanceCard balanceMicros={balance.balanceMicros} spendable={balance.spendable} />
 
         <NextStepCard />
+
+        <FeedbackOfferCard onGranted={refetchBalance} />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <BuyCreditsCard workspaceId={workspaceId} minTopUpMicros={balance.minTopUpMicros} canSpend={canSpend} />

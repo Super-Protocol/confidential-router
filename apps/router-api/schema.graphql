@@ -314,6 +314,45 @@ enum EvidenceState {
   STALE
 }
 
+"""The second grant an account earned by giving feedback."""
+type FeedbackGrant {
+  appliedAt: DateTime!
+
+  """The `grant` ledger entry this submission wrote."""
+  creditTransactionId: ID!
+
+  """Micro-USD credited."""
+  grantMicros: String!
+}
+
+enum FeedbackIneligibleReason {
+  ALREADY_GRANTED
+  BALANCE_HEALTHY
+  DISABLED
+  NO_FIRST_GRANT
+  NO_USAGE
+}
+
+"""Whether to ask this account for feedback, and where to send it."""
+type FeedbackOffer {
+  """Whether the second grant is available to the viewer right now."""
+  eligible: Boolean!
+
+  """
+  The form, with a short-lived signed token in its hidden fields. Null unless eligible; it expires in minutes, so it is read when the offer is shown and not stored.
+  """
+  formUrl: String
+
+  """Micro-USD a completed form credits."""
+  grantMicros: String!
+
+  """The grant already applied to this account, if there is one."""
+  granted: FeedbackGrant
+
+  """Why not. Null when `eligible`."""
+  reason: FeedbackIneligibleReason
+}
+
 enum GatekeeperArch {
   AMD64
   ARM64
@@ -664,6 +703,11 @@ type Query {
 
   """Everything this endpoint has published, newest first."""
   evidenceSnapshots(after: String, endpointId: ID!, first: Int! = 20): EvidenceSnapshotConnection!
+
+  """
+  Whether to offer the viewer a second grant for feedback, and the form link to do it with.
+  """
+  feedbackOffer: FeedbackOffer!
 
   """
   The published gatekeeper build, or null when none has been retrieved yet.

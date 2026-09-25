@@ -18,8 +18,8 @@ import { type MigrationInterface, type QueryRunner, TableColumn } from 'typeorm'
  * Same rules as the rest of the schema: TypeORM's dialect-neutral API, one
  * `bigint` epoch-millisecond timestamp on both PostgreSQL and SQLite.
  */
-export class WorkspaceFirstRequest1758900000000 implements MigrationInterface {
-  name = 'WorkspaceFirstRequest1758900000000';
+export class WorkspaceFirstRequest1759000000000 implements MigrationInterface {
+  name = 'WorkspaceFirstRequest1759000000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.addColumn(

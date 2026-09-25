@@ -9,6 +9,7 @@ import { ApiKeysModule } from '../../api-keys/api-keys.module.js';
 import { AuthModule } from '../../auth/index.js';
 import { BillingModule } from '../../billing/index.js';
 import { routerConfig } from '../../config.js';
+import { FeedbackModule } from '../../feedback/feedback.module.js';
 import { GatekeeperModule } from '../../gatekeeper/index.js';
 import { InvitesModule } from '../../invites/invites.module.js';
 import { PreferencesModule } from '../../preferences/index.js';
@@ -31,6 +32,7 @@ import { formatConsoleError } from './errors.js';
     ActivityModule,
     AnalyticsModule,
     BillingModule,
+    FeedbackModule,
     GatekeeperModule,
     InvitesModule,
     PreferencesModule,

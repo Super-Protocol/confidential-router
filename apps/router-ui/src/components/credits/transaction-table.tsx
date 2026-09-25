@@ -32,6 +32,22 @@ const KIND_LABELS: Record<CreditTransactionKind, string> = {
   GRANT: 'Invitation credit',
 };
 
+/**
+ * `reference` on a feedback grant, set by the API (`feedback-grant.recorder.ts`).
+ *
+ * Both grants are `kind: GRANT`, so the kind alone cannot say which $100 a row
+ * is — and a viewer looking at two identical badges has no way to tell the
+ * invitation from the one they earned by answering the form.
+ */
+const FEEDBACK_GRANT_REFERENCE = 'feedback';
+
+function kindLabelOf(entry: TransactionRow): string {
+  if (entry.kind === 'GRANT' && entry.reference === FEEDBACK_GRANT_REFERENCE) {
+    return 'Feedback grant';
+  }
+  return KIND_LABELS[entry.kind];
+}
+
 export function TransactionTable({ transactions }: { transactions: readonly TransactionRow[] }) {
   return (
     <Table>
@@ -55,7 +71,7 @@ export function TransactionTable({ transactions }: { transactions: readonly Tran
             <TableRow key={entry.id}>
               <TableCell className="whitespace-nowrap">{formatDate(entry.createdAt)}</TableCell>
               <TableCell>
-                <Badge variant="outline">{KIND_LABELS[entry.kind]}</Badge>
+                <Badge variant="outline">{kindLabelOf(entry)}</Badge>
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {descriptionTextOf(entry.description) || entry.reference || '—'}
