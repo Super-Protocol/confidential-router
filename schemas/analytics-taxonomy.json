@@ -1,0 +1,391 @@
+{
+  "$schema": "./analytics-taxonomy.schema.json",
+  "version": 1,
+  "sharedProperties": {
+    "campaign": {
+      "type": "string",
+      "required": false,
+      "description": "The invitation campaign the visitor arrived with — `InviteCode.campaign`, the free-text tag the generation CLI stamps on a batch of codes (SUP-142). This is the join key between the two tools and the database; omitted when the visit carried no code.",
+      "example": "launch-2026-10-devs"
+    },
+    "has_invite": {
+      "type": "boolean",
+      "required": true,
+      "description": "Whether the request carried an `?invite=` code. On the landing that means the URL and nothing else; on the console it also covers the `cr_invite` cookie the console sets on its own origin before an OAuth redirect, so the code survives the round trip. Always present, so `false` is a countable population rather than a gap.",
+      "example": true
+    },
+    "utm_source": {
+      "type": "string",
+      "required": false,
+      "description": "`utm_source` as it arrived in the URL, lower-cased and trimmed. Landing only.",
+      "example": "mailing"
+    },
+    "utm_medium": {
+      "type": "string",
+      "required": false,
+      "description": "`utm_medium` as it arrived in the URL, lower-cased and trimmed. Landing only.",
+      "example": "email"
+    },
+    "utm_campaign": {
+      "type": "string",
+      "required": false,
+      "description": "`utm_campaign` as it arrived in the URL, lower-cased and trimmed. Usually equal to `campaign`, but it is the marketer's string, not ours, so the two are recorded separately.",
+      "example": "launch-2026-10-devs"
+    },
+    "utm_content": {
+      "type": "string",
+      "required": false,
+      "description": "`utm_content` as it arrived in the URL, lower-cased and trimmed — which variant of the mail the click came from.",
+      "example": "button-b"
+    },
+    "position": {
+      "type": "string",
+      "required": true,
+      "description": "Which part of the page the element sits in. A closed set: it is the breakdown the copy decisions are made from, so a new section adds a value here in the same change.",
+      "enum": [
+        "nav",
+        "hero",
+        "how_it_works",
+        "verify",
+        "models",
+        "pricing",
+        "faq",
+        "closing",
+        "footer"
+      ],
+      "example": "hero"
+    },
+    "outcome": {
+      "type": "string",
+      "required": true,
+      "description": "Whether the server-side action credited the account or declined to.",
+      "enum": ["granted", "refused"],
+      "example": "granted"
+    },
+    "grant_micros": {
+      "type": "integer",
+      "required": false,
+      "description": "Micro-USD credited, integer, per the money convention in ADR-005 ($100 is 100000000). Present only when `outcome` is `granted`.",
+      "example": 100000000
+    }
+  },
+  "events": [
+    {
+      "name": "landing_view",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-144",
+      "when": "The landing page is loaded at router.superprotocol.com. This is Plausible's automatic pageview, not a second custom event.",
+      "notes": "The name is the taxonomy's; in Plausible's UI the row reads `pageview`. The properties below ride it through the `pageview-props` script variant, so no extra request is made and the page is never double-counted.",
+      "uses": [
+        "has_invite",
+        "campaign",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_content"
+      ]
+    },
+    {
+      "name": "cta_click",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-144",
+      "when": "A primary call-to-action is activated (click, or Enter/Space on the focused control) — before the navigation, with Plausible's own queueing so the beacon survives the unload.",
+      "notes": "`target: signup` is the landing half of the funnel: it is the last thing we can observe before the browser leaves for the console, which is a different origin with no shared identifier. Register it as a Plausible goal.",
+      "uses": ["position", "has_invite", "campaign", "utm_campaign"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "required": true,
+          "description": "Where the call-to-action sends the visitor.",
+          "enum": ["signup", "docs", "models", "contact"],
+          "example": "signup"
+        }
+      }
+    },
+    {
+      "name": "diagram_variant_shown",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-144",
+      "when": "The how-it-works diagram first enters the viewport, once per page load, reporting the variant the CSS actually resolved to.",
+      "notes": "The artboard ships two diagrams and the breakpoint decides; this is how we learn which one most visitors were shown before judging the section's engagement.",
+      "properties": {
+        "variant": {
+          "type": "string",
+          "required": true,
+          "description": "Which of the artboard's two diagrams is rendered at this width.",
+          "enum": ["horizontal", "vertical"],
+          "example": "horizontal"
+        },
+        "viewport_bucket": {
+          "type": "string",
+          "required": true,
+          "description": "Coarse width bucket at the moment the diagram appeared: mobile <768, tablet <1024, desktop <1440, wide otherwise. Buckets, not pixels — a pixel width is a high-cardinality property and a weak fingerprinting signal.",
+          "enum": ["mobile", "tablet", "desktop", "wide"],
+          "example": "desktop"
+        }
+      }
+    },
+    {
+      "name": "code_copied",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-144",
+      "when": "A copy button on a code sample succeeds (the clipboard write resolved), or the sample is copied with the keyboard from inside its container.",
+      "uses": ["has_invite"],
+      "properties": {
+        "snippet": {
+          "type": "string",
+          "required": true,
+          "description": "Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value.",
+          "enum": [
+            "base_url",
+            "curl",
+            "python",
+            "node",
+            "openai_sdk",
+            "model_slug"
+          ],
+          "example": "curl"
+        }
+      }
+    },
+    {
+      "name": "faq_opened",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-144",
+      "when": "An FAQ item is expanded. Collapsing it again sends nothing.",
+      "properties": {
+        "question_id": {
+          "type": "string",
+          "required": true,
+          "description": "The FAQ item's stable slug — the id already used as the disclosure's anchor, not the question text, so re-wording a question does not start a new series.",
+          "example": "what-is-a-tee"
+        }
+      }
+    },
+    {
+      "name": "docs_link_click",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-144",
+      "when": "An outbound link to documentation or to another Super Protocol property is activated.",
+      "notes": "Plausible's outbound-link extension would report these as `Outbound Link: Click` with the raw URL; we send our own named event instead so the breakdown is a handful of destinations rather than one row per URL.",
+      "uses": ["position"],
+      "properties": {
+        "destination": {
+          "type": "string",
+          "required": true,
+          "description": "Which property the link leads to. Closed set: an unrecognised host is not sent at all rather than widening the breakdown.",
+          "enum": [
+            "docs",
+            "api_reference",
+            "github",
+            "attestation",
+            "status",
+            "superprotocol"
+          ],
+          "example": "docs"
+        }
+      }
+    },
+    {
+      "name": "signup_started",
+      "surface": "console",
+      "tool": "posthog",
+      "transport": "first-party-ingest",
+      "owner": "SUP-145",
+      "when": "The sign-up screen is presented on console.router.superprotocol.com, once per page load.",
+      "notes": "Anonymous and deliberately unstitched: it is captured with `$process_person_profile: false` and a per-request random `distinct_id`, because linking it to the account that appears later would need an identifier stored in the visitor's browser — the thing ADR-006 §4 rules out. Read it as a volume, and read the landing → account edge from `cta_click{target: signup}`, from `invite_redeemed`, and from `inviteCampaignStats`.",
+      "uses": ["has_invite", "campaign", "utm_campaign"],
+      "properties": {
+        "entry": {
+          "type": "string",
+          "required": true,
+          "description": "How the visitor reached the screen, from the URL alone: `landing_cta` when the invite or UTM parameters are present, `invite_link` when an invitation URL was opened directly at the console, `login_switch` from the sign-in screen's link, `direct` otherwise.",
+          "enum": ["landing_cta", "invite_link", "login_switch", "direct"],
+          "example": "landing_cta"
+        }
+      }
+    },
+    {
+      "name": "signup_completed",
+      "surface": "api",
+      "tool": "posthog",
+      "transport": "server",
+      "owner": "SUP-145",
+      "when": "router-api's account-creation hook has committed — the same `user.create.after` boundary the invitation grant runs in (SUP-142) — so the event exists only for accounts that exist.",
+      "notes": "The first identified event: `distinct_id` is the account's UUID. No email, no name, no IP is sent as a person property (ADR-006 §4). Idempotency `uuid` is derived from the user id, so a retried hook cannot double-count a sign-up.",
+      "uses": ["has_invite", "campaign"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "required": true,
+          "description": "Which of ADR-004's three paths created the account.",
+          "enum": ["password", "magic_link", "github", "google"],
+          "example": "github"
+        }
+      }
+    },
+    {
+      "name": "invite_redeemed",
+      "surface": "api",
+      "tool": "posthog",
+      "transport": "server",
+      "owner": "SUP-145",
+      "when": "The redemption attempt inside sign-up resolves — for every attempt that carried a code, whether it credited the account or was declined. A sign-up with no code sends nothing.",
+      "notes": "Refusals are the point: a campaign whose codes were all spent before the mail went out looks identical to a campaign nobody opened unless the refusal reason is recorded. Idempotency `uuid` is the `InviteRedemption` row id. `reason` mirrors `InviteRedemptionOutcome` in router-api.",
+      "uses": ["campaign", "outcome", "grant_micros"],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "required": false,
+          "description": "Why the code was declined. Present only when `outcome` is `refused`.",
+          "enum": [
+            "not_found",
+            "expired",
+            "exhausted",
+            "disabled",
+            "already_redeemed",
+            "error"
+          ],
+          "example": "exhausted"
+        }
+      }
+    },
+    {
+      "name": "api_key_created",
+      "surface": "api",
+      "tool": "posthog",
+      "transport": "server",
+      "owner": "SUP-145",
+      "when": "The `createApiKey` mutation has committed. The key's own value and label are never part of the event.",
+      "uses": ["campaign"],
+      "properties": {
+        "has_spend_limit": {
+          "type": "boolean",
+          "required": true,
+          "description": "Whether the key was created with a per-key spend limit.",
+          "example": false
+        },
+        "keys_after": {
+          "type": "integer",
+          "required": true,
+          "description": "How many live keys the workspace has after this one — the cheap way to separate the first key (an activation step) from the tenth (an integration habit).",
+          "example": 1
+        }
+      }
+    },
+    {
+      "name": "first_request_sent",
+      "surface": "api",
+      "tool": "posthog",
+      "transport": "server",
+      "owner": "SUP-145",
+      "when": "A workspace's first generation reaches a terminal state, exactly once per workspace, decided by the workspace's own first-request timestamp inside the recording transaction rather than by a count.",
+      "notes": "The event the whole campaign is judged on: an account that redeemed $100 and never sent a token did not convert. `inviteCampaignStats.activated` answers the same question from the database and is the number to trust when the two disagree.",
+      "uses": ["campaign"],
+      "properties": {
+        "model_slug": {
+          "type": "string",
+          "required": true,
+          "description": "The catalogue slug of the model the first request went to — a closed set in practice, since it can only be a model the router serves.",
+          "example": "llama-3.3-70b"
+        },
+        "hours_since_signup": {
+          "type": "integer",
+          "required": true,
+          "description": "Whole hours between account creation and this request, floored. Hours rather than a timestamp difference computed in the tool, so the number survives export.",
+          "example": 2
+        },
+        "had_invite_grant": {
+          "type": "boolean",
+          "required": true,
+          "description": "Whether this workspace's ledger holds an invitation grant — the split that says whether the $100 did anything.",
+          "example": true
+        }
+      }
+    },
+    {
+      "name": "model_requested",
+      "surface": "api",
+      "tool": "posthog",
+      "transport": "server",
+      "owner": "SUP-146",
+      "when": "The `requestModel` mutation has committed a row.",
+      "notes": "The requested model name and any note stay in our database, where SUP-146's admin aggregation and CSV export read them. They are not event properties: free text is a breakdown with one row per request, and it is the one field on either surface where a visitor could type something personal.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "required": true,
+          "description": "Which screen the request was raised from.",
+          "enum": ["models_page", "empty_state", "dashboard"],
+          "example": "models_page"
+        },
+        "has_details": {
+          "type": "boolean",
+          "required": true,
+          "description": "Whether the requester wrote anything in the free-text field — how much the field earns its place, without reading it.",
+          "example": true
+        }
+      }
+    },
+    {
+      "name": "feedback_form_opened",
+      "surface": "console",
+      "tool": "posthog",
+      "transport": "first-party-ingest",
+      "owner": "SUP-149",
+      "when": "The feedback form is opened from the console — the click, not the form provider's own view event.",
+      "notes": "Identified: the console posts it to router-api on the session, so `distinct_id` is the account's UUID and the form provider needs no identifier of ours in its URL.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "required": true,
+          "description": "Where the invitation to give feedback was shown.",
+          "enum": ["balance_banner", "credits_page", "email_link"],
+          "example": "balance_banner"
+        },
+        "grant_eligible": {
+          "type": "boolean",
+          "required": true,
+          "description": "Whether this account could still earn the second grant at the moment it opened the form.",
+          "example": true
+        }
+      }
+    },
+    {
+      "name": "feedback_grant_applied",
+      "surface": "api",
+      "tool": "posthog",
+      "transport": "server",
+      "owner": "SUP-149",
+      "when": "The signed form webhook has been verified and the second grant resolved, whether it credited the account or was declined.",
+      "notes": "Idempotency `uuid` is the ledger entry id (or the webhook delivery id on a refusal), so a provider redelivery cannot show as two grants. No answer text is ever sent.",
+      "uses": ["outcome", "grant_micros"],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "required": false,
+          "description": "Why the second grant was declined. Present only when `outcome` is `refused`.",
+          "enum": [
+            "already_granted",
+            "not_eligible",
+            "unknown_account",
+            "error"
+          ],
+          "example": "already_granted"
+        }
+      }
+    }
+  ]
+}

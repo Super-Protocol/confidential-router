@@ -11,6 +11,13 @@ process boundary. TypeScript consumers import them through `@confidential-router
 | `rego-input.schema.json` | `apps/gatekeeper` (`pkg/policy`), policy authors | `examples/rego-input.example.json` |
 | `swarm-evidence-bundle.schema.json` | `libs/attestation`, `apps/gatekeeper/pkg/attestation`, router evidence poller | `examples/swarm-evidence-bundle.example.json` |
 | `router-config.schema.json` | `apps/router-api` (config loader) | `examples/router-config.example.yaml` |
+| `analytics-taxonomy.schema.json` | `analytics-taxonomy.json` itself, `libs/types` (event allow-list), the landing repository | the taxonomy *is* the instance — [`analytics-taxonomy.json`](./analytics-taxonomy.json) |
+
+`analytics-taxonomy.json` is the odd one out: it is not a schema for a document that crosses the wire but
+the single list of events two repositories emit (ADR-006), so the instance lives here beside its schema
+rather than under `examples/`. `libs/types/src/analytics/analytics.spec.ts` validates it, compares it with
+the typed view in `libs/types` and with `docs/contracts/analytics-events.md`, and rejects a property whose
+name reads like personal data.
 
 CI: `libs/types/src/schemas/schemas.spec.ts` compiles every schema in strict mode with `ajv` and asserts
 that every example validates (plus negative cases). Change a schema → update the example → the test tells
