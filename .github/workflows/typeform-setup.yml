@@ -1,0 +1,181 @@
+# Creates or updates the feedback form and points its webhook at a deployment
+# (SUP-149).
+#
+# It runs in CI rather than on anyone's machine because of who holds what: the
+# Typeform account token is a repository secret, agents cannot read it, and the
+# webhook secret it mints must reach the deployment without ever being written
+# down. This job is the only place the two meet.
+#
+# Re-running it rotates `TYPEFORM_WEBHOOK_SECRET` and re-points the webhook. The
+# form is matched by title, so marketing can keep editing the questions in
+# Typeform's own editor — which is the entire reason the form is not ours — and
+# a re-run will not undo them unless `recreate_form` is set.
+name: Typeform setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      webhook_url:
+        description: 'Where the deployment receives submissions, e.g. https://api.router.superprotocol.com/v1/webhooks/typeform'
+        type: string
+        required: true
+      environment:
+        description: 'Deployment environment to write TYPEFORM_WEBHOOK_SECRET into'
+        type: string
+        required: true
+        default: production
+      recreate_form:
+        description: 'Create a new form even if one with this title exists (discards its answers)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One at a time: two runs would mint two secrets and leave the webhook holding
+# whichever finished last, with the deployment holding the other.
+concurrency:
+  group: typeform-setup
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Form and webhook
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fail before anything at Typeform is touched. A run that registered a
+      # webhook and then could not deliver the secret would leave submissions
+      # signed with a key nobody has.
+      - name: Check the credentials this job needs
+        env:
+          TYPEFORM_ACCESS_TOKEN: ${{ secrets.TYPEFORM_ACCESS_TOKEN }}
+          ACTIONS_ADMIN_TOKEN: ${{ secrets.ACTIONS_ADMIN_TOKEN }}
+          # Through the environment, never interpolated into the script: a
+          # dispatch input is attacker-controlled text and `${{ }}` pastes it in
+          # before bash ever sees a quote.
+          WEBHOOK_URL: ${{ inputs.webhook_url }}
+        run: |
+          set -euo pipefail
+          test -n "${TYPEFORM_ACCESS_TOKEN}" || {
+            echo "::error::TYPEFORM_ACCESS_TOKEN is not set on this repository."
+            exit 1
+          }
+          # GITHUB_TOKEN cannot write Actions secrets at all, whatever its
+          # permissions block says, so this job needs a PAT with `repo` scope.
+          test -n "${ACTIONS_ADMIN_TOKEN}" || {
+            echo "::error::ACTIONS_ADMIN_TOKEN (PAT with repo scope) is not set; the webhook secret could not be stored."
+            exit 1
+          }
+          case "${WEBHOOK_URL}" in
+            https://*/v1/webhooks/typeform) ;;
+            *) echo "::error::webhook_url must be an https URL ending in /v1/webhooks/typeform."; exit 1 ;;
+          esac
+
+      - name: Mint the webhook secret
+        id: secret
+        run: |
+          set -euo pipefail
+          secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${secret}"
+          echo "value=${secret}" >> "$GITHUB_OUTPUT"
+
+      # Stored before the webhook is registered, for the same reason as above:
+      # the deployment must never be the last to know.
+      - name: Store it as a repository and environment secret
+        env:
+          GH_TOKEN: ${{ secrets.ACTIONS_ADMIN_TOKEN }}
+          SECRET: ${{ steps.secret.outputs.value }}
+          REPO: ${{ github.repository }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          gh secret set TYPEFORM_WEBHOOK_SECRET --repo "${REPO}" --body "${SECRET}"
+          gh secret set TYPEFORM_WEBHOOK_SECRET --repo "${REPO}" --env "${ENVIRONMENT}" --body "${SECRET}"
+
+      - name: Create or update the form
+        id: form
+        env:
+          TYPEFORM_ACCESS_TOKEN: ${{ secrets.TYPEFORM_ACCESS_TOKEN }}
+          RECREATE: ${{ inputs.recreate_form }}
+        run: |
+          set -euo pipefail
+          api() {
+            local method="$1" path="$2"
+            shift 2
+            curl --fail-with-body --silent --show-error \
+              -X "${method}" "https://api.typeform.com${path}" \
+              -H "Authorization: Bearer ${TYPEFORM_ACCESS_TOKEN}" \
+              -H 'Content-Type: application/json' "$@"
+          }
+
+          title="$(jq -r .title docs/feedback-form.json)"
+          existing=''
+          if [ "${RECREATE}" != 'true' ]; then
+            # `search` is a fuzzy match, so the title is compared exactly here.
+            existing="$(api GET "/forms?page_size=200" \
+              | jq -r --arg title "${title}" '.items[] | select(.title == $title) | .id' | head -n1)"
+          fi
+
+          if [ -n "${existing}" ]; then
+            echo "Updating form ${existing}"
+            api PUT "/forms/${existing}" --data @docs/feedback-form.json > form.json
+            form_id="${existing}"
+          else
+            echo "Creating a new form"
+            api POST "/forms" --data @docs/feedback-form.json > form.json
+            form_id="$(jq -r .id form.json)"
+          fi
+
+          display="$(jq -r '._links.display // empty' form.json)"
+          [ -n "${display}" ] || display="https://form.typeform.com/to/${form_id}"
+          echo "id=${form_id}" >> "$GITHUB_OUTPUT"
+          echo "url=${display}" >> "$GITHUB_OUTPUT"
+
+      - name: Point its webhook at the deployment
+        env:
+          TYPEFORM_ACCESS_TOKEN: ${{ secrets.TYPEFORM_ACCESS_TOKEN }}
+          SECRET: ${{ steps.secret.outputs.value }}
+          WEBHOOK_URL: ${{ inputs.webhook_url }}
+        run: |
+          set -euo pipefail
+          # The tag is the webhook's identity, so a re-run replaces this one
+          # rather than adding a second delivery of every submission.
+          jq -n --arg url "${WEBHOOK_URL}" --arg secret "${SECRET}" \
+            '{enabled: true, url: $url, secret: $secret, verify_ssl: true}' > webhook.json
+          curl --fail-with-body --silent --show-error \
+            -X PUT "https://api.typeform.com/forms/${{ steps.form.outputs.id }}/webhooks/confidential-router" \
+            -H "Authorization: Bearer ${TYPEFORM_ACCESS_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data @webhook.json > /dev/null
+
+      - name: Say what the deployment now needs
+        env:
+          WEBHOOK_URL: ${{ inputs.webhook_url }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          FORM_ID: ${{ steps.form.outputs.id }}
+          FORM_URL: ${{ steps.form.outputs.url }}
+        run: |
+          {
+            echo '### Feedback form ready'
+            echo
+            echo "- Form: \`${FORM_ID}\`"
+            echo "- Webhook: \`${WEBHOOK_URL}\`"
+            echo "- \`TYPEFORM_WEBHOOK_SECRET\` written to the repository and to the \`${ENVIRONMENT}\` environment"
+            echo
+            echo 'Set on the deployment:'
+            echo
+            echo '```yaml'
+            echo 'feedback:'
+            echo '  form:'
+            echo '    provider: typeform'
+            echo "    url: ${FORM_URL}"
+            echo '    webhookSecret: ${CR_FEEDBACK_WEBHOOK_SECRET}   # = TYPEFORM_WEBHOOK_SECRET'
+            echo '```'
+            echo
+            echo 'The console appends the signed token as the hidden field `t`; nothing else is added to the URL.'
+          } >> "$GITHUB_STEP_SUMMARY"

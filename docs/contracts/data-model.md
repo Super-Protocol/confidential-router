@@ -18,10 +18,11 @@ Auth tables (`user`, `session`, `account`, `verification`) are owned by Better A
 | `CreditTransaction` | `credit_transactions` | append-only ledger: `id`, `workspaceId` (idx), `kind: purchase\|usage\|refund\|adjustment\|auto_topup\|grant`, `amountMicros` (signed bigint), `reference?` (Stripe id / generation id), `description?`, `idempotencyKey` (unique), `createdAt`; a unit test asserts no `UPDATE`/`DELETE` path exists in the service |
 | `InviteCode` | `invite_codes` | one mailed invitation: `id`, `code` (**normalised** — upper case, separators stripped — unique), `grantMicros` (bigint), `campaign` (idx), `maxRedemptions` (default 1), `redemptionCount`, `expiresAt?`, `disabledAt?`, `note?`, `createdAt`. Normalising on write and on lookup is what makes the match case-insensitive as a plain index hit; neither `citext` nor `COLLATE NOCASE` exists on both databases |
 | `InviteRedemption` | `invite_redemptions` | that an account spent one, once and for all: `id`, `inviteCodeId` (idx, FK CASCADE), `userId` (**unique**), `workspaceId` (FK CASCADE), `creditTransactionId`, `ipHash?`, `userAgentHash?` (salted digests, never the values), `redeemedAt`. No FK on `userId` — Better Auth owns `user` (ADR-004 §3) |
+| `FeedbackSubmission` | `feedback_submissions` | one verified feedback submission and the second grant it did or did not earn: `id`, `provider`, `formId?`, `submissionId` (**unique**), `userId` (idx), `workspaceId` (FK CASCADE), `grantedUserId?` (**unique**, set only when credited), `grantMicros?`, `creditTransactionId?`, `refusalReason?`, `answers: JSON`, `submittedAt`, `createdAt`. A refused submission is kept — the answers are what the grant buys — and leaves `grantedUserId` null, which a unique index ignores on both drivers. No FK on `userId` — Better Auth owns `user` (ADR-004 §3); the hidden token the form carried is **never** stored |
 | `UserPreferences` | `user_preferences` | 1:1 with user: `userId` (PK), `archiveEvidence` (default true), `evidenceRetentionDays` (default 90), `notifyOnMeasurementChange` (default true), `desktopNotifications`, `emailReceipts`, `updatedAt` |
 | `ActivityRollup` | `activity_rollups` | **derived**, hourly `(workspaceId, modelId, apiKeyId, bucket)` → `requests`, `promptTokens`, `completionTokens`, `costMicros`, `coveredRequests`; rebuildable. **Not written yet** (SUP-75): Activity aggregates in SQL over `generations`, which one indexed range scan answers, and a cache no screen needs is a second source of truth to keep correct. The table stays for the day a log outgrows the scan |
 
-Relations: `InviteCode 1—* InviteRedemption`, `Workspace 1—* ApiKey`, `Workspace 1—* Generation`, `Workspace 1—* CreditTransaction`,
+Relations: `InviteCode 1—* InviteRedemption`, `Workspace 1—* FeedbackSubmission`, `Workspace 1—* ApiKey`, `Workspace 1—* Generation`, `Workspace 1—* CreditTransaction`,
 `Endpoint 1—* Model`, `Endpoint 1—* EvidenceSnapshot`, `Model 1—* Generation`, `ApiKey 1—* Generation`
 (nullable), `EvidenceSnapshot 1—* Generation` (nullable), `User 1—1 UserPreferences`, `User *—*
 Workspace` via `WorkspaceMember`.
@@ -46,3 +47,10 @@ Invariants enforced in code and tests:
    the redemption — so two sign-ups racing for the last seat resolve to exactly one grant without a row
    lock, which SQLite has not got. The ledger's `idempotencyKey` is `invite:<codeId>:<userId>`, which
    refuses a second credit even if the first two locks were bypassed (`invites.service.spec.ts`).
+7. One **feedback** grant per account, ever, and one grant per submission however often the form provider
+   redelivers it. Three locks again, all in the database: the unique `feedback_submissions.submissionId`
+   (a redelivery settles onto the row the first delivery wrote), the unique *nullable*
+   `feedback_submissions.grantedUserId` (the one-per-account policy — nullable so a refused submission can
+   sit beside a credited one without the index calling them duplicates), and the ledger's
+   `idempotencyKey`, `feedback:<userId>`. The credit and the submission row are written in one
+   transaction (`feedback.service.spec.ts`, `feedback.e2e.spec.ts`).

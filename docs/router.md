@@ -416,6 +416,68 @@ The grant is an ordinary ledger entry, so it shows up on the Credits screen with
 its campaign in `reference` — a campaign's spend is answerable from the ledger
 alone.
 
+## The second grant, for feedback
+
+When the first $100 runs out the console offers another one in exchange for
+telling us how it went (SUP-149). The timing is the whole design: the only moment
+an account is demonstrably engaged is the moment it has burned through the grant
+and wants more, and feedback collected at any other time is politeness rather
+than a roadmap.
+
+```yaml
+feedback:
+  grantMicros: 100000000        # what a completed form credits
+  offerBelowMicros: 5000000     # offer below $5 — before the wall, not after
+  minMeteredTokens: 1000        # the account must actually have used the first grant
+  tokenTtl: 30m                 # how long the link in the console stays good
+  webhooksPerMinute: 60
+  form:
+    provider: typeform
+    url: https://superprotocol.typeform.com/to/XXXXXX
+    webhookSecret: ${CR_FEEDBACK_WEBHOOK_SECRET}
+```
+
+Without `form` the feature is inert end to end: no offer is made and the webhook
+is a hard 404.
+
+**Eligibility is decided in the backend, never in the browser.** All four
+conditions have to hold: the account redeemed a first grant, its balance has
+fallen below `offerBelowMicros`, it has actually sent requests
+(`minMeteredTokens`, so the grant cannot be farmed by an account that never used
+the first one), and it has not already taken a feedback grant. The console asks
+`feedbackOffer` and renders what it is told; it never computes eligibility from
+the balance it happens to be holding.
+
+**The form is a third party's, so the link carries a signed statement rather than
+an identity.** `feedbackOffer` returns the form URL with a hidden field `t`: an
+HMAC over user id, workspace id and issue time, valid for `tokenTtl` — minutes,
+not days, because its only job is to survive the walk from the console to the
+submit button. A raw user id there would be a way to mint $100 into a stranger's
+account by typing theirs into a public form.
+
+**The submission comes back through `POST /v1/webhooks/typeform`**, which
+verifies the provider's own HMAC over the raw bytes *and* our token before
+anything is written, then applies the grant through the same ledger path an
+invitation uses — `kind: grant`, `idempotencyKey` `feedback:<userId>`,
+`reference` `feedback` so the Credits screen can name its origin. Everything is
+replay-safe: a webhook delivered twice grants once, and a token used twice grants
+once. See `docs/contracts/data-model.md` invariant 7.
+
+**The answers are stored here too, not only at the provider.** A question asked
+in a form we might stop paying for should not take its answers with it, so every
+verified submission is kept — credited or refused — in `feedback_submissions`.
+The hidden token is not: a credential in an analytics table is a credential in
+every backup of it.
+
+**Setting the form up.** No agent and no laptop holds the Typeform credentials.
+`.github/workflows/typeform-setup.yml` is a `workflow_dispatch` job that creates
+or updates the form from `docs/feedback-form.json`, mints a fresh
+`TYPEFORM_WEBHOOK_SECRET`, registers the webhook against this deployment's URL,
+and writes the secret back as a repository secret and into the deployment
+environment. Re-running it rotates the secret and re-points the webhook; the form
+itself is matched by title, so the questions can be edited in Typeform's own
+editor without the job undoing them.
+
 ## Running it
 
 ```bash

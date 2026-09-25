@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation';
 import * as React from 'react';
 import { BrandMark } from './brand-mark';
 import { AppBreadcrumbs } from './breadcrumbs';
+import { FeedbackPrompt } from './feedback/feedback-prompt';
 import { SidebarNav } from './sidebar-nav';
 import { ThemeToggle } from './theme-toggle';
 import { UserMenu } from './user-menu';
@@ -94,6 +95,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ThemeToggle />
           </div>
         </header>
+
+        <FeedbackPrompt />
 
         <main id="main-content" className="flex-1 px-4 py-6 lg:px-7">
           {children}

@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithSession, TEST_WORKSPACES } from '../../test-utils';
+import { feedbackOfferMock } from '../feedback/feedback-mocks';
 import { typedSessionMock } from '../typed-session';
 import { CreditsScreen } from './credits-screen';
 import { CREATE_CHECKOUT, CREDITS_QUERY, SET_AUTO_TOP_UP } from './operations';
@@ -260,6 +261,35 @@ describe('CreditsScreen', () => {
     expect(await screen.findByText('Invitation credit')).toBeInTheDocument();
     expect(screen.getByText('Invitation credit · launch-2026-10-devs')).toBeInTheDocument();
     expect(screen.getByText('+$100.00')).toBeInTheDocument();
+  });
+
+  it('tells the feedback grant apart from the invitation one, which is also a GRANT', async () => {
+    const feedback = transaction({
+      id: 'txn-feedback',
+      kind: 'GRANT',
+      amountMicros: '100000000',
+      reference: 'feedback',
+      description: 'Feedback grant · launch-2026-10-devs',
+    });
+
+    render([creditsMock(BALANCE, [feedback])]);
+
+    // Both grants carry the same kind, so the badge has to read `reference`:
+    // two identical badges would leave the viewer guessing which $100 this is.
+    expect(await screen.findByText('Feedback grant')).toBeInTheDocument();
+    expect(screen.getByText('Feedback grant · launch-2026-10-devs')).toBeInTheDocument();
+  });
+
+  it('shows the feedback offer when the server is making one', async () => {
+    renderWithSession(<CreditsScreen />, {
+      mocks: [
+        typedSessionMock(),
+        creditsMock(),
+        feedbackOfferMock({ eligible: true, formUrl: 'https://form.example/to/aBcDeF?t=token' }),
+      ],
+    });
+
+    expect(await screen.findByTestId('feedback-offer')).toHaveTextContent('another $100.00');
   });
 
   it('offers a way back when the balance cannot be read', async () => {

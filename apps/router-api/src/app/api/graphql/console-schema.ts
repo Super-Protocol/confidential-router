@@ -7,6 +7,7 @@ import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
 import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
 import { CreditsResolver } from './credits/credits.resolver.js';
+import { FeedbackResolver } from './feedback/feedback.resolver.js';
 import { GatekeeperResolver } from './gatekeeper/gatekeeper.resolver.js';
 import { InvitesResolver } from './invites/invites.resolver.js';
 import { PreferencesResolver } from './preferences/preferences.resolver.js';
@@ -28,6 +29,7 @@ export const CONSOLE_RESOLVERS = [
   CatalogResolver,
   CreditsResolver,
   EvidenceResolver,
+  FeedbackResolver,
   GatekeeperResolver,
   InvitesResolver,
   PreferencesResolver,

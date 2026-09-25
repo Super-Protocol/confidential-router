@@ -1,0 +1,75 @@
+{
+  "title": "Confidential Router — how did your first $100 go?",
+  "type": "quiz",
+  "settings": {
+    "is_public": true,
+    "progress_bar": "proportion",
+    "show_progress_bar": true,
+    "hide_navigation": false,
+    "language": "en"
+  },
+  "welcome_screens": [
+    {
+      "ref": "welcome",
+      "title": "Tell us how it went and we will add another $100",
+      "properties": {
+        "description": "Five questions, about three minutes. The credit lands in your workspace within a minute of you submitting.",
+        "show_button": true,
+        "button_text": "Start"
+      }
+    }
+  ],
+  "thankyou_screens": [
+    {
+      "ref": "thanks",
+      "title": "Thank you — your $100 is on its way",
+      "properties": {
+        "show_button": false,
+        "share_icons": false
+      }
+    }
+  ],
+  "hidden": ["t"],
+  "fields": [
+    {
+      "ref": "built",
+      "title": "What did you build with it?",
+      "type": "long_text",
+      "validations": { "required": true }
+    },
+    {
+      "ref": "missing",
+      "title": "What was missing, or what made you stop?",
+      "type": "long_text",
+      "validations": { "required": true }
+    },
+    {
+      "ref": "models",
+      "title": "Which model would you most like us to add?",
+      "type": "short_text",
+      "validations": { "required": false }
+    },
+    {
+      "ref": "confidentiality",
+      "title": "How much did the confidentiality guarantee matter to your choice?",
+      "type": "opinion_scale",
+      "properties": {
+        "steps": 5,
+        "start_at_one": true,
+        "labels": { "left": "Not at all", "right": "It was the reason" }
+      },
+      "validations": { "required": true }
+    },
+    {
+      "ref": "recommend",
+      "title": "How likely are you to recommend it to another team?",
+      "type": "opinion_scale",
+      "properties": {
+        "steps": 11,
+        "start_at_one": false,
+        "labels": { "left": "Not at all likely", "right": "Extremely likely" }
+      },
+      "validations": { "required": true }
+    }
+  ]
+}

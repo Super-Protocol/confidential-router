@@ -2,6 +2,7 @@ import type { MockLink } from '@apollo/client/testing';
 import { MockedProvider } from '@apollo/client/testing/react';
 import { type RenderOptions, type RenderResult, render } from '@testing-library/react';
 import type * as React from 'react';
+import { feedbackOfferMock } from './components/feedback/feedback-mocks';
 import { SESSION_QUERY, SessionProvider } from './components/session/session-provider';
 
 export const TEST_WORKSPACES = [
@@ -52,12 +53,21 @@ export function renderWithApollo(
   });
 }
 
+/**
+ * Renders inside the shell's providers.
+ *
+ * `feedbackOfferMock()` is appended to whatever the caller passed, rather than
+ * left to each suite: `AppShell` asks for the offer on every screen, and a test
+ * that forgot to stub it would fill its output with Apollo's "no more mocked
+ * responses" warnings for a query it is not about. A caller that cares passes
+ * its own — the first matching mock wins.
+ */
 export function renderWithSession(ui: React.ReactElement, options: RenderWithSessionOptions = {}): RenderResult {
   const { mocks = [sessionMock()], ...rest } = options;
 
   return render(ui, {
     wrapper: ({ children }) => (
-      <MockedProvider mocks={mocks}>
+      <MockedProvider mocks={[...mocks, feedbackOfferMock()]}>
         <SessionProvider>{children}</SessionProvider>
       </MockedProvider>
     ),
