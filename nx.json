@@ -19,7 +19,10 @@
     "sharedGlobals": [
       "{workspaceRoot}/.github/workflows/pull-request.yml",
       "{workspaceRoot}/biome.json",
-      "{workspaceRoot}/tsconfig.base.json"
+      "{workspaceRoot}/tsconfig.base.json",
+      "{workspaceRoot}/schemas/analytics-taxonomy.json",
+      "{workspaceRoot}/schemas/analytics-taxonomy.schema.json",
+      "{workspaceRoot}/docs/contracts/analytics-events.md"
     ]
   },
   "plugins": [
