@@ -54,6 +54,7 @@ export interface CreditsBalance {
 const REQUIRED_SIGN: Record<CreditTransactionKind, 'positive' | 'negative' | 'any'> = {
   purchase: 'positive',
   auto_topup: 'positive',
+  grant: 'positive',
   usage: 'negative',
   refund: 'negative',
   adjustment: 'any',
@@ -182,6 +183,37 @@ export class LedgerService {
       idempotencyKey: `generation:${input.generationId}`,
       description: null,
     });
+  }
+
+  /**
+   * Runs `run` in the one transaction — and the one write slot — that `record`
+   * would have used, so a caller can put its own rows alongside a ledger entry
+   * and have the pair be atomic.
+   *
+   * It exists for the invitation grant, which must not be able to write a
+   * redemption without the credit or the credit without the redemption. Going
+   * through the ledger rather than opening a transaction on the side is what
+   * keeps `serialize` in the picture: on SQLite there is one writer, and a
+   * second transaction taken out around a ledger write would deadlock against
+   * the queue rather than serialise with it.
+   */
+  async transaction<T>(workspaceId: string, run: (manager: EntityManager) => Promise<T>): Promise<T> {
+    return this.serialize(workspaceId, () => this.dataSource.transaction(run));
+  }
+
+  /**
+   * Appends one entry inside a transaction the caller already owns — the body of
+   * `record` without the retry-on-replay handling, which only makes sense where
+   * this class controls the transaction boundary.
+   *
+   * A repeated event therefore surfaces here as the unique-index violation on
+   * `idempotencyKey`, rolling the caller's whole transaction back. That is the
+   * intended behaviour: the caller's other rows describe an event that had
+   * already happened, so none of them should land either.
+   */
+  async appendWithin(manager: EntityManager, input: LedgerEntryInput): Promise<LedgerEntry> {
+    this.assertSign(input);
+    return this.append(manager, input);
   }
 
   /**

@@ -128,6 +128,30 @@ extend type Mutation {
   setAutoTopUp(workspaceId: ID!, enabled: Boolean!, threshold: Micros, amount: Micros): Workspace!
 }
 
+# ---------- invitations ----------
+
+type InviteGrant {                      # the viewer's credit, or null
+  creditTransactionId: ID!              # the `grant` ledger row it wrote
+  grantMicros: String!
+  campaign: String!
+  redeemedAt: DateTime!
+}
+
+type InviteCampaignStats {              # auth.adminEmails only
+  campaign: String!
+  issued: Int!
+  redeemed: Int!
+  redemptionRate: Float!
+  activated: Int!                       # redeemers that went on to send a request
+  grantedMicros: String!
+}
+
+# Query.inviteGrant: InviteGrant        # session; how the console confirms the credit landed
+# Query.inviteCampaigns(campaign: String): [InviteCampaignStats!]!   # session + admin
+#
+# There is deliberately no redeem mutation: a code is spent inside account
+# creation and nowhere else, so there is nothing here a client could replay.
+
 # ---------- preferences ----------
 type UserPreferences {
   archiveEvidence: Boolean!, evidenceRetentionDays: Int!, notifyOnMeasurementChange: Boolean!

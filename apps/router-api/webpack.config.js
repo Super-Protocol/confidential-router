@@ -74,6 +74,10 @@ module.exports = {
           entryName: 'cli/run-migrations',
           entryPath: './src/cli/run-migrations.ts',
         },
+        {
+          entryName: 'cli/invites',
+          entryPath: './src/cli/invites.ts',
+        },
       ],
     }),
   ],

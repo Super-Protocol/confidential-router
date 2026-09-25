@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
+import { saltedHash } from '../../common/salted-hash.js';
 import { routerConfig } from '../../config.js';
 import type { EvidenceCoverage } from '../../metering/evidence-coverage.service.js';
 import { EvidenceCoverageService } from '../../metering/evidence-coverage.service.js';
@@ -67,9 +67,6 @@ export class GenerationRecorder {
    * with a rainbow table of the IPv4 space. The address itself never lands.
    */
   private hashClientIp(ip: string | null): string | null {
-    if (!ip) {
-      return null;
-    }
-    return createHash('sha256').update(`${this.config.auth.secret}:${ip}`).digest('hex').slice(0, 64);
+    return ip ? saltedHash(this.config.auth.secret, ip) : null;
   }
 }

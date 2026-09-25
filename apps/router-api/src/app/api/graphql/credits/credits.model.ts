@@ -8,6 +8,7 @@ export enum CreditTransactionKindEnum {
   REFUND = 'refund',
   ADJUSTMENT = 'adjustment',
   AUTO_TOPUP = 'auto_topup',
+  GRANT = 'grant',
 }
 
 registerEnumType(CreditTransactionKindEnum, { name: 'CreditTransactionKind' });
@@ -26,7 +27,10 @@ export class CreditTransactionModel {
   @Field(() => String, { description: 'Signed micro-USD: credits positive, usage negative.' })
   amountMicros!: string;
 
-  @Field(() => String, { nullable: true, description: 'Payment id or generation id, depending on the kind.' })
+  @Field(() => String, {
+    nullable: true,
+    description: 'Payment id, generation id or invitation campaign, depending on the kind.',
+  })
   reference!: string | null;
 
   @Field(() => String, {

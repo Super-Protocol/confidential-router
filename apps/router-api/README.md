@@ -261,6 +261,21 @@ balance falls under `autoTopUpThresholdMicros`, at most once per `billing.autoTo
 written before the charge, so concurrent generations produce one charge and a declining card backs off
 instead of retrying per request.
 
+## Invitation codes
+
+Invitation codes that grant credit, for a mailed campaign
+([`docs/router.md`](../../docs/router.md#invitation-codes)). Three surfaces:
+
+| Surface | What it is |
+| --- | --- |
+| `GET /v1/invites/{code}` | public, rate-limited per address; `{valid, grantMicros, campaign}` or one generic `unavailable` |
+| the sign-up path | redemption, inside Better Auth's `user.create.after` — no endpoint, nothing to replay |
+| `dist/cli/invites.js` | `generate` mints a campaign's codes into a `code,url` CSV; `stats` reads how it converted |
+
+Plus `inviteGrant` (session) and `inviteCampaigns` (`auth.adminEmails`) in the
+console schema. `InvitesService` is the only code that spends a code, and it
+cannot throw at its caller: the account is created whether or not the grant is.
+
 ## The console GraphQL API
 
 Code-first Apollo at `/graphql`, one schema for all nine console screens
@@ -334,8 +349,11 @@ src/
     gatekeeper/           GitHub release metadata for the console's download screen
     api/graphql           Apollo code-first schema, its error codes and the committed SDL
     api/v1                the OpenAI-compatible gateway
+    invites/              invitation codes: lookup, redemption inside sign-up, campaign stats
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs
+  cli/invites.ts          `invites generate` / `invites stats`
+  cli/args.ts             the flag parser both CLIs share
 test/                     supertest e2e against the real module graph
 tools/runtime-deps.cjs    the one list of packages webpack leaves external and
                           the container image installs — read by webpack.config.js

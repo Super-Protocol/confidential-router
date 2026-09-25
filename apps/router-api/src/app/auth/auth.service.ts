@@ -14,7 +14,7 @@ import { routerConfig } from '../config.js';
 import { buildAuthOptions, createAuthDatabase } from './auth.options.js';
 import { runAuthMigrations } from './auth-schema.js';
 import { MAGIC_LINK_MAILER, type MagicLinkMailer } from './magic-link-mailer.js';
-import { WorkspaceProvisioningService } from './workspace-provisioning.service.js';
+import { SignUpProvisioning } from './sign-up-provisioning.service.js';
 
 /** The subject of an authenticated console request. */
 export interface SessionUser {
@@ -41,7 +41,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(routerConfig.KEY) config: ConfigType<typeof routerConfig>,
     @Inject(MAGIC_LINK_MAILER) mailer: MagicLinkMailer,
-    workspaces: WorkspaceProvisioningService,
+    provisioning: SignUpProvisioning,
   ) {
     this.database = createAuthDatabase(config);
     this.migrationsRun = config.database.migrationsRun;
@@ -49,9 +49,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       config,
       mailer,
       database: this.database,
-      onUserCreated: async (user) => {
-        await workspaces.ensurePersonalWorkspace(user);
-      },
+      onUserCreated: (user, invite) => provisioning.onUserCreated(user, invite),
     });
     this.instance = betterAuth(this.options);
   }

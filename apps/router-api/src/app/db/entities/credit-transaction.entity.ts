@@ -2,7 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn, type Relat
 import { bigIntColumn, idColumn, idPrimaryColumn, timestampColumn } from '../columns.js';
 import { Workspace } from './workspace.entity.js';
 
-export type CreditTransactionKind = 'purchase' | 'usage' | 'refund' | 'adjustment' | 'auto_topup';
+export type CreditTransactionKind = 'purchase' | 'usage' | 'refund' | 'adjustment' | 'auto_topup' | 'grant';
 
 /**
  * Append-only credits ledger. `Workspace.balanceMicros` is its running sum.
@@ -27,7 +27,7 @@ export class CreditTransaction {
   @Column(bigIntColumn())
   amountMicros!: number;
 
-  /** Stripe object id, generation id, … depending on `kind`. */
+  /** Stripe object id, generation id, invitation campaign, … depending on `kind`. */
   @Column({ type: 'varchar', length: 128, nullable: true })
   reference!: string | null;
 

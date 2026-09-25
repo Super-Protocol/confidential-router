@@ -60,6 +60,13 @@ auth:
   # link out of the log. See docs/router.md, "First sign-in on a fresh deployment".
   # bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}
 
+# Invitation codes that grant credit. Nothing here switches the feature on: with
+# no codes generated it is inert. `landingBaseUrl` is only read by the generation
+# CLI, to build the links a mailing sends.
+invites:
+  landingBaseUrl: https://router.superprotocol.com
+  lookupsPerMinute: 30
+
 log:
   level: info
   pretty: true

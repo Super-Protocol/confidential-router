@@ -161,7 +161,9 @@ type CreditTransaction {
   id: ID!
   kind: CreditTransactionKind!
 
-  """Payment id or generation id, depending on the kind."""
+  """
+  Payment id, generation id or invitation campaign, depending on the kind.
+  """
   reference: String
 }
 
@@ -179,6 +181,7 @@ type CreditTransactionEdge {
 enum CreditTransactionKind {
   ADJUSTMENT
   AUTO_TOPUP
+  GRANT
   PURCHASE
   REFUND
   USAGE
@@ -430,6 +433,40 @@ enum GenerationStatus {
   OK
 }
 
+"""How one invitation campaign converted. Operators only."""
+type InviteCampaignStats {
+  """
+  Redeeming accounts that went on to send at least one request — the number worth reading.
+  """
+  activated: Int!
+  campaign: String!
+
+  """Micro-USD handed out so far."""
+  grantedMicros: String!
+
+  """Codes generated."""
+  issued: Int!
+
+  """Accounts that redeemed one."""
+  redeemed: Int!
+
+  """`redeemed / issued`; 0 when nothing was issued."""
+  redemptionRate: Float!
+}
+
+"""The invitation credit an account received, if it received one."""
+type InviteGrant {
+  """Campaign the code belonged to."""
+  campaign: String!
+
+  """The `grant` ledger entry this redemption wrote."""
+  creditTransactionId: ID!
+
+  """Micro-USD credited."""
+  grantMicros: String!
+  redeemedAt: DateTime!
+}
+
 """Arbitrary JSON, serialised as-is."""
 scalar JSON
 
@@ -612,6 +649,12 @@ type Query {
 
   """The generation log, filtered, sorted and paginated."""
   generations(after: String, filter: GenerationFilter, first: Int! = 50, sort: GenerationSort, workspaceId: ID!): GenerationConnection!
+
+  """Invitation campaign conversion. Restricted to auth.adminEmails."""
+  inviteCampaigns(campaign: String): [InviteCampaignStats!]!
+
+  """The viewer’s invitation credit, or null if they never redeemed one."""
+  inviteGrant: InviteGrant
 
   """The signed-in user, or an error when anonymous."""
   me: User!

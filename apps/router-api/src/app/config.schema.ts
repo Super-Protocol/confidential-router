@@ -181,6 +181,16 @@ const AuthSchema = z.strictObject({
   bootstrapToken: optionalSecret(16),
   /** The address the bootstrapped account is created under. */
   bootstrapEmail: z.email().prefault('admin@confidential-router.local'),
+  /**
+   * Who may read the operator-only parts of the console schema — today the
+   * invitation-campaign aggregates.
+   *
+   * Addresses rather than a role column because the `user` table belongs to
+   * Better Auth (ADR-004 §2) and this codebase may not add a column to it. Empty
+   * by default: an admin query that answered before the deployment had named
+   * anybody would be a grant nobody made.
+   */
+  adminEmails: stringArrayish().prefault([]),
 });
 
 const BillingSchema = z
@@ -205,6 +215,29 @@ const BillingSchema = z
           .prefault('usd'),
       })
       .optional(),
+  })
+  .prefault({});
+
+/**
+ * Invitation codes that grant credit (SUP-142).
+ *
+ * Nothing here switches the feature on or off: with no codes generated it is
+ * inert, and a deployment that never runs `invites generate` never sees it.
+ */
+const InvitesSchema = z
+  .strictObject({
+    /**
+     * Where the landing page is served. The generation CLI builds the mailed
+     * `?invite=` links against it, so it is the campaign's public origin and not
+     * necessarily this service's own.
+     */
+    landingBaseUrl: z.url().prefault('https://router.superprotocol.com'),
+    /**
+     * Lookups per minute per source address on the public `GET /v1/invites/:code`.
+     * Low on purpose: the landing page makes one call per visit, and a code is 59
+     * bits, so anything higher only helps someone enumerating a campaign.
+     */
+    lookupsPerMinute: integerish().pipe(z.number().int().positive()).prefault(30),
   })
   .prefault({});
 
@@ -263,6 +296,7 @@ export const RouterConfigSchema = z.strictObject({
   rateLimits: RateLimitsSchema,
   auth: AuthSchema,
   billing: BillingSchema,
+  invites: InvitesSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,

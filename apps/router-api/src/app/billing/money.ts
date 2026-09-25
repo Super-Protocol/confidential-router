@@ -34,6 +34,32 @@ export function parseMicros(value: string, field = 'amount'): number {
   return parsed;
 }
 
+/**
+ * Parses a USD amount a human typed — `100`, `2.50`, `0.000001` — into micros.
+ *
+ * Only for operator input (the invitation CLI's `--grant`). Everything on the
+ * wire is already micros, which is the whole point of {@link parseMicros}: this
+ * function exists because `--grant 100000000` on a command line is a typo waiting
+ * to happen, and `--grant 100` is not.
+ */
+export function usdToMicros(value: string, field = 'amount'): number {
+  const text = value.trim();
+  const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(text);
+  if (!match) {
+    throw new InvalidMicroAmountError(
+      `${field} must be a positive USD amount with at most six decimal places, got "${value}".`,
+    );
+  }
+  const micros = Number(match[1]) * MICROS_PER_USD + Number((match[2] ?? '').padEnd(6, '0'));
+  if (micros <= 0) {
+    throw new InvalidMicroAmountError(`${field} must be greater than zero.`);
+  }
+  if (!Number.isSafeInteger(micros)) {
+    throw new InvalidMicroAmountError(`${field} is out of range.`);
+  }
+  return micros;
+}
+
 export function formatMicros(value: number): string {
   return String(value);
 }

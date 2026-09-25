@@ -113,6 +113,11 @@ auth:
   # See docs/router.md, "First sign-in on a fresh deployment".
   bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}
   bootstrapEmail: admin@tee.swarm.cloud
+  # Who may read the operator-only console queries — today the invitation-campaign
+  # aggregates. Empty means nobody; there is no role column to put this on,
+  # because Better Auth owns the user table (ADR-004).
+  adminEmails:
+    - admin@tee.swarm.cloud
 
 billing:
   minTopUpMicros: 5000000        # $5
@@ -123,6 +128,12 @@ billing:
     secretKey: ${CR_API_STRIPE_SECRET_KEY}
     webhookSecret: ${CR_API_STRIPE_WEBHOOK_SECRET}
     currency: usd
+
+# Invitation codes that grant credit (SUP-142). Inert until a campaign is
+# generated with `node dist/cli/invites.js generate`.
+invites:
+  landingBaseUrl: https://router.superprotocol.com
+  lookupsPerMinute: 30
 
 log:
   level: info
