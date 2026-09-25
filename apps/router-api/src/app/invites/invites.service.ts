@@ -19,8 +19,18 @@ export type InviteLookup =
   | { valid: false; reason: InviteUnusableReason };
 
 export type InviteRedemptionOutcome =
-  /** Credited. `creditTransactionId` is the `grant` row in the ledger. */
-  | { status: 'granted'; grantMicros: number; campaign: string; creditTransactionId: string }
+  /**
+   * Credited. `creditTransactionId` is the `grant` row in the ledger;
+   * `redemptionId` is the `invite_redemptions` row, which is what the
+   * `invite_redeemed` analytics event uses as its idempotency key (SUP-145).
+   */
+  | {
+      status: 'granted';
+      grantMicros: number;
+      campaign: string;
+      creditTransactionId: string;
+      redemptionId: string;
+    }
   /** The request carried no code. The overwhelmingly common case. */
   | { status: 'none' }
   | { status: 'refused'; reason: InviteUnusableReason | 'already_redeemed' | 'error' };
@@ -190,8 +200,9 @@ export class InvitesService {
       idempotencyKey: `invite:${invite.id}:${input.userId}`,
     });
 
+    const redemptionId = randomUUID();
     await manager.insert(InviteRedemption, {
-      id: randomUUID(),
+      id: redemptionId,
       inviteCodeId: invite.id,
       userId: input.userId,
       workspaceId: input.workspaceId,
@@ -209,6 +220,7 @@ export class InvitesService {
       grantMicros: invite.grantMicros,
       campaign: invite.campaign,
       creditTransactionId: entry.transaction.id,
+      redemptionId,
     };
   }
 

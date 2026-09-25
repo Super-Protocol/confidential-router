@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 import { ApiKey } from '../db/entities/api-key.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { displayPrefixOf, hashApiKey, looksLikeApiKey, mintApiKey } from './api-key-token.js';
@@ -74,6 +74,19 @@ export class ApiKeyService {
     });
     await this.keys.save(key);
     return { key, secret: minted.secret };
+  }
+
+  /**
+   * How many keys the workspace can still authenticate with.
+   *
+   * Revoked keys are kept for the generations metered against them, so "how many
+   * keys does this workspace have" is a count with a condition rather than a
+   * count — and the condition is the one the `api_key_created` event's
+   * `keys_after` is about: the first live key is an activation step, the tenth is
+   * an integration habit.
+   */
+  async countLive(workspaceId: string): Promise<number> {
+    return this.keys.count({ where: { workspaceId, revokedAt: IsNull() } });
   }
 
   /** Scoped by workspace, so an id from another tenant simply does not resolve. */

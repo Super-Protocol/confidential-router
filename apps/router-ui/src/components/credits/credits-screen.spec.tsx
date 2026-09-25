@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithSession, TEST_WORKSPACES } from '../../test-utils';
 import { feedbackOfferMock } from '../feedback/feedback-mocks';
+import { INVITE_GRANT_STATUS_QUERY } from '../invites/operations';
+import { NEXT_STEP_QUERY } from '../onboarding/next-step-card';
 import { typedSessionMock } from '../typed-session';
 import { CreditsScreen } from './credits-screen';
 import { CREATE_CHECKOUT, CREDITS_QUERY, SET_AUTO_TOP_UP } from './operations';
@@ -71,8 +73,22 @@ function creditsMock(
   };
 }
 
+/**
+ * `NextStepCard` renders on this screen and asks whether the workspace has a key.
+ * The test workspace already has credit, so without this the card would query and
+ * find no mock — answered here with one key, which is the state that hides it and
+ * keeps every other case about the ledger.
+ */
+function keysMock(revokedAt: string | null = null): MockLink.MockedResponse {
+  return {
+    request: { query: NEXT_STEP_QUERY, variables: { workspaceId: WORKSPACE_ID } },
+    result: { data: { apiKeys: [{ __typename: 'ApiKey', id: 'key-1', revokedAt }] } },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
 function render(mocks: MockLink.MockedResponse[]) {
-  return renderWithSession(<CreditsScreen />, { mocks: [typedSessionMock(), ...mocks] });
+  return renderWithSession(<CreditsScreen />, { mocks: [typedSessionMock(), keysMock(), ...mocks] });
 }
 
 beforeEach(() => {
@@ -94,6 +110,50 @@ describe('CreditsScreen', () => {
       'href',
       'https://pay.stripe.com/receipts/abc',
     );
+  });
+
+  it('welcomes an invited account with the grant, above the balance it explains', async () => {
+    search.current = new URLSearchParams('welcome=invite');
+    vi.stubGlobal('location', { ...window.location, search: '?welcome=invite' });
+    render([
+      creditsMock(BALANCE, [
+        transaction({
+          id: 'txn-0',
+          kind: 'GRANT',
+          amountMicros: '100000000',
+          reference: 'launch-2026-10-devs',
+          description: 'Invitation credit · launch-2026-10-devs',
+        }),
+      ]),
+      {
+        request: { query: INVITE_GRANT_STATUS_QUERY, variables: { code: null } },
+        result: {
+          data: {
+            inviteGrantStatus: {
+              __typename: 'InviteGrantStatus',
+              reason: null,
+              grant: {
+                __typename: 'InviteGrant',
+                creditTransactionId: 'txn-0',
+                grantMicros: '100000000',
+                campaign: 'launch-2026-10-devs',
+                redeemedAt: '2026-09-25T12:00:00.000Z',
+              },
+            },
+          },
+        },
+        maxUsageCount: Number.POSITIVE_INFINITY,
+      },
+    ]);
+
+    expect(await screen.findByTestId('invite-granted')).toHaveTextContent('$100 in credits is in your account.');
+    // The balance is already there, and the ledger names the campaign that paid.
+    expect(await screen.findByTestId('credit-balance')).toBeInTheDocument();
+    const entry = screen.getByRole('row', { name: /Invitation credit/ });
+    expect(entry).toHaveTextContent('launch-2026-10-devs');
+    expect(entry).toHaveTextContent('+$100.00');
+    // A welcome is a one-off: the parameter is dropped as soon as it is read.
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/credits'));
   });
 
   it('warns that /v1 is refusing requests once the balance is unspendable', async () => {

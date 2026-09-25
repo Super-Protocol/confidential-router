@@ -42,6 +42,18 @@ export class Workspace {
   @Column(timestampColumn({ nullable: true }))
   autoTopUpLastAt!: Date | null;
 
+  /**
+   * When this workspace's first generation was metered, or null.
+   *
+   * Not derivable from `generations` without counting them, and the point of the
+   * column is that it can be *claimed*: the conditional `UPDATE … WHERE
+   * firstRequestAt IS NULL` in `MeteringService` is what makes
+   * `first_request_sent` fire exactly once per workspace however many requests
+   * arrive at the same moment (SUP-145).
+   */
+  @Column(timestampColumn({ nullable: true }))
+  firstRequestAt!: Date | null;
+
   @Column(timestampColumn())
   createdAt!: Date;
 

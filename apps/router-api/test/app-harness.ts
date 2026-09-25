@@ -7,10 +7,12 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { dump } from 'js-yaml';
 import request from 'supertest';
+import { ANALYTICS_SINK } from '../src/app/analytics/index.js';
 import { AppModule } from '../src/app/app.module.js';
 import { MAGIC_LINK_MAILER, type MagicLinkMailer, type MagicLinkMessage } from '../src/app/auth/index.js';
 import { configureApp } from '../src/app/bootstrap.js';
 import { routerConfig } from '../src/app/config.js';
+import { RecordingAnalyticsSink } from './analytics-recorder.js';
 
 /** Captures magic links instead of mailing them, so a test can follow one. */
 export class CapturingMailer implements MagicLinkMailer {
@@ -32,6 +34,8 @@ export class CapturingMailer implements MagicLinkMailer {
 export interface Harness {
   app: INestApplication;
   mailer: CapturingMailer;
+  /** Every product event the application captured. See `RecordingAnalyticsSink`. */
+  events: RecordingAnalyticsSink;
   close(): Promise<void>;
 }
 
@@ -48,7 +52,8 @@ export interface HarnessOptions {
 
 /**
  * Boots the real application — the same modules, the same middleware stack as
- * `main.ts` — against a throwaway SQLite file. Only the mailer is replaced;
+ * `main.ts` — against a throwaway SQLite file. Only the two things that would
+ * reach outside the process are replaced, the mailer and the analytics sink;
  * everything an e2e test asserts (migrations, Better Auth, guards, GraphQL) is
  * the production wiring.
  */
@@ -81,9 +86,12 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
   }
 
   const mailer = new CapturingMailer();
+  const events = new RecordingAnalyticsSink();
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MAGIC_LINK_MAILER)
     .useValue(mailer)
+    .overrideProvider(ANALYTICS_SINK)
+    .useValue(events)
     .compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, bufferLogs: true });
@@ -93,6 +101,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
   return {
     app,
     mailer,
+    events,
     close: async () => {
       await app.close();
       for (const [key, value] of previous) {

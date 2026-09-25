@@ -9,6 +9,9 @@ import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import Link from 'next/link';
 import * as React from 'react';
 import { completeSignIn, signUpWithPassword } from '../../lib/auth';
+import { captureConsoleEvent } from '../../lib/console-analytics';
+import { inviteContextOf, normaliseInviteCode, rememberInvite } from '../../lib/invite';
+import { InviteNotice, useInviteLookup } from './invite-notice';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 
@@ -23,12 +26,23 @@ const SIGN_UP_MESSAGES = {
 };
 
 /**
+ * Where a viewer who signed up with an invitation lands.
+ *
+ * The Credits screen rather than the overview, because the one thing that
+ * happened while they were filling in the form is that $100 arrived — or did not,
+ * and that is the screen that says which (SUP-145). `welcome=invite` is what
+ * `CreditsScreen` renders the grant card on, and it clears itself from the URL.
+ */
+export const INVITE_WELCOME_PATH = '/credits?welcome=invite';
+
+/**
  * Creating an account on a deployment that cannot send mail.
  *
  * No verification round trip and no reset link: the address is never proven,
  * because proving it needs a mailer and the whole point of this path is not
  * having one. It exists so that a deployment whose bootstrap token created one
- * administrator can be used by a second person (SUP-112).
+ * administrator can be used by a second person (SUP-112), and it is the path the
+ * launch campaign's invitations lead to (SUP-140).
  */
 export function SignUpForm() {
   const [name, setName] = React.useState('');
@@ -36,6 +50,14 @@ export function SignUpForm() {
   const [password, setPassword] = React.useState('');
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Read once, from the URL this page was opened with. A `useSearchParams` here
+  // would need a Suspense boundary for a value that cannot change without a
+  // navigation, and the fallback to storage is not in the router's parameters
+  // anyway.
+  const [context] = React.useState(() => inviteContextOf(globalThis.location?.search ?? ''));
+  const [code, setCode] = React.useState<string | null>(context.code);
+  const invite = useInviteLookup(code);
 
   const { data, loading } = useQuery(SIGN_IN_OPTIONS_QUERY, { fetchPolicy: 'cache-and-network' });
   const settled = !loading || data !== undefined;
@@ -45,13 +67,41 @@ export function SignUpForm() {
   const offered = data?.signInOptions.password ?? false;
   const minLength = data?.signInOptions.passwordMinLength ?? 0;
 
+  // One per page load, anonymous, and a volume rather than a funnel step —
+  // linking it to the account that appears later would need an identifier stored
+  // in this browser (`docs/contracts/analytics-events.md`, `signup_started`).
+  //
+  // Held until the lookup settles, because `campaign` is the property the two
+  // halves of the funnel are joined on and only the lookup knows it. The wait is
+  // bounded by the lookup's own outcome, which includes failing.
+  const reported = React.useRef(false);
+  React.useEffect(() => {
+    if (reported.current || invite.kind === 'checking') return;
+    reported.current = true;
+
+    void captureConsoleEvent('signup_started', {
+      has_invite: context.code !== null,
+      campaign: invite.kind === 'ready' ? invite.campaign : undefined,
+      utm_campaign: context.utmCampaign ?? undefined,
+      entry: context.entry,
+    });
+  }, [context, invite]);
+
+  // Kept across the console's own navigations — a reload, a detour to `/login`
+  // — so the code survives without ever being in this form's markup.
+  React.useEffect(() => {
+    if (code) rememberInvite(code);
+  }, [code]);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setPending(true);
     try {
-      await signUpWithPassword({ email, password, name });
-      completeSignIn();
+      // Sent whatever the lookup said: its answer is a snapshot, and the only
+      // thing that decides is the redemption inside account creation.
+      await signUpWithPassword({ email, password, name, inviteCode: code });
+      completeSignIn(code ? INVITE_WELCOME_PATH : undefined);
     } catch (caught) {
       setError(messageOf(caught, SIGN_UP_MESSAGES));
       setPending(false);
@@ -98,6 +148,10 @@ export function SignUpForm() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {/* Normalised here, so a code the URL carried and a code someone typed
+            are the same string by the time anything looks at either. */}
+        <InviteNotice state={invite} onCodeEntered={(entered) => setCode(normaliseInviteCode(entered))} />
+
         <form className="flex flex-col gap-2" onSubmit={(event) => void handleSubmit(event)}>
           <Label htmlFor="name">Name (optional)</Label>
           <Input

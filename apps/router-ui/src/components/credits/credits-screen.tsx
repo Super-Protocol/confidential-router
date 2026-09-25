@@ -12,11 +12,13 @@ import * as React from 'react';
 import { toast } from 'sonner';
 import { FeedbackOfferCard } from '../feedback/feedback-offer-card';
 import { NoWorkspace } from '../no-workspace';
+import { NextStepCard } from '../onboarding/next-step-card';
 import { PageHeader } from '../page-header';
 import { useSession } from '../session/session-provider';
 import { AutoTopUpCard } from './auto-top-up-card';
 import { BalanceCard } from './balance-card';
 import { BuyCreditsCard } from './buy-credits-card';
+import { InviteWelcomeCard } from './invite-welcome-card';
 import { CREDITS_PAGE_SIZE, CREDITS_QUERY } from './operations';
 import { type TransactionRow, TransactionTable } from './transaction-table';
 
@@ -28,6 +30,11 @@ import { type TransactionRow, TransactionTable } from './transaction-table';
  * `?topup=cancelled` only trigger a refetch, because the money is real when the
  * provider's webhook says so — a viewer who came back from a Checkout tab that
  * Stripe had not finished processing would otherwise be told they had paid.
+ *
+ * It is also where a sign-up with an invitation lands (`?welcome=invite`): the one
+ * thing that happened while the visitor filled in the form was that $100 arrived,
+ * or did not, and this is the screen that shows both the balance and the ledger
+ * entry naming the campaign (SUP-145).
  */
 export function CreditsScreen() {
   const { activeWorkspace, loading: sessionLoading } = useSession();
@@ -43,6 +50,12 @@ export function CreditsScreen() {
   });
 
   useCheckoutReturn(refetch);
+  const searchParams = useSearchParams();
+  // Read once: `InviteWelcomeCard` clears the stored code as soon as it has its
+  // answer, so a re-render after the parameter is gone must not unmount the card
+  // the viewer is still reading.
+  const [welcomed] = React.useState(() => searchParams.get('welcome') === 'invite');
+  useWelcomeParameterCleared(welcomed);
 
   // A stable identity, so the feedback card's "grant landed" effect does not
   // re-run every time Apollo hands back a new `refetch`.
@@ -123,7 +136,11 @@ export function CreditsScreen() {
       {header}
 
       <div className="space-y-4">
+        {welcomed ? <InviteWelcomeCard /> : null}
+
         <BalanceCard balanceMicros={balance.balanceMicros} spendable={balance.spendable} />
+
+        <NextStepCard />
 
         <FeedbackOfferCard onGranted={refetchBalance} />
 
@@ -160,6 +177,21 @@ export function CreditsScreen() {
       </div>
     </>
   );
+}
+
+/**
+ * Drops `?welcome=invite` once the card has been rendered.
+ *
+ * A welcome is a one-off: the same URL bookmarked, or reloaded next week, should
+ * be the ordinary Credits screen. The card itself survives the replace because
+ * `welcomed` was captured on the first render.
+ */
+function useWelcomeParameterCleared(welcomed: boolean): void {
+  const router = useRouter();
+
+  React.useEffect(() => {
+    if (welcomed) router.replace('/credits');
+  }, [welcomed, router]);
 }
 
 /**

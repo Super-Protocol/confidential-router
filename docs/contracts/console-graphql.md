@@ -146,11 +146,27 @@ type InviteCampaignStats {              # auth.adminEmails only
   grantedMicros: String!
 }
 
+enum InviteRefusalReason { NOT_FOUND, EXPIRED, EXHAUSTED, DISABLED, ALREADY_REDEEMED, ERROR }
+type InviteGrantStatus {
+  grant: InviteGrant                    # null when nothing was credited
+  reason: InviteRefusalReason           # null when the grant is this account's and the code matches it
+}
+
 # Query.inviteGrant: InviteGrant        # session; how the console confirms the credit landed
+# Query.inviteGrantStatus(code: String): InviteGrantStatus!          # session; the post-sign-up screen
 # Query.inviteCampaigns(campaign: String): [InviteCampaignStats!]!   # session + admin
 #
 # There is deliberately no redeem mutation: a code is spent inside account
 # creation and nowhere else, so there is nothing here a client could replay.
+#
+# `inviteGrantStatus` takes the code because nothing persists a *refusal*: the
+# redemption writes a row when it succeeds and deliberately nothing when it does
+# not, so the browser that presented the code is the only thing that still knows
+# which one it was. Unlike `GET /v1/invites/{code}`, it answers the typed reason —
+# the caller holds a session and already holds the code, so there is nothing left
+# to leak, and `ALREADY_REDEEMED` (this account has a grant already, from another
+# code) is only answerable where the account is known. It spends the same
+# `invites.lookupsPerMinute` budget as the public lookup, keyed by account.
 
 # ---------- the second grant, for feedback ----------
 

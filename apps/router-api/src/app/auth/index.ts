@@ -9,6 +9,7 @@ export * from './optional-session.guard.js';
 export * from './request-of.js';
 export * from './session.guard.js';
 export * from './sign-in-options.service.js';
+export * from './sign-up-method.js';
 export * from './sign-up-provisioning.service.js';
 export * from './user-profile.service.js';
 export * from './workspace-provisioning.service.js';

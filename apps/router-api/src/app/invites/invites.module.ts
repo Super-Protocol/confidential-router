@@ -5,6 +5,7 @@ import { BillingModule } from '../billing/index.js';
 import { Generation } from '../db/entities/generation.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
+import { InviteAttributionService } from './invite-attribution.service.js';
 import { InviteStatsService } from './invite-stats.service.js';
 import { InvitesController } from './invites.controller.js';
 import { InvitesService } from './invites.service.js';
@@ -24,7 +25,15 @@ import { InvitesService } from './invites.service.js';
 @Module({
   imports: [TypeOrmModule.forFeature([InviteCode, InviteRedemption, Generation]), BillingModule],
   controllers: [InvitesController],
-  providers: [{ provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter }, InvitesService, InviteStatsService],
-  exports: [InvitesService, InviteStatsService],
+  providers: [
+    { provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter },
+    InvitesService,
+    InviteStatsService,
+    InviteAttributionService,
+  ],
+  // `RATE_LIMITER` is exported so the console's `inviteGrantStatus` query spends
+  // the same budget as the public lookup: both answer questions about a code, so
+  // a signed-in caller must not get a second allowance for asking.
+  exports: [InvitesService, InviteStatsService, InviteAttributionService, RATE_LIMITER],
 })
 export class InvitesModule {}

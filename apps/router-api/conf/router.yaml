@@ -67,6 +67,14 @@ invites:
   landingBaseUrl: https://router.superprotocol.com
   lookupsPerMinute: 30
 
+# Product analytics. No project key here on purpose: a developer's events must
+# not land in the real project. Set POSTHOG_PROJECT_KEY to capture them.
+analytics:
+  posthog:
+    host: https://eu.i.posthog.com
+    requestTimeout: 3s
+  ingestPerMinute: 60
+
 # The second $100, in exchange for feedback. Inert without `form`: no offer is
 # made and the webhook is a 404, which is what a laptop wants. Point `form.url`
 # at a real form and set `form.webhookSecret` to switch it on.

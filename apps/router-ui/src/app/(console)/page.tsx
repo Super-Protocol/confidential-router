@@ -1,6 +1,7 @@
 import { Button } from '@confidential-router/ui/components/button';
 import Link from 'next/link';
 import { BrandMark } from '../../components/brand-mark';
+import { NextStepCard } from '../../components/onboarding/next-step-card';
 import { OverviewScreen } from '../../components/overview/overview-screen';
 import { PageHeader } from '../../components/page-header';
 
@@ -40,6 +41,12 @@ export default function OverviewPage() {
         <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
           <Link href="/gatekeeper">How it works</Link>
         </Button>
+      </div>
+
+      {/* Only for an account with credit and no key yet — see `NextStepCard`. It
+          sits above the numbers because for that account there are no numbers. */}
+      <div className="mb-6">
+        <NextStepCard />
       </div>
 
       <OverviewScreen />
