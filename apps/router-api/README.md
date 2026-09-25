@@ -276,6 +276,23 @@ Plus `inviteGrant` (session) and `inviteCampaigns` (`auth.adminEmails`) in the
 console schema. `InvitesService` is the only code that spends a code, and it
 cannot throw at its caller: the account is created whether or not the grant is.
 
+## The second grant, for feedback
+
+When the first $100 runs out the console offers another one in exchange for
+telling us how it went ([`docs/router.md`](../../docs/router.md#the-second-grant-for-feedback)).
+Two surfaces, and the seam between them is the design:
+
+| Surface | What it is |
+| --- | --- |
+| `feedbackOffer` (session) | eligibility, decided in `FeedbackEligibilityService` and never in the browser, plus the form URL carrying a short-lived signed token |
+| `POST /v1/webhooks/typeform` | the only way a grant is ever applied; verifies the provider's HMAC over the raw bytes *and* our token before anything is written |
+
+The form belongs to a third party so marketing can iterate the questions without
+a deploy, which is exactly why the link carries a signed statement rather than a
+user id: a public form that named its own account would be a way to mint $100
+into a stranger's. Inert until `feedback.form` is configured — no offer, and the
+webhook is a hard 404.
+
 ## The console GraphQL API
 
 Code-first Apollo at `/graphql`, one schema for all nine console screens
@@ -350,6 +367,7 @@ src/
     api/graphql           Apollo code-first schema, its error codes and the committed SDL
     api/v1                the OpenAI-compatible gateway
     invites/              invitation codes: lookup, redemption inside sign-up, campaign stats
+    feedback/             the second grant: eligibility, the signed form token, the webhook
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs
   cli/invites.ts          `invites generate` / `invites stats`

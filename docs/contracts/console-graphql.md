@@ -152,6 +152,34 @@ type InviteCampaignStats {              # auth.adminEmails only
 # There is deliberately no redeem mutation: a code is spent inside account
 # creation and nowhere else, so there is nothing here a client could replay.
 
+# ---------- the second grant, for feedback ----------
+
+type FeedbackGrant {                    # the viewer's second credit, or null
+  creditTransactionId: ID!              # the `grant` ledger row it wrote
+  grantMicros: String!
+  appliedAt: DateTime!
+}
+
+enum FeedbackIneligibleReason { disabled no_first_grant already_granted balance_healthy no_usage }
+
+type FeedbackOffer {
+  eligible: Boolean!
+  reason: FeedbackIneligibleReason      # null when eligible
+  grantMicros: String!
+  formUrl: String                       # null unless eligible; carries a token good for minutes
+  granted: FeedbackGrant
+}
+
+# Query.feedbackOffer: FeedbackOffer!   # session; takes no arguments on purpose
+#
+# Eligibility is the server's answer, never the browser's arithmetic: the console
+# has the balance in hand and could guess, but a grant a tab can decide is a grant
+# anyone can decide. Reading this query is what mints the token in `formUrl`, so it
+# is scoped to the session and names no account of its own.
+#
+# There is no mutation here either. The grant is applied by the signed webhook and
+# nowhere else (`POST /v1/webhooks/typeform`).
+
 # ---------- preferences ----------
 type UserPreferences {
   archiveEvidence: Boolean!, evidenceRetentionDays: Int!, notifyOnMeasurementChange: Boolean!

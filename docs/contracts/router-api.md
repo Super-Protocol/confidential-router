@@ -25,6 +25,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `GET /v1/generation?id=` | required | metering record of one generation (OpenRouter-style) |
 | `GET /v1/evidence/{endpoint}` | required | raw passthrough of the endpoint's latest published bundle; no key |
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
+| `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
@@ -54,6 +55,38 @@ tenant's `/v1` traffic and the landing page's lookups do not spend each other's.
 
 Redemption is **not** on this surface, and there is no endpoint for it: a code is spent inside account
 creation (`docs/router.md`, "Invitation codes"), which is what makes a grant unreplayable.
+
+### `POST /v1/webhooks/typeform`
+
+Where the feedback form posts a submission, and the only way the second $100 is ever applied
+(`docs/router.md`, "The second grant"). Like the invitation lookup it lives under `/v1` without being
+OpenAI-compatible or key-authenticated, and is registered before the `/v1` fallback.
+
+Authenticated by **two** signatures and by nothing else:
+
+- `Typeform-Signature: sha256=<base64>`, an HMAC over the exact bytes of the body — which is why the raw
+  body parser is mounted on this path ahead of the JSON one, as it is for the Stripe webhook;
+- our own short-lived token in the submission's hidden field `t`, an HMAC over user id, workspace id and
+  issue time. It says *which account* to credit. Without it a public form would be a way to mint $100 into
+  a stranger's account by typing their id into it.
+
+Either one missing, forged or expired answers `401` and grants nothing; the response says which of the two
+failed to nobody, because the only callers are the provider, which does not read it, and someone probing.
+
+Once both check out the answer is always `200`, whatever it decided — a provider that does not read a 2xx
+redelivers for days:
+
+```json
+{ "outcome": "granted" }
+{ "outcome": "replayed" }                              // the same submission, delivered again
+{ "outcome": "refused", "reason": "already_granted" }  // or not_eligible / unknown_account / error
+{ "outcome": "ignored" }                               // an event that is not a form submission
+```
+
+A hard `404` where `feedback.form` is unset: an endpoint that answered would be telling a prober that this
+deployment has a grant to give away. `429` with `Retry-After` past `feedback.webhooksPerMinute` per source
+address — the signature is the authority, and the budget only stops an unsigned flood from spending the
+service's time verifying HMACs.
 
 ### `POST /v1/chat/completions`
 
