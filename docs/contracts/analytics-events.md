@@ -41,7 +41,7 @@ Properties that mean the same thing wherever they appear. An event references on
 | Property | Type | Required | Values | Meaning |
 | --- | --- | --- | --- | --- |
 | `campaign` | string | no | — | The invitation campaign the visitor arrived with — `InviteCode.campaign`, the free-text tag the generation CLI stamps on a batch of codes (SUP-142). This is the join key between the two tools and the database; omitted when the visit carried no code. |
-| `has_invite` | boolean | yes | — | Whether the request carried an `?invite=` code (or the `cr_invite` cookie the landing set from one). Always present, so `false` is a countable population rather than a gap. |
+| `has_invite` | boolean | yes | — | Whether the request carried an `?invite=` code. On the landing that means the URL and nothing else; on the console it also covers the `cr_invite` cookie the console sets on its own origin before an OAuth redirect, so the code survives the round trip. Always present, so `false` is a countable population rather than a gap. |
 | `utm_source` | string | no | — | `utm_source` as it arrived in the URL, lower-cased and trimmed. Landing only. |
 | `utm_medium` | string | no | — | `utm_medium` as it arrived in the URL, lower-cased and trimmed. Landing only. |
 | `utm_campaign` | string | no | — | `utm_campaign` as it arrived in the URL, lower-cased and trimmed. Usually equal to `campaign`, but it is the marketer's string, not ours, so the two are recorded separately. |

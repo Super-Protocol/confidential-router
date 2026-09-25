@@ -11,7 +11,7 @@
     "has_invite": {
       "type": "boolean",
       "required": true,
-      "description": "Whether the request carried an `?invite=` code (or the `cr_invite` cookie the landing set from one). Always present, so `false` is a countable population rather than a gap.",
+      "description": "Whether the request carried an `?invite=` code. On the landing that means the URL and nothing else; on the console it also covers the `cr_invite` cookie the console sets on its own origin before an OAuth redirect, so the code survives the round trip. Always present, so `false` is a countable population rather than a gap.",
       "example": true
     },
     "utm_source": {

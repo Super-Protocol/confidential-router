@@ -13,7 +13,7 @@ produced accounts that actually sent tokens?* Two surfaces have to be measured t
 landing page on `router.superprotocol.com` and the console on `console.router.superprotocol.com`, with
 `api.router.` serving requests from inside the confidential cluster — and they are different origins by
 necessity, because a single hostname cannot split TLS between AKS and the enclave (SUP-140,
-2026-09-26).
+2026-09-25).
 
 The constraint that shapes everything below is the product's own claim. This is an LLM router whose
 pitch is that the operator cannot read your prompts. Any measurement that would embarrass that claim in
@@ -59,6 +59,13 @@ third-party SDK in it to write one. Both tools therefore stay outside ePrivacy A
 about storing or reading information on terminal equipment, not about processing per se — and the
 processing itself runs on legitimate interest (GDPR Art. 6(1)(f)): aggregate product measurement, no
 profiling, no advertising, no data sold or shared.
+
+The one cookie in the product is not one of them. `cr_invite` is set by **the console**, on its own
+origin, immediately before an OAuth redirect, so an invitation code survives a round trip through
+GitHub or Google (`INVITE_COOKIE_NAME`, `apps/router-api/src/app/invites/sign-up-invite.ts`). It is
+strictly necessary for the sign-up the visitor explicitly asked for — the Art. 5(3) exemption — it
+carries no analytics, and the landing sets nothing at all: it hands the code on in the URL. A reader
+who finds `cr_invite` in devtools after signing up has not found a contradiction.
 
 The price is paid honestly: **the landing visitor and the account that appears later are not linked.**
 `signup_started` is captured anonymously with `$process_person_profile: false`, and the funnel is joined
