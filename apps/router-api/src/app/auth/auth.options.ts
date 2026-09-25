@@ -3,6 +3,7 @@ import { magicLink } from 'better-auth/plugins/magic-link';
 import Database from 'better-sqlite3';
 import { Pool } from 'pg';
 import type { RouterConfig } from '../config.schema.js';
+import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
 import type { MagicLinkMailer } from './magic-link-mailer.js';
 
@@ -40,8 +41,15 @@ export interface AuthOptionsDeps {
   mailer: MagicLinkMailer;
   /** Injected so tests can close the handle they own. */
   database: BetterAuthOptions['database'];
-  /** Provisions the personal workspace on first sign-in (ADR-004 §5). */
-  onUserCreated?: (user: { id: string; email: string; name?: string | null }) => Promise<void>;
+  /**
+   * Provisions the personal workspace on first sign-in (ADR-004 §5), and spends
+   * the invitation code the creating request carried, if any (SUP-142).
+   *
+   * It receives the invitation context rather than fetching it, because the only
+   * place the code exists is the request Better Auth is handling — see
+   * `sign-up-invite.ts` for why that request differs per sign-in path.
+   */
+  onUserCreated?: (user: { id: string; email: string; name?: string | null }, invite: SignUpInvite) => Promise<void>;
 }
 
 /**
@@ -112,8 +120,8 @@ export function buildAuthOptions({ config, mailer, database, onUserCreated }: Au
       ? {
           user: {
             create: {
-              after: async (user) => {
-                await onUserCreated({ id: user.id, email: user.email, name: user.name });
+              after: async (user, context) => {
+                await onUserCreated({ id: user.id, email: user.email, name: user.name }, signUpInviteOf(context));
               },
             },
           },

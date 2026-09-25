@@ -37,6 +37,7 @@ export type CreateCheckoutInput = {
 export type CreditTransactionKind =
   | 'ADJUSTMENT'
   | 'AUTO_TOPUP'
+  | 'GRANT'
   | 'PURCHASE'
   | 'REFUND'
   | 'USAGE';

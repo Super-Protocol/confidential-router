@@ -24,6 +24,9 @@ project asserts and it deliberately leaves the rest alone.
 | `gateway.e2e.spec.ts` | the OpenAI SDK ↔ the built process: completions, streaming, what reaches the backend, the error table, a revoked key |
 | `console.e2e.spec.ts` | the console's API ↔ the gateway: money bought on Credits is money `/v1` spends, and a metered generation is the one Activity shows |
 | `evidence.e2e.spec.ts` | the evidence poller ↔ a live HTTPS publisher: retrieval, digest history, a publisher that goes away, coverage attribution |
+| `bootstrap.e2e.spec.ts` | first sign-in on an empty deployment: the token must not reach the log, and the CSRF guard is only observable outside a test runner |
+| `password.e2e.spec.ts` | the same two, for email and password |
+| `invites.e2e.spec.ts` | `dist/cli/invites.js` ↔ the running process: a second webpack entry point can stop existing while every in-process test stays green, so the CLI mints a campaign and each URL in its CSV is resolved against the live lookup endpoint |
 
 The stack is `tools/demo`'s `startRouterStack()` — the same one the gatekeeper
 demo runs on, so a change that breaks one breaks both.
