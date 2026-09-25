@@ -403,8 +403,16 @@ things. Four sources are read, in order:
 
 **A code that cannot be used never fails the registration.** The account is
 created, the grant is not, and the console finds out by asking: `inviteGrant`
-answers `null`. Anything else would mean a mailing-list mistake costing a visitor
-their account.
+answers `null`, and `inviteGrantStatus(code:)` answers *why* — `EXPIRED`,
+`EXHAUSTED`, `DISABLED`, `NOT_FOUND`, `ALREADY_REDEEMED` or `ERROR`, one sentence
+each on the screen the sign-up lands on. Anything else would mean a mailing-list
+mistake costing a visitor their account.
+
+It takes the code as an argument because nothing persists a refusal: the
+redemption writes a row when it succeeds and deliberately nothing when it does
+not, so the browser that presented the code is the only thing that still knows
+which one it was. Unlike the public lookup it gives the typed reason — the caller
+holds a session and already holds the code, so there is nothing left to leak.
 
 Three database constraints make a double grant impossible, and none of them is a
 check in application code: the relative `UPDATE … WHERE redemptionCount <
@@ -415,6 +423,51 @@ account, ever"), and the ledger's unique `idempotencyKey`,
 The grant is an ordinary ledger entry, so it shows up on the Credits screen with
 its campaign in `reference` — a campaign's spend is answerable from the ledger
 alone.
+
+**In the console** (SUP-145) the code is never typed. `/signup` reads `?invite=`,
+keeps a copy in `localStorage` so it survives the console's own navigations, and
+appends it to whichever sign-up path the deployment offers — the request body for
+a password sign-up, `callbackURL` for a magic link, the `cr_invite` cookie before
+an OAuth redirect. The form shows what the code is worth before the visitor
+commits to anything, and keeps a small "have a code?" input for the one person who
+forwarded the mail to their work address and lost the link. After registration the
+browser lands on `/credits?welcome=invite`, where the balance is already there and
+the grant is the `Invitation credit` row naming the campaign.
+
+## Product analytics
+
+The launch campaign is measured, and the console still makes **no third-party
+request** (ADR-006; the taxonomy is `docs/contracts/analytics-events.md`).
+
+```yaml
+analytics:
+  posthog:
+    host: https://eu.i.posthog.com   # POSTHOG_HOST
+    requestTimeout: 3s
+  ingestPerMinute: 60                # per source address on POST /v1/analytics/events
+```
+
+`analytics.posthog.projectKey` is normally set from `POSTHOG_PROJECT_KEY` — a
+write-only ingest key, not a secret — which `loadRouterConfig` maps into this
+section as its lowest-precedence layer. With no key every event is discarded and
+the boot says so once, which is the state of every developer machine and every
+test.
+
+**Six of the eight events are captured server-side**, at the boundary where the
+fact they report is committed: `signup_completed` and `invite_redeemed` from the
+sign-up hook, `api_key_created` from the mutation, `first_request_sent` from the
+meter, and SUP-146/SUP-149's two from theirs. Each carries a `uuid` derived from
+the row it reports, so a retried hook cannot show as two conversions. Nothing is
+ever captured that the database does not already hold: no email, no name, no IP,
+no free text, and `$ip: null` on every event.
+
+**The other two are posted by the browser** to `POST /v1/analytics/events`, this
+service's own ingest, and validated against the taxonomy's allow-list before they
+leave. A browser SDK would have bought those two and written a persistent
+identifier to the visitor's device — which is what needs a consent banner, and a
+banner in front of the campaign we are measuring costs more than two events are
+worth. `signup_started` is captured anonymously and is a volume, never a funnel
+step; the two halves of the funnel are joined on `campaign`.
 
 ## Running it
 

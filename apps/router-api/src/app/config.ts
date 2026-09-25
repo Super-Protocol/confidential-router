@@ -91,6 +91,7 @@ export function loadRouterConfig(options: LoadRouterConfigOptions = {}): RouterC
   const envLayer = envConfiguration<RouterConfig>(CONFIG_ENV_PREFIX, { env, reserved: RESERVED_ENV_SUFFIXES });
   const layers: Array<ConfigurationLoader<RouterConfig>> = [
     developmentDefaults(deepMerge(yamlLayer(), envLayer()), env, warn),
+    analyticsCredentials(env),
     yamlLayer,
     envLayer,
   ];
@@ -102,6 +103,27 @@ export function loadRouterConfig(options: LoadRouterConfigOptions = {}): RouterC
   }
 
   return config;
+}
+
+/**
+ * `POSTHOG_PROJECT_KEY` and `POSTHOG_HOST`, mapped into `analytics.posthog`.
+ *
+ * Two names outside the `CR_API_*` scheme, and deliberately so: they were fixed
+ * for both the console and the landing page before either was written (SUP-143),
+ * and the landing repository has no `CR_API_*` prefix to put them behind. They
+ * arrive as a *lowest-precedence* layer, so `router.yaml` and
+ * `CR_API_ANALYTICS__POSTHOG__*` both still win — an operator who sets the
+ * specific name has said something more specific.
+ */
+function analyticsCredentials(env: NodeJS.ProcessEnv): ConfigurationLoader<RouterConfig> {
+  const projectKey = env.POSTHOG_PROJECT_KEY?.trim();
+  const host = env.POSTHOG_HOST?.trim();
+  const posthog = {
+    ...(projectKey ? { projectKey } : {}),
+    ...(host ? { host } : {}),
+  };
+
+  return Object.keys(posthog).length === 0 ? () => ({}) : () => ({ analytics: { posthog } }) as Partial<RouterConfig>;
 }
 
 /**

@@ -49,7 +49,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       config,
       mailer,
       database: this.database,
-      onUserCreated: (user, invite) => provisioning.onUserCreated(user, invite),
+      onUserCreated: (user, invite, method) => provisioning.onUserCreated(user, invite, method),
     });
     this.instance = betterAuth(this.options);
   }

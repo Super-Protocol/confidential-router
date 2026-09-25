@@ -467,6 +467,29 @@ type InviteGrant {
   redeemedAt: DateTime!
 }
 
+"""
+What became of the invitation code this account signed up with, if it presented one.
+"""
+type InviteGrantStatus {
+  """The credit, when there is one."""
+  grant: InviteGrant
+
+  """
+  Why no credit was applied. Null when `grant` is set and the code presented was the one redeemed.
+  """
+  reason: InviteRefusalReason
+}
+
+"""Why a presented invitation code did not credit this account."""
+enum InviteRefusalReason {
+  ALREADY_REDEEMED
+  DISABLED
+  ERROR
+  EXHAUSTED
+  EXPIRED
+  NOT_FOUND
+}
+
 """Arbitrary JSON, serialised as-is."""
 scalar JSON
 
@@ -655,6 +678,14 @@ type Query {
 
   """The viewer’s invitation credit, or null if they never redeemed one."""
   inviteGrant: InviteGrant
+
+  """
+  The viewer’s invitation credit, or why the code they signed up with did not apply.
+  """
+  inviteGrantStatus(
+    """The code the sign-up carried, if any."""
+    code: String
+  ): InviteGrantStatus!
 
   """The signed-in user, or an error when anonymous."""
   me: User!

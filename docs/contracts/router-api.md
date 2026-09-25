@@ -55,6 +55,30 @@ tenant's `/v1` traffic and the landing page's lookups do not spend each other's.
 Redemption is **not** on this surface, and there is no endpoint for it: a code is spent inside account
 creation (`docs/router.md`, "Invitation codes"), which is what makes a grant unreplayable.
 
+### `POST /v1/analytics/events`
+
+The console's first-party analytics ingest. Unauthenticated or session-authenticated, `Cache-Control:
+no-store`, answers `202` with an empty body.
+
+```json
+{ "event": "signup_started", "properties": { "has_invite": true, "campaign": "launch-2026-10-devs", "entry": "landing_cta" } }
+```
+
+It exists so the console makes **no third-party request**: `posthog-js` in the bundle would have bought two
+events and written a persistent identifier to the visitor's device, which is what ePrivacy Art. 5(3)
+attaches consent to (ADR-006 §3). The other six console events are facts the database already holds and are
+captured server-side.
+
+- `event` must be one of `CONSOLE_INGEST_EVENTS` — `signup_started`, `feedback_form_opened`. Anything else
+  is `400`: an event the server can derive is one a client must not assert.
+- `properties` are dropped unless the taxonomy declares them for that event, and unless they are short
+  scalars. The allow-list is what keeps a public endpoint from being a way to write arbitrary rows into our
+  analytics.
+- `distinct_id`, the timestamp and the event `uuid` are the server's. `signup_started` is captured
+  anonymously whatever session the request carries; `feedback_form_opened` needs one and answers `401`
+  without it.
+- `429` with `Retry-After` past `analytics.ingestPerMinute` per source address, on a budget of its own.
+
 ### `POST /v1/chat/completions`
 
 Request: OpenAI schema. Honoured fields: `model`, `messages`, `stream`, `stream_options.include_usage`,

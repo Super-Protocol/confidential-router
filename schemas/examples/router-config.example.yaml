@@ -135,6 +135,16 @@ invites:
   landingBaseUrl: https://router.superprotocol.com
   lookupsPerMinute: 30
 
+# Product analytics (ADR-006). The console makes no third-party request: its two
+# browser events are posted to POST /v1/analytics/events here, and the six the
+# database already knows are captured server-side. `projectKey` normally arrives
+# as POSTHOG_PROJECT_KEY; with no key every event is discarded.
+analytics:
+  posthog:
+    host: https://eu.i.posthog.com
+    requestTimeout: 3s
+  ingestPerMinute: 60
+
 log:
   level: info
   pretty: false

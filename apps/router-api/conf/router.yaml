@@ -67,6 +67,14 @@ invites:
   landingBaseUrl: https://router.superprotocol.com
   lookupsPerMinute: 30
 
+# Product analytics. No project key here on purpose: a developer's events must
+# not land in the real project. Set POSTHOG_PROJECT_KEY to capture them.
+analytics:
+  posthog:
+    host: https://eu.i.posthog.com
+    requestTimeout: 3s
+  ingestPerMinute: 60
+
 log:
   level: info
   pretty: true

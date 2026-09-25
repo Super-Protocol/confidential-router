@@ -415,6 +415,43 @@
         }
       }
     },
+    "analytics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Product analytics (ADR-006). Inert without a PostHog project key; the console reaches PostHog only through this service, never directly.",
+      "properties": {
+        "posthog": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "PostHog capture. Usually set from POSTHOG_PROJECT_KEY and POSTHOG_HOST rather than written here.",
+          "properties": {
+            "projectKey": {
+              "type": "string",
+              "minLength": 8,
+              "description": "The phc_... project key. A write-only ingest key, not a secret. Unset means every event is discarded."
+            },
+            "host": {
+              "type": "string",
+              "format": "uri",
+              "default": "https://eu.i.posthog.com",
+              "description": "Ingest origin. The EU cloud by default."
+            },
+            "requestTimeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(ms|s|m|h)$",
+              "default": "3s",
+              "description": "Capture request timeout. Short: a slow analytics host must cost a dropped event, never a slow response."
+            }
+          }
+        },
+        "ingestPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60,
+          "description": "Per-source-address budget on the console's POST /v1/analytics/events."
+        }
+      }
+    },
     "log": {
       "type": "object",
       "additionalProperties": false,

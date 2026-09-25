@@ -8,7 +8,7 @@ Auth tables (`user`, `session`, `account`, `verification`) are owned by Better A
 | Entity | Table | Purpose |
 | --- | --- | --- |
 | `User` | `user` (Better Auth) | read-only mapping: `id`, `email`, `name`, `image`, `createdAt` |
-| `Workspace` | `workspaces` | billing/tenancy unit; `id`, `name`, `slug` (unique), `balanceMicros` (bigint cache), `stripeCustomerId?`, `autoTopUpEnabled`, `autoTopUpThresholdMicros?`, `autoTopUpAmountMicros?`, `autoTopUpLastAt?`, `createdAt` |
+| `Workspace` | `workspaces` | billing/tenancy unit; `id`, `name`, `slug` (unique), `balanceMicros` (bigint cache), `stripeCustomerId?`, `autoTopUpEnabled`, `autoTopUpThresholdMicros?`, `autoTopUpAmountMicros?`, `autoTopUpLastAt?`, `firstRequestAt?` (when the first generation was metered — *claimed* by a conditional `UPDATE … WHERE firstRequestAt IS NULL`, which is what makes the `first_request_sent` event fire exactly once per workspace), `createdAt` |
 | `WorkspaceMember` | `workspace_members` | `workspaceId`, `userId`, `role: owner\|member`; PK `(workspaceId,userId)` |
 | `ApiKey` | `api_keys` | `id`, `workspaceId` (idx), `name`, `keyHash` (sha256, unique), `prefix` (12 chars, display), `modelScope: string[]\|null` (model ids; null = all), `spendLimitMicros?`, `spentTotalMicros` (bigint), `requestsPerMinute?`, `tokensPerMinute?`, `expiresAt?`, `lastUsedAt?`, `revokedAt?`, `createdByUserId`, `createdAt` |
 | `Model` | `models` | **projection of router config**, upserted at boot: `id` (= slug, PK), `name`, `litellmModel`, `endpointId`, `contextLength`, `capabilities: string[]`, `promptPer1mMicros`, `completionPer1mMicros`, `tee`, `enabled`, `updatedAt`. Config is the source of truth; rows exist for FK integrity and history |

@@ -1,5 +1,6 @@
 import { InitialSchema1756600000000 } from './1756600000000-InitialSchema.js';
 import { InviteCodes1758800000000 } from './1758800000000-InviteCodes.js';
+import { WorkspaceFirstRequest1758900000000 } from './1758900000000-WorkspaceFirstRequest.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -7,4 +8,8 @@ import { InviteCodes1758800000000 } from './1758800000000-InviteCodes.js';
  *
  * Order is the array order, so new migrations are appended, never inserted.
  */
-export const MIGRATIONS = [InitialSchema1756600000000, InviteCodes1758800000000];
+export const MIGRATIONS = [
+  InitialSchema1756600000000,
+  InviteCodes1758800000000,
+  WorkspaceFirstRequest1758900000000,
+];

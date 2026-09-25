@@ -16,6 +16,7 @@ import {
   signInWithPassword,
   signInWithProvider,
 } from '../../lib/auth';
+import { readInviteCode } from '../../lib/invite';
 import { BootstrapForm } from './bootstrap-form';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
@@ -61,6 +62,18 @@ export function SignInForm() {
   // arrives, because the deployment decides which one is the default.
   const [emailPath, setEmailPath] = React.useState<'password' | 'magic-link' | null>(null);
 
+  /**
+   * The invitation code this browser is carrying, if any.
+   *
+   * This is a sign-*in* screen, so usually there is none and nothing happens. But
+   * OAuth and a magic link both create the account on first use, and on a
+   * deployment that offers no password sign-up they are the only way an invited
+   * visitor can register at all — so the code has to travel from here too, or the
+   * grant is silently lost. `signInWithPassword` deliberately does not take it:
+   * an existing account cannot be topped up (SUP-142).
+   */
+  const [inviteCode] = React.useState(() => readInviteCode(globalThis.location?.search ?? ''));
+
   const { data, loading } = useQuery(SIGN_IN_OPTIONS_QUERY, { fetchPolicy: 'cache-and-network' });
   const options = data?.signInOptions ?? OFFER_EVERYTHING;
   // A password is the sturdier of the two on a deployment that offers both: it
@@ -73,7 +86,7 @@ export function SignInForm() {
     setError(null);
     setPending(provider);
     try {
-      await signInWithProvider(provider);
+      await signInWithProvider(provider, inviteCode);
       // On success the browser navigates away, so `pending` is never cleared.
     } catch (caught) {
       setError(messageOf(caught));
@@ -86,7 +99,7 @@ export function SignInForm() {
     setError(null);
     setPending('magic-link');
     try {
-      await signInWithMagicLink(email);
+      await signInWithMagicLink(email, inviteCode);
       setLinkSent(true);
     } catch (caught) {
       setError(messageOf(caught));
@@ -267,7 +280,10 @@ export function SignInForm() {
             {options.password ? (
               <p className="text-center text-muted-foreground text-sm">
                 No account yet?{' '}
-                <Link href="/signup" className="font-medium text-foreground underline underline-offset-4">
+                {/* `from=login` is what makes `signup_started` able to tell a
+                    visitor who came through this screen from one who opened the
+                    sign-up page directly (`entry` in the taxonomy). */}
+                <Link href="/signup?from=login" className="font-medium text-foreground underline underline-offset-4">
                   Create one
                 </Link>
               </p>

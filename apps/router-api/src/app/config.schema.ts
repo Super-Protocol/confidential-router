@@ -241,6 +241,45 @@ const InvitesSchema = z
   })
   .prefault({});
 
+/**
+ * Product analytics (ADR-006).
+ *
+ * The credential names are `POSTHOG_PROJECT_KEY` and `POSTHOG_HOST` rather than
+ * `CR_API_ANALYTICS__*`, because they are the deployment-wide names SUP-143 fixed
+ * for both repositories; `loadRouterConfig` maps them into this section as the
+ * lowest-precedence layer, so a `router.yaml` or a `CR_API_*` variable still wins.
+ *
+ * With no project key the whole thing is inert and every event is dropped — which
+ * is the state of every developer machine and every test.
+ */
+const AnalyticsSchema = z
+  .strictObject({
+    posthog: z
+      .strictObject({
+        /**
+         * PostHog's `phc_…` project key. A write-only ingest key, not a secret:
+         * it can add events to the project and read nothing back.
+         */
+        projectKey: optionalSecret(8),
+        /** EU cloud by default; a self-hosted project sets its own origin. */
+        host: z.url().prefault('https://eu.i.posthog.com'),
+        /**
+         * Short on purpose. Every caller has already committed its database work
+         * and is holding a request open, so a slow analytics host has to cost a
+         * dropped event rather than a slow response.
+         */
+        requestTimeout: durationMs('3s'),
+      })
+      .prefault({}),
+    /**
+     * Console events per minute per source address on the first-party ingest.
+     * Higher than the invite lookups' budget because one visitor legitimately
+     * produces several events a minute, and nothing expensive is behind it.
+     */
+    ingestPerMinute: integerish().pipe(z.number().int().positive()).prefault(60),
+  })
+  .prefault({});
+
 const LogSchema = z
   .strictObject({
     level: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).prefault('info'),
@@ -297,6 +336,7 @@ export const RouterConfigSchema = z.strictObject({
   auth: AuthSchema,
   billing: BillingSchema,
   invites: InvitesSchema,
+  analytics: AnalyticsSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,

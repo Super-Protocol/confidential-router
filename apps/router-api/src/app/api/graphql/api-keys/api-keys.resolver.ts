@@ -1,9 +1,11 @@
 import { BadRequestException, NotFoundException, UseGuards } from '@nestjs/common';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { AnalyticsService, eventUuid } from '../../../analytics/index.js';
 import { ApiKeyService } from '../../../api-keys/api-key.service.js';
 import { CurrentUser, SessionGuard, type SessionUser, WorkspaceScopeService } from '../../../auth/index.js';
 import { CatalogService } from '../../../catalog/catalog.service.js';
 import type { ApiKey } from '../../../db/entities/api-key.entity.js';
+import { InviteAttributionService } from '../../../invites/invite-attribution.service.js';
 import { ApiKeyCreatedModel, ApiKeyModel, CreateApiKeyInputModel, UpdateApiKeyInputModel } from './api-key.model.js';
 
 /**
@@ -16,10 +18,13 @@ import { ApiKeyCreatedModel, ApiKeyModel, CreateApiKeyInputModel, UpdateApiKeyIn
 @Resolver(() => ApiKeyModel)
 @UseGuards(SessionGuard)
 export class ApiKeysResolver {
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly apiKeys: ApiKeyService,
     private readonly workspaces: WorkspaceScopeService,
     private readonly catalog: CatalogService,
+    private readonly analytics: AnalyticsService,
+    private readonly attribution: InviteAttributionService,
   ) {}
 
   @Query(() => [ApiKeyModel], { name: 'apiKeys', description: 'Every key in the workspace, newest first.' })
@@ -51,7 +56,34 @@ export class ApiKeysResolver {
       tokensPerMinute: input.tokensPerMinute ?? null,
       expiresAt: input.expiresAt ?? null,
     });
+
+    await this.reportCreated(user, created.key);
     return { key: present(created.key), secret: created.secret };
+  }
+
+  /**
+   * `api_key_created`, after the row is committed.
+   *
+   * The key's secret, its hash and its label are not in it and never will be:
+   * a label is free text, and the taxonomy's one hard rule is that no free text
+   * leaves the database (`docs/contracts/analytics-events.md`, convention 6).
+   * What the campaign needs is whether this was the workspace's *first* key —
+   * `keys_after: 1` is the activation step the launch is judged on.
+   */
+  private async reportCreated(user: SessionUser, key: ApiKey): Promise<void> {
+    const attribution = await this.attribution.forWorkspace(key.workspaceId);
+
+    await this.analytics.capture({
+      event: 'api_key_created',
+      distinctId: user.id,
+      uuid: eventUuid('api_key_created', key.id),
+      timestamp: key.createdAt,
+      properties: {
+        campaign: attribution.campaign,
+        has_spend_limit: key.spendLimitMicros !== null,
+        keys_after: await this.apiKeys.countLive(key.workspaceId),
+      },
+    });
   }
 
   @Mutation(() => ApiKeyModel)

@@ -48,6 +48,7 @@ describe('SQLite', () => {
       expect(applied.map((migration) => migration.name)).toEqual([
         'InitialSchema1756600000000',
         'InviteCodes1758800000000',
+        'WorkspaceFirstRequest1758900000000',
       ]);
     } finally {
       await dataSource.destroy();
@@ -80,9 +81,13 @@ describe('SQLite', () => {
     const dataSource = await sqliteDataSource();
     try {
       await dataSource.runMigrations();
+      const queryRunner = dataSource.createQueryRunner();
 
       await dataSource.undoLastMigration();
-      const queryRunner = dataSource.createQueryRunner();
+      expect(await queryRunner.hasColumn('workspaces', 'firstRequestAt')).toBe(false);
+      expect(await queryRunner.hasTable('invite_codes')).toBe(true);
+
+      await dataSource.undoLastMigration();
       expect(await queryRunner.hasTable('invite_redemptions')).toBe(false);
       expect(await queryRunner.hasTable('invite_codes')).toBe(false);
       // The tables the reverted migration did not create are untouched.
@@ -129,6 +134,7 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
       expect(applied.map((migration) => migration.name)).toEqual([
         'InitialSchema1756600000000',
         'InviteCodes1758800000000',
+        'WorkspaceFirstRequest1758900000000',
       ]);
 
       const { upQueries } = await dataSource.driver.createSchemaBuilder().log();
@@ -142,8 +148,9 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     const dataSource = await postgresDataSource();
     try {
       await dataSource.runMigrations({ transaction: 'all' });
-      await dataSource.undoLastMigration({ transaction: 'all' });
-      await dataSource.undoLastMigration({ transaction: 'all' });
+      for (let index = 0; index < 3; index += 1) {
+        await dataSource.undoLastMigration({ transaction: 'all' });
+      }
 
       const queryRunner = dataSource.createQueryRunner();
       expect(await queryRunner.hasTable('invite_codes')).toBe(false);

@@ -4,6 +4,7 @@ import { ConfigType } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import type { Request } from 'express';
 import { ActivityModule } from '../../activity/index.js';
+import { AnalyticsModule } from '../../analytics/index.js';
 import { ApiKeysModule } from '../../api-keys/api-keys.module.js';
 import { AuthModule } from '../../auth/index.js';
 import { BillingModule } from '../../billing/index.js';
@@ -28,6 +29,7 @@ import { formatConsoleError } from './errors.js';
     ApiKeysModule,
     AuthModule,
     ActivityModule,
+    AnalyticsModule,
     BillingModule,
     GatekeeperModule,
     InvitesModule,
