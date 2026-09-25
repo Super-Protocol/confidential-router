@@ -3,10 +3,9 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithSession, TEST_WORKSPACES } from '../../test-utils';
+import { feedbackOfferMock } from '../feedback/feedback-mocks';
 import { INVITE_GRANT_STATUS_QUERY } from '../invites/operations';
 import { NEXT_STEP_QUERY } from '../onboarding/next-step-card';
-
-import { feedbackOfferMock } from '../feedback/feedback-mocks';
 import { typedSessionMock } from '../typed-session';
 import { CreditsScreen } from './credits-screen';
 import { CREATE_CHECKOUT, CREDITS_QUERY, SET_AUTO_TOP_UP } from './operations';
