@@ -23,7 +23,12 @@
  * out is a candidate string, and `InviteService` decides whether it is a code.
  */
 
-/** Cookie the landing page may set so the code survives an OAuth round trip. */
+/**
+ * Cookie the console sets on its own origin, immediately before an OAuth
+ * redirect, so the code survives the round trip. Not the landing page's: that
+ * surface sets nothing and hands the code on in the URL, which is what keeps its
+ * published "no cookie" claim true (ADR-006 §4).
+ */
 export const INVITE_COOKIE_NAME = 'cr_invite';
 
 /** Query parameter the invitation URL uses, and the console appends to sign-up. */

@@ -10,6 +10,7 @@ immutable once `Accepted`; superseding decisions get a new number and link back.
 | [ADR-003](./ADR-003-gatekeeper-trust-model.md) | Gatekeeper trust model — trusted roots, per-endpoint pinned `evidenceDigest`, Rego AND-semantics, fail-closed | Accepted |
 | [ADR-004](./ADR-004-console-auth.md) | Console authentication — OAuth (GitHub/Google) + email magic link, sessions in PostgreSQL | Accepted |
 | [ADR-005](./ADR-005-billing.md) | Billing — prepaid credits ledger + Stripe, no crypto | Accepted |
+| [ADR-006](./ADR-006-analytics.md) | Analytics — Plausible on the landing, PostHog EU behind our own server, no consent banner | Accepted |
 
 Companion documents:
 
@@ -18,6 +19,7 @@ Companion documents:
 - [Console GraphQL outline](../contracts/console-graphql.md) — target SDL for the code-first NestJS schema.
 - [Data model](../contracts/data-model.md) — TypeORM entities of `router-api`.
 - [Gatekeeper Rego contract](../contracts/rego-input.md) — `input` document, generated trust module, default policy.
+- [Analytics event taxonomy](../contracts/analytics-events.md) — every event both surfaces emit, its properties and its owner.
 - Machine-readable contracts in [`/schemas`](../../schemas/README.md), validated by `libs/types` in CI.
 
 Conventions: status ∈ {Proposed, Accepted, Superseded}; "Decided by" names the human decision on record
