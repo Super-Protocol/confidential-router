@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Super-Protocol/confidential-router/schemas/analytics-taxonomy.schema.json",
+  "title": "Analytics event taxonomy",
+  "description": "Shape of schemas/analytics-taxonomy.json — the single list of product events the landing page (Plausible) and the console/API (PostHog EU) are allowed to emit. Two repositories code against it (ADR-006), so the names, the property spellings and the owning issue live in one machine-readable file rather than in two markdown tables that drift.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sharedProperties", "events"],
+  "properties": {
+    "$schema": {
+      "description": "Relative pointer to this file, so an editor validates the taxonomy as it is typed.",
+      "type": "string"
+    },
+    "version": {
+      "const": 1
+    },
+    "sharedProperties": {
+      "description": "Properties that mean the same thing on more than one event. An event references them by name in `uses`; it may not redefine one.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/propertyName" },
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/property" }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/event" }
+    }
+  },
+  "$defs": {
+    "eventName": {
+      "description": "snake_case, verb-last (`cta_click`, not `click_cta`), so related events sort together.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+){1,4}$",
+      "maxLength": 48
+    },
+    "propertyName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)*$",
+      "maxLength": 40
+    },
+    "issueKey": {
+      "type": "string",
+      "pattern": "^SUP-[0-9]+$"
+    },
+    "property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "required", "description"],
+      "properties": {
+        "type": {
+          "description": "Scalars only. A nested object is a property nobody can build a breakdown on, and it is how free text gets in by accident.",
+          "enum": ["string", "integer", "boolean"]
+        },
+        "required": {
+          "description": "false means the emitter omits it rather than sending null — an absent property and an empty one are different rows in a breakdown.",
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10
+        },
+        "enum": {
+          "description": "Closed value set. Prefer it: an unbounded string property is a breakdown with one row per visitor.",
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "example": {
+          "description": "A real value, so the readable table shows one. For a closed set it must be a member of `enum`; the taxonomy test checks that.",
+          "anyOf": [
+            { "type": "string" },
+            { "type": "integer" },
+            { "type": "boolean" }
+          ]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "surface", "tool", "transport", "owner", "when"],
+      "properties": {
+        "name": { "$ref": "#/$defs/eventName" },
+        "surface": {
+          "description": "Which of the three surfaces owns the emission. Exactly one — an event emitted from two places is two events.",
+          "enum": ["landing", "console", "api"]
+        },
+        "tool": {
+          "enum": ["plausible", "posthog"]
+        },
+        "transport": {
+          "description": "browser = the surface's own script calls the tool directly (landing/Plausible only). server = router-api calls the tool with posthog-node. first-party-ingest = the browser posts it to router-api, which forwards it (ADR-006 §3: the console makes no third-party requests).",
+          "enum": ["browser", "server", "first-party-ingest"]
+        },
+        "owner": {
+          "description": "The issue that implements the emission.",
+          "$ref": "#/$defs/issueKey"
+        },
+        "when": {
+          "description": "The exact moment it fires, precise enough that two implementers cannot disagree about whether it fired.",
+          "type": "string",
+          "minLength": 20
+        },
+        "notes": {
+          "type": "string"
+        },
+        "uses": {
+          "description": "Shared properties this event carries.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/propertyName" }
+        },
+        "properties": {
+          "description": "Properties specific to this event.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/propertyName" },
+          "additionalProperties": { "$ref": "#/$defs/property" }
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "Plausible has no server-side event API in our plan, and the console emits nothing to a third party directly.",
+          "if": {
+            "properties": { "tool": { "const": "plausible" } },
+            "required": ["tool"]
+          },
+          "then": { "properties": { "transport": { "const": "browser" } } }
+        },
+        {
+          "if": {
+            "properties": { "surface": { "const": "landing" } },
+            "required": ["surface"]
+          },
+          "then": { "properties": { "tool": { "const": "plausible" } } },
+          "else": { "properties": { "tool": { "const": "posthog" } } }
+        },
+        {
+          "$comment": "Nothing router-api computes needs to be reported by a browser.",
+          "if": {
+            "properties": { "surface": { "const": "api" } },
+            "required": ["surface"]
+          },
+          "then": { "properties": { "transport": { "const": "server" } } }
+        },
+        {
+          "$comment": "ADR-006 §3: the console never talks to a third party; its two browser events go through router-api.",
+          "if": {
+            "properties": { "surface": { "const": "console" } },
+            "required": ["surface"]
+          },
+          "then": {
+            "properties": { "transport": { "const": "first-party-ingest" } }
+          }
+        }
+      ]
+    }
+  }
+}
