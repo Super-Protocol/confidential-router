@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AnalyticsModule } from '../analytics/index.js';
 import { routerConfig } from '../config.js';
 import { User } from '../db/entities/user.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
@@ -18,9 +19,10 @@ import { WorkspaceProvisioningService } from './workspace-provisioning.service.j
 import { WorkspaceScopeService } from './workspace-scope.service.js';
 
 @Module({
-  // `InvitesModule` for the grant the sign-up hook applies; the dependency runs
-  // this way only, and nothing in invites knows about sessions.
-  imports: [TypeOrmModule.forFeature([User, Workspace, WorkspaceMember]), InvitesModule],
+  // `InvitesModule` for the grant the sign-up hook applies, `AnalyticsModule` for
+  // the two events it reports; both dependencies run this way only, and neither
+  // invites nor analytics knows about sessions.
+  imports: [TypeOrmModule.forFeature([User, Workspace, WorkspaceMember]), InvitesModule, AnalyticsModule],
   providers: [
     {
       provide: MAGIC_LINK_MAILER,

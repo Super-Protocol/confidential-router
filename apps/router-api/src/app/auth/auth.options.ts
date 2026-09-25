@@ -6,6 +6,7 @@ import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
 import type { MagicLinkMailer } from './magic-link-mailer.js';
+import { type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
 /** Session cookie name fixed by ADR-004 §4. */
 export const SESSION_COOKIE_NAME = 'cr_session';
@@ -42,14 +43,21 @@ export interface AuthOptionsDeps {
   /** Injected so tests can close the handle they own. */
   database: BetterAuthOptions['database'];
   /**
-   * Provisions the personal workspace on first sign-in (ADR-004 §5), and spends
-   * the invitation code the creating request carried, if any (SUP-142).
+   * Provisions the personal workspace on first sign-in (ADR-004 §5), spends the
+   * invitation code the creating request carried, if any (SUP-142), and reports
+   * the sign-up to analytics (SUP-145).
    *
-   * It receives the invitation context rather than fetching it, because the only
-   * place the code exists is the request Better Auth is handling — see
-   * `sign-up-invite.ts` for why that request differs per sign-in path.
+   * It receives the invitation context and the method rather than fetching
+   * either, because the only place both exist is the request Better Auth is
+   * handling — see `sign-up-invite.ts` for why that request differs per sign-in
+   * path, and `sign-up-method.ts` for why the provider is not yet readable from
+   * the database when this runs.
    */
-  onUserCreated?: (user: { id: string; email: string; name?: string | null }, invite: SignUpInvite) => Promise<void>;
+  onUserCreated?: (
+    user: { id: string; email: string; name?: string | null },
+    invite: SignUpInvite,
+    method: SignUpMethod,
+  ) => Promise<void>;
 }
 
 /**
@@ -121,7 +129,11 @@ export function buildAuthOptions({ config, mailer, database, onUserCreated }: Au
           user: {
             create: {
               after: async (user, context) => {
-                await onUserCreated({ id: user.id, email: user.email, name: user.name }, signUpInviteOf(context));
+                await onUserCreated(
+                  { id: user.id, email: user.email, name: user.name },
+                  signUpInviteOf(context),
+                  signUpMethodOf(context),
+                );
               },
             },
           },

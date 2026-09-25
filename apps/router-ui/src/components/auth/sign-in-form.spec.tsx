@@ -2,6 +2,7 @@ import type { MockLink } from '@apollo/client/testing';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { INVITE_COOKIE_NAME } from '../../lib/invite';
 import { clearSignedIn, SIGNED_IN_COOKIE_NAME } from '../../lib/signed-in-cookie';
 import { renderWithApollo } from '../../test-utils';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
@@ -343,10 +344,12 @@ describe('SignInForm, the password path', () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it('links to sign-up where accounts can be created', async () => {
+  it('links to sign-up where accounts can be created, saying where the visitor came from', async () => {
     renderForm([optionsMock(MAILER_LESS)]);
 
-    expect(await screen.findByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/signup');
+    // `from=login` is what lets `signup_started` tell this visitor apart from one
+    // who opened the sign-up page directly (SUP-145).
+    expect(await screen.findByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/signup?from=login');
   });
 
   it('does not, where they cannot', async () => {
@@ -395,5 +398,61 @@ describe('SignInForm, the password path', () => {
     expect(submit).toBeDisabled();
     await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
     expect(submit).toBeEnabled();
+  });
+});
+
+/**
+ * An invitation reaches this screen more often than it looks. OAuth and a magic
+ * link both create the account on first use, and on a deployment with no password
+ * provider they are the only way an invited visitor can register — so the code has
+ * to leave from here too, or the grant is silently lost (SUP-145).
+ */
+describe('an invitation carried to a sign-in screen', () => {
+  beforeEach(() => {
+    vi.stubGlobal('location', { ...window.location, search: '?invite=abcd-efgh', protocol: 'http:', assign });
+  });
+
+  afterEach(() => {
+    // biome-ignore lint/suspicious/noDocumentCookie: clearing the cookie the code under test set, with the API the code under test uses.
+    document.cookie = `${INVITE_COOKIE_NAME}=; max-age=0; path=/`;
+  });
+
+  it('publishes the code as a cookie before leaving for the provider', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ url: 'https://github.com/login/oauth/authorize?x=1' }));
+    renderForm();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Continue with GitHub' }));
+
+    // The callback is a URL the provider built: a cookie on our origin is the only
+    // thing of ours that survives it.
+    expect(document.cookie).toContain(`${INVITE_COOKIE_NAME}=ABCDEFGH`);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).callbackURL).toBe('/?invite=ABCDEFGH');
+  });
+
+  it('carries the code in the callbackURL of a magic link', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm();
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'invited@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
+
+    // `callbackURL` is the only thing that survives from the request that asks for
+    // the mail to the one that creates the account.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).callbackURL).toBe('/?invite=ABCDEFGH');
+  });
+
+  it('does not attach it to a password sign-in, which cannot create an account', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm([optionsMock({ password: true, magicLink: false, github: false, google: false })]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'existing@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    // An existing account cannot be topped up: redemption lives in account
+    // creation and nowhere else (SUP-142).
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.callbackURL).toBe('/');
+    expect(body.inviteCode).toBeUndefined();
   });
 });

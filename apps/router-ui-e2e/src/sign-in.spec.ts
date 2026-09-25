@@ -276,7 +276,9 @@ test.describe('sign-in', () => {
 
     await page.goto('/login');
     await page.getByRole('link', { name: 'Create one' }).click();
-    await expect(page).toHaveURL(/\/signup$/);
+    // `from=login` rides along so `signup_started` can tell this visitor from one
+    // who opened the sign-up page directly (SUP-145).
+    await expect(page).toHaveURL(/\/signup\?from=login$/);
 
     await page.getByLabel('Name (optional)').fill('New Comer');
     await page.getByLabel('Email').fill('newcomer@example.com');

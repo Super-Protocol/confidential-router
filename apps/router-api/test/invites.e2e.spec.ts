@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { formatInviteCode, generateInvites, mintInviteCode } from '../src/app/invites/index.js';
 import { createHarness, type Harness, pathOf } from './app-harness.js';
-import { type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
+import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
 /**
  * Invitation codes end to end: the public lookup the landing page calls, the
@@ -23,6 +23,11 @@ const CAMPAIGN = 'launch-2026-10-devs';
 const PASSWORD = 'correct-horse-battery';
 
 const INVITE_GRANT = '{ inviteGrant { grantMicros campaign creditTransactionId redeemedAt } }';
+const GRANT_STATUS = `
+  query Status($code: String) {
+    inviteGrantStatus(code: $code) { reason grant { grantMicros campaign } }
+  }
+`;
 const LEDGER = `
   query Ledger($workspaceId: ID!) {
     creditTransactions(workspaceId: $workspaceId, first: 10) {
@@ -348,6 +353,103 @@ describe('the generated CSV', () => {
         .expect(200)
         .expect(validBody());
     }
+  });
+});
+
+describe('the post-sign-up screen', () => {
+  beforeEach(async () => {
+    await inviteHarness();
+  });
+
+  async function accountWith(code: string | undefined, email: string): Promise<ConsoleSession> {
+    const created = await signUp({
+      email,
+      password: PASSWORD,
+      name: 'Arrived',
+      ...(code ? { inviteCode: code } : {}),
+    }).expect(200);
+    return consoleSession(sessionCookiesOf(created));
+  }
+
+  it('confirms the credit, with the campaign that paid for it', async () => {
+    const [invite] = await issue(dataSourceOf(harness));
+    const session = await accountWith(invite.code, 'welcome@example.com');
+
+    const status = await expectData(session, GRANT_STATUS, { code: invite.code });
+
+    expect(status.inviteGrantStatus).toEqual({
+      reason: null,
+      grant: { grantMicros: String(GRANT_MICROS), campaign: CAMPAIGN },
+    });
+  });
+
+  /**
+   * Each refusal gets its own reason, which the anonymous lookup deliberately
+   * withholds. Safe here: the caller holds a session and already holds the code,
+   * so "expired" tells them nothing trying it would not have.
+   */
+  it('says why, one reason per failure mode', async () => {
+    const dataSource = dataSourceOf(harness);
+    const [expired] = await issue(dataSource, { expiresAt: new Date('2020-01-01T00:00:00Z'), campaign: 'expired-c' });
+    const [spent] = await issue(dataSource, { campaign: 'spent-c' });
+    const [disabled] = await issue(dataSource, { campaign: 'disabled-c' });
+    await dataSource.getRepository(InviteCode).update({ campaign: 'spent-c' }, { redemptionCount: 1 });
+    await dataSource.getRepository(InviteCode).update({ campaign: 'disabled-c' }, { disabledAt: new Date() });
+
+    const cases: [string, string][] = [
+      [expired.code, 'EXPIRED'],
+      [spent.code, 'EXHAUSTED'],
+      [disabled.code, 'DISABLED'],
+      [formatInviteCode(mintInviteCode()), 'NOT_FOUND'],
+      ['../../etc/passwd', 'NOT_FOUND'],
+    ];
+
+    let index = 0;
+    for (const [code, reason] of cases) {
+      const session = await accountWith(code, `refused-${index}@example.com`);
+      index += 1;
+      const status = await expectData(session, GRANT_STATUS, { code });
+      expect(status.inviteGrantStatus, code).toEqual({ reason, grant: null });
+    }
+  });
+
+  it('says an account that already has a credit cannot have a second one', async () => {
+    const dataSource = dataSourceOf(harness);
+    const [first] = await issue(dataSource);
+    const [second] = await issue(dataSource, { campaign: 'another-campaign' });
+    const session = await accountWith(first.code, 'already@example.com');
+
+    const status = await expectData(session, GRANT_STATUS, { code: second.code });
+
+    // Both halves are true, and the screen has to say both: the account has its
+    // grant, and the code it just presented bought nothing.
+    expect(status.inviteGrantStatus.grant).toMatchObject({ campaign: CAMPAIGN });
+    expect(status.inviteGrantStatus.reason).toBe('ALREADY_REDEEMED');
+  });
+
+  it('answers a visitor who arrived without a code at all', async () => {
+    const session = await accountWith(undefined, 'organic@example.com');
+
+    expect((await expectData(session, GRANT_STATUS, {})).inviteGrantStatus).toEqual({ reason: null, grant: null });
+  });
+
+  it('refuses an anonymous caller', async () => {
+    const refused = await graphql(anonymous(harness), GRANT_STATUS, { code: 'ZZZZ-ZZZZ-ZZZZ' });
+
+    expect(refused.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
+  });
+
+  it('spends the invitation-lookup budget, so a session is not a second allowance', async () => {
+    await harness.close();
+    await inviteHarness({ CR_API_INVITES__LOOKUPS_PER_MINUTE: '2' });
+    const session = await accountWith(undefined, 'curious@example.com');
+    const guess = () => graphql(session, GRANT_STATUS, { code: formatInviteCode(mintInviteCode()) });
+
+    await guess();
+    await guess();
+    const refused = await guess();
+
+    expect(refused.errors?.[0].message).toContain('Too many invitation lookups');
   });
 });
 

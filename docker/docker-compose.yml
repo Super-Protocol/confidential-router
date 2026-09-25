@@ -53,6 +53,12 @@ x-router-api-env: &router-api-env
   CR_API_EVIDENCE__POLL_INTERVAL: 30s
   CR_API_LOG__LEVEL: ${CR_API_LOG__LEVEL:-info}
 
+  # Product analytics (ADR-006). Unset by default, and deliberately: a demo
+  # stack's events must not land in the real PostHog project. With no key every
+  # event is discarded. Set both in docker/.env to capture them.
+  POSTHOG_PROJECT_KEY: ${POSTHOG_PROJECT_KEY:-}
+  POSTHOG_HOST: ${POSTHOG_HOST:-https://eu.i.posthog.com}
+
 x-router-api: &router-api
   image: ${ROUTER_API_IMAGE:-confidential-router/router-api:local}
   build:

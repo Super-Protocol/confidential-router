@@ -1,3 +1,4 @@
+import { publishInviteCookie, withInvite } from './invite';
 import { publicConfig } from './public-config';
 import { clearSignedIn, markSignedIn } from './signed-in-cookie';
 
@@ -45,11 +46,20 @@ async function postToAuth(path: string, body: unknown): Promise<unknown> {
 /**
  * Starts an OAuth sign-in. Better Auth answers with the provider's authorize
  * URL rather than a redirect, so the caller navigates.
+ *
+ * An invitation code cannot ride this one: the account is created by the
+ * provider's callback, a URL the provider built, where nothing of ours survives
+ * except a cookie on the API's origin. So the code is published as `cr_invite`
+ * before the browser leaves — see `publishInviteCookie` for why that is the only
+ * hop that needs one.
  */
-export async function signInWithProvider(provider: SocialProvider): Promise<void> {
+export async function signInWithProvider(provider: SocialProvider, inviteCode?: string | null): Promise<void> {
+  if (inviteCode) {
+    publishInviteCookie(inviteCode);
+  }
   const result = (await postToAuth('/sign-in/social', {
     provider,
-    callbackURL: publicConfig().authCallbackUrl,
+    callbackURL: withInvite(publicConfig().authCallbackUrl, inviteCode ?? null),
   })) as { url?: unknown };
 
   if (typeof result.url !== 'string') {
@@ -59,9 +69,17 @@ export async function signInWithProvider(provider: SocialProvider): Promise<void
   window.location.assign(result.url);
 }
 
-/** Mails a magic link. Resolves once the mail is accepted — never with a session. */
-export async function signInWithMagicLink(email: string): Promise<void> {
-  await postToAuth('/sign-in/magic-link', { email, callbackURL: publicConfig().authCallbackUrl });
+/**
+ * Mails a magic link. Resolves once the mail is accepted — never with a session.
+ *
+ * `callbackURL` is the only thing that survives from here to the verification
+ * request that creates the account, so an invitation code travels in it.
+ */
+export async function signInWithMagicLink(email: string, inviteCode?: string | null): Promise<void> {
+  await postToAuth('/sign-in/magic-link', {
+    email,
+    callbackURL: withInvite(publicConfig().authCallbackUrl, inviteCode ?? null),
+  });
 }
 
 /**
@@ -74,13 +92,24 @@ export async function signInWithMagicLink(email: string): Promise<void> {
  *
  * `name` is optional to the console and required by Better Auth's body schema,
  * which accepts an empty string; the console lets it be filled in later.
+ *
+ * `inviteCode` rides the body. This is the one sign-up path that is the console's
+ * own request, so it is also the one where the code needs no cookie and no
+ * `callbackURL` smuggling — and a failed redemption never fails the sign-up, so
+ * there is nothing to handle here beyond sending it (SUP-142).
  */
-export async function signUpWithPassword(input: { email: string; password: string; name?: string }): Promise<void> {
+export async function signUpWithPassword(input: {
+  email: string;
+  password: string;
+  name?: string;
+  inviteCode?: string | null;
+}): Promise<void> {
   await postToAuth('/sign-up/email', {
     email: input.email,
     password: input.password,
     name: input.name?.trim() ?? '',
     callbackURL: publicConfig().authCallbackUrl,
+    ...(input.inviteCode ? { inviteCode: input.inviteCode } : {}),
   });
 }
 
@@ -120,11 +149,11 @@ export async function signOut(): Promise<void> {
  * `?next=https://evil.example` — or `//evil.example`, which a browser reads as
  * an origin too — would otherwise make the console an open redirector.
  */
-export function signInDestination(search: string = globalThis.location?.search ?? ''): string {
+export function signInDestination(search: string = globalThis.location?.search ?? '', fallback?: string): string {
   const next = new URLSearchParams(search).get('next');
   const local = next?.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\');
 
-  return local ? (next as string) : publicConfig().authCallbackUrl;
+  return local ? (next as string) : (fallback ?? publicConfig().authCallbackUrl);
 }
 
 /**
@@ -135,7 +164,7 @@ export function signInDestination(search: string = globalThis.location?.search ?
  * just set on the API origin and every cached Apollo result on this page was
  * fetched without one.
  */
-export function completeSignIn(): void {
+export function completeSignIn(fallback?: string): void {
   markSignedIn();
-  window.location.assign(signInDestination());
+  window.location.assign(signInDestination(globalThis.location?.search ?? '', fallback));
 }
