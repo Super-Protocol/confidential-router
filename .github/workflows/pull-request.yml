@@ -88,8 +88,18 @@ jobs:
       # console's client is generated from: the first spec checks it against the
       # schema the resolvers produce, the second against the schema the running
       # application serves. Either failing means the committed SDL is stale.
+      #
+      # The build is not optional. These specs import workspace packages that
+      # resolve to `dist/`, and the step above is `nx affected` — on a pull
+      # request that touches only files outside every project it runs nothing at
+      # all, leaving no `dist/` for this step to resolve. It then fails with
+      # "Failed to resolve entry for package", which says nothing about the SDL.
+      # Nine seconds cold, replayed from cache whenever the step above already
+      # built it.
       - name: Console schema drift
-        run: pnpm exec vitest run --root apps/router-api src/app/api/graphql/schema.spec.ts test/schema.e2e.spec.ts
+        run: |
+          pnpm nx run @confidential-router/router-api:build --outputStyle=static
+          pnpm exec vitest run --root apps/router-api src/app/api/graphql/schema.spec.ts test/schema.e2e.spec.ts
 
       # `apps/router-ui/src/generated` is never edited by hand. Regenerating it
       # from the committed schema has to be a no-op.
