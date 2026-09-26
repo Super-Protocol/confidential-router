@@ -143,14 +143,16 @@
         "snippet": {
           "type": "string",
           "required": true,
-          "description": "Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value.",
+          "description": "Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value. Named from the landing page as built (SUP-144): the hero's OpenAI SDK example, the four code tabs, and the three Gatekeeper blocks.",
           "enum": [
-            "base_url",
+            "openai_sdk",
             "curl",
             "python",
             "node",
-            "openai_sdk",
-            "model_slug"
+            "gatekeeper_sdk",
+            "install",
+            "gatekeeper_setup",
+            "gatekeeper_verdict"
           ],
           "example": "curl"
         }

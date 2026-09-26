@@ -107,7 +107,7 @@ The artboard ships two diagrams and the breakpoint decides; this is how we learn
 | Property | Type | Required | Values | Meaning |
 | --- | --- | --- | --- | --- |
 | `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
-| `snippet` | string | yes | `base_url` `curl` `python` `node` `openai_sdk` `model_slug` | Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value. |
+| `snippet` | string | yes | `openai_sdk` `curl` `python` `node` `gatekeeper_sdk` `install` `gatekeeper_setup` `gatekeeper_verdict` | Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value. Named from the landing page as built (SUP-144): the hero's OpenAI SDK example, the four code tabs (`curl`, Python, Node, and the same call through a local Gatekeeper), the Gatekeeper install one-liner, its three setup commands, and its verdict output. The original list was written before the page existed and named two blocks — the base URL and a model slug — that carry no copy button. |
 
 ### `faq_opened`
 
