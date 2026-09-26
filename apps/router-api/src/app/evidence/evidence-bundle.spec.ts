@@ -46,6 +46,74 @@ describe('parseEvidenceBundle', () => {
     ]);
   });
 
+  /**
+   * What the deployed platform actually signs: the Kubernetes objects it
+   * applied, not a pre-flattened container list. Reading only the flat shape
+   * left the evidence modal with no images for every real deployment (SUP-157).
+   */
+  it('flattens them out of Kubernetes workloads too, init containers included', () => {
+    const raw = withPayload(bundle('valid-rsa-deployment'), {
+      evidence: {
+        version: 2,
+        resources: [
+          {
+            apiVersion: 'apps/v1',
+            kind: 'Deployment',
+            metadata: { name: 'confidential-router-api' },
+            spec: {
+              template: {
+                spec: {
+                  initContainers: [{ image: 'ghcr.io/super-protocol/router-migrate@sha256:bbbb' }],
+                  containers: [{ image: 'ghcr.io/super-protocol/router-api@sha256:aaaa' }],
+                },
+              },
+            },
+          },
+          { apiVersion: 'v1', kind: 'Pod', spec: { containers: [{ image: 'ollama/ollama:0.6.3' }] } },
+          {
+            apiVersion: 'batch/v1',
+            kind: 'CronJob',
+            spec: { jobTemplate: { spec: { template: { spec: { containers: [{ image: 'busybox:1.36' }] } } } } },
+          },
+          // Neither contributes an image, and neither may throw: a Service has
+          // no pod spec at all, and a ConfigMap keeps strings under `data`.
+          { apiVersion: 'v1', kind: 'Service', spec: { ports: [{ port: 80 }] } },
+          { apiVersion: 'v1', kind: 'ConfigMap', data: { 'router.yaml': 'containers: not-a-list' } },
+        ],
+      },
+    });
+
+    expect(parseEvidenceBundle(raw, 'router.example.test').containerImages).toEqual([
+      'ghcr.io/super-protocol/router-api@sha256:aaaa',
+      'ghcr.io/super-protocol/router-migrate@sha256:bbbb',
+      'ollama/ollama:0.6.3',
+      'busybox:1.36',
+    ]);
+  });
+
+  it('skips a container entry that is not an object rather than throwing', () => {
+    const raw = withPayload(bundle('valid-rsa-deployment'), {
+      evidence: {
+        version: 2,
+        resources: [
+          {
+            apiVersion: 'v1',
+            kind: 'Pod',
+            spec: { containers: [null, 'nope', 7, { image: 'ollama/ollama:0.6.3' }] },
+          },
+        ],
+      },
+    });
+
+    expect(parseEvidenceBundle(raw, 'router.example.test').containerImages).toEqual(['ollama/ollama:0.6.3']);
+  });
+
+  it('has no images when the snapshot holds a shape it does not recognise', () => {
+    const raw = withPayload(bundle('valid-rsa-deployment'), { evidence: { version: 2, resources: [{ nope: true }] } });
+
+    expect(parseEvidenceBundle(raw, 'router.example.test').containerImages).toEqual([]);
+  });
+
   it('summarises the chain leaf → root without validating it', () => {
     const parsed = parseEvidenceBundle(bundle('valid-rsa-deployment'), 'router.example.test');
 
@@ -91,6 +159,49 @@ describe('parseEvidenceBundle', () => {
     });
 
     expect(parseEvidenceBundle(raw, 'router.example.test').measurements).toEqual({ MRTD: '91f4a2', RTMR0: 'c3a71e' });
+  });
+
+  /**
+   * The production evidence host publishes `{ "status": "not-implemented" }`
+   * here until the root CA quote ships (SUP-157). A gatekeeper admits such a
+   * bundle — it keeps the member as raw JSON — so the router has to file it too,
+   * or the console contradicts the verifier it tells users to run.
+   */
+  describe('a rootCaTeeQuote the producer has not filled in', () => {
+    it('is filed, with the digest intact and the format not stated', () => {
+      const raw = { ...bundle('valid-rsa-deployment'), rootCaTeeQuote: { status: 'not-implemented' } };
+
+      const parsed = parseEvidenceBundle(raw, 'router.example.test');
+
+      expect(parsed.quoteFormat).toBeNull();
+      expect(parsed.digest.canonical).toBe('sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs');
+    });
+
+    it('survives as-is in the stored bundle, which /v1/evidence hands back verbatim', () => {
+      const raw = { ...bundle('valid-rsa-deployment'), rootCaTeeQuote: { status: 'not-implemented' } };
+
+      expect(parseEvidenceBundle(raw, 'router.example.test').bundle.rootCaTeeQuote).toEqual({
+        status: 'not-implemented',
+      });
+    });
+
+    it.each([null, 'not-implemented', 42, [], true])('is filed even when the member is %j', (quote) => {
+      const raw = { ...bundle('valid-rsa-deployment'), rootCaTeeQuote: quote };
+
+      expect(parseEvidenceBundle(raw, 'router.example.test').quoteFormat).toBeNull();
+    });
+
+    it('still reads measurements the producer put in the quote collateral', () => {
+      const raw = {
+        ...bundle('valid-rsa-deployment'),
+        rootCaTeeQuote: { format: 'amd-sev-snp-report', data: 'AAAA', collateral: { measurements: { MRTD: 'ab12' } } },
+      };
+
+      const parsed = parseEvidenceBundle(raw, 'router.example.test');
+
+      expect(parsed.quoteFormat).toBe('amd-sev-snp-report');
+      expect(parsed.measurements).toEqual({ MRTD: 'ab12' });
+    });
   });
 
   it('normalises a hex evidenceDigest to the canonical form users pin', () => {
