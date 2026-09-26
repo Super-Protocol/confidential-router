@@ -97,6 +97,35 @@ describe('ModelsScreen', () => {
     expect(await screen.findByText('No models are served yet')).toBeInTheDocument();
   });
 
+  it('opens the request dialog empty from the toolbar', async () => {
+    const user = userEvent.setup();
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData())] });
+
+    await user.click(await screen.findByRole('button', { name: 'Request a model' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Request a model')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Model name or Hugging Face id')).toHaveValue('');
+  });
+
+  it('carries the search term into the dialog when the filter is what found nothing', async () => {
+    const user = userEvent.setup();
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData())] });
+
+    await user.type(await screen.findByRole('searchbox', { name: 'Filter models' }), 'kimi-k2');
+    await user.click(await screen.findByRole('button', { name: 'Request this model' }));
+
+    expect(within(await screen.findByRole('dialog')).getByLabelText('Model name or Hugging Face id')).toHaveValue(
+      'kimi-k2',
+    );
+  });
+
+  it('offers the request even when the router serves nothing at all', async () => {
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock({ models: [] })] });
+
+    expect(await screen.findByRole('button', { name: 'Request a model' })).toBeInTheDocument();
+  });
+
   it('offers a retry when the catalogue cannot be loaded', async () => {
     renderWithApollo(<ModelsScreen />, {
       mocks: [{ request: { query: MODEL_CATALOGUE_QUERY }, error: new Error('network down') }],

@@ -19,10 +19,11 @@ Auth tables (`user`, `session`, `account`, `verification`) are owned by Better A
 | `InviteCode` | `invite_codes` | one mailed invitation: `id`, `code` (**normalised** — upper case, separators stripped — unique), `grantMicros` (bigint), `campaign` (idx), `maxRedemptions` (default 1), `redemptionCount`, `expiresAt?`, `disabledAt?`, `note?`, `createdAt`. Normalising on write and on lookup is what makes the match case-insensitive as a plain index hit; neither `citext` nor `COLLATE NOCASE` exists on both databases |
 | `InviteRedemption` | `invite_redemptions` | that an account spent one, once and for all: `id`, `inviteCodeId` (idx, FK CASCADE), `userId` (**unique**), `workspaceId` (FK CASCADE), `creditTransactionId`, `ipHash?`, `userAgentHash?` (salted digests, never the values), `redeemedAt`. No FK on `userId` — Better Auth owns `user` (ADR-004 §3) |
 | `FeedbackSubmission` | `feedback_submissions` | one verified feedback submission and the second grant it did or did not earn: `id`, `provider`, `formId?`, `submissionId` (**unique**), `userId` (idx), `workspaceId` (FK CASCADE), `grantedUserId?` (**unique**, set only when credited), `grantMicros?`, `creditTransactionId?`, `refusalReason?`, `answers: JSON`, `submittedAt`, `createdAt`. A refused submission is kept — the answers are what the grant buys — and leaves `grantedUserId` null, which a unique index ignores on both drivers. No FK on `userId` — Better Auth owns `user` (ADR-004 §3); the hidden token the form carried is **never** stored |
+| `ModelRequest` | `model_requests` | one "serve this next" ask: `id`, `userId` (idx), `workspaceId` (FK CASCADE), `requestedModel` (as typed), `normalisedModel` (idx — the aggregation's `GROUP BY` key: lower-cased, whitespace collapsed, a Hugging Face URL reduced to its `org/model` id), `note?` (free text; never leaves the database), `notify`, `source: models_page\|empty_state\|dashboard` (the analytics taxonomy's spelling), `createdAt` (idx). **No unique index anywhere, deliberately**: forty people asking for one model are forty rows, because the count is the whole value of the table. No FK on `userId` — Better Auth owns `user` (ADR-004 §3) |
 | `UserPreferences` | `user_preferences` | 1:1 with user: `userId` (PK), `archiveEvidence` (default true), `evidenceRetentionDays` (default 90), `notifyOnMeasurementChange` (default true), `desktopNotifications`, `emailReceipts`, `updatedAt` |
 | `ActivityRollup` | `activity_rollups` | **derived**, hourly `(workspaceId, modelId, apiKeyId, bucket)` → `requests`, `promptTokens`, `completionTokens`, `costMicros`, `coveredRequests`; rebuildable. **Not written yet** (SUP-75): Activity aggregates in SQL over `generations`, which one indexed range scan answers, and a cache no screen needs is a second source of truth to keep correct. The table stays for the day a log outgrows the scan |
 
-Relations: `InviteCode 1—* InviteRedemption`, `Workspace 1—* FeedbackSubmission`, `Workspace 1—* ApiKey`, `Workspace 1—* Generation`, `Workspace 1—* CreditTransaction`,
+Relations: `InviteCode 1—* InviteRedemption`, `Workspace 1—* FeedbackSubmission`, `Workspace 1—* ModelRequest`, `Workspace 1—* ApiKey`, `Workspace 1—* Generation`, `Workspace 1—* CreditTransaction`,
 `Endpoint 1—* Model`, `Endpoint 1—* EvidenceSnapshot`, `Model 1—* Generation`, `ApiKey 1—* Generation`
 (nullable), `EvidenceSnapshot 1—* Generation` (nullable), `User 1—1 UserPreferences`, `User *—*
 Workspace` via `WorkspaceMember`.
@@ -54,3 +55,8 @@ Invariants enforced in code and tests:
    sit beside a credited one without the index calling them duplicates), and the ledger's
    `idempotencyKey`, `feedback:<userId>`. The credit and the submission row are written in one
    transaction (`feedback.service.spec.ts`, `feedback.e2e.spec.ts`).
+8. Model requests are **never** deduplicated on write. The per-account budget (`modelRequests.perAccountPerDay`)
+   is counted over `model_requests` itself rather than held in an in-process bucket, so a restart or a second
+   replica cannot hand the same account a fresh allowance; the admin aggregation collapses the rows at read
+   time, and the distinct-requester count is what separates forty people from one person asking forty times
+   (`model-requests.service.spec.ts`, `model-requests.e2e.spec.ts`).

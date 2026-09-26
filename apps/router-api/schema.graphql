@@ -584,6 +584,48 @@ enum ModelCapability {
   EMBEDDINGS
 }
 
+"""How many people have asked for one model. Operators only."""
+type ModelDemand {
+  firstRequestedAt: DateTime!
+  lastRequestedAt: DateTime!
+
+  """The most recent spelling anyone used, for a table a human reads."""
+  model: String!
+
+  """
+  The key the rows were grouped on: lower-cased, Hugging Face URLs stripped.
+  """
+  normalisedModel: String!
+
+  """Requests whose author asked to be told when it is served."""
+  notifyRequests: Int!
+
+  """Distinct accounts — the number that tells demand from enthusiasm."""
+  requesters: Int!
+
+  """Requests filed. One person asking four times counts four."""
+  requests: Int!
+}
+
+"""
+Proof that one request was filed, so the dialog can say so rather than guess.
+"""
+type ModelRequestReceipt {
+  createdAt: DateTime!
+  id: ID!
+  notify: Boolean!
+
+  """The name as stored — trimmed, otherwise exactly what was typed."""
+  requestedModel: String!
+}
+
+"""Where the "request a model" dialog was opened from."""
+enum ModelRequestSource {
+  DASHBOARD
+  EMPTY_STATE
+  MODELS_PAGE
+}
+
 """What one model was used for in a period, most expensive first."""
 type ModelUsage {
   completionTokens: Int!
@@ -614,6 +656,11 @@ type Mutation {
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
   refreshEvidence(endpointId: ID!): EvidenceSnapshot
+
+  """
+  Asks us to serve a model. Rate-limited per account; there is deliberately no deduplication.
+  """
+  requestModel(input: RequestModelInput!): ModelRequestReceipt!
 
   """Revokes a key. Idempotent; the row is kept for its generations."""
   revokeApiKey(id: ID!): ApiKey!
@@ -737,6 +784,17 @@ type Query {
   """One routable model, by id. Public."""
   model(id: ID!): Model
 
+  """
+  What people have asked us to serve, most requested first. Restricted to auth.adminEmails.
+  """
+  modelDemand(
+    """Cap the list. Omit for every model asked for."""
+    limit: Int
+
+    """Only requests filed at or after this instant."""
+    since: DateTime
+  ): [ModelDemand!]!
+
   """Routable models, in config order. Public."""
   models(
     """Narrow to one TEE label."""
@@ -774,6 +832,18 @@ type Query {
     to: DateTime!
     workspaceId: ID!
   ): [ModelUsage!]!
+}
+
+input RequestModelInput {
+  """A model name or a Hugging Face id, as the requester typed it."""
+  model: String!
+
+  """What they want it for. Never leaves the database."""
+  note: String
+
+  """Tell them when it is served. Defaults to false."""
+  notify: Boolean
+  source: ModelRequestSource!
 }
 
 input SetAutoTopUpInput {

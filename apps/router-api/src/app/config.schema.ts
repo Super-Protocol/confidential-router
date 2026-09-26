@@ -242,6 +242,28 @@ const InvitesSchema = z
   .prefault({});
 
 /**
+ * "Request a model" — the demand signal (SUP-146).
+ *
+ * Nothing switches it on or off: the dialog is always there, and with nobody
+ * asking the table is empty. The one number is the per-account budget, which is
+ * here rather than in code because it is the dial an operator turns when the
+ * table starts reading as spam rather than as demand.
+ */
+const ModelRequestsSchema = z
+  .strictObject({
+    /**
+     * Requests one account may file in a rolling 24 hours.
+     *
+     * Generous on purpose. The limit is not there to ration a scarce thing — a
+     * row costs nothing — but to keep one person from drowning the count that
+     * makes the table worth reading, and ten distinct models is already more
+     * than anyone asks for in a day.
+     */
+    perAccountPerDay: integerish().pipe(z.number().int().positive()).prefault(10),
+  })
+  .prefault({});
+
+/**
  * Product analytics (ADR-006).
  *
  * The credential names are `POSTHOG_PROJECT_KEY` and `POSTHOG_HOST` rather than
@@ -399,6 +421,7 @@ export const RouterConfigSchema = z.strictObject({
   billing: BillingSchema,
   invites: InvitesSchema,
   analytics: AnalyticsSchema,
+  modelRequests: ModelRequestsSchema,
   feedback: FeedbackSchema,
   log: LogSchema,
   graphql: GraphqlSchema,

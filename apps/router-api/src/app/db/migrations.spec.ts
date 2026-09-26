@@ -50,6 +50,7 @@ describe('SQLite', () => {
         'InviteCodes1758800000000',
         'FeedbackGrants1758900000000',
         'WorkspaceFirstRequest1759000000000',
+        'ModelRequests1759100000000',
       ]);
     } finally {
       await dataSource.destroy();
@@ -83,6 +84,10 @@ describe('SQLite', () => {
     try {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
+
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('model_requests')).toBe(false);
+      expect(await queryRunner.hasColumn('workspaces', 'firstRequestAt')).toBe(true);
 
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('workspaces', 'firstRequestAt')).toBe(false);
@@ -142,6 +147,7 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
         'InviteCodes1758800000000',
         'FeedbackGrants1758900000000',
         'WorkspaceFirstRequest1759000000000',
+        'ModelRequests1759100000000',
       ]);
 
       const { upQueries } = await dataSource.driver.createSchemaBuilder().log();
@@ -155,7 +161,7 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     const dataSource = await postgresDataSource();
     try {
       await dataSource.runMigrations({ transaction: 'all' });
-      for (let index = 0; index < 4; index += 1) {
+      for (let index = 0; index < 5; index += 1) {
         await dataSource.undoLastMigration({ transaction: 'all' });
       }
 
