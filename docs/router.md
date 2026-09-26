@@ -465,6 +465,12 @@ matched nothing, so a script can tell a closed leak from a mistyped code. Runnin
 `disable` twice is not an error and does not move the timestamp that records when
 the code was retired.
 
+`restore --campaign` clears **every** withdrawal in the campaign, including a code
+retired on its own for a leak earlier: the column records that a code is withdrawn,
+not why. Read the counts before running it — `restored 4998 of 5000` on a campaign
+you only meant to un-disable wholesale is the leak back in circulation — and
+withdraw that code again by `--code` afterwards if it was one of them.
+
 **A withdrawal never touches credit already granted.** `disabledAt` is read when a
 seat is claimed and nowhere else, so no balance, no `credit_transactions` row and
 no `invite_redemptions` row is affected: retiring a campaign mid-flight stops the
