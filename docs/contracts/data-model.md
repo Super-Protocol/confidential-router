@@ -47,6 +47,11 @@ Invariants enforced in code and tests:
    the redemption — so two sign-ups racing for the last seat resolve to exactly one grant without a row
    lock, which SQLite has not got. The ledger's `idempotencyKey` is `invite:<codeId>:<userId>`, which
    refuses a second credit even if the first two locks were bypassed (`invites.service.spec.ts`).
+   `disabledAt` has exactly one writer, `InviteWithdrawalService` — the kill switch behind
+   `invites disable` and the admin-gated `disableInviteCodes` mutation. Setting it stops the *next* claim
+   and **cannot take back a grant already made**: it is read when a seat is claimed and nowhere else, so
+   balances, `credit_transactions` and `invite_redemptions` are untouched by a withdrawal
+   (`invite-withdrawal.service.spec.ts`).
 7. One **feedback** grant per account, ever, and one grant per submission however often the form provider
    redelivers it. Three locks again, all in the database: the unique `feedback_submissions.submissionId`
    (a redelivery settles onto the row the first delivery wrote), the unique *nullable*

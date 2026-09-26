@@ -2,6 +2,7 @@ export * from './invite-attribution.service.js';
 export * from './invite-code.js';
 export * from './invite-generator.js';
 export * from './invite-stats.service.js';
+export * from './invite-withdrawal.service.js';
 export * from './invites.controller.js';
 export * from './invites.dto.js';
 export * from './invites.errors.js';
