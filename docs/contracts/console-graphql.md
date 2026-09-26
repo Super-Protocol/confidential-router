@@ -196,6 +196,52 @@ type FeedbackOffer {
 # There is no mutation here either. The grant is applied by the signed webhook and
 # nowhere else (`POST /v1/webhooks/typeform`).
 
+# ---------- requesting a model ----------
+
+enum ModelRequestSource { MODELS_PAGE EMPTY_STATE DASHBOARD }
+
+input RequestModelInput {
+  model: String!                        # a name or a Hugging Face id, 1..200, as typed
+  note: String                          # 0..2000; read by us, never sent to analytics
+  notify: Boolean                       # tell them when it is served; defaults to false
+  source: ModelRequestSource!
+}
+
+type ModelRequestReceipt {              # what the dialog confirms with
+  id: ID!
+  requestedModel: String!
+  notify: Boolean!
+  createdAt: DateTime!
+}
+
+type ModelDemand {                      # one model, and how much demand there is for it
+  model: String!                        # the most recent spelling anyone used
+  normalisedModel: String!              # the grouping key
+  requests: Int!
+  requesters: Int!                      # distinct accounts
+  notifyRequests: Int!
+  firstRequestedAt: DateTime!
+  lastRequestedAt: DateTime!
+}
+
+# Mutation.requestModel(input: RequestModelInput!): ModelRequestReceipt!   # session
+# Query.modelDemand(since: DateTime, limit: Int): [ModelDemand!]!          # session + admin
+#
+# The mutation names no workspace. A request is not a thing anybody owns — it is
+# filed by an account, and the workspace is recorded only so the row can be joined
+# to usage later — so offering the caller a choice that changes nothing would be
+# offering one they could get wrong.
+#
+# Nothing deduplicates. Forty people asking for one model are forty rows, because
+# the count is the whole value of the table; `modelRequests.perAccountPerDay`
+# bounds the volume instead, counted over the rows themselves rather than an
+# in-process bucket. A refusal is `TOO_MANY_REQUESTS`.
+#
+# The CSV export is `GET /admin/model-requests/demand.csv` (session + admin), the
+# same aggregation with the same two guards: a download is a browser navigation
+# with a filename, which a GraphQL response cannot be. It exports the aggregate
+# and never the notes — reading free text means opening the database, deliberately.
+
 # ---------- preferences ----------
 type UserPreferences {
   archiveEvidence: Boolean!, evidenceRetentionDays: Int!, notifyOnMeasurementChange: Boolean!
@@ -323,7 +369,7 @@ its stack trace.
 ### Screen → operations, as shipped
 
 **Sign in** `signInOptions` (public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
-`models` (public) `+ endpoints`;
+`models` (public) `+ endpoints` + `requestModel`;
 **Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` / `evidenceDigestHistory` +
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
 `activitySummary` / `activitySeries` / `topKeys` / `usageByModel`; **Logs** `generations` (+ the CSV

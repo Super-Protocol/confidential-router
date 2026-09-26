@@ -363,7 +363,7 @@ invites:
   landingBaseUrl: https://router.superprotocol.com   # only the generation CLI reads this
   lookupsPerMinute: 30                               # per source address on the public lookup
 auth:
-  adminEmails: [ops@example.com]                     # who may read the campaign aggregates
+  adminEmails: [ops@example.com]                     # who may read the operator-only surfaces
 ```
 
 Nothing switches the feature on: with no codes generated it is inert.
@@ -483,6 +483,41 @@ identifier to the visitor's device — which is what needs a consent banner, and
 banner in front of the campaign we are measuring costs more than two events are
 worth. `signup_started` is captured anonymously and is a volume, never a funnel
 step; the two halves of the funnel are joined on `campaign`.
+
+## Requesting a model
+
+The Models screen carries a "Request a model" button, and the empty state a
+filter leaves behind carries another one pre-filled with what was searched for
+(SUP-146). Each submission is a row: nothing is deduplicated, because forty
+people asking for one model is the signal, and the distinct-requester count is
+what separates that from one person asking forty times.
+
+```yaml
+modelRequests:
+  perAccountPerDay: 10          # rolling 24 hours, counted over the rows themselves
+auth:
+  adminEmails: [ops@example.com]   # who may read the demand aggregation and its export
+```
+
+Nothing switches it on: with nobody asking, the table is empty. The budget is
+counted over `model_requests` rather than held in memory, so a restart or a
+second replica cannot hand the same account a fresh allowance; an account that
+has spent it gets a `429` with a message the dialog shows as written.
+
+**Reading the demand.** Two operator surfaces over the same aggregation, both
+behind `auth.adminEmails`:
+
+- `modelDemand(since: DateTime, limit: Int)` in the console schema — model,
+  requests, distinct requesters, how many asked to be notified, and the first
+  and last time it was asked for.
+- `GET /admin/model-requests/demand.csv` — the same rows as a download, for a
+  spreadsheet. It carries the session cookie the console already has.
+
+Neither exports the free-text notes. They are what the requester wrote about
+their own work, and the thing to act on is the count; reading a note means
+opening the database, deliberately. For the same reason the `model_requested`
+event carries only the screen it came from and whether a note was written —
+never the model name, and never the note.
 
 ## The second grant, for feedback
 

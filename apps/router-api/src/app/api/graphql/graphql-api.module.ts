@@ -12,6 +12,7 @@ import { routerConfig } from '../../config.js';
 import { FeedbackModule } from '../../feedback/feedback.module.js';
 import { GatekeeperModule } from '../../gatekeeper/index.js';
 import { InvitesModule } from '../../invites/invites.module.js';
+import { ModelRequestsModule } from '../../model-requests/index.js';
 import { PreferencesModule } from '../../preferences/index.js';
 import { CatalogViewService } from './catalog/catalog-view.service.js';
 import { CONSOLE_RESOLVERS, CONSOLE_SCALARS } from './console-schema.js';
@@ -35,6 +36,7 @@ import { formatConsoleError } from './errors.js';
     FeedbackModule,
     GatekeeperModule,
     InvitesModule,
+    ModelRequestsModule,
     PreferencesModule,
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,

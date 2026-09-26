@@ -12,6 +12,7 @@ import { CatalogModule } from './catalog/catalog.module.js';
 import { routerConfig } from './config.js';
 import { DbModule } from './db/db.module.js';
 import { EvidenceModule } from './evidence/index.js';
+import { ModelRequestsModule } from './model-requests/index.js';
 import { PreferencesModule } from './preferences/index.js';
 
 @Module({
@@ -38,6 +39,7 @@ import { PreferencesModule } from './preferences/index.js';
     EvidenceModule,
     BillingModule,
     ActivityModule,
+    ModelRequestsModule,
     PreferencesModule,
     RestApiModule,
     GraphQLApiModule,
