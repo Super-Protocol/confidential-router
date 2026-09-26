@@ -452,6 +452,19 @@
         }
       }
     },
+    "modelRequests": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "\"Request a model\" \u2014 the console's demand signal (SUP-146). Always on; with nobody asking, the table stays empty.",
+      "properties": {
+        "perAccountPerDay": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Requests one account may file in a rolling 24 hours. Counted over the model_requests table, so a restart or a second replica cannot hand out a fresh allowance."
+        }
+      }
+    },
     "feedback": {
       "type": "object",
       "additionalProperties": false,

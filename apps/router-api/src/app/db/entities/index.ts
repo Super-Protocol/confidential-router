@@ -8,6 +8,7 @@ import { Generation } from './generation.entity.js';
 import { InviteCode } from './invite-code.entity.js';
 import { InviteRedemption } from './invite-redemption.entity.js';
 import { Model } from './model.entity.js';
+import { ModelRequest } from './model-request.entity.js';
 import { User } from './user.entity.js';
 import { UserPreferences } from './user-preferences.entity.js';
 import { Workspace } from './workspace.entity.js';
@@ -23,6 +24,7 @@ export * from './generation.entity.js';
 export * from './invite-code.entity.js';
 export * from './invite-redemption.entity.js';
 export * from './model.entity.js';
+export * from './model-request.entity.js';
 export * from './user.entity.js';
 export * from './user-preferences.entity.js';
 export * from './workspace.entity.js';
@@ -44,6 +46,7 @@ export const ENTITIES = [
   InviteCode,
   InviteRedemption,
   Model,
+  ModelRequest,
   User,
   UserPreferences,
   Workspace,
