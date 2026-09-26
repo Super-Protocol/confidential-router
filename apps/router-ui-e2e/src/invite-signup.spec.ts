@@ -18,6 +18,8 @@ const CODE = 'ABCD-EFGH-JKLM';
 const NORMALISED = 'ABCDEFGHJKLM';
 const CAMPAIGN = 'launch-2026-10-devs';
 const GRANT_MICROS = '100000000';
+/** What the onboarding card's snippet has to name — a model the catalogue serves. */
+const SAMPLE_MODEL = 'google/gemma-2-2b-it:tee';
 const WORKSPACE_ID = SESSION_DATA.me.workspaces[0].id;
 
 const SIGN_IN_OPTIONS = {
@@ -93,7 +95,9 @@ function creditsFixtures(grantMicros: string, extra: GraphQLFixtures = {}): Grap
               ],
       },
     },
-    NextStep: { apiKeys: [] },
+    // The card's snippet names the catalogue's first model, so the fixture has to
+    // carry one (SUP-153).
+    NextStep: { apiKeys: [], models: [{ __typename: 'Model', id: SAMPLE_MODEL }] },
     ...extra,
   };
 }
@@ -211,8 +215,11 @@ test.describe('signing up from an invitation URL', () => {
     // the session says, and a second copy of the number here would just drift.
     const dollars = `$${(Number(SESSION_DATA.me.workspaces[0].balanceMicros) / 1_000_000).toFixed(2)}`;
     await expect(nudge).toContainText(`You have ${dollars} to spend. One step to go.`);
-    // The snippet is already written out, not a link to documentation about one.
+    // The snippet is already written out, not a link to documentation about one,
+    // and it names a model the deployment serves — the SUP-153 defect was a card
+    // offering `meta/llama-3.3-70b-instruct:tdx`, which answers 404.
     await expect(nudge).toContainText('from openai import OpenAI');
+    await expect(nudge).toContainText(SAMPLE_MODEL);
     await expect(nudge.getByRole('link', { name: /Create a key/ })).toHaveAttribute('href', '/keys');
   });
 
