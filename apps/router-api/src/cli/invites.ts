@@ -1,17 +1,25 @@
 #!/usr/bin/env node
 /**
- * Invitation codes from the command line: mint a campaign's worth, or read how
- * one is converting.
+ * Invitation codes from the command line: mint a campaign's worth, read how one
+ * is converting, or take one back.
  *
  *   node dist/cli/invites.js generate --count 5000 --grant 100 \
  *     --campaign launch-2026-10 --expires 2026-12-31 --out codes.csv
  *   node dist/cli/invites.js stats --campaign launch-2026-10
+ *   node dist/cli/invites.js disable --code ABCD-EFGH-JKMN
+ *   node dist/cli/invites.js disable --campaign launch-2026-10 --unspent-only
  *
  * It talks to the same database as the service, through the same configuration
  * (`CR_API_*`, `conf/router.yaml`) — there is no second source of truth for where
  * the codes live. Generation is the only way codes come into existence: there is
  * deliberately no API for it, because an endpoint that mints credit is a thing to
  * be attacked and a CLI behind an operator's database access is not.
+ *
+ * Withdrawal is the one operation that also has an API — the admin-gated
+ * `disableInviteCodes` mutation. The asymmetry is deliberate and runs in the safe
+ * direction: minting creates credit, withdrawing only stops it, and a deployment
+ * whose cluster space is published has no shell to run this CLI in when a code
+ * turns up on a mailing list (SUP-159).
  */
 import 'reflect-metadata';
 import { existsSync, writeFileSync } from 'node:fs';
@@ -21,6 +29,13 @@ import { loadRouterConfig } from '../app/config.js';
 import { buildDataSourceOptions, ensureSqliteDirectory } from '../app/db/data-source.js';
 import { generateInvites, invitesCsv } from '../app/invites/invite-generator.js';
 import { InviteStatsService } from '../app/invites/invite-stats.service.js';
+import {
+  describeRestoration,
+  describeWithdrawal,
+  InviteTargetError,
+  type InviteWithdrawalRequest,
+  InviteWithdrawalService,
+} from '../app/invites/invite-withdrawal.service.js';
 import { booleanFlag, integerFlag, type ParsedArgs, parseArgs, requiredFlag, stringFlag, UsageError } from './args.js';
 
 const USAGE = `Usage:
@@ -28,11 +43,18 @@ const USAGE = `Usage:
                    [--expires <YYYY-MM-DD|ISO>] [--max-redemptions <n>]
                    [--note <text>] [--url-base <origin>] [--force]
   invites stats [--campaign <tag>]
+  invites disable (--code <CODE> | --campaign <tag>) [--unspent-only]
+  invites restore (--code <CODE> | --campaign <tag>)
 
   --grant is USD, not micros: "--grant 100" grants $100.
   --expires with a bare date means "valid through that day", UTC.
   --out refuses to overwrite an existing file unless --force is given.
-  --url-base defaults to invites.landingBaseUrl from the configuration.`;
+  --url-base defaults to invites.landingBaseUrl from the configuration.
+  disable withdraws codes: no further sign-up can redeem them, and no credit
+    already granted is touched. --unspent-only leaves codes whose seats are all
+    taken alone. It exits 1 when nothing matched, so a script can tell a closed
+    leak from a mistyped code.
+  restore undoes a withdrawal — for the campaign disabled by a wrong flag.`;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -58,6 +80,12 @@ async function main(): Promise<void> {
         break;
       case 'stats':
         await stats(dataSource, args);
+        break;
+      case 'disable':
+        await disable(dataSource, args);
+        break;
+      case 'restore':
+        await restore(dataSource, args);
         break;
       default:
         throw new UsageError(`Unknown command “${args.command}”.`);
@@ -118,6 +146,41 @@ async function stats(dataSource: DataSource, args: ParsedArgs): Promise<void> {
 }
 
 /**
+ * The kill switch. One command, and the code stops granting credit.
+ *
+ * Exits 1 when the target matched nothing: an operator closing a leak needs to
+ * know the difference between "withdrawn" and "there is no code by that name",
+ * and so does whatever ran the command.
+ */
+async function disable(dataSource: DataSource, args: ParsedArgs): Promise<void> {
+  const service = new InviteWithdrawalService(dataSource);
+  const result = await service.withdraw({ ...targetFlags(args), unspentOnly: booleanFlag(args, 'unspent-only') });
+
+  console.log(`[invites] ${describeWithdrawal(result)}`);
+  if (result.matched === 0) {
+    process.exitCode = 1;
+  }
+}
+
+async function restore(dataSource: DataSource, args: ParsedArgs): Promise<void> {
+  const result = await new InviteWithdrawalService(dataSource).restore(targetFlags(args));
+
+  console.log(`[invites] ${describeRestoration(result)}`);
+  if (result.matched === 0) {
+    process.exitCode = 1;
+  }
+}
+
+/**
+ * `--code` or `--campaign`, whichever was given. Which of the two, and whether
+ * exactly one was named, is the service's rule — one place, so the mutation and
+ * this command cannot disagree about what `--code ''` means.
+ */
+function targetFlags(args: ParsedArgs): InviteWithdrawalRequest {
+  return { code: stringFlag(args, 'code') ?? null, campaign: stringFlag(args, 'campaign') ?? null };
+}
+
+/**
  * `--grant` in USD. A malformed amount is the operator's typo, so it earns the
  * usage message rather than a stack trace.
  */
@@ -167,7 +230,7 @@ function expiryOf(value: string | undefined): Date | null {
 }
 
 main().catch((error: unknown) => {
-  if (error instanceof UsageError) {
+  if (error instanceof UsageError || error instanceof InviteTargetError) {
     console.error(`[invites] ${error.message}\n\n${USAGE}`);
     process.exit(2);
   }
