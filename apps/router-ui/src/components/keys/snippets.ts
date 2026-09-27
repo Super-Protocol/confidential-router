@@ -18,7 +18,17 @@ export const GATEKEEPER_BASE_URL = `http://${GATEKEEPER_LISTEN}/v1`;
  */
 export const PLACEHOLDER_KEY = 'sk-tee-v1-…';
 
-export const PLACEHOLDER_MODEL = 'meta/llama-3.3-70b-instruct:tdx';
+/**
+ * Stands in for a model id when the caller has no catalogue to hand — while
+ * `models` is still in flight, or on a deployment that serves nothing yet.
+ *
+ * Deliberately not a plausible id. It used to be `meta/llama-3.3-70b-instruct:tdx`,
+ * the example id the docs use, and the onboarding card shipped it to real
+ * accounts as a snippet to copy: it looked runnable and answered
+ * `404 model_not_found` (SUP-153). A visible blank is the honest failure — every
+ * caller with a catalogue passes `model` and never sees this.
+ */
+export const PLACEHOLDER_MODEL = '<model-id>';
 
 export interface SnippetOptions {
   /** Where the SDK points — the local gatekeeper, not the router. */

@@ -13,15 +13,23 @@ import { PLACEHOLDER_KEY, wiringSnippet } from '../keys/snippets';
 import { useSession } from '../session/session-provider';
 
 /**
- * Whether this workspace has a key yet. Nothing else: the card is about the one
- * step that is missing, so a full `apiKeys` page would be asking for rows to throw
- * away.
+ * Whether this workspace has a key yet, and what to name in the snippet. Nothing
+ * else: the card is about the one step that is missing, so a full `apiKeys` page
+ * would be asking for rows to throw away.
+ *
+ * The catalogue rides along because the snippet has to name a model that exists.
+ * It used to name a hardcoded placeholder, which meant the first thing an invited
+ * account was offered to copy answered `404 model_not_found` (SUP-153). One query,
+ * so the card cannot paint with a key answer and no model.
  */
 export const NEXT_STEP_QUERY = graphql(`
   query NextStep($workspaceId: ID!) {
     apiKeys(workspaceId: $workspaceId) {
       id
       revokedAt
+    }
+    models {
+      id
     }
   }
 `);
@@ -59,6 +67,11 @@ export function NextStepCard(): React.ReactElement | null {
     return null;
   }
 
+  // The catalogue's first model, which is what the Keys screen names too. Absent
+  // only on a deployment that serves nothing — and then there is no snippet worth
+  // offering, so the card keeps the step and drops the paste.
+  const sampleModel = data.models[0]?.id;
+
   return (
     <Card className="border-brand-border" data-testid="next-step-card">
       <CardContent className="space-y-3 py-4">
@@ -82,13 +95,16 @@ export function NextStepCard(): React.ReactElement | null {
           to the key it has just minted; here the point is that adopting the router
           is one base-URL swap, and three tabs of the same claim make it look like
           more work than it is. The key is a placeholder because the console cannot
-          read a secret back — and there is no key yet anyway.
+          read a secret back — and there is no key yet anyway. The model is not: it
+          comes from the catalogue, so the snippet is runnable as pasted.
         */}
-        <CodeBlock
-          title="Python"
-          code={wiringSnippet('python', { apiKey: PLACEHOLDER_KEY })}
-          copyLabel="Copy the Python snippet"
-        />
+        {sampleModel ? (
+          <CodeBlock
+            title="Python"
+            code={wiringSnippet('python', { apiKey: PLACEHOLDER_KEY, model: sampleModel })}
+            copyLabel="Copy the Python snippet"
+          />
+        ) : null}
       </CardContent>
     </Card>
   );
