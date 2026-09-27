@@ -13,11 +13,17 @@ const MICROS_PER_CENT = 10_000n;
 /** The buttons on the buy-credits card, in micro-USD. */
 export const PRESET_TOP_UP_MICROS = ['10000000', '25000000', '50000000', '100000000'] as const;
 
+/** The floor and ceiling the API holds a single top-up to. */
+export interface TopUpBounds {
+  minTopUpMicros: string;
+  maxTopUpMicros: string;
+}
+
 /**
  * Parses a typed dollar amount and holds it to what a payment provider can
  * actually charge. Returns the micro-USD string, or the message to show.
  */
-export function parseTopUpAmount(value: string, minTopUpMicros: string): { micros: string } | { error: string } {
+export function parseTopUpAmount(value: string, bounds: TopUpBounds): { micros: string } | { error: string } {
   if (value.trim() === '') return { error: 'Enter an amount to buy.' };
 
   const micros = usdToMicros(value);
@@ -25,7 +31,12 @@ export function parseTopUpAmount(value: string, minTopUpMicros: string): { micro
 
   const amount = BigInt(micros);
   if (amount % MICROS_PER_CENT !== 0n) return { error: 'Amounts are charged in whole cents, e.g. 12.50.' };
-  if (amount < BigInt(minTopUpMicros)) return { error: `The minimum top-up is ${formatUsd(minTopUpMicros)}.` };
+  if (amount < BigInt(bounds.minTopUpMicros)) {
+    return { error: `The minimum top-up is ${formatUsd(bounds.minTopUpMicros)}.` };
+  }
+  if (amount > BigInt(bounds.maxTopUpMicros)) {
+    return { error: `The maximum top-up is ${formatUsd(bounds.maxTopUpMicros)}.` };
+  }
 
   return { micros };
 }
@@ -45,7 +56,7 @@ export type AutoTopUpErrors = Partial<Record<'threshold' | 'amount', string>>;
  * setting off is how a viewer gets out of a half-filled form, and the API drops
  * both values when `enabled` is false.
  */
-export function validateAutoTopUp(values: AutoTopUpFormValues, minTopUpMicros: string): AutoTopUpErrors {
+export function validateAutoTopUp(values: AutoTopUpFormValues, bounds: TopUpBounds): AutoTopUpErrors {
   if (!values.enabled) return {};
 
   const errors: AutoTopUpErrors = {};
@@ -56,7 +67,7 @@ export function validateAutoTopUp(values: AutoTopUpFormValues, minTopUpMicros: s
     errors.threshold = 'Enter an amount in dollars, e.g. 20 or 12.50.';
   }
 
-  const amount = parseTopUpAmount(values.amount, minTopUpMicros);
+  const amount = parseTopUpAmount(values.amount, bounds);
   if ('error' in amount) errors.amount = amount.error;
 
   return errors;

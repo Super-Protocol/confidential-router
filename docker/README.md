@@ -36,7 +36,10 @@ docker compose -f docker/docker-compose.yml logs api | grep magic-link/verify
 A new workspace starts at zero credits, so the first generation is refused with
 `insufficient_credits` — which is the product working. Top up on the Credits
 screen: with no Stripe keys configured the manual payment provider stands in and
-completes the checkout without a card. Then mint a key on the API Keys screen and:
+completes the checkout without a card. That provider mints credit from a signed
+link, so it binds only outside production mode **and** on a loopback
+`server.publicBaseUrl` — point `ROUTER_API_PUBLIC_URL` at a real hostname and the
+API refuses to boot rather than publishing a free-credit button (SUP-167). Then mint a key on the API Keys screen and:
 
 ```bash
 curl http://localhost:3000/v1/chat/completions \

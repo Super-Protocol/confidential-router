@@ -20,7 +20,10 @@ export interface CreditsView {
   balanceMicros: number;
   spendable: boolean;
   minTopUpMicros: number;
+  maxTopUpMicros: number;
   autoTopUp: AutoTopUpSettings;
+  /** False when nothing is for sale, so the console hides the buy panel (SUP-167). */
+  purchasesAvailable: boolean;
   /** False when the provider cannot charge off-session, so the console can say why. */
   autoTopUpAvailable: boolean;
   lastAutoTopUpAt: Date | null;
@@ -56,11 +59,13 @@ export class BillingService {
       workspaceId,
       ...this.ledger.toBalance(workspace.balanceMicros),
       minTopUpMicros: this.config.billing.minTopUpMicros,
+      maxTopUpMicros: this.config.billing.maxTopUpMicros,
       autoTopUp: {
         enabled: workspace.autoTopUpEnabled,
         thresholdMicros: workspace.autoTopUpThresholdMicros,
         amountMicros: workspace.autoTopUpAmountMicros,
       },
+      purchasesAvailable: this.provider.supportsCheckout,
       autoTopUpAvailable: this.provider.supportsSavedPaymentMethods,
       lastAutoTopUpAt: workspace.autoTopUpLastAt,
     };
@@ -188,9 +193,21 @@ export class BillingService {
     return this.creditsView(workspaceId);
   }
 
+  /**
+   * The bounds one top-up has to be inside.
+   *
+   * The ceiling is the part that is not a business rule: without it the only
+   * limit on a single `createCheckout` was what a 64-bit integer holds, so one
+   * call could ask a provider — or, before SUP-167, a provider that minted — for
+   * a million dollars. A card charge that large is a support conversation, not a
+   * self-serve checkout.
+   */
   private assertTopUpAmount(amountMicros: number): void {
     if (amountMicros < this.config.billing.minTopUpMicros) {
       throw new BadRequestException(`The minimum top-up is $${microsToUsdString(this.config.billing.minTopUpMicros)}.`);
+    }
+    if (amountMicros > this.config.billing.maxTopUpMicros) {
+      throw new BadRequestException(`The maximum top-up is $${microsToUsdString(this.config.billing.maxTopUpMicros)}.`);
     }
     // Throws when the amount is not a whole number of cents, which no provider
     // can charge exactly.

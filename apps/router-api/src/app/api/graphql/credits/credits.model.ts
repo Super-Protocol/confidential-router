@@ -93,6 +93,14 @@ export class CreditBalanceModel {
   @Field(() => String)
   minTopUpMicros!: string;
 
+  @Field(() => String, { description: 'Micro-USD ceiling on a single top-up.' })
+  maxTopUpMicros!: string;
+
+  @Field(() => Boolean, {
+    description: 'False when this deployment sells no credit; the screen then hides the buy panel.',
+  })
+  purchasesAvailable!: boolean;
+
   @Field(() => AutoTopUpModel)
   autoTopUp!: AutoTopUpModel;
 }

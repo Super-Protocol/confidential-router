@@ -62,6 +62,8 @@ function creditsFixtures(grantMicros: string, extra: GraphQLFixtures = {}): Grap
         balanceMicros: grantMicros,
         spendable: BigInt(grantMicros) > 0n,
         minTopUpMicros: '5000000',
+        maxTopUpMicros: '10000000000',
+        purchasesAvailable: true,
         autoTopUp: {
           __typename: 'AutoTopUp',
           enabled: false,

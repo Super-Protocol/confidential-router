@@ -353,10 +353,21 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "provider": {
+          "enum": ["auto", "stripe", "manual", "disabled"],
+          "default": "auto",
+          "description": "Which payment provider binds. \"auto\" is Stripe when it is configured and the manual provider otherwise; the manual provider mints credit from a signed link, so it is refused in production and on any server.publicBaseUrl that is not a loopback address. \"disabled\" sells nothing: checkout is refused and the console hides the buy panel."
+        },
         "minTopUpMicros": {
           "type": "integer",
           "minimum": 0,
           "default": 5000000
+        },
+        "maxTopUpMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000000000,
+          "description": "Ceiling on a single top-up, in micro-USD. Must not be below minTopUpMicros."
         },
         "allowOverdraftMicros": {
           "type": "integer",

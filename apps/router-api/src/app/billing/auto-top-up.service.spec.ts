@@ -10,6 +10,7 @@ import type { LedgerEvent, PaymentProvider, SavedCharge } from './payment-provid
 /** A provider that records what it was asked to charge and never leaves the process. */
 class RecordingProvider implements PaymentProvider {
   readonly name = 'recording';
+  readonly supportsCheckout = true;
   readonly supportsSavedPaymentMethods = true;
   readonly charges: SavedCharge[] = [];
   outcome: 'settle' | 'pending' | 'throw' = 'settle';

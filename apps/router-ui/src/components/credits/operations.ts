@@ -20,6 +20,8 @@ export const CREDIT_BALANCE_FIELDS = graphql(`
     balanceMicros
     spendable
     minTopUpMicros
+    maxTopUpMicros
+    purchasesAvailable
     autoTopUp {
       enabled
       available

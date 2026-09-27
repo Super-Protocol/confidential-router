@@ -311,7 +311,9 @@ twice.
 
 ```yaml
 billing:
+  provider: auto                       # auto | stripe | manual | disabled
   minTopUpMicros: 5000000              # $5
+  maxTopUpMicros: 10000000000          # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0              # how far a generation may push a balance negative
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h                # floor between two automatic top-ups of one workspace
@@ -321,12 +323,27 @@ billing:
     currency: usd
 ```
 
-The payment provider sits behind an interface (ADR-005). Stripe is the only
-implementation, and there are no crypto payments. Outside production the module
-binds a **manual provider** instead: `createCheckout` hands back a link,
-following the link *is* the payment, and the redirect credits the ledger — the
-same redirect-then-confirm sequence Stripe drives, without a card or a network.
-`BillingModule` refuses to bind it in production.
+The payment provider sits behind an interface (ADR-005), and `billing.provider`
+says which one binds. Stripe is the only one that takes money, and there are no
+crypto payments.
+
+On a developer's machine the module binds a **manual provider** instead:
+`createCheckout` hands back a link, following the link *is* the payment, and the
+redirect credits the ledger — the same redirect-then-confirm sequence Stripe
+drives, without a card or a network. Because that is credit out of nothing, two
+independent conditions have to hold before it binds: `NODE_ENV` is not
+`production`, **and** `server.publicBaseUrl` is a loopback address. Either one
+failing is a refusal to boot. `NODE_ENV` alone used to be the test, and a
+deployment that set it to `development` shipped an unbounded free-credit button
+to every account holder (SUP-167).
+
+A deployment that does not sell credit sets `provider: disabled`. Checkout is
+then refused outright, the console hides its buy panel, and credit arrives the
+way it was meant to — invitation codes, the feedback grant, and an operator's
+`credits grant`, none of which go through a provider.
+
+`maxTopUpMicros` bounds one checkout. It is not a business rule but a blast
+radius: whatever the mutation accepts is what a single call can ask for.
 
 A top-up flow, end to end: `createCheckout` → the provider's URL → Stripe's
 webhook (or the manual confirm endpoint) → one `purchase` ledger row → the

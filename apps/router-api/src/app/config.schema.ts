@@ -195,7 +195,29 @@ const AuthSchema = z.strictObject({
 
 const BillingSchema = z
   .strictObject({
+    /**
+     * Which payment provider binds (SUP-167).
+     *
+     * `auto` is the historical rule — Stripe when `stripe` is configured, the
+     * manual provider otherwise — and the manual provider mints credit from a
+     * signed link, so it is refused on anything but a loopback deployment. The
+     * decision deliberately does not rest on `NODE_ENV` alone: a chart that sets
+     * that variable to `development` must not be able to turn a public
+     * deployment into a money printer.
+     *
+     * `disabled` is the setting for a deployment where credit arrives from grants
+     * and invitations and nothing is for sale: checkout is refused outright and
+     * the console stops offering it, rather than falling back to a provider that
+     * creates money out of nothing.
+     */
+    provider: z.enum(['auto', 'stripe', 'manual', 'disabled']).prefault('auto'),
     minTopUpMicros: integerish().pipe(z.number().int().nonnegative()).prefault(5_000_000),
+    /**
+     * Ceiling on a single top-up. Not a business rule but a blast radius:
+     * whatever `createCheckout` accepts is what one call — from a stolen session,
+     * or from a provider that turns out to mint — can be asked for. $10 000.
+     */
+    maxTopUpMicros: integerish().pipe(z.number().int().positive()).prefault(10_000_000_000),
     allowOverdraftMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
     /** Where Stripe (or the manual provider) sends the browser back after a checkout. */
     checkoutReturnUrl: z.url().prefault('http://localhost:4200/credits'),
@@ -215,6 +237,16 @@ const BillingSchema = z
           .prefault('usd'),
       })
       .optional(),
+  })
+  .check((ctx) => {
+    if (ctx.value.maxTopUpMicros < ctx.value.minTopUpMicros) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['maxTopUpMicros'],
+        message: 'billing.maxTopUpMicros is below billing.minTopUpMicros, which leaves no amount a top-up may be.',
+      });
+    }
   })
   .prefault({});
 
