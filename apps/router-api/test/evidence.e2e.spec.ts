@@ -18,12 +18,52 @@ import { createHarness, type Harness, pathOf } from './app-harness.js';
 
 const PUBLISHING = 'router.example.test';
 const SILENT = 'silent.example.test';
+const PLATFORM = 'platform.example.test';
 const DIGEST = 'sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs';
+const PLATFORM_IMAGE = 'ghcr.io/super-protocol/confidential-router/router-api@sha256:21de82b6';
 
 const manifest = loadConformanceManifest();
 const bundle = loadCaseBody(
   manifest.cases.find((testCase) => testCase.id === 'valid-rsa-deployment') as never,
 ) as Record<string, unknown>;
+
+/**
+ * The same bundle in the shape the deployed platform actually publishes: a
+ * `rootCaTeeQuote` sentinel instead of a quote it cannot produce yet, and the
+ * applied Kubernetes objects instead of a pre-flattened container list.
+ *
+ * Both divergences are the platform's deliberate output, not corruption — the
+ * first is asserted by swarm-cloud's own suite — and both used to make the
+ * poller drop the bundle on the floor, which is all it took for the console to
+ * report "Not published" for an endpoint a gatekeeper was admitting (SUP-157).
+ */
+function platformShapedBundle(): Record<string, unknown> {
+  const [header, payload, signature] = (bundle.jws as string).split('.');
+  const decoded = JSON.parse(Buffer.from(payload as string, 'base64url').toString('utf8'));
+  const patched = {
+    ...decoded,
+    hostname: PLATFORM,
+    evidence: {
+      version: 2,
+      resources: [
+        { apiVersion: 'v1', kind: 'Service', metadata: { name: 'router-api' }, spec: { ports: [{ port: 80 }] } },
+        {
+          apiVersion: 'apps/v1',
+          kind: 'Deployment',
+          metadata: { name: 'confidential-router-api' },
+          spec: { template: { spec: { containers: [{ image: PLATFORM_IMAGE }] } } },
+        },
+      ],
+    },
+  };
+  const encoded = Buffer.from(JSON.stringify(patched), 'utf8').toString('base64url');
+  return {
+    ...bundle,
+    hostname: PLATFORM,
+    rootCaTeeQuote: { status: 'not-implemented' },
+    jws: [header, encoded, signature].join('.'),
+  };
+}
 
 let harness: Harness;
 let publisher: Server;
@@ -40,6 +80,11 @@ async function startPublisher(): Promise<number> {
     if (req.url === '/published/.well-known/swarm-evidence') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(bundle));
+      return;
+    }
+    if (req.url === '/platform/.well-known/swarm-evidence') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(platformShapedBundle()));
       return;
     }
     res.writeHead(503).end('unavailable');
@@ -84,6 +129,12 @@ beforeAll(async () => {
           tee: 'AMD SEV-SNP',
           evidenceUrl: `http://127.0.0.1:${port}/silent/.well-known/swarm-evidence`,
         },
+        {
+          name: 'platform',
+          hostname: PLATFORM,
+          tee: 'Intel TDX + H100 CC',
+          evidenceUrl: `http://127.0.0.1:${port}/platform/.well-known/swarm-evidence`,
+        },
       ],
       models: [
         {
@@ -127,7 +178,7 @@ describe('the evidence poller', () => {
   it('files what the publisher serves and lets the silent endpoint be silent', async () => {
     const report = await harness.app.get(EvidencePollerService).pollAll();
 
-    expect(report).toEqual({ polled: 2, stored: 1, failed: 1 });
+    expect(report).toEqual({ polled: 3, stored: 2, failed: 1 });
   });
 
   it('files a second pass without duplicating the publication', async () => {
@@ -207,6 +258,15 @@ describe('the console view', () => {
     expect(published.latestEvidence.chain[0].isRoot).toBe(false);
 
     expect(silent).toMatchObject({ hostname: SILENT, evidenceState: 'NOT_PUBLISHED', latestEvidence: null });
+
+    // The production shape reaches the console with the digest a user pins and
+    // the image digests they compare, and says "not stated" for the quote
+    // format rather than falling back to NOT_PUBLISHED (SUP-157).
+    const platform = data.endpoints.find((endpoint: { name: string }) => endpoint.name === 'platform');
+
+    expect(platform).toMatchObject({ hostname: PLATFORM, evidenceState: 'PUBLISHED' });
+    expect(platform.latestEvidence).toMatchObject({ evidenceDigest: DIGEST, quoteFormat: null });
+    expect(platform.latestEvidence.containerImages).toEqual([PLATFORM_IMAGE]);
   });
 
   it('hands the raw bundle to an exporter', async () => {
@@ -324,6 +384,15 @@ describe('GET /v1/evidence/:endpoint', () => {
 
   it('404s for an endpoint that has published nothing', async () => {
     await request(server()).get('/v1/evidence/silent').expect(404);
+  });
+
+  it('hands back the rootCaTeeQuote sentinel the platform published, through the database', async () => {
+    // The member survives the JSON column unread and unedited, so a user
+    // diffing this against what the host serves sees the same document — the
+    // router neither fills the placeholder in nor drops it (SUP-157).
+    const response = await request(server()).get('/v1/evidence/platform').expect(200);
+
+    expect(response.body.rootCaTeeQuote).toEqual({ status: 'not-implemented' });
   });
 
   it('404s for an endpoint that does not exist', async () => {
