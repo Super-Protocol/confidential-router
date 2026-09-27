@@ -251,6 +251,26 @@ describe('the committed development seed', () => {
   });
 });
 
+describe('the top-up bounds', () => {
+  it('defaults to $5 and $10 000', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    expect(config.billing.minTopUpMicros).toBe(5_000_000);
+    expect(config.billing.maxTopUpMicros).toBe(10_000_000_000);
+  });
+
+  /** A ceiling under the floor leaves no amount a top-up may be, so it is a boot error. */
+  it('refuses a maximum below the minimum', () => {
+    const result = RouterConfigSchema.safeParse({
+      auth: { secret: SECRET },
+      billing: { minTopUpMicros: 5_000_000, maxTopUpMicros: 1_000_000 },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['billing', 'maxTopUpMicros']);
+  });
+});
+
 describe('the committed example configuration', () => {
   /**
    * `schemas/router-config.schema.json` is the contract; this schema is its

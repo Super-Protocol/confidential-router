@@ -29,6 +29,8 @@ const BALANCE = {
   balanceMicros: '170650000',
   spendable: true,
   minTopUpMicros: '5000000',
+  maxTopUpMicros: '10000000000',
+  purchasesAvailable: true,
   autoTopUp: {
     __typename: 'AutoTopUp' as const,
     enabled: false,
@@ -271,6 +273,55 @@ describe('CreditsScreen', () => {
     expect(screen.getByRole('button', { name: 'Add credits' })).toBeDisabled();
     expect(screen.getByLabelText('Enable automatic top-up')).toBeDisabled();
     expect(screen.getByRole('row', { name: /Credit purchase/ })).toBeInTheDocument();
+  });
+
+  /**
+   * SUP-167: a deployment that sells nothing used to render this panel anyway, and
+   * the API behind it had fallen back to a provider that minted credit from a
+   * signed link — so "Add credits" worked, for free, with no card.
+   */
+  describe('on a deployment that sells no credit', () => {
+    const OFF = { ...BALANCE, purchasesAvailable: false, autoTopUp: { ...BALANCE.autoTopUp, available: false } };
+
+    it('replaces the buy panel with what is actually true', async () => {
+      render([creditsMock(OFF)]);
+
+      expect(await screen.findByText('Buying credits is switched off')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Add credits' })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Amount (USD)')).not.toBeInTheDocument();
+    });
+
+    it('hides automatic top-up too, since there is no card to charge', async () => {
+      render([creditsMock(OFF)]);
+
+      await screen.findByText('Buying credits is switched off');
+      expect(screen.queryByLabelText('Enable automatic top-up')).not.toBeInTheDocument();
+    });
+
+    it('still shows the balance and the ledger, which is what the screen is for', async () => {
+      render([creditsMock(OFF)]);
+
+      expect(await screen.findByTestId('credit-balance')).toHaveTextContent('$170.65');
+      expect(screen.getByRole('row', { name: /Credit purchase/ })).toBeInTheDocument();
+    });
+
+    /** A provider that stopped supporting saved cards must not trap a setting on. */
+    it('keeps automatic top-up on screen while it is still enabled, so it can be turned off', async () => {
+      render([creditsMock({ ...OFF, autoTopUp: { ...OFF.autoTopUp, enabled: true } })]);
+
+      await screen.findByText('Buying credits is switched off');
+      expect(screen.getByLabelText('Enable automatic top-up')).toBeInTheDocument();
+    });
+  });
+
+  it('rejects a top-up above the maximum without calling the API', async () => {
+    render([creditsMock()]);
+
+    await userEvent.clear(await screen.findByLabelText('Amount (USD)'));
+    await userEvent.type(screen.getByLabelText('Amount (USD)'), '1000000');
+    await userEvent.click(screen.getByRole('button', { name: 'Add credits' }));
+
+    expect(await screen.findByText('The maximum top-up is $10,000.00.')).toBeInTheDocument();
   });
 
   it('confirms a completed checkout and clears the parameter so a reload does not repeat it', async () => {

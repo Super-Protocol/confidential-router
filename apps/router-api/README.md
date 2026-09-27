@@ -247,16 +247,22 @@ the money, and a ledger that refused to record it would permanently disagree wit
 operator adjustment, whose amount is known and who has a human behind it, cannot take the balance below
 zero.
 
-The payment provider sits behind `PaymentProvider`:
+The payment provider sits behind `PaymentProvider`, and `billing.provider` says which one binds:
 
-| `billing.stripe` | Provider | Top-up flow |
-| --- | --- | --- |
-| configured | `StripePaymentProvider` | Checkout Session → `POST /billing/stripe/webhook` (signature over the raw body) → ledger |
-| absent, outside production | `ManualPaymentProvider` | a signed link → `GET /billing/manual/complete` → ledger |
-| absent, in production | — | the boot fails: a link that mints credit must not run against real customers |
+| `billing.provider` | Condition | Provider | Top-up flow |
+| --- | --- | --- | --- |
+| `auto` (default) | `billing.stripe` configured | `StripePaymentProvider` | Checkout Session → `POST /billing/stripe/webhook` (signature over the raw body) → ledger |
+| `auto` or `manual` | not production **and** `server.publicBaseUrl` is loopback | `ManualPaymentProvider` | a signed link → `GET /billing/manual/complete` → ledger |
+| `auto` or `manual` | anything else | — | the boot fails: a link that mints credit must not run where anyone else can reach it |
+| `stripe` | `billing.stripe` configured | `StripePaymentProvider` | as above; the boot fails without credentials rather than falling back |
+| `disabled` | — | `DisabledPaymentProvider` | none: checkout is refused and the console hides its buy panel |
 
 The manual provider is what lets `nx serve` and the e2e suite exercise a complete top-up with no Stripe
-credentials and no network. Automatic top-up charges the card saved by the first checkout when the
+credentials and no network. Both of its conditions are checked because only one of them used to be:
+`NODE_ENV` alone decided it, a deployment chart sets `NODE_ENV`, and the deployment that set it to
+`development` shipped an unbounded free-credit button to every account holder (SUP-167). A deployment
+that sells nothing says `provider: disabled` rather than arriving at a minting provider by omission.
+`billing.maxTopUpMicros` bounds a single checkout — the same bug had a floor and no ceiling. Automatic top-up charges the card saved by the first checkout when the
 balance falls under `autoTopUpThresholdMicros`, at most once per `billing.autoTopUpCooldown`; the claim is
 written before the charge, so concurrent generations produce one charge and a declining card backs off
 instead of retrying per request.

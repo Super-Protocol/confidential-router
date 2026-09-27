@@ -262,7 +262,9 @@ and small:
   `ApiKey` object types land with SUP-73/SUP-74. Adding the object field later is additive; a name is
   what the Logs and Activity tables render today.
 - **`creditBalance(workspaceId)`** replaces reading `workspace.balance`: the Credits screen also needs
-  `spendable`, `minTopUpMicros` and the automatic top-up settings, and one query is one round trip.
+  `spendable`, `minTopUpMicros`, `maxTopUpMicros`, `purchasesAvailable` and the automatic top-up settings,
+  and one query is one round trip. `purchasesAvailable` is false on a deployment that sells no credit, and
+  the screen hides its buy panel rather than offering a button that can only fail (SUP-167).
 - **Mutations take one input object** (`createCheckout(input:)`, `setAutoTopUp(input:)`) so the workspace
   id and the payload travel together — that pair is what the membership check reads.
 - **`generations` gains `sort:`**, and `usageByModel` an optional `limit:` (which is the "top models by

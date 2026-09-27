@@ -16,6 +16,7 @@ import { CREATE_CHECKOUT } from './operations';
 export interface BuyCreditsCardProps {
   workspaceId: string;
   minTopUpMicros: string;
+  maxTopUpMicros: string;
   /** False for a member: only an owner may spend the workspace's card. */
   canSpend: boolean;
 }
@@ -28,7 +29,7 @@ export interface BuyCreditsCardProps {
  * balance moves when the provider's webhook confirms the payment, which is why
  * the screen refetches on the `?topup=success` return rather than assuming.
  */
-export function BuyCreditsCard({ workspaceId, minTopUpMicros, canSpend }: BuyCreditsCardProps) {
+export function BuyCreditsCard({ workspaceId, minTopUpMicros, maxTopUpMicros, canSpend }: BuyCreditsCardProps) {
   const [amount, setAmount] = React.useState(() => microsToUsdInput(PRESET_TOP_UP_MICROS[1]));
   const [error, setError] = React.useState<string | null>(null);
   const [createCheckout, { loading }] = useMutation(CREATE_CHECKOUT);
@@ -36,7 +37,7 @@ export function BuyCreditsCard({ workspaceId, minTopUpMicros, canSpend }: BuyCre
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    const parsed = parseTopUpAmount(amount, minTopUpMicros);
+    const parsed = parseTopUpAmount(amount, { minTopUpMicros, maxTopUpMicros });
     if ('error' in parsed) {
       setError(parsed.error);
       return;
@@ -103,7 +104,7 @@ export function BuyCreditsCard({ workspaceId, minTopUpMicros, canSpend }: BuyCre
               </p>
             ) : (
               <p id="topup-amount-hint" className="text-muted-foreground text-xs">
-                Minimum {formatUsd(minTopUpMicros)}, in whole cents.
+                Between {formatUsd(minTopUpMicros)} and {formatUsd(maxTopUpMicros)}, in whole cents.
               </p>
             )}
           </div>

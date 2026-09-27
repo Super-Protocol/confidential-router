@@ -68,7 +68,7 @@ export function AutoTopUpCard({ workspaceId, balance, canSpend }: AutoTopUpCardP
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    const found = validateAutoTopUp(values, balance.minTopUpMicros);
+    const found = validateAutoTopUp(values, balance);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 

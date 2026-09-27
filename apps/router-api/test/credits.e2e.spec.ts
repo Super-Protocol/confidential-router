@@ -18,6 +18,8 @@ const BALANCE = `
       balanceMicros
       spendable
       minTopUpMicros
+      maxTopUpMicros
+      purchasesAvailable
       autoTopUp { enabled thresholdMicros amountMicros available }
     }
   }
@@ -77,7 +79,13 @@ describe('a top-up', () => {
   it('starts at zero and is not spendable', async () => {
     const data = await expectData(session, BALANCE, { workspaceId: session.workspaceId });
 
-    expect(data.creditBalance).toMatchObject({ balanceMicros: '0', spendable: false, minTopUpMicros: '5000000' });
+    expect(data.creditBalance).toMatchObject({
+      balanceMicros: '0',
+      spendable: false,
+      minTopUpMicros: '5000000',
+      maxTopUpMicros: '10000000000',
+      purchasesAvailable: true,
+    });
   });
 
   it('credits nothing until the checkout is completed', async () => {
@@ -108,6 +116,18 @@ describe('a top-up', () => {
     });
 
     expect(body.errors[0].message).toMatch(/minimum top-up/i);
+  });
+
+  /**
+   * SUP-167: `assertTopUpAmount` had a floor and no ceiling, so one mutation could
+   * ask for a million dollars and get a valid signed link back for it.
+   */
+  it('refuses an amount above the configured maximum', async () => {
+    const body = await graphql(session, CHECKOUT, {
+      input: { workspaceId: session.workspaceId, amountMicros: '1000000000000' },
+    });
+
+    expect(body.errors[0].message).toMatch(/maximum top-up/i);
   });
 
   it('refuses an amount that is not a whole number of cents', async () => {
@@ -288,5 +308,55 @@ describe('the Stripe webhook', () => {
       .findOneByOrFail({ id: stripeSession.workspaceId });
 
     expect(workspace.stripeCustomerId).toBe('cus_e2e');
+  });
+});
+
+/**
+ * `billing.provider: disabled` — the deployment that does not sell credit
+ * (SUP-167). It is what a launch whose terms say purchasing is not switched on
+ * has to run, and the alternative it replaces was the manual provider minting
+ * from a signed link.
+ */
+describe('a deployment that sells no credit', () => {
+  let offHarness: Harness;
+  let offSession: ConsoleSession;
+
+  beforeAll(async () => {
+    offHarness = await createHarness({ env: { CR_API_BILLING__PROVIDER: 'disabled' } });
+    offSession = await signIn(offHarness, 'no-purchases@example.com');
+  }, 60_000);
+
+  afterAll(async () => {
+    await offHarness?.close();
+  });
+
+  it('tells the console there is nothing to buy', async () => {
+    const data = await expectData(offSession, BALANCE, { workspaceId: offSession.workspaceId });
+
+    expect(data.creditBalance.purchasesAvailable).toBe(false);
+    expect(data.creditBalance.autoTopUp.available).toBe(false);
+  });
+
+  it('refuses a checkout instead of handing back a link', async () => {
+    const body = await graphql(offSession, CHECKOUT, {
+      input: { workspaceId: offSession.workspaceId, amountMicros: '10000000' },
+    });
+
+    expect(body.errors[0].message).toMatch(/switched off/i);
+  });
+
+  it('has no manual completion endpoint to mint from', async () => {
+    await request(offHarness.app.getHttpServer()).get('/billing/manual/complete?token=anything').expect(404);
+  });
+
+  it('refuses to turn automatic top-up on, since there is no card to charge', async () => {
+    const body = await graphql(offSession, SET_AUTO_TOP_UP, {
+      input: {
+        workspaceId: offSession.workspaceId,
+        settings: { enabled: true, thresholdMicros: '5000000', amountMicros: '20000000' },
+      },
+    });
+
+    expect(body.errors[0].message).toMatch(/cannot charge a saved card/i);
   });
 });

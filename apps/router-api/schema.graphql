@@ -143,7 +143,15 @@ type CreditBalance {
 
   """Micro-USD. Negative after an overdrawing generation."""
   balanceMicros: String!
+
+  """Micro-USD ceiling on a single top-up."""
+  maxTopUpMicros: String!
   minTopUpMicros: String!
+
+  """
+  False when this deployment sells no credit; the screen then hides the buy panel.
+  """
+  purchasesAvailable: Boolean!
 
   """False once `/v1` starts answering 402 insufficient_credits."""
   spendable: Boolean!

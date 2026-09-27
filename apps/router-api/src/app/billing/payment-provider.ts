@@ -55,12 +55,20 @@ export interface SavedCharge {
 /**
  * Everything billing needs from a payment processor (ADR-005 §4).
  *
- * Two implementations: `StripePaymentProvider` in production and
+ * Three implementations: `StripePaymentProvider` in production,
  * `ManualPaymentProvider` for development and e2e, where reaching Stripe is
- * neither possible nor desirable.
+ * neither possible nor desirable, and `DisabledPaymentProvider` for a deployment
+ * that does not sell credit at all.
  */
 export interface PaymentProvider {
   readonly name: string;
+
+  /**
+   * Whether `createCheckout` can produce anything. False on the provider that a
+   * deployment which does not sell credit binds, and the console reads it to stop
+   * offering a button that can only fail (SUP-167).
+   */
+  readonly supportsCheckout: boolean;
 
   /** Whether `chargeSaved` can work — i.e. whether auto top-up is available at all. */
   readonly supportsSavedPaymentMethods: boolean;

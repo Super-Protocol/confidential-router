@@ -50,6 +50,8 @@ function balance(autoTopUp: Record<string, unknown>) {
     balanceMicros: '170650000',
     spendable: true,
     minTopUpMicros: '5000000',
+    maxTopUpMicros: '10000000000',
+    purchasesAvailable: true,
     autoTopUp: {
       __typename: 'AutoTopUp',
       enabled: false,

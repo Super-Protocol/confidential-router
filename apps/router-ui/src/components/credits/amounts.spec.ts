@@ -8,64 +8,70 @@ import {
   validateAutoTopUp,
 } from './amounts';
 
-/** $5, the API's default `minTopUpMicros`. */
-const MIN = '5000000';
+/** The API's defaults: a $5 floor and a $10 000 ceiling on one top-up. */
+const BOUNDS = { minTopUpMicros: '5000000', maxTopUpMicros: '10000000000' };
 
 describe('parseTopUpAmount', () => {
   it('accepts a whole amount and a two-decimal one', () => {
-    expect(parseTopUpAmount('25', MIN)).toEqual({ micros: '25000000' });
-    expect(parseTopUpAmount('12.50', MIN)).toEqual({ micros: '12500000' });
+    expect(parseTopUpAmount('25', BOUNDS)).toEqual({ micros: '25000000' });
+    expect(parseTopUpAmount('12.50', BOUNDS)).toEqual({ micros: '12500000' });
   });
 
   it('does not lose a cent to floating point', () => {
     // 12.34 * 1_000_000 is 12339999.999999998 in IEEE 754.
-    expect(parseTopUpAmount('12.34', MIN)).toEqual({ micros: '12340000' });
+    expect(parseTopUpAmount('12.34', BOUNDS)).toEqual({ micros: '12340000' });
   });
 
   it('refuses an amount finer than a cent, which no provider can charge', () => {
-    expect(parseTopUpAmount('12.345', MIN)).toEqual({ error: 'Amounts are charged in whole cents, e.g. 12.50.' });
+    expect(parseTopUpAmount('12.345', BOUNDS)).toEqual({ error: 'Amounts are charged in whole cents, e.g. 12.50.' });
   });
 
   it('refuses anything below the minimum, quoting it', () => {
-    expect(parseTopUpAmount('1', MIN)).toEqual({ error: 'The minimum top-up is $5.00.' });
+    expect(parseTopUpAmount('1', BOUNDS)).toEqual({ error: 'The minimum top-up is $5.00.' });
+  });
+
+  /** SUP-167: the API had no ceiling at all, and the form had nothing to show. */
+  it('refuses more than the maximum', () => {
+    expect(parseTopUpAmount('1000000', BOUNDS)).toEqual({ error: 'The maximum top-up is $10,000.00.' });
+    expect(parseTopUpAmount('10000', BOUNDS)).toEqual({ micros: '10000000000' });
   });
 
   it('refuses text, an empty field and a negative amount', () => {
-    expect(parseTopUpAmount('', MIN)).toEqual({ error: 'Enter an amount to buy.' });
-    expect(parseTopUpAmount('twenty', MIN)).toEqual({ error: 'Enter an amount in dollars, e.g. 25 or 12.50.' });
-    expect(parseTopUpAmount('-25', MIN)).toEqual({ error: 'Enter an amount in dollars, e.g. 25 or 12.50.' });
+    expect(parseTopUpAmount('', BOUNDS)).toEqual({ error: 'Enter an amount to buy.' });
+    expect(parseTopUpAmount('twenty', BOUNDS)).toEqual({ error: 'Enter an amount in dollars, e.g. 25 or 12.50.' });
+    expect(parseTopUpAmount('-25', BOUNDS)).toEqual({ error: 'Enter an amount in dollars, e.g. 25 or 12.50.' });
   });
 
   it('accepts every preset the card offers', () => {
     for (const micros of PRESET_TOP_UP_MICROS) {
-      expect(parseTopUpAmount(String(Number(micros) / 1_000_000), MIN)).toEqual({ micros });
+      expect(parseTopUpAmount(String(Number(micros) / 1_000_000), BOUNDS)).toEqual({ micros });
     }
   });
 });
 
 describe('validateAutoTopUp', () => {
   it('passes a complete, enabled setting', () => {
-    expect(validateAutoTopUp({ enabled: true, threshold: '20', amount: '25' }, MIN)).toEqual({});
+    expect(validateAutoTopUp({ enabled: true, threshold: '20', amount: '25' }, BOUNDS)).toEqual({});
   });
 
   it('requires both fields when enabled', () => {
-    const errors = validateAutoTopUp({ enabled: true, threshold: '', amount: '' }, MIN);
+    const errors = validateAutoTopUp({ enabled: true, threshold: '', amount: '' }, BOUNDS);
     expect(errors.threshold).toBe('Set the balance that triggers a top-up.');
     expect(errors.amount).toBe('Enter an amount to buy.');
   });
 
   it('holds the amount to the same minimum a manual top-up has', () => {
-    expect(validateAutoTopUp({ enabled: true, threshold: '20', amount: '1' }, MIN).amount).toBe(
+    expect(validateAutoTopUp({ enabled: true, threshold: '20', amount: '1' }, BOUNDS).amount).toBe(
       'The minimum top-up is $5.00.',
     );
   });
 
   it('accepts a zero threshold — top up when the balance runs out', () => {
-    expect(validateAutoTopUp({ enabled: true, threshold: '0', amount: '25' }, MIN)).toEqual({});
+    expect(validateAutoTopUp({ enabled: true, threshold: '0', amount: '25' }, BOUNDS)).toEqual({});
   });
 
   it('ignores the fields when the setting is being turned off', () => {
-    expect(validateAutoTopUp({ enabled: false, threshold: 'nonsense', amount: '' }, MIN)).toEqual({});
+    expect(validateAutoTopUp({ enabled: false, threshold: 'nonsense', amount: '' }, BOUNDS)).toEqual({});
   });
 });
 
