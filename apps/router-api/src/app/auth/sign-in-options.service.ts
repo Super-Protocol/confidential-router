@@ -16,6 +16,14 @@ export interface SignInOptions {
   password: boolean;
   /** `auth.password.minLength`, so the sign-up form states the real rule. */
   passwordMinLength: number;
+  /**
+   * Registration is by invitation (`auth.requireInviteForSignUp`, SUP-173).
+   *
+   * Not a sign-in path but a property of every one of them: while it is true no
+   * path creates an account without a valid, unredeemed code, so the sign-up
+   * screen has to say so and block a submission it knows will be refused.
+   */
+  inviteRequired: boolean;
 }
 
 /**
@@ -48,6 +56,7 @@ export class SignInOptionsService {
       magicLink: auth.magicLink.mailer !== 'none',
       password: auth.password.enabled,
       passwordMinLength: auth.password.minLength,
+      inviteRequired: auth.requireInviteForSignUp,
     };
   }
 

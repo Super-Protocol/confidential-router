@@ -172,6 +172,23 @@ const AuthSchema = z.strictObject({
     })
     .prefault({}),
   /**
+   * Invite-only registration: no account is created without a code that is
+   * valid and unredeemed at that moment (SUP-173).
+   *
+   * Off by default, which is the behaviour every deployment has had so far and
+   * the one the demo stand keeps: a wrong code never fails a registration, it
+   * only fails the grant (SUP-142). A launch running grants-only turns it on,
+   * and then every sign-up path — password, magic link, OAuth callback — refuses
+   * before the `user` row exists rather than creating an account that can never
+   * be credited.
+   *
+   * It gates *sign-up* only. An existing account signs in exactly as before,
+   * code or no code, and `POST /auth/bootstrap` is exempt: that path is the
+   * operator claiming their own deployment, not a campaign sign-up, and an
+   * invitation it could never have been mailed must not lock them out.
+   */
+  requireInviteForSignUp: booleanish().prefault(false),
+  /**
    * Lets the first admin in on a deployment that has neither a mailer nor an
    * OAuth app. While it is set *and* no user exists, `POST /auth/bootstrap`
    * trades this token for the first account and a session; the endpoint is a

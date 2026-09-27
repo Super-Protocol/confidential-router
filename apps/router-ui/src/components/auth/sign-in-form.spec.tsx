@@ -34,6 +34,7 @@ type Offers = Partial<{
   magicLink: boolean;
   password: boolean;
   passwordMinLength: number;
+  inviteRequired: boolean;
 }>;
 
 /**
@@ -53,6 +54,7 @@ function optionsMock(overrides: Offers = {}) {
           magicLink: true,
           password: false,
           passwordMinLength: 12,
+          inviteRequired: false,
           ...overrides,
         },
       },
@@ -454,5 +456,70 @@ describe('an invitation carried to a sign-in screen', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.callbackURL).toBe('/');
     expect(body.inviteCode).toBeUndefined();
+  });
+});
+
+/**
+ * A sign-*up* this screen started and the router refused (SUP-173).
+ *
+ * The two paths that can create an account from here finish as a navigation, so
+ * their refusal comes back as `?error=` rather than as a rejected promise — and
+ * it has to come back *here*, because the button that caused it is on this
+ * screen and pressing it again is the way out.
+ */
+describe('an invite-only refusal carried back to the sign-in screen', () => {
+  it('names the error callback it wants a refusal sent to, absolute so the router does not resolve it against its own origin', async () => {
+    vi.stubGlobal('location', {
+      ...window.location,
+      origin: 'https://console.example',
+      pathname: '/login',
+      search: '',
+      assign,
+    });
+    fetchMock.mockResolvedValue(jsonResponse({ url: 'https://github.com/login/oauth/authorize?x=1' }));
+    renderForm();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Continue with GitHub' }));
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).errorCallbackURL).toBe('https://console.example/login');
+  });
+
+  it('explains it, and points at the screen where a code can be entered', async () => {
+    vi.stubGlobal('location', { ...window.location, search: '?error=invite_required', assign });
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm();
+
+    const alert = await screen.findByTestId('invite-refused-invite_required');
+    expect(alert).toHaveTextContent('You need an invitation');
+    expect(screen.getByRole('link', { name: 'Enter a code' })).toHaveAttribute('href', '/signup');
+  });
+
+  it('tells a claimed invitation apart from one that never worked', async () => {
+    vi.stubGlobal('location', { ...window.location, search: '?error=invite_already_claimed', assign });
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm();
+
+    expect(await screen.findByTestId('invite-refused-invite_already_claimed')).toHaveTextContent(
+      'already been claimed',
+    );
+  });
+
+  it('leaves Better Auth’s own errors alone rather than mistranslating them', async () => {
+    vi.stubGlobal('location', { ...window.location, search: '?error=INVALID_TOKEN', assign });
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm();
+
+    await screen.findByRole('button', { name: 'Continue with GitHub' });
+    expect(screen.queryByText(/invitation/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the code for the retry, which the provider’s redirect stripped from the URL', async () => {
+    vi.stubGlobal('location', { ...window.location, search: '?invite=abcd-efgh', protocol: 'http:', assign });
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm();
+
+    await screen.findByRole('button', { name: 'Continue with GitHub' });
+    await waitFor(() => expect(window.localStorage.getItem('cr_invite')).toBe('ABCDEFGH'));
+    window.localStorage.clear();
   });
 });

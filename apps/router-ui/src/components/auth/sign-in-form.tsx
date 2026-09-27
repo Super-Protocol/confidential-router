@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader } from '@confidential-ro
 import { Input } from '@confidential-router/ui/components/input';
 import { Label } from '@confidential-router/ui/components/label';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
-import { MailCheck } from 'lucide-react';
+import { MailCheck, TriangleAlert } from 'lucide-react';
 import Link from 'next/link';
 import * as React from 'react';
 import {
@@ -16,7 +16,8 @@ import {
   signInWithPassword,
   signInWithProvider,
 } from '../../lib/auth';
-import { readInviteCode } from '../../lib/invite';
+import { readInviteCode, rememberInvite } from '../../lib/invite';
+import { INVITE_REFUSAL_COPY, type InviteRefusalCode, inviteRefusalOf } from '../../lib/invite-refusal';
 import { BootstrapForm } from './bootstrap-form';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
@@ -73,6 +74,25 @@ export function SignInForm() {
    * an existing account cannot be topped up (SUP-142).
    */
   const [inviteCode] = React.useState(() => readInviteCode(globalThis.location?.search ?? ''));
+
+  /**
+   * A sign-*up* this screen started and the router refused (SUP-173).
+   *
+   * Both paths that create an account from here — a provider and a magic link —
+   * finish as a navigation, so an invite-only refusal comes back as `?error=` on
+   * this page rather than as a rejected promise. It is rendered here because
+   * this is where the button that caused it is: the way out of it is to press
+   * the same one again with a code that works.
+   */
+  const [refusal] = React.useState<InviteRefusalCode | null>(() => inviteRefusalOf(globalThis.location?.search ?? ''));
+
+  // Kept for the round trip back. The OAuth callback reads the `cr_invite`
+  // cookie, but a refusal lands the visitor back on this page with a URL the
+  // provider built and none of our parameters on it — so a retry has nothing to
+  // send unless the code was stored before the browser left.
+  React.useEffect(() => {
+    if (inviteCode) rememberInvite(inviteCode);
+  }, [inviteCode]);
 
   const { data, loading } = useQuery(SIGN_IN_OPTIONS_QUERY, { fetchPolicy: 'cache-and-network' });
   const options = data?.signInOptions ?? OFFER_EVERYTHING;
@@ -170,6 +190,26 @@ export function SignInForm() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {refusal ? (
+          <div
+            className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3"
+            role="alert"
+            data-testid={`invite-refused-${refusal}`}
+          >
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="font-medium text-sm">{INVITE_REFUSAL_COPY[refusal].title}</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                {INVITE_REFUSAL_COPY[refusal].detail}{' '}
+                <Link href="/signup" className="font-medium text-foreground underline underline-offset-4">
+                  Enter a code
+                </Link>
+                .
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         {!settled ? (
           <div className="flex flex-col gap-2" data-testid="sign-in-options-loading">
             <Skeleton className="h-9 w-full" />

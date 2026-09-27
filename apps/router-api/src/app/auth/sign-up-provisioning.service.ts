@@ -37,7 +37,9 @@ export interface CreatedUser {
  * inserted, leaving an account nobody can sign in to explain. Provisioning is
  * idempotent and retried on the next sign-in; the grant reports its own failure
  * and is not retried, because a mailing-list mistake must not cost the visitor
- * their account (SUP-142); `AnalyticsService.capture` never rejects at all.
+ * their account (SUP-142); `AnalyticsService.capture` never rejects at all. An
+ * invite-only deployment refuses that mistake a step earlier instead, in
+ * `SignUpGate`, which is why the requirement lives there and not here (SUP-173).
  */
 @Injectable()
 export class SignUpProvisioning {
