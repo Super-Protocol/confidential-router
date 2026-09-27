@@ -82,7 +82,7 @@ function creditsMock(
 function keysMock(revokedAt: string | null = null): MockLink.MockedResponse {
   return {
     request: { query: NEXT_STEP_QUERY, variables: { workspaceId: WORKSPACE_ID } },
-    result: { data: { apiKeys: [{ __typename: 'ApiKey', id: 'key-1', revokedAt }] } },
+    result: { data: { apiKeys: [{ __typename: 'ApiKey', id: 'key-1', revokedAt }], models: [] } },
     maxUsageCount: Number.POSITIVE_INFINITY,
   };
 }
