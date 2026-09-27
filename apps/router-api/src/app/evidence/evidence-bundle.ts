@@ -32,13 +32,23 @@ const BundleSchema = z.looseObject({
   certFingerprint: z.string().regex(FINGERPRINT),
   jws: z.string().regex(COMPACT_JWS),
   certChain: z.array(z.string().min(1)).min(1),
-  rootCaTeeQuote: z
-    .looseObject({
-      format: z.string().min(1),
-      data: z.string().min(1),
-      collateral: z.looseObject({}).optional(),
-    })
-    .optional(),
+  /**
+   * Passed through unread, in the spirit of the Go verifier, which keeps it as
+   * a `json.RawMessage` and never inspects it. A shade looser, in fact: both
+   * verifiers still require the member to be an object when it is present, and
+   * this accepts anything, because nothing here can act on the difference.
+   *
+   * `schemas/swarm-evidence-bundle.schema.json` requires `format` and `data`
+   * here, so a producer that publishes neither is out of spec — but the only
+   * thing this router does with the member is print `format` beside the digest,
+   * and a display field must not be able to reject a bundle. Mirroring the
+   * schema strictly is what made the console report "Not published" for an
+   * endpoint a gatekeeper was admitting at the same moment (SUP-157), because
+   * the platform publishes `{ "status": "not-implemented" }` until the root CA
+   * quote ships. The digest, the hostnames and the chain stay strict; those are
+   * the contract.
+   */
+  rootCaTeeQuote: z.unknown().optional(),
   tlsLeaf: z.string().min(1).optional(),
 });
 
@@ -114,7 +124,7 @@ export function parseEvidenceBundle(raw: unknown, hostname: string): ParsedEvide
     issuedAt: new Date(payload.issuedAt),
     digest,
     certFingerprint: payload.certFingerprint,
-    quoteFormat: bundle.data.rootCaTeeQuote?.format ?? null,
+    quoteFormat: quoteFormatOf(bundle.data.rootCaTeeQuote),
     containerImages: containerImagesOf(payload.evidence),
     chainSummary: summariseChain(bundle.data.certChain),
     measurements: measurementsOf(payload, bundle.data),
@@ -140,11 +150,30 @@ function decodePayload(jws: string): z.infer<typeof PayloadSchema> {
 }
 
 /**
- * Flattens the container images out of the canonical deployment snapshot
- * (`{ version: 2, resources: [{ containers: [{ image }] }] }`). These are the
- * enclave image digests the Overview and the evidence modal show; a snapshot in
- * a shape this does not recognise yields an empty list rather than an error,
- * because the images are display detail and the digest is the contract.
+ * The quote's `format` label, when the producer published a usable one.
+ *
+ * Anything else — an absent member, a placeholder, a `format` that is not a
+ * non-empty string — reads as "not stated", which is what the evidence modal
+ * already renders for a null.
+ */
+function quoteFormatOf(quote: unknown): string | null {
+  const format = (quote as { format?: unknown } | undefined)?.format;
+  return typeof format === 'string' && format.length > 0 ? format : null;
+}
+
+/**
+ * Flattens the enclave image digests out of the canonical deployment snapshot
+ * (`{ version: 2, resources: [...] }`) — what the Overview and the evidence
+ * modal list under the digest.
+ *
+ * Two resource shapes are read, because the snapshot carries whatever the
+ * producer deployed: a resource may hold `containers` directly, or it may be a
+ * plain Kubernetes object that keeps them on a pod spec. The deployed platform
+ * publishes the Kubernetes shape; reading only the flat one left the modal
+ * empty for every real deployment (SUP-157).
+ *
+ * A shape neither of those recognises yields an empty list rather than an
+ * error: the images are display detail and the digest is the contract.
  */
 function containerImagesOf(evidence: unknown): string[] {
   const resources = (evidence as { resources?: unknown } | undefined)?.resources;
@@ -153,16 +182,47 @@ function containerImagesOf(evidence: unknown): string[] {
   }
   const images = new Set<string>();
   for (const resource of resources) {
-    const containers = (resource as { containers?: unknown }).containers;
-    if (!Array.isArray(containers)) continue;
-    for (const container of containers) {
-      const image = (container as { image?: unknown }).image;
-      if (typeof image === 'string' && image.length > 0) {
-        images.add(image);
+    for (const spec of podSpecsOf(resource)) {
+      // `initContainers` count: an init container runs on the same node with the
+      // same access to the workload's secrets, so a user comparing what the
+      // enclave runs has to see it.
+      for (const key of ['containers', 'initContainers'] as const) {
+        const containers = (spec as Record<string, unknown>)[key];
+        if (!Array.isArray(containers)) continue;
+        for (const container of containers) {
+          // A null member would throw a bare TypeError out of a function whose
+          // contract is that an unrecognised shape yields no images.
+          if (!container || typeof container !== 'object') continue;
+          const image = (container as { image?: unknown }).image;
+          if (typeof image === 'string' && image.length > 0) {
+            images.add(image);
+          }
+        }
       }
     }
   }
   return [...images];
+}
+
+/**
+ * Every place a resource may keep a pod spec.
+ *
+ * The list covers the resource itself (the flat shape), a bare `Pod`, the
+ * template every controller wraps one in — Deployment, ReplicaSet, StatefulSet,
+ * DaemonSet, Job — and the extra level a CronJob adds. Enumerated rather than
+ * searched recursively: a blind walk for anything called `containers` would
+ * start reporting whatever a future resource happens to nest under that name.
+ */
+function podSpecsOf(resource: unknown): unknown[] {
+  if (!resource || typeof resource !== 'object') {
+    return [];
+  }
+  const spec = (resource as { spec?: unknown }).spec as
+    | { template?: { spec?: unknown }; jobTemplate?: { spec?: { template?: { spec?: unknown } } } }
+    | undefined;
+  return [resource, spec, spec?.template?.spec, spec?.jobTemplate?.spec?.template?.spec].filter(
+    (candidate): candidate is object => !!candidate && typeof candidate === 'object',
+  );
 }
 
 /**
@@ -179,7 +239,7 @@ function measurementsOf(
   const candidates: unknown[] = [
     (payload.evidence as { measurements?: unknown } | undefined)?.measurements,
     (payload as { measurements?: unknown }).measurements,
-    (bundle.rootCaTeeQuote?.collateral as { measurements?: unknown } | undefined)?.measurements,
+    (bundle.rootCaTeeQuote as { collateral?: { measurements?: unknown } } | undefined)?.collateral?.measurements,
   ];
   for (const candidate of candidates) {
     if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
