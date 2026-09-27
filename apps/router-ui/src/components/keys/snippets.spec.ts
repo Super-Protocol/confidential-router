@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GATEKEEPER_BASE_URL, PLACEHOLDER_KEY, SNIPPET_LANGUAGES, wiringSnippet } from './snippets';
+import { GATEKEEPER_BASE_URL, PLACEHOLDER_KEY, PLACEHOLDER_MODEL, SNIPPET_LANGUAGES, wiringSnippet } from './snippets';
 
 describe('wiringSnippet', () => {
   it('points every client at the local gatekeeper by default', () => {
@@ -10,6 +10,15 @@ describe('wiringSnippet', () => {
 
   it('carries the placeholder when no key is available to show', () => {
     expect(wiringSnippet('python')).toContain(PLACEHOLDER_KEY);
+  });
+
+  it('never stands in a plausible model id for one it does not have', () => {
+    // SUP-153: the default used to be the docs' example id. It reads as runnable
+    // and answers 404, so a caller with no catalogue must show a visible blank.
+    expect(PLACEHOLDER_MODEL).not.toMatch(/^[a-z0-9]+\/[a-z0-9.-]+:[a-z]+$/);
+    for (const language of SNIPPET_LANGUAGES) {
+      expect(wiringSnippet(language.id)).toContain(PLACEHOLDER_MODEL);
+    }
   });
 
   it('uses the key and model it is given, verbatim', () => {
