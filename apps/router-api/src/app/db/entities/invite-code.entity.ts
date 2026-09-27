@@ -45,7 +45,11 @@ export class InviteCode {
   @Column(timestampColumn({ nullable: true }))
   expiresAt!: Date | null;
 
-  /** Set to withdraw a code that is still unexpired and unspent. */
+  /**
+   * When an operator withdrew the code. `InviteWithdrawalService` is the only
+   * writer; `claimSeat` re-checks it inside the redemption transaction, which is
+   * why setting it stops the next sign-up without touching any grant already made.
+   */
   @Column(timestampColumn({ nullable: true }))
   disabledAt!: Date | null;
 

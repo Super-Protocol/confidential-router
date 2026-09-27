@@ -1,34 +1,53 @@
-import { Inject, UseGuards } from '@nestjs/common';
+import { BadRequestException, Inject, Logger, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import { Args, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { AdminGuard, CurrentUser, SessionGuard, type SessionUser } from '../../../auth/index.js';
 import { routerConfig } from '../../../config.js';
 import type { InviteRedemption } from '../../../db/entities/invite-redemption.entity.js';
 import { type InviteLookup, InviteStatsService, InvitesService, normaliseInviteCode } from '../../../invites/index.js';
+import {
+  describeRestoration,
+  describeWithdrawal,
+  InviteTargetError,
+  InviteWithdrawalService,
+} from '../../../invites/invite-withdrawal.service.js';
 import { InviteRateLimitedError } from '../../../invites/invites.errors.js';
 import { RATE_LIMITER, type RateLimiter } from '../../v1/rate-limiter.js';
 import {
+  DisableInviteCodesInputModel,
   InviteCampaignStatsModel,
   InviteGrantModel,
   InviteGrantStatusModel,
   InviteRefusalReason,
+  InviteRestorationModel,
+  InviteWithdrawalModel,
+  RestoreInviteCodesInputModel,
 } from './invites.model.js';
 
 /**
  * Invitation codes in the console.
  *
- * There is no mutation here, and that is the design: a code is spent inside
- * account creation and nowhere else (`invites.service.ts`), so exposing a
- * "redeem" field would be exposing the one thing that must not be callable
- * twice. What the console can do is *read* — whether the credit landed, why it
- * did not, and, for an operator, how the campaign is going.
+ * Nothing here *spends* a code, and that is the design: a code is redeemed inside
+ * account creation and nowhere else (`invites.service.ts`), so exposing a "redeem"
+ * field would be exposing the one thing that must not be callable twice. Minting
+ * is absent for the same reason, and stays a CLI.
+ *
+ * The two operator mutations run in the other direction. `disableInviteCodes`
+ * only ever *stops* credit, and it is here because a deployment whose cluster
+ * space is published has no `kubectl exec` to reach the CLI with — a kill switch
+ * that cannot be pulled on the cluster the codes were mailed for is not a kill
+ * switch (SUP-159). Both are behind `auth.adminEmails`, like the campaign
+ * aggregates.
  */
 @Resolver()
 export class InvitesResolver {
+  private readonly logger = new Logger(InvitesResolver.name);
+
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly invites: InvitesService,
     private readonly stats: InviteStatsService,
+    private readonly withdrawals: InviteWithdrawalService,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
     @Inject(RATE_LIMITER) private readonly limiter: RateLimiter,
   ) {}
@@ -104,6 +123,66 @@ export class InvitesResolver {
   ): Promise<InviteCampaignStatsModel[]> {
     const campaigns = await this.stats.campaigns(campaign ?? null);
     return campaigns.map((entry) => ({ ...entry, grantedMicros: String(entry.grantedMicros) }));
+  }
+
+  /**
+   * Withdraws a leaked code, or a whole mailing. `auth.adminEmails` only.
+   *
+   * The counterpart of `invites disable` and the same code underneath. It takes
+   * no confirmation flag: the operator reaching for this has a code in the wild,
+   * and `restoreInviteCodes` is the undo.
+   *
+   * **No grant already made is affected** — `disabledAt` is read when a seat is
+   * claimed and nowhere else, so balances, `credit_transactions` and
+   * `invite_redemptions` are untouched. Withdrawing a campaign stops the next
+   * sign-up, not the accounts that already have their credit.
+   *
+   * It writes a WARN naming the operator. On a published cluster the container
+   * log is the only audit trail there is, and retiring a mailing is the one
+   * invitation operation someone may later have to prove they performed — the
+   * CLI's equivalent is the line it prints to whoever ran it.
+   */
+  @Mutation(() => InviteWithdrawalModel, {
+    description:
+      'Withdraws one invitation code or a campaign’s. Credit already granted is untouched. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async disableInviteCodes(
+    @CurrentUser() user: SessionUser,
+    @Args('input') input: DisableInviteCodesInputModel,
+  ): Promise<InviteWithdrawalModel> {
+    const result = await this.targeted(() =>
+      this.withdrawals.withdraw({ ...input, unspentOnly: input.unspentOnly === true }),
+    );
+    this.logger.warn(`Invitation codes withdrawn by ${user.email} — ${describeWithdrawal(result)}`);
+    return result;
+  }
+
+  /** Puts withdrawn codes back. The undo for a mistyped campaign tag. */
+  @Mutation(() => InviteRestorationModel, {
+    description: 'Puts withdrawn invitation codes back into circulation. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async restoreInviteCodes(
+    @CurrentUser() user: SessionUser,
+    @Args('input') input: RestoreInviteCodesInputModel,
+  ): Promise<InviteRestorationModel> {
+    const result = await this.targeted(() => this.withdrawals.restore(input));
+    this.logger.warn(`Invitation codes restored by ${user.email} — ${describeRestoration(result)}`);
+    return result;
+  }
+
+  /**
+   * Naming neither target, or both, or something that is not a code, is the
+   * caller's mistake — a 400 and the service's own sentence, rather than an
+   * `INTERNAL_SERVER_ERROR` that tells an operator under pressure nothing.
+   */
+  private async targeted<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      throw error instanceof InviteTargetError ? new BadRequestException(error.message) : error;
+    }
   }
 
   private async admit(userId: string): Promise<void> {

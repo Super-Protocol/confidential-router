@@ -7,6 +7,7 @@ import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { InviteAttributionService } from './invite-attribution.service.js';
 import { InviteStatsService } from './invite-stats.service.js';
+import { InviteWithdrawalService } from './invite-withdrawal.service.js';
 import { InvitesController } from './invites.controller.js';
 import { InvitesService } from './invites.service.js';
 
@@ -29,11 +30,12 @@ import { InvitesService } from './invites.service.js';
     { provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter },
     InvitesService,
     InviteStatsService,
+    InviteWithdrawalService,
     InviteAttributionService,
   ],
   // `RATE_LIMITER` is exported so the console's `inviteGrantStatus` query spends
   // the same budget as the public lookup: both answer questions about a code, so
   // a signed-in caller must not get a second allowance for asking.
-  exports: [InvitesService, InviteStatsService, InviteAttributionService, RATE_LIMITER],
+  exports: [InvitesService, InviteStatsService, InviteWithdrawalService, InviteAttributionService, RATE_LIMITER],
 })
 export class InvitesModule {}

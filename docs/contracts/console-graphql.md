@@ -152,12 +152,42 @@ type InviteGrantStatus {
   reason: InviteRefusalReason           # null when the grant is this account's and the code matches it
 }
 
+type InviteWithdrawal {                 # auth.adminEmails only; the four numbers add up to `matched`
+  target: String!                       # the code or campaign, echoed back normalised
+  matched: Int!                         # 0 means there is no such code or campaign
+  withdrawn: Int!
+  alreadyWithdrawn: Int!                # left with their original timestamp
+  spent: Int!                           # left in circulation — `unspentOnly` only
+}
+
+type InviteRestoration {                # auth.adminEmails only
+  target: String!
+  matched: Int!
+  restored: Int!
+  alreadyUsable: Int!                   # matched, but never withdrawn
+}
+
 # Query.inviteGrant: InviteGrant        # session; how the console confirms the credit landed
 # Query.inviteGrantStatus(code: String): InviteGrantStatus!          # session; the post-sign-up screen
 # Query.inviteCampaigns(campaign: String): [InviteCampaignStats!]!   # session + admin
+input RestoreInviteCodesInput { code: String, campaign: String }
+input DisableInviteCodesInput { code: String, campaign: String, unspentOnly: Boolean = false }
+
+# Mutation.disableInviteCodes(input: DisableInviteCodesInput!): InviteWithdrawal!
+# Mutation.restoreInviteCodes(input: RestoreInviteCodesInput!): InviteRestoration!   # both session + admin
 #
-# There is deliberately no redeem mutation: a code is spent inside account
-# creation and nowhere else, so there is nothing here a client could replay.
+# There is deliberately no redeem mutation and no generate mutation: a code is
+# spent inside account creation and nowhere else, and minting is a CLI behind an
+# operator's database access, so there is nothing here a client could replay and
+# nothing here that creates credit.
+#
+# The two operator mutations run the other way — they only ever *stop* credit —
+# and they exist because a deployment whose cluster space is published has no
+# `kubectl exec` to reach `invites disable` with (SUP-159). Exactly one of `code`
+# and `campaign` is required; naming neither or both is a 400. Withdrawing is
+# idempotent and **never touches a grant already made**: `disabledAt` is read when
+# a seat is claimed and nowhere else, so balances, `credit_transactions` and
+# `invite_redemptions` are untouched (`data-model.md` invariant 6).
 #
 # `inviteGrantStatus` takes the code because nothing persists a *refusal*: the
 # redemption writes a row when it succeeds and deliberately nothing when it does
