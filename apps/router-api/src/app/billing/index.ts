@@ -3,6 +3,7 @@ export * from './billing.controller.js';
 export * from './billing.module.js';
 export * from './billing.service.js';
 export * from './credits.gateway.js';
+export * from './disabled-payment.provider.js';
 export * from './ledger.errors.js';
 export * from './ledger.service.js';
 export * from './manual-payment.provider.js';

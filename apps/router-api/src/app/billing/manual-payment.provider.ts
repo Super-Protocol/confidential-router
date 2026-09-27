@@ -36,12 +36,14 @@ export interface ManualCheckoutClaims extends SignedLinkClaims {
  *
  * The link is HMAC-signed with `auth.secret` and expires. Without that, the
  * confirm endpoint would be an unauthenticated way to mint credit; with it, a
- * caller can only complete a checkout this process actually created.
- * `BillingModule` additionally refuses to bind this provider in production.
+ * caller can only complete a checkout this process actually created — which is
+ * still every account holder, so `BillingModule` refuses to bind this provider
+ * in production or on a `server.publicBaseUrl` anyone else can reach (SUP-167).
  */
 @Injectable()
 export class ManualPaymentProvider implements PaymentProvider {
   readonly name = 'manual';
+  readonly supportsCheckout = true;
   readonly supportsSavedPaymentMethods = true;
 
   private readonly logger = new Logger(ManualPaymentProvider.name);

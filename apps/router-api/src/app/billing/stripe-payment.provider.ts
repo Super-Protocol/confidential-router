@@ -26,6 +26,7 @@ const HANDLED_EVENTS = new Set(['checkout.session.completed', 'payment_intent.su
 @Injectable()
 export class StripePaymentProvider implements PaymentProvider {
   readonly name = 'stripe';
+  readonly supportsCheckout = true;
   readonly supportsSavedPaymentMethods = true;
 
   private readonly logger = new Logger(StripePaymentProvider.name);

@@ -20,11 +20,17 @@ import { BalanceCard } from './balance-card';
 import { BuyCreditsCard } from './buy-credits-card';
 import { InviteWelcomeCard } from './invite-welcome-card';
 import { CREDITS_PAGE_SIZE, CREDITS_QUERY } from './operations';
+import { PurchasesOffCard } from './purchases-off-card';
 import { type TransactionRow, TransactionTable } from './transaction-table';
 
 /**
  * The Credits screen: balance, top-ups through Stripe Checkout, automatic
  * top-up, and the ledger those write to.
+ *
+ * `purchasesAvailable` decides whether the buy panel is on the screen at all. A
+ * deployment that sells nothing used to get the panel anyway — and, because the
+ * API fell back to its development payment provider, a working one that minted
+ * credit from a signed link (SUP-167).
  *
  * The screen never writes credit itself. Both `?topup=success` and
  * `?topup=cancelled` only trigger a refetch, because the money is real when the
@@ -145,8 +151,24 @@ export function CreditsScreen() {
         <FeedbackOfferCard onGranted={refetchBalance} />
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <BuyCreditsCard workspaceId={workspaceId} minTopUpMicros={balance.minTopUpMicros} canSpend={canSpend} />
-          <AutoTopUpCard workspaceId={workspaceId} balance={balance} canSpend={canSpend} />
+          {balance.purchasesAvailable ? (
+            <BuyCreditsCard
+              workspaceId={workspaceId}
+              minTopUpMicros={balance.minTopUpMicros}
+              maxTopUpMicros={balance.maxTopUpMicros}
+              canSpend={canSpend}
+            />
+          ) : (
+            <PurchasesOffCard />
+          )}
+          {/*
+            Hidden with the buy panel, with one exception: a workspace that turned
+            automatic top-up on while a provider could charge a card has to be able
+            to turn it off again, and a card that is not rendered cannot.
+          */}
+          {balance.purchasesAvailable || balance.autoTopUp.enabled ? (
+            <AutoTopUpCard workspaceId={workspaceId} balance={balance} canSpend={canSpend} />
+          ) : null}
         </div>
 
         <Card>

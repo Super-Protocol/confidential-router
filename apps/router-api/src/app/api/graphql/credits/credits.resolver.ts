@@ -108,6 +108,8 @@ function balanceModel(view: CreditsView): CreditBalanceModel {
     balanceMicros: String(view.balanceMicros),
     spendable: view.spendable,
     minTopUpMicros: String(view.minTopUpMicros),
+    maxTopUpMicros: String(view.maxTopUpMicros),
+    purchasesAvailable: view.purchasesAvailable,
     autoTopUp: {
       enabled: view.autoTopUp.enabled,
       thresholdMicros: view.autoTopUp.thresholdMicros === null ? null : String(view.autoTopUp.thresholdMicros),

@@ -120,7 +120,13 @@ auth:
     - admin@tee.swarm.cloud
 
 billing:
+  # `auto` is Stripe when the block below is set. The manual provider it otherwise
+  # falls back to mints credit from a signed link, so it is refused in production
+  # and on any publicBaseUrl that is not a loopback address; a deployment that
+  # sells nothing at all says `disabled` here.
+  provider: auto
   minTopUpMicros: 5000000        # $5
+  maxTopUpMicros: 10000000000    # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h          # floor between two automatic top-ups of one workspace
