@@ -16,9 +16,9 @@ const REASONS: Record<FeedbackIneligibleReason, FeedbackIneligibleReasonEnum> = 
 /**
  * The second grant, in the console.
  *
- * One query and no mutation, for the same reason `InvitesResolver` has none: the
- * grant is applied by a signed webhook and nowhere else, so a field that could
- * apply it would be a field that could apply it twice. What the console can do
+ * One query and no mutation, for the same reason `InvitesResolver` exposes none
+ * that credits: the grant is applied by a signed webhook and nowhere else, so a
+ * field that could apply it would be a field that could apply it twice. What the console can do
  * is ask whether to make the offer — and get, in the same answer, the URL to
  * make it with.
  *

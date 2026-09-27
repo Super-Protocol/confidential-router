@@ -192,6 +192,17 @@ A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date
 """
 scalar DateTime
 
+input DisableInviteCodesInput {
+  """Every code of one campaign."""
+  campaign: String
+
+  """One code, in any spelling."""
+  code: String
+
+  """Leave codes whose every seat is already taken alone."""
+  unspentOnly: Boolean = false
+}
+
 """
 A router hostname the platform publishes evidence for. Projected from the router config; never created or edited through this API.
 """
@@ -529,6 +540,43 @@ enum InviteRefusalReason {
   NOT_FOUND
 }
 
+"""
+How many withdrawn invitation codes an operator put back. Operators only.
+"""
+type InviteRestoration {
+  """Codes the target matched that were never withdrawn."""
+  alreadyUsable: Int!
+  matched: Int!
+
+  """Codes this call put back into circulation."""
+  restored: Int!
+  target: String!
+}
+
+"""How many invitation codes an operator withdrew. Operators only."""
+type InviteWithdrawal {
+  """
+  Codes already withdrawn before this call; their timestamps were left alone.
+  """
+  alreadyWithdrawn: Int!
+
+  """
+  Codes the target matched. Zero means there is no such code or campaign.
+  """
+  matched: Int!
+
+  """
+  Codes left in circulation because every seat is spent — `unspentOnly` only.
+  """
+  spent: Int!
+
+  """The code or campaign acted on, echoed back normalised."""
+  target: String!
+
+  """Codes this call withdrew. No further sign-up can redeem them."""
+  withdrawn: Int!
+}
+
 """Arbitrary JSON, serialised as-is."""
 scalar JSON
 
@@ -611,9 +659,19 @@ type Mutation {
   """Starts a top-up. Credit appears once the provider confirms."""
   createCheckout(input: CreateCheckoutInput!): CheckoutSession!
 
+  """
+  Withdraws one invitation code or a campaign’s. Credit already granted is untouched. Restricted to auth.adminEmails.
+  """
+  disableInviteCodes(input: DisableInviteCodesInput!): InviteWithdrawal!
+
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
   refreshEvidence(endpointId: ID!): EvidenceSnapshot
+
+  """
+  Puts withdrawn invitation codes back into circulation. Restricted to auth.adminEmails.
+  """
+  restoreInviteCodes(input: RestoreInviteCodesInput!): InviteRestoration!
 
   """Revokes a key. Idempotent; the row is kept for its generations."""
   revokeApiKey(id: ID!): ApiKey!
@@ -774,6 +832,14 @@ type Query {
     to: DateTime!
     workspaceId: ID!
   ): [ModelUsage!]!
+}
+
+input RestoreInviteCodesInput {
+  """Every code of one campaign."""
+  campaign: String
+
+  """One code, in any spelling."""
+  code: String
 }
 
 input SetAutoTopUpInput {

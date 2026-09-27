@@ -496,6 +496,165 @@ describe('the campaign stats query', () => {
   });
 });
 
+/**
+ * The kill switch over the console schema — the path that exists because a
+ * published cluster has no shell to run `invites disable` in (SUP-159).
+ *
+ * End to end rather than in the service spec, because what is being checked is
+ * the wiring: that the guard is on the mutation, and that a withdrawal made
+ * through it is the same withdrawal a redemption inside a real sign-up honours.
+ */
+describe('the kill switch', () => {
+  const DISABLE = `
+    mutation Disable($input: DisableInviteCodesInput!) {
+      disableInviteCodes(input: $input) { target matched withdrawn alreadyWithdrawn spent }
+    }
+  `;
+  const RESTORE = `
+    mutation Restore($input: RestoreInviteCodesInput!) {
+      restoreInviteCodes(input: $input) { target matched restored alreadyUsable }
+    }
+  `;
+
+  async function operator(): Promise<ConsoleSession> {
+    return consoleSession(
+      sessionCookiesOf(await signUp({ email: 'ops@example.com', password: PASSWORD, name: 'Ops' }).expect(200)),
+    );
+  }
+
+  beforeEach(async () => {
+    await inviteHarness({ CR_API_AUTH__ADMIN_EMAILS: 'ops@example.com' });
+  });
+
+  it('withdraws a leaked code, and the next sign-up gets an account but no credit', async () => {
+    const [invite] = await issue(dataSourceOf(harness));
+    const ops = await operator();
+
+    const withdrawal = await expectData(ops, DISABLE, { input: { code: invite.code } });
+
+    expect(withdrawal.disableInviteCodes).toEqual({
+      target: invite.code,
+      matched: 1,
+      withdrawn: 1,
+      alreadyWithdrawn: 0,
+      spent: 0,
+    });
+    // The landing page stops promising the credit…
+    await lookup(invite.code).expect(200).expect({ valid: false, reason: 'unavailable' });
+    // …and the registration still succeeds, with nothing granted and a reason.
+    const late = await consoleSession(
+      sessionCookiesOf(
+        await signUp({
+          email: 'too-late@example.com',
+          password: PASSWORD,
+          name: 'Late',
+          inviteCode: invite.code,
+        }).expect(200),
+      ),
+    );
+    expect((await expectData(late, GRANT_STATUS, { code: invite.code })).inviteGrantStatus).toEqual({
+      grant: null,
+      reason: 'DISABLED',
+    });
+  });
+
+  it('withdraws a campaign without touching the credit it already granted', async () => {
+    const invites = await issue(dataSourceOf(harness), { count: 2 });
+    const redeemed = await consoleSession(
+      sessionCookiesOf(
+        await signUp({
+          email: 'early@example.com',
+          password: PASSWORD,
+          name: 'Early',
+          inviteCode: invites[0].code,
+        }).expect(200),
+      ),
+    );
+    const ops = await operator();
+
+    const withdrawal = await expectData(ops, DISABLE, { input: { campaign: CAMPAIGN, unspentOnly: true } });
+
+    expect(withdrawal.disableInviteCodes).toMatchObject({ matched: 2, withdrawn: 1, spent: 1 });
+    // The account that got in keeps its $100: the ledger entry and the grant.
+    const ledger = await expectData(redeemed, LEDGER, { workspaceId: redeemed.workspaceId });
+    expect(ledger.creditTransactions.edges).toEqual([
+      {
+        node: {
+          kind: 'GRANT',
+          amountMicros: String(GRANT_MICROS),
+          reference: CAMPAIGN,
+          description: `Invitation credit · ${CAMPAIGN}`,
+        },
+      },
+    ]);
+    expect((await expectData(redeemed, INVITE_GRANT)).inviteGrant).toMatchObject({
+      grantMicros: String(GRANT_MICROS),
+      campaign: CAMPAIGN,
+    });
+  });
+
+  it('puts a withdrawn code back, and it grants again', async () => {
+    const [invite] = await issue(dataSourceOf(harness));
+    const ops = await operator();
+    await expectData(ops, DISABLE, { input: { code: invite.code } });
+
+    const restoration = await expectData(ops, RESTORE, { input: { code: invite.code } });
+
+    expect(restoration.restoreInviteCodes).toEqual({
+      target: invite.code,
+      matched: 1,
+      restored: 1,
+      alreadyUsable: 0,
+    });
+    await lookup(invite.code).expect(200).expect(validBody());
+    const late = await consoleSession(
+      sessionCookiesOf(
+        await signUp({
+          email: 'second-chance@example.com',
+          password: PASSWORD,
+          name: 'Second',
+          inviteCode: invite.code,
+        }).expect(200),
+      ),
+    );
+    expect((await expectData(late, INVITE_GRANT)).inviteGrant).toMatchObject({ grantMicros: String(GRANT_MICROS) });
+  });
+
+  it('refuses a signed-in caller who is not an operator, and leaves the code usable', async () => {
+    const [invite] = await issue(dataSourceOf(harness));
+    const outsider = await consoleSession(
+      sessionCookiesOf(
+        await signUp({ email: 'outsider@example.com', password: PASSWORD, name: 'Outsider' }).expect(200),
+      ),
+    );
+
+    const refused = await graphql(outsider, DISABLE, { input: { code: invite.code } });
+
+    expect(refused.errors?.[0].extensions.code).toBe('FORBIDDEN');
+    await lookup(invite.code).expect(200).expect(validBody());
+  });
+
+  it('refuses an anonymous caller', async () => {
+    const [invite] = await issue(dataSourceOf(harness));
+
+    const refused = await graphql(anonymous(harness), DISABLE, { input: { code: invite.code } });
+
+    expect(refused.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
+    await lookup(invite.code).expect(200).expect(validBody());
+  });
+
+  it('tells an operator who named neither target, or both, what is wrong', async () => {
+    const ops = await operator();
+
+    const neither = await graphql(ops, DISABLE, { input: {} });
+    const both = await graphql(ops, DISABLE, { input: { code: 'ZZZZ-ZZZZ-ZZZZ', campaign: CAMPAIGN } });
+
+    expect(neither.errors?.[0].extensions.code).toBe('BAD_REQUEST');
+    expect(neither.errors?.[0].message).toContain('exactly one');
+    expect(both.errors?.[0].extensions.code).toBe('BAD_REQUEST');
+  });
+});
+
 function validBody() {
   return { valid: true, grantMicros: String(GRANT_MICROS), campaign: CAMPAIGN };
 }

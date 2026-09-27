@@ -270,11 +270,16 @@ Invitation codes that grant credit, for a mailed campaign
 | --- | --- |
 | `GET /v1/invites/{code}` | public, rate-limited per address; `{valid, grantMicros, campaign}` or one generic `unavailable` |
 | the sign-up path | redemption, inside Better Auth's `user.create.after` — no endpoint, nothing to replay |
-| `dist/cli/invites.js` | `generate` mints a campaign's codes into a `code,url` CSV; `stats` reads how it converted |
+| `dist/cli/invites.js` | `generate` mints a campaign's codes into a `code,url` CSV; `stats` reads how it converted; `disable`/`restore` are the kill switch |
 
-Plus `inviteGrant` (session) and `inviteCampaigns` (`auth.adminEmails`) in the
-console schema. `InvitesService` is the only code that spends a code, and it
-cannot throw at its caller: the account is created whether or not the grant is.
+Plus `inviteGrant` (session), `inviteCampaigns` and the two operator mutations
+`disableInviteCodes`/`restoreInviteCodes` (`auth.adminEmails`) in the console
+schema — the kill switch has an API because a published cluster has no shell to
+run the CLI in, and unlike minting it only ever *stops* credit (SUP-159).
+`InvitesService` is the only code that spends a code, and it cannot throw at its
+caller: the account is created whether or not the grant is.
+`InviteWithdrawalService` is the only code that writes `disabledAt`, and it cannot
+touch a grant already made.
 
 ## The second grant, for feedback
 
@@ -366,11 +371,11 @@ src/
     gatekeeper/           GitHub release metadata for the console's download screen
     api/graphql           Apollo code-first schema, its error codes and the committed SDL
     api/v1                the OpenAI-compatible gateway
-    invites/              invitation codes: lookup, redemption inside sign-up, campaign stats
+    invites/              invitation codes: lookup, redemption inside sign-up, campaign stats, the kill switch
     feedback/             the second grant: eligibility, the signed form token, the webhook
   migrations/             TypeORM migrations, imported explicitly for bundling
   cli/run-migrations.ts   the migration command a deployment runs
-  cli/invites.ts          `invites generate` / `invites stats`
+  cli/invites.ts          `invites generate` / `stats` / `disable` / `restore`
   cli/args.ts             the flag parser both CLIs share
 test/                     supertest e2e against the real module graph
 tools/runtime-deps.cjs    the one list of packages webpack leaves external and

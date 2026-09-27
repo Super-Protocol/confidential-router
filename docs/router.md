@@ -449,6 +449,51 @@ forwarded the mail to their work address and lost the link. After registration t
 browser lands on `/credits?welcome=invite`, where the balance is already there and
 the grant is the `Invitation credit` row naming the campaign.
 
+**Withdrawing a code.** A code that turns up on a mailing list, a forum or a
+screenshot has to be retractable in one command, and a campaign that was mailed by
+mistake has to be retractable whole (SUP-159):
+
+```bash
+node apps/router-api/dist/cli/invites.js disable --code ABCD-EFGH-JKMN
+node apps/router-api/dist/cli/invites.js disable --campaign launch-2026-10-devs --unspent-only
+node apps/router-api/dist/cli/invites.js restore --campaign launch-2026-10-devs
+```
+
+Each prints how many codes it changed — `withdrew 4996 of 5000 codes (2 already
+withdrawn, 2 spent and left in circulation)` — and exits `1` when the target
+matched nothing, so a script can tell a closed leak from a mistyped code. Running
+`disable` twice is not an error and does not move the timestamp that records when
+the code was retired.
+
+`restore --campaign` clears **every** withdrawal in the campaign, including a code
+retired on its own for a leak earlier: the column records that a code is withdrawn,
+not why. Read the counts before running it — `restored 4998 of 5000` on a campaign
+you only meant to un-disable wholesale is the leak back in circulation — and
+withdraw that code again by `--code` afterwards if it was one of them.
+
+**A withdrawal never touches credit already granted.** `disabledAt` is read when a
+seat is claimed and nowhere else, so no balance, no `credit_transactions` row and
+no `invite_redemptions` row is affected: retiring a campaign mid-flight stops the
+*next* sign-up and leaves every account that already redeemed exactly as it was.
+`--unspent-only` is about tidiness rather than safety — it keeps `disabledAt`
+meaning "an operator retired this", so a campaign's disabled count stays readable
+afterwards.
+
+**On a cluster whose space is published there is no shell**, which is why the same
+two operations are also console mutations:
+
+```graphql
+mutation { disableInviteCodes(input: { code: "ABCD-EFGH-JKMN" }) { target matched withdrawn } }
+mutation { restoreInviteCodes(input: { campaign: "launch-2026-10-devs" }) { restored } }
+```
+
+Both are behind `auth.adminEmails`, like `inviteCampaigns`, and both write a WARN
+naming the operator — on a frozen deployment the container log is the audit trail.
+Withdrawal has an API where *minting* deliberately does not, and the asymmetry
+runs in the safe direction: generating codes creates credit and stays a CLI behind
+database access, while this only ever stops it. A kill switch that cannot be pulled
+on the cluster the codes were mailed for is not a kill switch.
+
 ## Product analytics
 
 The launch campaign is measured, and the console still makes **no third-party
