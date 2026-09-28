@@ -19,6 +19,14 @@ export const CONSOLE_ERROR_CODES = {
   409: 'CONFLICT',
   422: 'BAD_USER_INPUT',
   429: 'TOO_MANY_REQUESTS',
+  // The one 5xx that is a policy statement rather than a fault: a deployment
+  // that sells no credit answers `createCheckout` with a
+  // `ServiceUnavailableException` carrying a sentence written for the user
+  // (SUP-171). Unmapped, it fell through to `INTERNAL_SERVER_ERROR` and had its
+  // message blanked, so the console could neither quote the sentence nor tell a
+  // deliberate refusal from an outage. Mapping it keeps that one path speaking;
+  // every other 5xx is still masked, because nothing else here throws a 503.
+  503: 'SERVICE_UNAVAILABLE',
 } as const;
 
 export const INTERNAL_ERROR_CODE = 'INTERNAL_SERVER_ERROR';
