@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
 )
 
 // Patterns kept in lockstep with schemas/gatekeeper-config.schema.json. They are
@@ -178,6 +180,23 @@ func (c *Config) validateAttestedRoots(p *problems) {
 	}
 	if ttl := c.AttestedRoots.CacheTTL; ttl != nil && ttl.Std() <= 0 {
 		p.addf("attestedRoots.cacheTtl", "must be positive, got %s", ttl)
+	}
+	seen := map[string]int{}
+	for i, raw := range c.AttestedRoots.TrustedMeasurements {
+		path := fmt.Sprintf("attestedRoots.trustedMeasurements[%d]", i)
+		normalized, err := attestedroot.ParseMeasurement(raw)
+		if err != nil {
+			p.addf(path, "%s", err)
+			continue
+		}
+		// A duplicate is harmless to the verifier and a sign the operator lost
+		// track of what they pinned, which is the thing this list exists to
+		// keep legible.
+		if prev, dup := seen[normalized]; dup {
+			p.addf(path, "duplicate measurement (already pinned by attestedRoots.trustedMeasurements[%d])", prev)
+			continue
+		}
+		seen[normalized] = i
 	}
 }
 

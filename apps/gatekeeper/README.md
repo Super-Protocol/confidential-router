@@ -162,6 +162,18 @@ Manual roots always win — the attested check only runs for a chain that
 terminated somewhere the manual list does not know. ADR-003 §2a is the model,
 `docs/gatekeeper.md` the user-facing version.
 
+The fourth leg is the one that is not a property of the VM in front of you: it is
+a statement Super Protocol published about an image it built, and a stand built
+outside that flow has none. `attestedRoots.trustedMeasurements` —
+`gatekeeper trust measurements add|rm|list` — lets the operator supply that leg
+themselves, for a named measurement and nothing else. Legs 1–3, the network-type
+rule, the policies and the endpoint's own `trustedEvidence` pin are all untouched,
+so a pin can admit a cloud but never a deployment and never a VM that is not
+attested. Because it proves less, it is reported as a different verdict:
+`attested (operator-pinned)` rather than `attested (registry)`, on every surface
+and in `input.attestation.rootAttestation.measurementSource`, so a stricter
+deployment can refuse it in one Rego line.
+
 Every edit goes through `config.Document`, so the comments and formatting of a
 hand-written file survive, and every save is atomic.
 

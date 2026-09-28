@@ -205,6 +205,7 @@ describe('rego-input rules', () => {
       networkType: 'untrusted',
       measurement: 'a'.repeat(64),
       inRegistry: true,
+      measurementSource: 'registry',
       reportIntegrity: true,
       revocationChecked: false,
       keyBinding: true,
@@ -233,6 +234,32 @@ describe('rego-input rules', () => {
       measurement: 'not-hex',
     };
     expect(validate(bad)).toBe(false);
+
+    // Which anchor admitted the measurement is the one field a stricter
+    // deployment keys on, so an unknown value has to be a schema error rather
+    // than a rule that silently never matches (SUP-139). The empty string is
+    // valid: it is what a denied attested root carries.
+    const pinned = base();
+    pinned.attestation.rootAttestation = {
+      attested: true,
+      inRegistry: false,
+      measurementSource: 'operator-pinned',
+      reportIntegrity: true,
+      keyBinding: true,
+      teeFlags: {},
+    };
+    expect(validate(pinned), errorsOf(validate)).toBe(true);
+
+    const denied = base();
+    denied.attestation.rootAttestation = { ...pinned.attestation.rootAttestation, measurementSource: '' };
+    expect(validate(denied), errorsOf(validate)).toBe(true);
+
+    const unknownSource = base();
+    unknownSource.attestation.rootAttestation = {
+      ...pinned.attestation.rootAttestation,
+      measurementSource: 'somebody-else',
+    };
+    expect(validate(unknownSource)).toBe(false);
   });
 
   it('passes unknown payload fields through', () => {

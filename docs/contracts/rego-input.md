@@ -24,6 +24,7 @@ to `endpoint` and the attestation block extended. Rego v1 syntax, evaluated by e
       "networkType": "untrusted",                   // what the certificate declares; reported, not enforced
       "measurement": "842c5f2e…",                   // normalised mrEnclave, hex
       "inRegistry": true,                           // Super Protocol signed that measurement
+      "measurementSource": "registry",              // or "operator-pinned"; see below
       "reportIntegrity": true,
       "revocationChecked": false,                   // false ⇒ not run, never "clean"
       "notRevoked": false,
@@ -67,7 +68,14 @@ with the scheme dropped, or against `evidenceDigest` if the canonical
 `attestation.rootAttestation` is **absent** for a root the user pinned in `trustedRoots[]`, and present
 whenever the attested-root anchor was consulted (ADR-003 §2a) — including when it denied. That is what lets
 a policy require one anchor or the other, and what lets an operator police the TEE flags the gatekeeper
-deliberately does not judge:
+deliberately does not judge.
+
+`measurementSource` says which anchor admitted the measurement: `registry` when Super Protocol signed it,
+`operator-pinned` when the operator listed it in `attestedRoots.trustedMeasurements` because the registry
+does not. The second proves strictly less — the hardware half of the check is identical, but the image's
+identity is vouched for locally rather than by a published signature — so a stricter deployment refuses it
+with `input.attestation.rootAttestation.measurementSource == "registry"`. A measurement the registry does
+sign is always reported as `registry`, whether or not it is also pinned.
 
 ```rego
 package gatekeeper.hardened

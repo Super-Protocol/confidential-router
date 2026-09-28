@@ -14,7 +14,7 @@ import (
 func newTrustCommand(g *globals) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trust",
-		Short: "Manage the global trusted roots",
+		Short: "Manage the global trust anchors: roots and TEE measurements",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
@@ -28,7 +28,7 @@ func newTrustCommand(g *globals) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	roots.AddCommand(newTrustRootsListCommand(g), newTrustRootsAddCommand(g), newTrustRootsRemoveCommand(g))
-	cmd.AddCommand(roots)
+	cmd.AddCommand(roots, newTrustMeasurementsCommand(g))
 	return cmd
 }
 
