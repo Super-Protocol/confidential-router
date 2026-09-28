@@ -13,6 +13,7 @@ import { createMagicLinkMailer, MAGIC_LINK_MAILER } from './magic-link-mailer.js
 import { OptionalSessionGuard } from './optional-session.guard.js';
 import { SessionGuard } from './session.guard.js';
 import { SignInOptionsService } from './sign-in-options.service.js';
+import { SignUpGate } from './sign-up-gate.service.js';
 import { SignUpProvisioning } from './sign-up-provisioning.service.js';
 import { UserProfileService } from './user-profile.service.js';
 import { WorkspaceProvisioningService } from './workspace-provisioning.service.js';
@@ -34,6 +35,7 @@ import { WorkspaceScopeService } from './workspace-scope.service.js';
     OptionalSessionGuard,
     SessionGuard,
     SignInOptionsService,
+    SignUpGate,
     SignUpProvisioning,
     UserProfileService,
     WorkspaceProvisioningService,

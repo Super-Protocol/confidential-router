@@ -328,6 +328,11 @@
             }
           }
         },
+        "requireInviteForSignUp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Invite-only registration. While this is on, no sign-up path creates an account without an invitation code that is valid and unredeemed at that moment; sign-in of existing accounts and POST /auth/bootstrap are unaffected."
+        },
         "bootstrapToken": {
           "type": "string",
           "description": "While this is set and no user exists, POST /auth/bootstrap trades it for the first account and a session. Blank counts as unset; otherwise at least 16 characters."

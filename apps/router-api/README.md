@@ -287,6 +287,16 @@ caller: the account is created whether or not the grant is.
 `InviteWithdrawalService` is the only code that writes `disabledAt`, and it cannot
 touch a grant already made.
 
+`auth.requireInviteForSignUp` turns the campaign into an invite-only deployment
+(SUP-173): `SignUpGate` runs in `user.create.before` and refuses every sign-up
+path — password, magic link, OAuth callback — that does not carry a usable code,
+before the `user` row exists. It answers one of three typed codes,
+`invite_required` / `invite_already_claimed` / `invite_expired_or_unknown`, in a
+403 body or as `?error=` on the error callback depending on whether the path can
+be answered with JSON. Off by default, sign-in and `/auth/bootstrap` unaffected,
+and `signInOptions { inviteRequired }` reports it so the console can say so before
+anyone tries.
+
 ## The second grant, for feedback
 
 When the first $100 runs out the console offers another one in exchange for

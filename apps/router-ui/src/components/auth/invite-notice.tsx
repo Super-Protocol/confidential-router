@@ -3,10 +3,11 @@
 import { Button } from '@confidential-router/ui/components/button';
 import { Input } from '@confidential-router/ui/components/input';
 import { Label } from '@confidential-router/ui/components/label';
-import { Gift } from 'lucide-react';
+import { Gift, TriangleAlert } from 'lucide-react';
 import * as React from 'react';
 import { formatUsdShort } from '../../lib/format';
 import { type InviteLookup, lookupInvite } from '../../lib/invite-lookup';
+import { INVITE_REFUSAL_COPY, type InviteRefusalCode } from '../../lib/invite-refusal';
 
 export type InviteState =
   /** Nothing to say: no code, and the viewer has not opened the input. */
@@ -66,6 +67,21 @@ export interface InviteNoticeProps {
    * lookup in the same shape.
    */
   onCodeEntered: (code: string) => void;
+  /**
+   * The deployment is invite-only (`signInOptions.inviteRequired`, SUP-173).
+   *
+   * Changes what the same three states mean rather than adding a fourth: without
+   * a usable code there is no account to be had, so the input is always open and
+   * every unusable code is an alert instead of a footnote about credit.
+   */
+  required?: boolean;
+  /**
+   * A refusal the router has already made, from a sign-up that was attempted and
+   * turned away — the race the live lookup cannot see, and the OAuth round trip
+   * that lost its cookie. Outranks {@link state}, which is a snapshot from
+   * before the attempt.
+   */
+  refusal?: InviteRefusalCode | null;
 }
 
 /**
@@ -77,13 +93,20 @@ export interface InviteNoticeProps {
  * forwarded the mail to their work address and opened the console from a bookmark
  * — a real case, and the alternative for them is silently not getting $100.
  */
-export function InviteNotice({ state, onCodeEntered }: InviteNoticeProps): React.ReactElement | null {
+export function InviteNotice({
+  state,
+  onCodeEntered,
+  required = false,
+  refusal = null,
+}: InviteNoticeProps): React.ReactElement | null {
   // Open by default where the code we have is no good: the viewer has something to
-  // do about it, and hiding the input behind a click helps nobody.
+  // do about it, and hiding the input behind a click helps nobody. On an
+  // invite-only deployment it is open from the start — there is nothing else on
+  // the screen that can produce an account.
   const [entering, setEntering] = React.useState(false);
   const [typed, setTyped] = React.useState('');
   const failed = state.kind === 'unavailable' || state.kind === 'unknown';
-  const showsInput = entering || failed;
+  const showsInput = entering || failed || required;
 
   const apply = (): void => {
     const code = typed.trim();
@@ -91,6 +114,76 @@ export function InviteNotice({ state, onCodeEntered }: InviteNoticeProps): React
       onCodeEntered(code);
     }
   };
+
+  /**
+   * The way back in for someone whose code is no good, or who never had one on
+   * the page. Shared by the refusal above and the states below, because it is
+   * the same field wherever it appears.
+   */
+  const codeInput = (): React.ReactElement =>
+    showsInput ? (
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="invite-code">Invitation code</Label>
+        <div className="flex gap-2">
+          <Input
+            id="invite-code"
+            name="invite-code"
+            // Not `autoComplete="off"`: a code is not a credential and the
+            // browser has no field type for it.
+            autoCapitalize="characters"
+            spellCheck={false}
+            placeholder="ABCD-EFGH-JKLM"
+            className="font-mono"
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter inside this input must not submit the sign-up form: the
+              // viewer is applying a code, not creating the account yet.
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                apply();
+              }
+            }}
+          />
+          <Button type="button" variant="outline" disabled={typed.trim().length === 0} onClick={apply}>
+            Apply
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="self-start px-0 text-muted-foreground"
+        aria-expanded={false}
+        onClick={() => setEntering(true)}
+      >
+        Have a code?
+      </Button>
+    );
+
+  // Whatever the lookup last said, a refusal the router actually made is newer
+  // and is the thing to explain: it is the outcome of an attempt, not of a check.
+  if (refusal) {
+    const { title, detail } = INVITE_REFUSAL_COPY[refusal];
+    return (
+      <div className="flex flex-col gap-2">
+        <div
+          className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3"
+          role="alert"
+          data-testid={`invite-refused-${refusal}`}
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="font-medium text-sm">{title}</p>
+            <p className="text-muted-foreground text-xs leading-relaxed">{detail}</p>
+          </div>
+        </div>
+        {codeInput()}
+      </div>
+    );
+  }
 
   if (state.kind === 'ready') {
     return (
@@ -120,65 +213,62 @@ export function InviteNotice({ state, onCodeEntered }: InviteNoticeProps): React
         </p>
       ) : null}
 
+      {/* On an invite-only deployment the same answer means something else: the
+          code is not worth less credit, it is the difference between having an
+          account and not. So it is an alert with the sign-up blocked behind it,
+          not a footnote saying to carry on. */}
       {state.kind === 'unavailable' ? (
-        <p className="text-sm" role="status" data-testid="invite-unavailable">
-          This invitation cannot be used any more — it may have been claimed already or expired.{' '}
-          <span className="text-muted-foreground">
-            You can still create an account; it just starts without the credit.
-          </span>
-        </p>
+        required ? (
+          <div
+            className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3"
+            role="alert"
+            data-testid="invite-unavailable-required"
+          >
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="font-medium text-sm">
+                {INVITE_REFUSAL_COPY.invite_expired_or_unknown.title} It may already have been claimed.
+              </p>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                Registration here is by invitation, so this one has to work before an account can be created. Check the
+                link you were sent, or ask for a new code.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm" role="status" data-testid="invite-unavailable">
+            This invitation cannot be used any more — it may have been claimed already or expired.{' '}
+            <span className="text-muted-foreground">
+              You can still create an account; it just starts without the credit.
+            </span>
+          </p>
+        )
       ) : null}
 
       {state.kind === 'unknown' ? (
         <p className="text-sm" role="status" data-testid="invite-unknown">
           We could not check your invitation just now.{' '}
           <span className="text-muted-foreground">
-            Sign up anyway — the credit is applied when the account is created, not here.
+            {required
+              ? 'Registration here is by invitation, so the code has to be checked before an account can be created. Try again in a moment.'
+              : 'Sign up anyway — the credit is applied when the account is created, not here.'}
           </span>
         </p>
       ) : null}
 
-      {showsInput ? (
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="invite-code">Invitation code</Label>
-          <div className="flex gap-2">
-            <Input
-              id="invite-code"
-              name="invite-code"
-              // Not `autoComplete="off"`: a code is not a credential and the
-              // browser has no field type for it.
-              autoCapitalize="characters"
-              spellCheck={false}
-              placeholder="ABCD-EFGH-JKLM"
-              className="font-mono"
-              value={typed}
-              onChange={(event) => setTyped(event.target.value)}
-              onKeyDown={(event) => {
-                // Enter inside this input must not submit the sign-up form: the
-                // viewer is applying a code, not creating the account yet.
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  apply();
-                }
-              }}
-            />
-            <Button type="button" variant="outline" disabled={typed.trim().length === 0} onClick={apply}>
-              Apply
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="self-start px-0 text-muted-foreground"
-          aria-expanded={false}
-          onClick={() => setEntering(true)}
-        >
-          Have a code?
-        </Button>
-      )}
+      {/* Nothing has happened yet and nothing is wrong, but on an invite-only
+          deployment the visitor still has to be told why there is a code field
+          above the form at all. */}
+      {required && state.kind === 'none' ? (
+        <p className="text-sm" data-testid="invite-required-notice">
+          Registration is by invitation.{' '}
+          <span className="text-muted-foreground">
+            Paste the code from the link you were sent — the account cannot be created without it.
+          </span>
+        </p>
+      ) : null}
+
+      {codeInput()}
     </div>
   );
 }

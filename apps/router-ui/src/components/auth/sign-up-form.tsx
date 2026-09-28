@@ -8,9 +8,10 @@ import { Label } from '@confidential-router/ui/components/label';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import Link from 'next/link';
 import * as React from 'react';
-import { completeSignIn, signUpWithPassword } from '../../lib/auth';
+import { AuthRequestError, completeSignIn, signUpWithPassword } from '../../lib/auth';
 import { captureConsoleEvent } from '../../lib/console-analytics';
 import { inviteContextOf, normaliseInviteCode, rememberInvite } from '../../lib/invite';
+import { type InviteRefusalCode, inviteRefusalOf, isInviteRefusalCode } from '../../lib/invite-refusal';
 import { InviteNotice, useInviteLookup } from './invite-notice';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
@@ -50,6 +51,14 @@ export function SignUpForm() {
   const [password, setPassword] = React.useState('');
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /**
+   * A refusal from the router, either carried back by a magic-link or OAuth
+   * redirect (`?error=`) or answered to this form's own POST. Read once from the
+   * URL, for the same reason the invitation context is.
+   */
+  const [refusal, setRefusal] = React.useState<InviteRefusalCode | null>(() =>
+    inviteRefusalOf(globalThis.location?.search ?? ''),
+  );
 
   // Read once, from the URL this page was opened with. A `useSearchParams` here
   // would need a Suspense boundary for a value that cannot change without a
@@ -66,6 +75,16 @@ export function SignUpForm() {
   // than a sentence saying where to go instead.
   const offered = data?.signInOptions.password ?? false;
   const minLength = data?.signInOptions.passwordMinLength ?? 0;
+  /**
+   * Invite-only registration (SUP-173). Defaults to false while the answer is on
+   * its way, which never renders: the form is behind `settled` below, and the
+   * router refuses the sign-up anyway — the flag decides what this screen says,
+   * never whether an account can be created.
+   */
+  const inviteRequired = data?.signInOptions.inviteRequired ?? false;
+  // Nothing else can produce an account here, so a code that has not been
+  // confirmed is a submission the router is certain to refuse.
+  const blockedOnInvite = inviteRequired && invite.kind !== 'ready';
 
   // One per page load, anonymous, and a volume rather than a funnel step —
   // linking it to the account that appears later would need an identifier stored
@@ -96,6 +115,7 @@ export function SignUpForm() {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setRefusal(null);
     setPending(true);
     try {
       // Sent whatever the lookup said: its answer is a snapshot, and the only
@@ -103,7 +123,17 @@ export function SignUpForm() {
       await signUpWithPassword({ email, password, name, inviteCode: code });
       completeSignIn(code ? INVITE_WELCOME_PATH : undefined);
     } catch (caught) {
-      setError(messageOf(caught, SIGN_UP_MESSAGES));
+      // An invite-only refusal is about the code, not about the form, so it is
+      // rendered where the code is rather than under the password field. The two
+      // that can race past the live lookup — the last seat taken between the
+      // check and the submit, a code withdrawn in between — only ever arrive here.
+      const code = caught instanceof AuthRequestError ? caught.code : undefined;
+      if (isInviteRefusalCode(code)) {
+        setRefusal(code);
+        setError(null);
+      } else {
+        setError(messageOf(caught, SIGN_UP_MESSAGES));
+      }
       setPending(false);
     }
   };
@@ -143,14 +173,25 @@ export function SignUpForm() {
       <CardHeader>
         <h1 className="font-semibold leading-none">Create an account</h1>
         <CardDescription>
-          Your prompts are metered, never stored. There is no confirmation mail on this deployment — the account works
-          from the moment you create it.
+          {inviteRequired
+            ? 'Registration is by invitation: an account is created only for a code that has not been used yet. Your prompts are metered, never stored.'
+            : 'Your prompts are metered, never stored. There is no confirmation mail on this deployment — the account works from the moment you create it.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {/* Normalised here, so a code the URL carried and a code someone typed
             are the same string by the time anything looks at either. */}
-        <InviteNotice state={invite} onCodeEntered={(entered) => setCode(normaliseInviteCode(entered))} />
+        <InviteNotice
+          state={invite}
+          required={inviteRequired}
+          refusal={refusal}
+          onCodeEntered={(entered) => {
+            // A new code is a new attempt: the refusal on screen was about the
+            // old one, and leaving it up would read as a verdict on this one.
+            setRefusal(null);
+            setCode(normaliseInviteCode(entered));
+          }}
+        />
 
         <form className="flex flex-col gap-2" onSubmit={(event) => void handleSubmit(event)}>
           <Label htmlFor="name">Name (optional)</Label>
@@ -199,10 +240,19 @@ export function SignUpForm() {
             type="submit"
             variant="brand"
             className="w-full"
-            disabled={pending || email.length === 0 || password.length < minLength}
+            disabled={pending || blockedOnInvite || email.length === 0 || password.length < minLength}
           >
             {pending ? 'Creating…' : 'Create account'}
           </Button>
+          {/* Why the button is dead, said next to it: a disabled control with no
+              explanation is the failure this issue was opened about. */}
+          {blockedOnInvite ? (
+            <p className="text-muted-foreground text-xs" data-testid="sign-up-blocked-on-invite">
+              {invite.kind === 'checking'
+                ? 'Checking your invitation…'
+                : 'Enter a working invitation code above to create an account.'}
+            </p>
+          ) : null}
         </form>
 
         {error ? (

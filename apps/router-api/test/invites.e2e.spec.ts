@@ -658,3 +658,223 @@ describe('the kill switch', () => {
 function validBody() {
   return { valid: true, grantMicros: String(GRANT_MICROS), campaign: CAMPAIGN };
 }
+
+/**
+ * Invite-only registration, end to end (SUP-173).
+ *
+ * The assertion that matters is the same in every case and is made twice: the
+ * request is refused, **and** the `user` table is no bigger than it was. A
+ * refusal that answered 403 after inserting the row would pass any test that only
+ * read the response, and would be exactly the half-created account the feature
+ * exists to prevent.
+ */
+describe('a deployment that requires an invitation to sign up', () => {
+  /** Better Auth owns the `user` table, so this counts through its own connection. */
+  async function users(): Promise<number> {
+    return dataSourceOf(harness)
+      .query('select count(*) as n from user')
+      .then((rows) => Number(rows[0].n));
+  }
+
+  async function requireInvites(env: Record<string, string> = {}): Promise<void> {
+    await inviteHarness({ CR_API_AUTH__REQUIRE_INVITE_FOR_SIGN_UP: 'true', ...env });
+  }
+
+  describe('the password path', () => {
+    beforeEach(async () => {
+      await requireInvites();
+    });
+
+    it('creates the account and credits it when the code is good', async () => {
+      const [invite] = await issue(dataSourceOf(harness));
+
+      const created = await signUp({
+        email: 'invited@example.com',
+        password: PASSWORD,
+        name: 'Invited',
+        inviteCode: invite.code,
+      }).expect(200);
+
+      const session = await consoleSession(sessionCookiesOf(created));
+      const grant = await expectData(session, INVITE_GRANT);
+      expect(grant.inviteGrant).toMatchObject({ grantMicros: String(GRANT_MICROS), campaign: CAMPAIGN });
+    });
+
+    it('refuses a sign-up with no code at all, and creates nothing', async () => {
+      const before = await users();
+
+      const refused = await signUp({ email: 'uninvited@example.com', password: PASSWORD, name: 'Uninvited' }).expect(
+        403,
+      );
+
+      expect(refused.body.code).toBe('invite_required');
+      expect(await users()).toBe(before);
+    });
+
+    it('tells a spent code apart from every other bad one, because that is the one a visitor can act on', async () => {
+      const dataSource = dataSourceOf(harness);
+      const [spent] = await issue(dataSource, { campaign: 'spent-c' });
+      await dataSource.getRepository(InviteCode).update({ campaign: 'spent-c' }, { redemptionCount: 1 });
+      const [expired] = await issue(dataSource, { expiresAt: new Date('2020-01-01T00:00:00Z'), campaign: 'exp-c' });
+      const [disabled] = await issue(dataSource, { campaign: 'dis-c' });
+      await dataSource.getRepository(InviteCode).update({ campaign: 'dis-c' }, { disabledAt: new Date() });
+
+      const cases: [string, string][] = [
+        [spent.code, 'invite_already_claimed'],
+        [expired.code, 'invite_expired_or_unknown'],
+        [disabled.code, 'invite_expired_or_unknown'],
+        [formatInviteCode(mintInviteCode()), 'invite_expired_or_unknown'],
+        ['not-a-code-at-all', 'invite_expired_or_unknown'],
+      ];
+
+      const before = await users();
+      let index = 0;
+      for (const [code, expected] of cases) {
+        const refused = await signUp({
+          email: `refused-${index}@example.com`,
+          password: PASSWORD,
+          name: 'Refused',
+          inviteCode: code,
+        }).expect(403);
+        index += 1;
+        expect(refused.body.code, code).toBe(expected);
+      }
+      expect(await users()).toBe(before);
+    });
+
+    it('spends the code exactly once, so the second person to try it is turned away', async () => {
+      const [invite] = await issue(dataSourceOf(harness));
+
+      await signUp({ email: 'first@example.com', password: PASSWORD, inviteCode: invite.code, name: 'First' }).expect(
+        200,
+      );
+      const before = await users();
+      const second = await signUp({
+        email: 'second@example.com',
+        password: PASSWORD,
+        inviteCode: invite.code,
+        name: 'Second',
+      }).expect(403);
+
+      expect(second.body.code).toBe('invite_already_claimed');
+      expect(await users()).toBe(before);
+    });
+
+    it('leaves signing in to an existing account alone', async () => {
+      const [invite] = await issue(dataSourceOf(harness));
+      await signUp({ email: 'returning@example.com', password: PASSWORD, inviteCode: invite.code, name: 'R' }).expect(
+        200,
+      );
+
+      // No code on this request, and the one it was created with is spent.
+      await request(server())
+        .post('/auth/sign-in/email')
+        .send({ email: 'returning@example.com', password: PASSWORD })
+        .expect(200);
+    });
+  });
+
+  describe('the magic-link path', () => {
+    beforeEach(async () => {
+      await requireInvites();
+    });
+
+    it('creates the account when the code rode the callbackURL', async () => {
+      const [invite] = await issue(dataSourceOf(harness));
+
+      await request(server())
+        .post('/auth/sign-in/magic-link')
+        .send({ email: 'magic@example.com', callbackURL: `/?invite=${encodeURIComponent(invite.code)}` });
+      const verified = await request(server()).get(pathOf(harness.mailer.last.url));
+
+      const session = await consoleSession(sessionCookiesOf(verified));
+      expect((await expectData(session, INVITE_GRANT)).inviteGrant).toMatchObject({
+        grantMicros: String(GRANT_MICROS),
+      });
+    });
+
+    /**
+     * A navigation cannot be answered with a 403 body, so the refusal comes back
+     * as `?error=` on the error callback — the same three codes the password path
+     * puts in its body, which is what lets the console have one set of copy.
+     */
+    it('redirects to the error callback with the code, and creates nothing', async () => {
+      const before = await users();
+
+      await request(server())
+        .post('/auth/sign-in/magic-link')
+        .send({ email: 'nocode@example.com', callbackURL: '/', errorCallbackURL: '/signup' });
+      const verified = await request(server()).get(pathOf(harness.mailer.last.url)).expect(302);
+
+      const location = new URL(verified.headers.location, 'http://localhost:3000');
+      expect(location.pathname).toBe('/signup');
+      expect(location.searchParams.get('error')).toBe('invite_required');
+      expect(await users()).toBe(before);
+    });
+
+    it('carries the claimed-already refusal the same way', async () => {
+      const dataSource = dataSourceOf(harness);
+      const [spent] = await issue(dataSource);
+      await dataSource.getRepository(InviteCode).update({ code: spent.code.replace(/-/g, '') }, { redemptionCount: 1 });
+
+      await request(server())
+        .post('/auth/sign-in/magic-link')
+        .send({ email: 'spent@example.com', callbackURL: `/?invite=${spent.code}`, errorCallbackURL: '/signup' });
+      const verified = await request(server()).get(pathOf(harness.mailer.last.url)).expect(302);
+
+      expect(new URL(verified.headers.location, 'http://localhost:3000').searchParams.get('error')).toBe(
+        'invite_already_claimed',
+      );
+    });
+  });
+
+  describe('the operator’s own way in', () => {
+    it('lets the bootstrap token claim the deployment, which no invitation could cover', async () => {
+      await requireInvites({ CR_API_AUTH__BOOTSTRAP_TOKEN: 'bootstrap-token-'.padEnd(40, 'x') });
+
+      await request(server())
+        .post('/auth/bootstrap')
+        .send({ token: 'bootstrap-token-'.padEnd(40, 'x') })
+        .expect(200);
+
+      expect(await users()).toBe(1);
+    });
+  });
+
+  describe('the console’s public answer', () => {
+    it('reports the requirement, so the sign-up screen can say so before anyone tries', async () => {
+      await requireInvites();
+
+      const options = await expectData(anonymous(harness), '{ signInOptions { inviteRequired password } }');
+
+      expect(options.signInOptions).toMatchObject({ inviteRequired: true, password: true });
+    });
+
+    it('reports it off on a deployment that did not ask for it — the demo stand’s default', async () => {
+      await inviteHarness();
+
+      const options = await expectData(anonymous(harness), '{ signInOptions { inviteRequired } }');
+
+      expect(options.signInOptions.inviteRequired).toBe(false);
+    });
+  });
+});
+
+describe('a deployment that does not require an invitation', () => {
+  beforeEach(async () => {
+    await inviteHarness();
+  });
+
+  it('still creates the account when the code is no good — the behaviour SUP-142 chose', async () => {
+    const created = await signUp({
+      email: 'nocode-open@example.com',
+      password: PASSWORD,
+      name: 'Open',
+      inviteCode: formatInviteCode(mintInviteCode()),
+    }).expect(200);
+
+    const session = await consoleSession(sessionCookiesOf(created));
+    const grant = await expectData(session, INVITE_GRANT);
+    expect(grant.inviteGrant).toBeNull();
+  });
+});

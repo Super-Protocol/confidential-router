@@ -7,11 +7,20 @@ export type SocialProvider = 'github' | 'google';
 export class AuthRequestError extends Error {
   /** HTTP status of the failed response, when there was one to read. */
   readonly status?: number;
+  /**
+   * Better Auth's machine-readable `code`, when the body carried one.
+   *
+   * The refusals this console has copy for — `invite_required` and the other two
+   * of SUP-173 — are told apart by this and not by the status: an invite-only
+   * deployment answers 403 to all three.
+   */
+  readonly code?: string;
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, code?: string) {
     super(message);
     this.name = 'AuthRequestError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -31,13 +40,15 @@ async function postToAuth(path: string, body: unknown): Promise<unknown> {
   }
 
   if (!response.ok) {
-    // Better Auth returns `{ message }` on failure. Anything else (a proxy error
-    // page, say) must not be shown to the viewer verbatim.
-    const detail = await response
+    // Better Auth returns `{ message, code }` on failure. Anything else (a proxy
+    // error page, say) must not be shown to the viewer verbatim.
+    const body = await response
       .json()
-      .then((body: { message?: unknown }) => (typeof body?.message === 'string' ? body.message : null))
+      .then((parsed: { message?: unknown; code?: unknown }) => parsed)
       .catch(() => null);
-    throw new AuthRequestError(detail ?? 'Sign-in failed. Please try again.', response.status);
+    const detail = typeof body?.message === 'string' ? body.message : null;
+    const code = typeof body?.code === 'string' ? body.code : undefined;
+    throw new AuthRequestError(detail ?? 'Sign-in failed. Please try again.', response.status, code);
   }
 
   return response.json().catch(() => ({}));
@@ -60,6 +71,7 @@ export async function signInWithProvider(provider: SocialProvider, inviteCode?: 
   const result = (await postToAuth('/sign-in/social', {
     provider,
     callbackURL: withInvite(publicConfig().authCallbackUrl, inviteCode ?? null),
+    errorCallbackURL: thisPageUrl(),
   })) as { url?: unknown };
 
   if (typeof result.url !== 'string') {
@@ -79,6 +91,7 @@ export async function signInWithMagicLink(email: string, inviteCode?: string | n
   await postToAuth('/sign-in/magic-link', {
     email,
     callbackURL: withInvite(publicConfig().authCallbackUrl, inviteCode ?? null),
+    errorCallbackURL: thisPageUrl(),
   });
 }
 
@@ -111,6 +124,26 @@ export async function signUpWithPassword(input: {
     callbackURL: publicConfig().authCallbackUrl,
     ...(input.inviteCode ? { inviteCode: input.inviteCode } : {}),
   });
+}
+
+/**
+ * This page, absolute, for the router to send a refused sign-up back to.
+ *
+ * The two paths that create an account by navigation — a magic-link
+ * verification and an OAuth callback — cannot answer a browser with JSON, so a
+ * refusal arrives as `?error=<code>` on a URL the router redirects to
+ * (SUP-173). It has to be absolute: the router resolves a relative one against
+ * its **own** origin, which is the API's and not this console's.
+ *
+ * The page the visitor started from, rather than a fixed screen, because the
+ * way out of `invite_required` is the button they just pressed — the provider
+ * is on `/login`, the form is on `/signup`, and neither page has the other's.
+ * The query is dropped: the router appends its own, and a stale `?invite=` there
+ * would outlive the code it named.
+ */
+function thisPageUrl(): string {
+  const { origin, pathname } = globalThis.location ?? { origin: '', pathname: '/' };
+  return `${origin}${pathname}`;
 }
 
 /** Signs an existing account in with its password. The session arrives as a cookie. */
