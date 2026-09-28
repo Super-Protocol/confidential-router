@@ -14,6 +14,7 @@ import { routerConfig } from '../config.js';
 import { buildAuthOptions, createAuthDatabase } from './auth.options.js';
 import { runAuthMigrations } from './auth-schema.js';
 import { MAGIC_LINK_MAILER, type MagicLinkMailer } from './magic-link-mailer.js';
+import { SignUpGate } from './sign-up-gate.service.js';
 import { SignUpProvisioning } from './sign-up-provisioning.service.js';
 
 /** The subject of an authenticated console request. */
@@ -38,10 +39,12 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly database: ReturnType<typeof createAuthDatabase>;
   private readonly migrationsRun: boolean;
 
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     @Inject(routerConfig.KEY) config: ConfigType<typeof routerConfig>,
     @Inject(MAGIC_LINK_MAILER) mailer: MagicLinkMailer,
     provisioning: SignUpProvisioning,
+    gate: SignUpGate,
   ) {
     this.database = createAuthDatabase(config);
     this.migrationsRun = config.database.migrationsRun;
@@ -50,6 +53,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       mailer,
       database: this.database,
       onUserCreated: (user, invite, method) => provisioning.onUserCreated(user, invite, method),
+      onBeforeUserCreated: (invite, bootstrap) => gate.admit(invite, bootstrap),
     });
     this.instance = betterAuth(this.options);
   }

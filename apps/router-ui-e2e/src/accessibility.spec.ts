@@ -36,6 +36,7 @@ async function signInOptions(
     magicLink: boolean;
     password: boolean;
     passwordMinLength: number;
+    inviteRequired: boolean;
   }>,
 ): Promise<void> {
   await mockGraphQL(page, {
@@ -48,6 +49,7 @@ async function signInOptions(
         magicLink: false,
         password: false,
         passwordMinLength: 12,
+        inviteRequired: false,
         ...offers,
       },
     },

@@ -25,6 +25,7 @@ type Offers = Partial<{
   magicLink: boolean;
   password: boolean;
   passwordMinLength: number;
+  inviteRequired: boolean;
 }>;
 
 async function deployment(page: Page, offers: Offers = {}, operations: GraphQLFixtures = {}): Promise<void> {
@@ -39,6 +40,7 @@ async function deployment(page: Page, offers: Offers = {}, operations: GraphQLFi
         magicLink: true,
         password: false,
         passwordMinLength: 12,
+        inviteRequired: false,
         ...offers,
       },
     },

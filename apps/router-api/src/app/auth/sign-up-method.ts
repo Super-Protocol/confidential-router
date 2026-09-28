@@ -7,6 +7,8 @@
  * the `account` row naming the provider has not been written yet.
  */
 
+import { BOOTSTRAP_PATH } from './bootstrap-admin.plugin.js';
+
 /** The taxonomy's closed set. No fifth value: adding one is a change to the contract. */
 export type SignUpMethod = 'password' | 'magic_link' | 'github' | 'google';
 
@@ -29,6 +31,23 @@ export interface SignUpMethodContext {
  * calling it `password` is closer to true than inventing a fifth value the
  * taxonomy does not have and the funnels cannot break down on.
  */
+/**
+ * Whether the deployment's own bootstrap token is creating this account.
+ *
+ * The one account creation that is not a sign-up: `POST /auth/bootstrap` is the
+ * operator claiming a deployment that has no other way in, so the invite-only
+ * gate (SUP-173) lets it through. Nobody mailed the operator a code for their
+ * own cluster, and a deployment that could not be claimed would be one nobody
+ * could ever turn the gate back off on.
+ *
+ * Matched on the exact path rather than a suffix, unlike the providers below:
+ * this one decides whether a check is skipped, so a route that merely ends in
+ * `/bootstrap` must not inherit the exemption.
+ */
+export function isBootstrapSignUp(context: SignUpMethodContext | null | undefined): boolean {
+  return context?.path === BOOTSTRAP_PATH;
+}
+
 export function signUpMethodOf(context: SignUpMethodContext | null | undefined): SignUpMethod {
   const path = context?.path ?? '';
 

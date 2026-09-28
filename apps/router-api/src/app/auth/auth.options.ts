@@ -6,7 +6,7 @@ import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
 import type { MagicLinkMailer } from './magic-link-mailer.js';
-import { type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
+import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
 /** Session cookie name fixed by ADR-004 §4. */
 export const SESSION_COOKIE_NAME = 'cr_session';
@@ -58,6 +58,24 @@ export interface AuthOptionsDeps {
     invite: SignUpInvite,
     method: SignUpMethod,
   ) => Promise<void>;
+  /**
+   * Decides whether an account may be created at all (`SignUpGate`, SUP-173).
+   *
+   * Runs before the insert, on every path, and throws Better Auth's `APIError`
+   * to refuse — which is what turns into a 403 for a password sign-up and into
+   * an `?error=<code>` redirect for the two that arrive as navigations.
+   *
+   * It must not write. Better Auth holds an open read transaction across this
+   * hook, and a second connection writing into it deadlocks SQLite outright
+   * (`SQLITE_BUSY`, immediately, in WAL as well as in the default journal mode —
+   * a read snapshot cannot be upgraded past another connection's commit). That
+   * is why the invitation *seat* is still claimed where it always was, inside
+   * the grant that follows the insert, and this hook only reads.
+   *
+   * Only registered alongside `onUserCreated`: the two halves of one sign-up are
+   * either both wired or neither is.
+   */
+  onBeforeUserCreated?: (invite: SignUpInvite, bootstrap: boolean) => Promise<void>;
 }
 
 /**
@@ -73,7 +91,13 @@ export function createAuthDatabase(config: RouterConfig): BetterAuthOptions['dat
   return new Pool({ connectionString: config.database.url });
 }
 
-export function buildAuthOptions({ config, mailer, database, onUserCreated }: AuthOptionsDeps): BetterAuthOptions {
+export function buildAuthOptions({
+  config,
+  mailer,
+  database,
+  onUserCreated,
+  onBeforeUserCreated,
+}: AuthOptionsDeps): BetterAuthOptions {
   const { auth, server } = config;
 
   return {
@@ -128,6 +152,9 @@ export function buildAuthOptions({ config, mailer, database, onUserCreated }: Au
       ? {
           user: {
             create: {
+              before: onBeforeUserCreated
+                ? async (_user, context) => onBeforeUserCreated(signUpInviteOf(context), isBootstrapSignUp(context))
+                : undefined,
               after: async (user, context) => {
                 await onUserCreated(
                   { id: user.id, email: user.email, name: user.name },

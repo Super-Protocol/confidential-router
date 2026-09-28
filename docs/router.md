@@ -418,8 +418,9 @@ things. Four sources are read, in order:
 | `invite` inside `callbackURL` | magic link: `callbackURL` is the only thing of ours the verify request keeps |
 | the `cr_invite` cookie | OAuth: the provider builds the callback URL, so nothing of ours survives it except a cookie **scoped to cover both hosts** — see below |
 
-**A code that cannot be used never fails the registration.** The account is
-created, the grant is not, and the console finds out by asking: `inviteGrant`
+**A code that cannot be used never fails the registration** — unless the
+deployment asked for the opposite; see *Invite-only registration* below. The
+account is created, the grant is not, and the console finds out by asking: `inviteGrant`
 answers `null`, and `inviteGrantStatus(code:)` answers *why* — `EXPIRED`,
 `EXHAUSTED`, `DISABLED`, `NOT_FOUND`, `ALREADY_REDEEMED` or `ERROR`, one sentence
 each on the screen the sign-up lands on. Anything else would mean a mailing-list
@@ -465,6 +466,63 @@ commits to anything, and keeps a small "have a code?" input for the one person w
 forwarded the mail to their work address and lost the link. After registration the
 browser lands on `/credits?welcome=invite`, where the balance is already there and
 the grant is the `Invitation credit` row naming the campaign.
+
+### Invite-only registration
+
+A campaign running grants-only wants the stronger rule: **an account must not be
+creatable without a valid, unredeemed code** (SUP-173). One setting, off
+everywhere by default:
+
+```yaml
+auth:
+  requireInviteForSignUp: true
+```
+
+While it is on, every sign-up path — password, magic link, OAuth callback — is
+refused before the `user` row exists unless the request carries a code that is
+usable at that moment. The check runs in Better Auth's
+`databaseHooks.user.create.before`, which is the one seam all three paths pass
+through and the only one that can tell a sign-up from a sign-in on the two where a
+single request does both. Two things it deliberately does **not** change: signing
+in to an existing account, which is untouched, and `POST /auth/bootstrap`, which
+is the operator claiming their own deployment and could never have been mailed a
+code.
+
+The refusal is typed, because "you need an invitation" and "yours has been used"
+send a person to two different places:
+
+| Code | When | HTTP |
+| --- | --- | --- |
+| `invite_required` | the request carried no code at all | 403 |
+| `invite_already_claimed` | the code exists and its seats are gone | 403 |
+| `invite_expired_or_unknown` | never issued, expired, or withdrawn | 403 |
+
+Three and not five. `already_claimed` is the one refusal that confirms a code was
+real, and a spent code is worth nothing to whoever confirmed it; merging expired,
+withdrawn and never-issued keeps the endpoint from telling a guessed code from a
+real one, and keeps a withdrawal from announcing itself. The public lookup
+`GET /v1/invites/:code` is unchanged and still collapses every unusable code into
+one `unavailable`.
+
+A password sign-up reads the code out of the 403 body (`{ code, message }`). The
+other two finish as navigations and cannot be answered with a body, so Better Auth
+redirects to the error callback the console named, with `?error=<code>` on it —
+the same three values either way, which is what lets the console have one set of
+copy. `signInOptions { inviteRequired }` reports the setting, so the sign-up screen
+says "registration is by invitation", keeps the code input open, blocks submission
+until a code passes the live lookup, and renders each refusal as its own alert.
+
+**One window the check does not cover.** The pre-check is a read, and the seat is
+still claimed by the atomic `UPDATE` inside the grant that follows the insert. It
+has to be: Better Auth holds an open read transaction across the hook, and a write
+from a second connection inside it is refused with `SQLITE_BUSY` immediately — in
+WAL as well as in the default journal mode, because a read snapshot cannot be
+upgraded past another connection's commit. So two sign-ups submitted within
+milliseconds of each other **on the same code** both get an account and only one
+gets the credit. Every other way of presenting an unusable code is refused before
+anything is created, and the loser of that race is logged by
+`SignUpProvisioning` — on an invite-only deployment that WARN is the only way an
+account without credit can come into being.
 
 **Withdrawing a code.** A code that turns up on a mailing list, a forum or a
 screenshot has to be retractable in one command, and a campaign that was mailed by

@@ -12,7 +12,7 @@
  */
 import { expect, type Page, test } from '@playwright/test';
 import { type GraphQLFixtures, mockGraphQL, SESSION_DATA, signIn, UNAUTHENTICATED } from './fixtures';
-import { API_HOST, API_ORIGIN, CONSOLE_HOST } from './origins';
+import { API_HOST, API_ORIGIN, CONSOLE_HOST, CONSOLE_ORIGIN } from './origins';
 
 const CODE = 'ABCD-EFGH-JKLM';
 const NORMALISED = 'ABCDEFGHJKLM';
@@ -31,6 +31,7 @@ const SIGN_IN_OPTIONS = {
     magicLink: false,
     password: true,
     passwordMinLength: 12,
+    inviteRequired: false,
   },
 };
 
@@ -315,5 +316,118 @@ test.describe('an invitation carried through OAuth', () => {
     const stored = await page.context().cookies();
     const invite = stored.find((cookie) => cookie.name === 'cr_invite');
     expect(invite?.domain).toBe(`.${API_HOST.split('.').slice(1).join('.')}`);
+  });
+});
+
+/**
+ * Invite-only registration, in a real browser (SUP-173).
+ *
+ * The router is the enforcement and it is tested where it lives; what a browser
+ * adds here is the thing that went wrong in the first place — a refusal the
+ * visitor did not notice. So every case asserts on what is on the screen and
+ * whether the button can be pressed, and one of them asserts the refusal survives
+ * a redirect from another origin, which no component test can reach.
+ */
+test.describe('a deployment where registration is by invitation', () => {
+  const INVITE_ONLY = {
+    signInOptions: { ...SIGN_IN_OPTIONS.signInOptions, inviteRequired: true },
+  };
+
+  test('says so, opens the code field, and will not submit until a code works', async ({ page }) => {
+    await mockLookup(page, { valid: false, reason: 'unavailable' });
+    const { signUps } = await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
+
+    await page.goto('/signup');
+
+    await expect(page.getByTestId('invite-required-notice')).toContainText('Registration is by invitation');
+    await expect(page.getByLabel('Invitation code')).toBeVisible();
+
+    await page.getByLabel('Email').fill('invited@example.com');
+    await page.getByLabel('Password').fill('correct-horse-battery');
+    await expect(page.getByRole('button', { name: 'Create account' })).toBeDisabled();
+    await expect(page.getByTestId('sign-up-blocked-on-invite')).toContainText('working invitation code');
+    expect(signUps).toHaveLength(0);
+  });
+
+  test('makes a code that cannot be used an alert, not a line about credit', async ({ page }) => {
+    await mockLookup(page, { valid: false, reason: 'unavailable' });
+    await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
+
+    await page.goto(signUpUrl());
+
+    const alert = page.getByTestId('invite-unavailable-required');
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText('cannot be used');
+    // The open-sign-up copy invited the visitor to carry on without the credit.
+    // Here there is nothing to carry on to.
+    await expect(page.getByTestId('invite-unavailable')).toBeHidden();
+  });
+
+  test('lets a good code through, unchanged', async ({ page }) => {
+    await mockLookup(page, { valid: true, grantMicros: GRANT_MICROS, campaign: CAMPAIGN });
+    const { signUps } = await mockInviteFlow(page, {
+      SignInOptions: INVITE_ONLY,
+      ...creditsFixtures(GRANT_MICROS),
+      ...grantStatus(true, null),
+    });
+
+    await page.goto(signUpUrl());
+    await expect(page.getByTestId('invite-grant-pending')).toContainText('$100 in credits');
+    await fillInAndSubmit(page);
+
+    await expect(page).toHaveURL(/\/credits/);
+    expect(signUps[0]).toMatchObject({ inviteCode: NORMALISED });
+  });
+
+  test('shows the refusal the router answered the sign-up with, rather than a generic error', async ({ page }) => {
+    await mockLookup(page, { valid: true, grantMicros: GRANT_MICROS, campaign: CAMPAIGN });
+    await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
+    // The last seat went between the lookup and the submit — the one window the
+    // pre-check cannot close.
+    await page.route('**/auth/sign-up/email', (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 'invite_already_claimed', message: 'This invitation has already been claimed.' }),
+      }),
+    );
+
+    await page.goto(signUpUrl());
+    await expect(page.getByTestId('invite-grant-pending')).toBeVisible();
+    await fillInAndSubmit(page);
+
+    await expect(page.getByTestId('invite-refused-invite_already_claimed')).toContainText('already been claimed');
+    await expect(page).toHaveURL(/\/signup/);
+  });
+
+  /**
+   * The OAuth refusal, which is the only one that crosses an origin: the router
+   * redirects the browser back to the console with `?error=` on it, and the
+   * console has to read that as an invitation problem and offer the way out.
+   */
+  test('carries an OAuth refusal back to the screen the visitor started on', async ({ page }) => {
+    await mockInviteFlow(page, {
+      SignInOptions: { signInOptions: { ...INVITE_ONLY.signInOptions, github: true, password: false } },
+    });
+
+    let errorCallback: string | undefined;
+    await page.route('**/auth/sign-in/social', async (route) => {
+      errorCallback = (route.request().postDataJSON() as { errorCallbackURL?: string }).errorCallbackURL;
+      // What the router does when the callback's user creation is refused.
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ url: `${errorCallback}?error=invite_required` }),
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Continue with GitHub' }).click();
+
+    // Absolute and on the console's own origin: the router resolves a relative
+    // one against its own.
+    expect(errorCallback).toBe(`${CONSOLE_ORIGIN}/login`);
+    await expect(page.getByTestId('invite-refused-invite_required')).toContainText('You need an invitation');
+    await expect(page.getByRole('link', { name: 'Enter a code' })).toBeVisible();
   });
 });

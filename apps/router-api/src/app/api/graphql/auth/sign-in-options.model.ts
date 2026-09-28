@@ -31,4 +31,11 @@ export class SignInOptionsModel {
       'discovering it. Meaningless while `password` is false.',
   })
   passwordMinLength!: number;
+
+  @Field({
+    description:
+      'Registration is by invitation: no sign-up path on this deployment creates an account without an ' +
+      'invitation code that is valid and unredeemed. Signing in to an existing account is unaffected.',
+  })
+  inviteRequired!: boolean;
 }
