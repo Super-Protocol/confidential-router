@@ -345,12 +345,19 @@ exceptions are mapped in one place (`src/app/api/graphql/errors.ts`):
 | 404 | `NOT_FOUND` |
 | 409 | `CONFLICT` |
 | 429 | `TOO_MANY_REQUESTS` |
+| 503 | `SERVICE_UNAVAILABLE` |
 | anything else | `INTERNAL_SERVER_ERROR` |
 
 `extensions.status` carries the HTTP status alongside it. Apollo's own pre-resolution codes
 (`GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, …) are kept as they are. With
 `graphql.introspection` off — the production default — an `INTERNAL_SERVER_ERROR` loses its message and
 its stack trace.
+
+`503` is mapped because one refusal is policy rather than a fault (SUP-171): on a deployment with
+`billing.provider: disabled`, `createCheckout` answers `SERVICE_UNAVAILABLE` with *"Buying credits is
+switched off on this deployment."* — a sentence a client may quote. It was the only 5xx the router raises
+deliberately, and while it was unmapped the console saw `INTERNAL_SERVER_ERROR` / *"Internal server
+error."* and could not tell a deliberate refusal from an outage.
 
 ### Screen → operations, as shipped
 

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { GraphQLError, type GraphQLFormattedError } from 'graphql';
@@ -28,6 +29,7 @@ describe('formatConsoleError', () => {
     [new ForbiddenException('You do not have access to this workspace.'), 'FORBIDDEN', 403],
     [new NotFoundException('API key not found.'), 'NOT_FOUND', 404],
     [new BadRequestException('spendLimitMicros must be a whole number.'), 'BAD_USER_INPUT', 400],
+    [new ServiceUnavailableException('Buying credits is switched off on this deployment.'), 'SERVICE_UNAVAILABLE', 503],
   ])('maps %# to a stable code a client can branch on', (exception, code, status) => {
     const [formatted, raw] = thrown(exception);
 
@@ -79,6 +81,20 @@ describe('formatConsoleError', () => {
 
     expect(result.message).toBe('The evidence retention window must be 1–3650 days.');
     expect(result.extensions?.stacktrace).toBeUndefined();
+  });
+
+  it('lets a deliberate 503 refusal speak in production — it is policy, not a fault', () => {
+    // A deployment that sells no credit refuses `createCheckout` with a sentence
+    // written for the user (SUP-171). Masking it told the caller the server had
+    // broken, and made our own error text unreachable.
+    const [formatted, raw] = thrown(
+      new ServiceUnavailableException('Buying credits is switched off on this deployment.'),
+    );
+
+    const result = formatConsoleError(formatted, raw, false);
+
+    expect(result.message).toBe('Buying credits is switched off on this deployment.');
+    expect(result.extensions).toEqual({ code: 'SERVICE_UNAVAILABLE', status: 503 });
   });
 
   it('treats an unlisted 5xx as internal and an unlisted 4xx as a bad request', () => {

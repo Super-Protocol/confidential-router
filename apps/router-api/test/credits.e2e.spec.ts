@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PURCHASES_DISABLED_MESSAGE } from '../src/app/billing/disabled-payment.provider.js';
 import { CreditTransaction } from '../src/app/db/entities/credit-transaction.entity.js';
 import { Workspace } from '../src/app/db/entities/workspace.entity.js';
 import { createHarness, type Harness } from './app-harness.js';
@@ -316,13 +317,19 @@ describe('the Stripe webhook', () => {
  * (SUP-167). It is what a launch whose terms say purchasing is not switched on
  * has to run, and the alternative it replaces was the manual provider minting
  * from a signed link.
+ *
+ * Introspection is off here, as it is on that deployment, because that switch is
+ * also what masks an unmapped error's message (SUP-171): with it on, a refusal
+ * that is really an `INTERNAL_SERVER_ERROR` still reads correctly to a test.
  */
 describe('a deployment that sells no credit', () => {
   let offHarness: Harness;
   let offSession: ConsoleSession;
 
   beforeAll(async () => {
-    offHarness = await createHarness({ env: { CR_API_BILLING__PROVIDER: 'disabled' } });
+    offHarness = await createHarness({
+      env: { CR_API_BILLING__PROVIDER: 'disabled', CR_API_GRAPHQL__INTROSPECTION: 'false' },
+    });
     offSession = await signIn(offHarness, 'no-purchases@example.com');
   }, 60_000);
 
@@ -337,12 +344,14 @@ describe('a deployment that sells no credit', () => {
     expect(data.creditBalance.autoTopUp.available).toBe(false);
   });
 
-  it('refuses a checkout instead of handing back a link', async () => {
+  it('refuses a checkout with a code the console can branch on, and its own sentence', async () => {
     const body = await graphql(offSession, CHECKOUT, {
       input: { workspaceId: offSession.workspaceId, amountMicros: '10000000' },
     });
 
-    expect(body.errors[0].message).toMatch(/switched off/i);
+    expect(body.data).toBeNull();
+    expect(body.errors[0].message).toBe(PURCHASES_DISABLED_MESSAGE);
+    expect(body.errors[0].extensions).toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503 });
   });
 
   it('has no manual completion endpoint to mint from', async () => {
@@ -358,5 +367,9 @@ describe('a deployment that sells no credit', () => {
     });
 
     expect(body.errors[0].message).toMatch(/cannot charge a saved card/i);
+    // Apollo has already called this one `BAD_REQUEST`, and that code is stable,
+    // so the mapping leaves it alone. The point here is the pair: both refusals
+    // this provider makes reach the caller coded and quotable.
+    expect(body.errors[0].extensions).toMatchObject({ code: 'BAD_REQUEST', status: 400 });
   });
 });
