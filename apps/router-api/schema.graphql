@@ -79,6 +79,14 @@ enum ApiKeyPurpose {
   CONSOLE_CHAT
 }
 
+input AppendChatMessageInput {
+  content: String!
+  error: String
+  role: ChatRole!
+  threadId: ID!
+  workspaceId: ID!
+}
+
 """Charge the saved card when the balance falls below the threshold."""
 type AutoTopUp {
   amountMicros: String
@@ -161,6 +169,27 @@ enum ChatHistoryStorage {
 }
 
 """
+One turn of a conversation, content and all — the one documented exception to the rule that no request content reaches this database (ADR-007 §4). `generations` still holds none.
+"""
+type ChatMessage {
+  content: String!
+  createdAt: DateTime!
+
+  """
+  The gateway’s refusal for a turn that ended badly. A failed turn stays in the transcript.
+  """
+  error: String
+  id: ID!
+  role: ChatRole!
+}
+
+"""Who said it. There is no system role."""
+enum ChatRole {
+  ASSISTANT
+  USER
+}
+
+"""
 What the console Chat screen is allowed to do, and where its history lives. Public: the limits are the same for everyone and the screen has to know them before a session exists.
 """
 type ChatSettings {
@@ -185,6 +214,20 @@ type ChatSettings {
   maxThreads: Int!
 }
 
+"""One conversation. Scoped to the member who started it, never shared."""
+type ChatThread {
+  createdAt: DateTime!
+  id: ID!
+
+  """Oldest first. Empty on the thread list, which asks for titles only."""
+  messages: [ChatMessage!]!
+  modelId: String!
+
+  """Derived from the first user message, never typed by the user."""
+  title: String!
+  updatedAt: DateTime!
+}
+
 """Where to send the browser to pay."""
 type CheckoutSession {
   """The provider's own id for the session."""
@@ -201,6 +244,11 @@ input CreateApiKeyInput {
   requestsPerMinute: Int
   spendLimitMicros: String
   tokensPerMinute: Int
+  workspaceId: ID!
+}
+
+input CreateChatThreadInput {
+  modelId: String!
   workspaceId: ID!
 }
 
@@ -733,6 +781,11 @@ type ModelUsage {
 
 type Mutation {
   """
+  Records one turn that has already happened. This does not call a model — the browser does that over /v1/chat/completions, like any other client.
+  """
+  appendChatMessage(input: AppendChatMessageInput!): ChatMessage!
+
+  """
   A short-lived key for the console chat. Rotates: this user’s own previous chat key in the workspace is revoked, and no one else’s.
   """
   chatCredential(input: ChatCredentialInput!): ChatCredential!
@@ -742,8 +795,18 @@ type Mutation {
   """
   createApiKey(input: CreateApiKeyInput!): ApiKeyCreated!
 
+  """
+  Starts a conversation. The member’s oldest is pruned when they are at `maxThreads`.
+  """
+  createChatThread(input: CreateChatThreadInput!): ChatThread!
+
   """Starts a top-up. Credit appears once the provider confirms."""
   createCheckout(input: CreateCheckoutInput!): CheckoutSession!
+
+  """
+  Deletes a conversation and its turns outright. There is no archive and no tombstone.
+  """
+  deleteChatThread(threadId: ID!, workspaceId: ID!): Boolean!
 
   """
   Withdraws one invitation code or a campaign’s. Credit already granted is untouched. Restricted to auth.adminEmails.
@@ -764,6 +827,9 @@ type Mutation {
 
   """Turns automatic top-up on or off."""
   setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
+
+  """Switches the model a conversation talks to."""
+  setChatThreadModel(input: CreateChatThreadInput!, threadId: ID!): ChatThread!
   updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
 
   """Updates the settings named; leaves the rest alone."""
@@ -820,6 +886,14 @@ type Query {
 
   """Limits and history location for the console chat. Public."""
   chatSettings: ChatSettings!
+
+  """One conversation with its turns, oldest first."""
+  chatThread(threadId: ID!, workspaceId: ID!): ChatThread!
+
+  """
+  This member’s conversations in the workspace, most recently used first. Titles only.
+  """
+  chatThreads(workspaceId: ID!): [ChatThread!]!
 
   """Balance, admission state and automatic top-up settings."""
   creditBalance(workspaceId: ID!): CreditBalance!

@@ -196,19 +196,25 @@ export function bundleSourceNote(source: BundleSource): string {
  * justifies.
  *
  * The console asks the API (`chatSettings.historyStorage`) rather than deciding
- * for itself, so the screen cannot promise storage inside an attested boundary
- * before that storage exists — server-side history waits on SUP-179's verdict on
- * whether a tenant PVC survives a node reboot.
+ * for itself, so the screen cannot promise storage the deployment does not have.
+ *
+ * The `attested_server` wording is where the honesty rule bites hardest. Three
+ * things are true and each is stated: the transcript is inside the boundary, it
+ * is encrypted at rest, and **it may be lost during infrastructure maintenance**.
+ * Denis deferred the durability work and accepted that risk (2026-09-30); the
+ * state disk is ephemeral by design. "Stored inside the attested boundary" is a
+ * confidentiality claim, and a reader will hear it as a durability claim unless
+ * the sentence next to it says otherwise — so it does.
  */
 export const HISTORY_COPY: Record<string, { summary: string; detail: string }> = {
+  attested_server: {
+    summary: 'This conversation is stored inside the attested boundary — and may be lost during maintenance.',
+    detail:
+      'Threads are stored on the deployment’s own state, which sits inside the enclave and is encrypted at rest: the host sees ciphertext and the key never leaves the boundary. Only you can read your conversations, and a thread you delete is deleted outright — no archive, no copy to ask us for. What we cannot promise is that it survives: the state disk is ephemeral by design, so infrastructure maintenance can take your history with it. Keep anything you need elsewhere. The messages themselves travel to the model over the same /v1/chat/completions path an API client uses, which records tokens and cost and no content at all.',
+  },
   browser_local: {
     summary: 'This conversation is stored in this browser only.',
     detail:
       'Threads live in this browser’s local storage and are never sent to the router. Deleting a thread removes it here and there is nothing to delete anywhere else. Clearing site data, or opening the console in another browser, loses the history. The messages themselves do travel to the model — over the same /v1/chat/completions path an API client uses, which records tokens and cost and no content at all.',
-  },
-  attested_server: {
-    summary: 'This conversation is stored inside the attested boundary.',
-    detail:
-      'Threads are stored server-side on the deployment’s encrypted state, readable only inside the enclave, and a thread you delete is deleted outright.',
   },
 };

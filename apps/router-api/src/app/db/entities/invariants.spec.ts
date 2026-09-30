@@ -128,7 +128,12 @@ describe('CreditTransaction', () => {
  */
 describe('the schema as a whole', () => {
   /** Tables allowed to hold a column named after content, and why. */
-  const CONTENT_EXCEPTIONS: Record<string, string> = {};
+  const CONTENT_EXCEPTIONS: Record<string, string> = {
+    chat_messages:
+      'The console chat transcript — the one documented exception (ADR-007 §4). The user asked us to keep ' +
+      'this; `generations` still holds no content, and the message still reached the model over the ordinary ' +
+      '/v1 path that records none.',
+  };
 
   it('has no table outside the exceptions holding a column named after message content', () => {
     const offenders = dataSource.entityMetadatas.flatMap((metadata) =>
@@ -142,15 +147,81 @@ describe('the schema as a whole', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('has no chat table yet, because server-side history waits on SUP-179', () => {
-    // A guard against landing the tables before the durability question is
-    // answered: history that a node reboot silently erases must not be described
-    // to a user as storage. Replace this expectation in the same change that
-    // adds the tables, and name them in CONTENT_EXCEPTIONS above.
+  it('keeps the exception to exactly one column of exactly one table', () => {
+    // The exception is a door, and this is the doorstop. `chat_messages.content`
+    // is the only place in the schema where something a user typed or a model
+    // answered is stored; anything else acquiring a content column is either a
+    // mistake or needs its own line in CONTENT_EXCEPTIONS and its own argument.
+    const contentColumns = dataSource.entityMetadatas.flatMap((metadata) =>
+      metadata.columns
+        .map((column) => column.propertyName)
+        .filter((name) => CONTENT_NAMES.includes(name.toLowerCase()))
+        .map((name) => `${metadata.tableName}.${name}`),
+    );
+
+    expect(contentColumns).toEqual(['chat_messages.content']);
+  });
+});
+
+/**
+ * The console chat's own invariant (SUP-180, ADR-007 §4).
+ *
+ * The tables exist now that Denis has unblocked server-side history, so the
+ * question is no longer "are they absent" but "is the exception still bounded".
+ * Two properties make it bounded, and both are structural rather than a
+ * convention somebody has to remember:
+ *
+ *  - a transcript belongs to one member of one workspace, so it cannot be read
+ *    by the tenant it sits in;
+ *  - nothing else in the service reads the content — see
+ *    `app/chat/chat-content-boundary.spec.ts` for the paths it must not reach.
+ */
+describe('the chat tables', () => {
+  it('exist, so the documented exception describes something real', () => {
     const tables = dataSource.entityMetadatas.map((metadata) => metadata.tableName);
 
-    expect(tables).not.toContain('chat_threads');
-    expect(tables).not.toContain('chat_messages');
+    expect(tables).toContain('chat_threads');
+    expect(tables).toContain('chat_messages');
+  });
+
+  it('scopes a thread to one member of one workspace, not to the workspace', () => {
+    // A workspace has members, and one member's demo transcript is not another's
+    // to read. `userId` is what makes that true; without it the scoping would be
+    // a convention in whichever query happened to remember it.
+    const columns = dataSource.getMetadata('chat_threads').columns.map((column) => column.propertyName);
+
+    expect(columns).toContain('workspaceId');
+    expect(columns).toContain('userId');
+  });
+
+  it('indexes the lookup both the list and the pruning use', () => {
+    const index = dataSource
+      .getMetadata('chat_threads')
+      .indices.find((candidate) => candidate.columns.some((column) => column.propertyName === 'userId'));
+
+    expect(index?.columns.map((column) => column.propertyName)).toEqual(['workspaceId', 'userId', 'updatedAt']);
+  });
+
+  it('cascades messages from their thread, so a delete is one statement', () => {
+    const relation = dataSource
+      .getMetadata('chat_messages')
+      .relations.find((candidate) => candidate.propertyName === 'thread');
+
+    expect(relation?.onDelete).toBe('CASCADE');
+  });
+
+  it('records no verdict, retention or backup field that would imply durability', () => {
+    // Denis deferred the durability work and accepted the risk: the state disk
+    // is ephemeral by design. A column here promising otherwise — `expiresAt`,
+    // `retainUntil`, `backedUpAt` — would be a promise the platform has not made.
+    const columns = [
+      ...dataSource.getMetadata('chat_threads').columns,
+      ...dataSource.getMetadata('chat_messages').columns,
+    ]
+      .map((column) => column.propertyName)
+      .filter((name) => /retain|expire|backup|archiv|durable/i.test(name));
+
+    expect(columns).toEqual([]);
   });
 });
 

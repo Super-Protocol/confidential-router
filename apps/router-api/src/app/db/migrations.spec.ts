@@ -51,6 +51,7 @@ describe('SQLite', () => {
         'FeedbackGrants1758900000000',
         'WorkspaceFirstRequest1759000000000',
         'ConsoleChatKeys1759100000000',
+        'ChatHistory1759200000000',
       ]);
     } finally {
       await dataSource.destroy();
@@ -84,6 +85,12 @@ describe('SQLite', () => {
     try {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
+
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('chat_messages')).toBe(false);
+      expect(await queryRunner.hasTable('chat_threads')).toBe(false);
+      // The column the previous migration added is untouched.
+      expect(await queryRunner.hasColumn('api_keys', 'purpose')).toBe(true);
 
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('api_keys', 'purpose')).toBe(false);
@@ -149,6 +156,7 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
         'FeedbackGrants1758900000000',
         'WorkspaceFirstRequest1759000000000',
         'ConsoleChatKeys1759100000000',
+        'ChatHistory1759200000000',
       ]);
 
       const { upQueries } = await dataSource.driver.createSchemaBuilder().log();
@@ -162,11 +170,12 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     const dataSource = await postgresDataSource();
     try {
       await dataSource.runMigrations({ transaction: 'all' });
-      for (let index = 0; index < 5; index += 1) {
+      for (let index = 0; index < 6; index += 1) {
         await dataSource.undoLastMigration({ transaction: 'all' });
       }
 
       const queryRunner = dataSource.createQueryRunner();
+      expect(await queryRunner.hasTable('chat_threads')).toBe(false);
       expect(await queryRunner.hasTable('feedback_submissions')).toBe(false);
       expect(await queryRunner.hasTable('invite_codes')).toBe(false);
       expect(await queryRunner.hasTable('workspaces')).toBe(false);

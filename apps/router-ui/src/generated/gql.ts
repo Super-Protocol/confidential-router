@@ -20,6 +20,12 @@ type Documents = {
     "\n  query SignedIn {\n    me {\n      id\n    }\n  }\n": typeof types.SignedInDocument,
     "\n  query ChatScreen {\n    chatSettings {\n      enabled\n      maxMessageChars\n      maxThreads\n      maxMessagesPerThread\n      historyStorage\n      chatModelIds\n    }\n    models {\n      id\n      name\n      contextLength\n      capabilities\n      tee\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n    }\n  }\n": typeof types.ChatScreenDocument,
     "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n": typeof types.ChatCredentialDocument,
+    "\n  query ChatThreads($workspaceId: ID!) {\n    chatThreads(workspaceId: $workspaceId) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n": typeof types.ChatThreadsDocument,
+    "\n  query ChatThread($workspaceId: ID!, $threadId: ID!) {\n    chatThread(workspaceId: $workspaceId, threadId: $threadId) {\n      id\n      title\n      modelId\n      updatedAt\n      messages {\n        id\n        role\n        content\n        error\n        createdAt\n      }\n    }\n  }\n": typeof types.ChatThreadDocument,
+    "\n  mutation CreateChatThread($input: CreateChatThreadInput!) {\n    createChatThread(input: $input) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n": typeof types.CreateChatThreadDocument,
+    "\n  mutation SetChatThreadModel($input: CreateChatThreadInput!, $threadId: ID!) {\n    setChatThreadModel(input: $input, threadId: $threadId) {\n      id\n      modelId\n    }\n  }\n": typeof types.SetChatThreadModelDocument,
+    "\n  mutation AppendChatMessage($input: AppendChatMessageInput!) {\n    appendChatMessage(input: $input) {\n      id\n      role\n      content\n      error\n      createdAt\n    }\n  }\n": typeof types.AppendChatMessageDocument,
+    "\n  mutation DeleteChatThread($workspaceId: ID!, $threadId: ID!) {\n    deleteChatThread(workspaceId: $workspaceId, threadId: $threadId)\n  }\n": typeof types.DeleteChatThreadDocument,
     "\n  fragment CreditBalanceFields on CreditBalance {\n    workspaceId\n    balanceMicros\n    spendable\n    minTopUpMicros\n    maxTopUpMicros\n    purchasesAvailable\n    autoTopUp {\n      enabled\n      available\n      thresholdMicros\n      amountMicros\n      lastChargedAt\n    }\n  }\n": typeof types.CreditBalanceFieldsFragmentDoc,
     "\n  query Credits($workspaceId: ID!, $first: Int!, $after: String) {\n    creditBalance(workspaceId: $workspaceId) {\n      ...CreditBalanceFields\n    }\n    creditTransactions(workspaceId: $workspaceId, first: $first, after: $after) {\n      totalCount\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n      edges {\n        cursor\n        node {\n          id\n          createdAt\n          kind\n          amountMicros\n          reference\n          description\n        }\n      }\n    }\n  }\n": typeof types.CreditsDocument,
     "\n  mutation CreateCheckout($input: CreateCheckoutInput!) {\n    createCheckout(input: $input) {\n      url\n      ref\n    }\n  }\n": typeof types.CreateCheckoutDocument,
@@ -55,6 +61,12 @@ const documents: Documents = {
     "\n  query SignedIn {\n    me {\n      id\n    }\n  }\n": types.SignedInDocument,
     "\n  query ChatScreen {\n    chatSettings {\n      enabled\n      maxMessageChars\n      maxThreads\n      maxMessagesPerThread\n      historyStorage\n      chatModelIds\n    }\n    models {\n      id\n      name\n      contextLength\n      capabilities\n      tee\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n    }\n  }\n": types.ChatScreenDocument,
     "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n": types.ChatCredentialDocument,
+    "\n  query ChatThreads($workspaceId: ID!) {\n    chatThreads(workspaceId: $workspaceId) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n": types.ChatThreadsDocument,
+    "\n  query ChatThread($workspaceId: ID!, $threadId: ID!) {\n    chatThread(workspaceId: $workspaceId, threadId: $threadId) {\n      id\n      title\n      modelId\n      updatedAt\n      messages {\n        id\n        role\n        content\n        error\n        createdAt\n      }\n    }\n  }\n": types.ChatThreadDocument,
+    "\n  mutation CreateChatThread($input: CreateChatThreadInput!) {\n    createChatThread(input: $input) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n": types.CreateChatThreadDocument,
+    "\n  mutation SetChatThreadModel($input: CreateChatThreadInput!, $threadId: ID!) {\n    setChatThreadModel(input: $input, threadId: $threadId) {\n      id\n      modelId\n    }\n  }\n": types.SetChatThreadModelDocument,
+    "\n  mutation AppendChatMessage($input: AppendChatMessageInput!) {\n    appendChatMessage(input: $input) {\n      id\n      role\n      content\n      error\n      createdAt\n    }\n  }\n": types.AppendChatMessageDocument,
+    "\n  mutation DeleteChatThread($workspaceId: ID!, $threadId: ID!) {\n    deleteChatThread(workspaceId: $workspaceId, threadId: $threadId)\n  }\n": types.DeleteChatThreadDocument,
     "\n  fragment CreditBalanceFields on CreditBalance {\n    workspaceId\n    balanceMicros\n    spendable\n    minTopUpMicros\n    maxTopUpMicros\n    purchasesAvailable\n    autoTopUp {\n      enabled\n      available\n      thresholdMicros\n      amountMicros\n      lastChargedAt\n    }\n  }\n": types.CreditBalanceFieldsFragmentDoc,
     "\n  query Credits($workspaceId: ID!, $first: Int!, $after: String) {\n    creditBalance(workspaceId: $workspaceId) {\n      ...CreditBalanceFields\n    }\n    creditTransactions(workspaceId: $workspaceId, first: $first, after: $after) {\n      totalCount\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n      edges {\n        cursor\n        node {\n          id\n          createdAt\n          kind\n          amountMicros\n          reference\n          description\n        }\n      }\n    }\n  }\n": types.CreditsDocument,
     "\n  mutation CreateCheckout($input: CreateCheckoutInput!) {\n    createCheckout(input: $input) {\n      url\n      ref\n    }\n  }\n": types.CreateCheckoutDocument,
@@ -122,6 +134,30 @@ export function graphql(source: "\n  query ChatScreen {\n    chatSettings {\n   
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n"): (typeof documents)["\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query ChatThreads($workspaceId: ID!) {\n    chatThreads(workspaceId: $workspaceId) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n"): (typeof documents)["\n  query ChatThreads($workspaceId: ID!) {\n    chatThreads(workspaceId: $workspaceId) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query ChatThread($workspaceId: ID!, $threadId: ID!) {\n    chatThread(workspaceId: $workspaceId, threadId: $threadId) {\n      id\n      title\n      modelId\n      updatedAt\n      messages {\n        id\n        role\n        content\n        error\n        createdAt\n      }\n    }\n  }\n"): (typeof documents)["\n  query ChatThread($workspaceId: ID!, $threadId: ID!) {\n    chatThread(workspaceId: $workspaceId, threadId: $threadId) {\n      id\n      title\n      modelId\n      updatedAt\n      messages {\n        id\n        role\n        content\n        error\n        createdAt\n      }\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation CreateChatThread($input: CreateChatThreadInput!) {\n    createChatThread(input: $input) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n"): (typeof documents)["\n  mutation CreateChatThread($input: CreateChatThreadInput!) {\n    createChatThread(input: $input) {\n      id\n      title\n      modelId\n      updatedAt\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation SetChatThreadModel($input: CreateChatThreadInput!, $threadId: ID!) {\n    setChatThreadModel(input: $input, threadId: $threadId) {\n      id\n      modelId\n    }\n  }\n"): (typeof documents)["\n  mutation SetChatThreadModel($input: CreateChatThreadInput!, $threadId: ID!) {\n    setChatThreadModel(input: $input, threadId: $threadId) {\n      id\n      modelId\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation AppendChatMessage($input: AppendChatMessageInput!) {\n    appendChatMessage(input: $input) {\n      id\n      role\n      content\n      error\n      createdAt\n    }\n  }\n"): (typeof documents)["\n  mutation AppendChatMessage($input: AppendChatMessageInput!) {\n    appendChatMessage(input: $input) {\n      id\n      role\n      content\n      error\n      createdAt\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation DeleteChatThread($workspaceId: ID!, $threadId: ID!) {\n    deleteChatThread(workspaceId: $workspaceId, threadId: $threadId)\n  }\n"): (typeof documents)["\n  mutation DeleteChatThread($workspaceId: ID!, $threadId: ID!) {\n    deleteChatThread(workspaceId: $workspaceId, threadId: $threadId)\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

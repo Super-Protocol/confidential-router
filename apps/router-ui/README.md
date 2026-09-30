@@ -96,10 +96,13 @@ design, and why each tier says what it says, is ADR-007; what lives where:
   `chatCredential` minted. The same gateway, guard, meter and billing as any API
   client; there is no console-only inference route, and adding one would break
   the claim the screen makes.
-- `chat-history.ts` — threads in `localStorage`, one key per workspace, hard
-  delete, and the two caps from `chatSettings`. Everything is a pure function
-  over a `ChatHistory` plus one thin storage adapter, so the pruning rules are
-  tested without a browser.
+- `chat-history.ts` — what is left on this side now that the transcript is
+  server-side: `promptMessages`, which decides the turns the next request
+  carries, and the shape of the answer that is still arriving and is therefore
+  not a stored message yet. The transcript's own rules — titles, the two caps,
+  pruning, hard delete, one member's threads never appearing in another's list —
+  are `router-api`'s, tested against a real schema in
+  `app/chat/chat.service.spec.ts`.
 - `verification/evidence-gate.ts` — **tier 1**. Runs the stages of
   `@confidential-router/attestation` in the page and locks the composer until
   they pass. It calls the stages individually rather than `verifyHostname`,

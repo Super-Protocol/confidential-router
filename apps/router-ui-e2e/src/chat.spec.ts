@@ -32,7 +32,7 @@ function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = 
         maxMessageChars: 8_000,
         maxThreads: 50,
         maxMessagesPerThread: 200,
-        historyStorage: 'BROWSER_LOCAL',
+        historyStorage: 'ATTESTED_SERVER',
         chatModelIds: [MODEL_ID],
         ...overrides.chatSettings,
       },
@@ -105,11 +105,15 @@ test.describe('Chat', () => {
     await expect(dialog.getByText(`gatekeeper endpoint add router --upstream https://${ENDPOINT_HOST}`)).toBeVisible();
   });
 
-  test('says the conversation is stored in this browser only', async ({ page, baseURL }) => {
+  test('names the storage boundary and the maintenance risk in the same sentence', async ({ page, baseURL }) => {
     await openChat(page, baseURL as string);
 
-    await expect(page.getByText(/This conversation is stored in this browser only\./)).toBeVisible();
-    await expect(page.getByText(/attested boundary/i)).toHaveCount(0);
+    // Rendered, not just present in a constant: the caveat has to survive into
+    // the markup a reader actually sees, beside the boundary claim rather than
+    // somewhere further down the page.
+    const note = page.getByText(/stored inside the attested boundary/i);
+    await expect(note).toBeVisible();
+    await expect(note).toContainText('may be lost during maintenance');
   });
 
   test('says so, rather than showing a dead composer, when the chat is switched off', async ({ page, baseURL }) => {

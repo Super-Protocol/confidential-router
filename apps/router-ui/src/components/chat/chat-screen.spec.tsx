@@ -6,7 +6,15 @@ import { publishedEndpoint } from '../../test-fixtures';
 import { renderWithSession, TEST_WORKSPACES } from '../../test-utils';
 import { typedSessionMock } from '../typed-session';
 import { ChatScreen } from './chat-screen';
-import { CHAT_CREDENTIAL, CHAT_SCREEN_QUERY } from './operations';
+import {
+  APPEND_CHAT_MESSAGE,
+  CHAT_CREDENTIAL,
+  CHAT_SCREEN_QUERY,
+  CHAT_THREAD,
+  CHAT_THREADS,
+  CREATE_CHAT_THREAD,
+  DELETE_CHAT_THREAD,
+} from './operations';
 
 /**
  * The two browser-side verification tiers are unit-tested against the
@@ -35,6 +43,7 @@ vi.mock('./verification/extension-bridge', async (importOriginal) => ({
 }));
 
 const WORKSPACE_ID = TEST_WORKSPACES[0].id;
+const MODEL_ID = 'meta/llama-3.3-70b-instruct:tdx';
 
 const PASSING_GATE = {
   unlocked: true,
@@ -103,8 +112,8 @@ function settings(overrides: Record<string, unknown> = {}) {
     maxMessageChars: 8_000,
     maxThreads: 50,
     maxMessagesPerThread: 200,
-    historyStorage: 'BROWSER_LOCAL' as const,
-    chatModelIds: ['meta/llama-3.3-70b-instruct:tdx'],
+    historyStorage: 'ATTESTED_SERVER' as const,
+    chatModelIds: [MODEL_ID],
     ...overrides,
   };
 }
@@ -112,7 +121,7 @@ function settings(overrides: Record<string, unknown> = {}) {
 function model(overrides: Record<string, unknown> = {}) {
   return {
     __typename: 'Model' as const,
-    id: 'meta/llama-3.3-70b-instruct:tdx',
+    id: MODEL_ID,
     name: 'Llama 3.3 70B Instruct',
     contextLength: 131_072,
     capabilities: ['CHAT' as const, 'COMPLETIONS' as const],
@@ -144,7 +153,7 @@ function credentialMock(
           secret: overrides.secret ?? 'sk-tee-v1-chat-secret',
           expiresAt: '2099-01-01T00:00:00.000Z',
           baseUrl: 'https://api.router.test/v1',
-          modelScope: ['meta/llama-3.3-70b-instruct:tdx'],
+          modelScope: [MODEL_ID],
         },
       },
     },
@@ -193,8 +202,118 @@ function bearerOf(call: unknown): string | undefined {
   return (init.headers as Record<string, string>).authorization;
 }
 
-function render(mocks: MockLink.MockedResponse[] = [screenMock()]) {
+function render(mocks: MockLink.MockedResponse[] = [screenMock(), threadsMock([]), threadMock([])]) {
   return renderWithSession(<ChatScreen />, { mocks: [typedSessionMock(), ...mocks] });
+}
+
+/** The full set for a successful exchange: create, store, stream, store, re-read. */
+function sendingMocks(question: string, answer: string, appended: Record<string, unknown>[] = []) {
+  return [
+    screenMock(),
+    credentialMock(),
+    createThreadMock(),
+    appendMock({ role: 'USER', content: question }, appended),
+    appendMock({ role: 'ASSISTANT', content: answer, error: null }, appended),
+    threadsMock([], true),
+    threadsMock([question]),
+    threadMock([], { once: true }),
+    threadMock([storedMessage('USER', question)], { once: true, title: question }),
+    threadMock([storedMessage('USER', question), storedMessage('ASSISTANT', answer)], { title: question }),
+  ];
+}
+
+const THREAD_ID = 'thread-1';
+
+function storedMessage(role: 'USER' | 'ASSISTANT', content: string, error: string | null = null) {
+  return {
+    __typename: 'ChatMessage' as const,
+    id: `m-${role}-${content.slice(0, 6)}`,
+    role,
+    content,
+    error,
+    createdAt: '2026-09-30T12:00:00.000Z',
+  };
+}
+
+function threadSummary(title: string) {
+  return {
+    __typename: 'ChatThread' as const,
+    id: THREAD_ID,
+    title,
+    modelId: MODEL_ID,
+    updatedAt: '2026-09-30T12:00:00.000Z',
+  };
+}
+
+/** The list. `once` lets a test queue an empty list followed by a populated one. */
+function threadsMock(titles: string[], once = false): MockLink.MockedResponse {
+  return {
+    request: { query: CHAT_THREADS, variables: { workspaceId: WORKSPACE_ID } },
+    result: { data: { chatThreads: titles.map((title) => threadSummary(title)) } },
+    maxUsageCount: once ? 1 : Number.POSITIVE_INFINITY,
+  };
+}
+
+/**
+ * The open conversation. Queued in order across a send — empty, then the question,
+ * then the question and the answer — which is what the screen actually observes as
+ * it stores each turn.
+ */
+function threadMock(
+  messages: ReturnType<typeof storedMessage>[],
+  options: { once?: boolean; title?: string } = {},
+): MockLink.MockedResponse {
+  return {
+    request: { query: CHAT_THREAD, variables: { workspaceId: WORKSPACE_ID, threadId: THREAD_ID } },
+    result: {
+      data: {
+        chatThread: { ...threadSummary(options.title ?? 'New conversation'), messages },
+      },
+    },
+    maxUsageCount: options.once ? 1 : Number.POSITIVE_INFINITY,
+  };
+}
+
+function createThreadMock(): MockLink.MockedResponse {
+  return {
+    request: { query: CREATE_CHAT_THREAD, variables: { input: { workspaceId: WORKSPACE_ID, modelId: MODEL_ID } } },
+    result: { data: { createChatThread: threadSummary('New conversation') } },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+/**
+ * One expected `appendChatMessage` call.
+ *
+ * The variables are matched exactly, so the mock only fires if the screen stores
+ * precisely this turn — that match *is* the contract assertion. The `result`
+ * function additionally records it, so a test can also assert that both calls
+ * happened and in which order; a missing call would otherwise just be a mock
+ * nobody used.
+ */
+function appendMock(input: Record<string, unknown>, recorder: Record<string, unknown>[] = []): MockLink.MockedResponse {
+  return {
+    request: {
+      query: APPEND_CHAT_MESSAGE,
+      variables: { input: { workspaceId: WORKSPACE_ID, threadId: THREAD_ID, ...input } },
+    },
+    result: (variables) => {
+      recorder.push((variables as { input: Record<string, unknown> }).input);
+      return { data: { appendChatMessage: storedMessage('USER', 'recorded') } };
+    },
+    maxUsageCount: 1,
+  };
+}
+
+function deleteMock(recorder: Record<string, unknown>[]): MockLink.MockedResponse {
+  return {
+    request: { query: DELETE_CHAT_THREAD, variables: { workspaceId: WORKSPACE_ID, threadId: THREAD_ID } },
+    result: (variables) => {
+      recorder.push(variables as Record<string, unknown>);
+      return { data: { deleteChatThread: true } };
+    },
+    maxUsageCount: 1,
+  };
 }
 
 /** A `fetch` that streams one answer back as Server-Sent Events. */
@@ -314,40 +433,57 @@ describe('the evidence gate', () => {
 });
 
 describe('sending a message', () => {
-  it('calls /v1/chat/completions with the minted key and streams the answer in', async () => {
+  it('records the question, calls /v1 with the minted key, then records the answer', async () => {
+    const appended: Record<string, unknown>[] = [];
     const fetcher = streamingFetch('A TEE is a hardware-isolated environment.');
     vi.stubGlobal('fetch', fetcher);
-    render([screenMock(), credentialMock()]);
+    render(sendingMocks('What is a TEE?', 'A TEE is a hardware-isolated environment.', appended));
 
-    const message = await screen.findByLabelText('Message');
-    await waitFor(() => expect(message).toBeEnabled());
-    await userEvent.type(message, 'What is a TEE?');
-    await userEvent.click(screen.getByRole('button', { name: /send/i }));
+    await ask('What is a TEE?');
 
     expect(await screen.findByText('A TEE is a hardware-isolated environment.')).toBeInTheDocument();
+    // The answer appears from the streaming copy first; the second turn is stored
+    // just behind it, so the recorder is waited on rather than read immediately.
+    await waitFor(() => expect(appended).toHaveLength(2));
+
+    // The inference call is unchanged — the ordinary gateway with a real key.
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://api.router.test/v1/chat/completions');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer sk-tee-v1-chat-secret');
+
+    // And the transcript was stored in two calls, not one: the question before
+    // the stream, the answer after, so a tab that dies mid-answer keeps the
+    // question.
+    expect(appended).toEqual([
+      { workspaceId: WORKSPACE_ID, threadId: THREAD_ID, role: 'USER', content: 'What is a TEE?' },
+      {
+        workspaceId: WORKSPACE_ID,
+        threadId: THREAD_ID,
+        role: 'ASSISTANT',
+        content: 'A TEE is a hardware-isolated environment.',
+        error: null,
+      },
+    ]);
     vi.unstubAllGlobals();
   });
 
-  it('titles the thread from the question and keeps it in this browser', async () => {
+  it('shows the thread the server named, in the conversation list', async () => {
+    // The title is the server's: it takes it from the first user message, so
+    // nothing in the browser invents one.
     vi.stubGlobal('fetch', streamingFetch('Because it is.'));
-    render([screenMock(), credentialMock()]);
+    render(sendingMocks('Why confidential computing?', 'Because it is.'));
 
-    const message = await screen.findByLabelText('Message');
-    await waitFor(() => expect(message).toBeEnabled());
-    await userEvent.type(message, 'Why confidential computing?');
-    await userEvent.click(screen.getByRole('button', { name: /send/i }));
+    await ask('Why confidential computing?');
 
     await screen.findByText('Because it is.');
-    const conversations = screen.getByRole('list', { name: 'Conversations' });
-    expect(conversations).toHaveTextContent('Why confidential computing?');
-    expect(localStorage.getItem(`router-console.chat.v1.${WORKSPACE_ID}`)).toContain('Why confidential computing?');
+    await waitFor(() =>
+      expect(screen.getByRole('list', { name: 'Conversations' })).toHaveTextContent('Why confidential computing?'),
+    );
     vi.unstubAllGlobals();
   });
 
-  it('shows the gateway’s refusal on the turn it refused', async () => {
+  it('stores the gateway’s refusal on the turn it refused, and shows it', async () => {
+    const appended: Record<string, unknown>[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -357,14 +493,25 @@ describe('sending a message', () => {
           }),
       ),
     );
-    render([screenMock(), credentialMock()]);
+    render([
+      screenMock(),
+      credentialMock(),
+      createThreadMock(),
+      appendMock({ role: 'USER', content: 'hello' }, appended),
+      appendMock({ role: 'ASSISTANT', content: '', error: 'Not enough credits.' }, appended),
+      threadsMock([]),
+      threadMock([], { once: true }),
+      threadMock([storedMessage('USER', 'hello')], { once: true }),
+      threadMock([storedMessage('USER', 'hello'), storedMessage('ASSISTANT', '', 'Not enough credits.')]),
+    ]);
 
-    const message = await screen.findByLabelText('Message');
-    await waitFor(() => expect(message).toBeEnabled());
-    await userEvent.type(message, 'hello');
-    await userEvent.click(screen.getByRole('button', { name: /send/i }));
+    await ask('hello');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Not enough credits.');
+    // A failed turn is part of the transcript, with why it stopped.
+    await waitFor(() =>
+      expect(appended.at(-1)).toMatchObject({ role: 'ASSISTANT', content: '', error: 'Not enough credits.' }),
+    );
     vi.unstubAllGlobals();
   });
 });
@@ -374,9 +521,7 @@ describe('a credential that has stopped working', () => {
     /*
      * A chat key can die while a tab still holds it: it expired, an operator
      * revoked it, or this user rotated their own key from a second tab. The tab
-     * must recover on the next message instead of needing a reload — which, when
-     * rotation was workspace-wide, is what two members chatting at once produced
-     * for each other.
+     * must recover on the next message instead of needing a reload.
      */
     const fetcher = vi
       .fn()
@@ -387,24 +532,46 @@ describe('a credential that has stopped working', () => {
       screenMock(),
       credentialMock({ apiKeyId: 'key-stale', secret: 'sk-tee-v1-stale', once: true }),
       credentialMock({ apiKeyId: 'key-fresh', secret: 'sk-tee-v1-fresh', once: true }),
+      createThreadMock(),
+      appendMock({ role: 'USER', content: 'Does the chat recover?' }),
+      appendMock({ role: 'ASSISTANT', content: 'Recovered, and here is the answer.', error: null }),
+      threadsMock([]),
+      threadMock([], { once: true }),
+      threadMock([storedMessage('USER', 'Does the chat recover?')], { once: true }),
+      threadMock([
+        storedMessage('USER', 'Does the chat recover?'),
+        storedMessage('ASSISTANT', 'Recovered, and here is the answer.'),
+      ]),
     ]);
 
     await ask('Does the chat recover?');
 
     expect(await screen.findByText('Recovered, and here is the answer.')).toBeInTheDocument();
     expect(fetcher).toHaveBeenCalledTimes(2);
-    // The second attempt used a *newly minted* key, not the cached dead one.
     expect(bearerOf(fetcher.mock.calls[0])).toBe('Bearer sk-tee-v1-stale');
     expect(bearerOf(fetcher.mock.calls[1])).toBe('Bearer sk-tee-v1-fresh');
-    // And no error was left on the turn that eventually succeeded.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
   it('retries exactly once, so a deployment refusing every key cannot spin', async () => {
+    const appended: Record<string, unknown>[] = [];
     const fetcher = vi.fn(async () => revokedKeyResponse());
     vi.stubGlobal('fetch', fetcher);
-    render([screenMock(), credentialMock()]);
+    render([
+      screenMock(),
+      credentialMock(),
+      createThreadMock(),
+      appendMock({ role: 'USER', content: 'Will this loop?' }, appended),
+      appendMock({ role: 'ASSISTANT', content: '', error: 'This API key has been revoked.' }, appended),
+      threadsMock([]),
+      threadMock([], { once: true }),
+      threadMock([storedMessage('USER', 'Will this loop?')], { once: true }),
+      threadMock([
+        storedMessage('USER', 'Will this loop?'),
+        storedMessage('ASSISTANT', '', 'This API key has been revoked.'),
+      ]),
+    ]);
 
     await ask('Will this loop?');
 
@@ -414,8 +581,7 @@ describe('a credential that has stopped working', () => {
   });
 
   it('does not re-mint for a refusal a fresh key would not fix', async () => {
-    // No credit is no credit whichever key asks. Retrying would double the work
-    // and mint a key for nothing.
+    // No credit is no credit whichever key asks.
     const fetcher = vi.fn(
       async () =>
         new Response(JSON.stringify({ error: { message: 'Not enough credits.', code: 'insufficient_credits' } }), {
@@ -423,7 +589,16 @@ describe('a credential that has stopped working', () => {
         }),
     );
     vi.stubGlobal('fetch', fetcher);
-    render([screenMock(), credentialMock()]);
+    render([
+      screenMock(),
+      credentialMock(),
+      createThreadMock(),
+      appendMock({ role: 'USER', content: 'Anything' }),
+      appendMock({ role: 'ASSISTANT', content: '', error: 'Not enough credits.' }),
+      threadsMock([]),
+      threadMock([], { once: true }),
+      threadMock([storedMessage('USER', 'Anything')]),
+    ]);
 
     await ask('Anything');
 
@@ -434,33 +609,32 @@ describe('a credential that has stopped working', () => {
 });
 
 describe('the conversation list', () => {
-  it('deletes a thread outright, leaving nothing in storage', async () => {
-    vi.stubGlobal('fetch', streamingFetch('answer'));
-    render([screenMock(), credentialMock()]);
+  it('deletes a thread outright, scoped to the workspace it belongs to', async () => {
+    const deleted: Record<string, unknown>[] = [];
+    render([
+      screenMock(),
+      threadsMock(['a question worth deleting']),
+      threadMock([storedMessage('USER', 'a question worth deleting')], { title: 'a question worth deleting' }),
+      deleteMock(deleted),
+    ]);
 
-    const message = await screen.findByLabelText('Message');
-    await waitFor(() => expect(message).toBeEnabled());
-    await userEvent.type(message, 'a question worth deleting');
-    await userEvent.click(screen.getByRole('button', { name: /send/i }));
-    await screen.findByText('answer');
+    await userEvent.click(await screen.findByRole('button', { name: /delete “a question worth deleting”/i }));
 
-    await userEvent.click(
-      screen.getByRole('button', { name: /delete “a question worth deleting” from this browser/i }),
-    );
-
-    await waitFor(() =>
-      expect(localStorage.getItem(`router-console.chat.v1.${WORKSPACE_ID}`)).not.toContain('a question worth deleting'),
-    );
-    vi.unstubAllGlobals();
+    await waitFor(() => expect(deleted).toEqual([{ workspaceId: WORKSPACE_ID, threadId: THREAD_ID }]));
   });
 });
 
 describe('what the screen says about storage', () => {
-  it('says the conversation is in this browser, and claims nothing more', async () => {
+  it('names the boundary and the maintenance risk in the same breath', async () => {
+    // Denis deferred the durability work and accepted the risk. "Stored inside
+    // the attested boundary" is a confidentiality claim, and a reader hears it as
+    // a durability claim unless the sentence beside it says otherwise.
     render();
 
-    expect(await screen.findByText(/This conversation is stored in this browser only\./)).toBeInTheDocument();
-    expect(screen.queryByText(/attested boundary/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/stored inside the attested boundary/i)).toBeInTheDocument();
+    expect(screen.getByText(/may be lost during maintenance/i)).toBeInTheDocument();
+    expect(screen.getByText(/encrypted at rest/i)).toBeInTheDocument();
+    expect(screen.getByText(/ephemeral by design/i)).toBeInTheDocument();
   });
 });
 

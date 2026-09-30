@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiKeyService } from '../../../api-keys/api-key.service.js';
 import type { SessionUser, WorkspaceScopeService } from '../../../auth/index.js';
 import type { CatalogModel, CatalogService } from '../../../catalog/catalog.service.js';
+import type { ChatService } from '../../../chat/index.js';
 import type { routerConfig } from '../../../config.js';
 import type { ApiKey } from '../../../db/entities/api-key.entity.js';
 import { CHAT_KEY_NAME, ChatResolver } from './chat.resolver.js';
@@ -65,6 +66,9 @@ function build(
     {
       list: () => options.models ?? [model('meta/llama-3.2-3b', ['chat', 'completions'])],
     } as unknown as CatalogService,
+    // The transcript store. `chatSettings` and `chatCredential` never touch it;
+    // the operations that do are tested in `app/chat/chat.service.spec.ts`.
+    {} as unknown as ChatService,
   );
 
   return { resolver, create, revoke, listLiveByPurpose, live };
@@ -77,11 +81,13 @@ describe('chatSettings', () => {
     expect(settings).toMatchObject({ enabled: true, maxMessageChars: 42, maxThreads: 3, maxMessagesPerThread: 200 });
   });
 
-  it('says the history lives in the browser, because that is where it lives', () => {
-    // The console derives its own privacy copy from this field (SUP-180). It must
-    // not be able to read `attested_server` until server-side history is real —
-    // which waits on SUP-179's verdict on tenant-PVC durability.
-    expect(build().resolver.chatSettings().historyStorage).toBe('browser_local');
+  it('says the history lives on the server, because that is now where it lives', () => {
+    // The console derives its own privacy copy from this field. It reads
+    // `attested_server` since Denis unblocked server-side history — which licenses
+    // "inside the attested boundary, encrypted at rest" and emphatically not
+    // "durable": the state disk is ephemeral by design, and every surface that
+    // mentions storage says so in the same breath.
+    expect(build().resolver.chatSettings().historyStorage).toBe('attested_server');
   });
 
   it('offers only chat-capable models', () => {

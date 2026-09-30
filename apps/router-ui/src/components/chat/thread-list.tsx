@@ -3,10 +3,15 @@
 import { Button } from '@confidential-router/ui/components/button';
 import { cn } from '@confidential-router/ui/lib/utils';
 import { MessageSquarePlus, Trash2 } from 'lucide-react';
-import type { ChatThread } from './chat-history';
+
+/** Only what a sidebar row renders; the server sends more and this ignores it. */
+export interface ThreadSummary {
+  id: string;
+  title: string;
+}
 
 export interface ThreadListProps {
-  threads: ChatThread[];
+  threads: readonly ThreadSummary[];
   activeThreadId: string | null;
   onSelect: (threadId: string) => void;
   onDelete: (threadId: string) => void;
@@ -16,11 +21,11 @@ export interface ThreadListProps {
 }
 
 /**
- * The conversations this browser is holding.
+ * The conversations stored for this member.
  *
- * Delete is a hard delete and says so: there is no archive and no tombstone,
- * because the history is one key in this browser's local storage and removing the
- * thread from it is the whole operation.
+ * Delete is a hard delete and says so: no archive, no tombstone. The thread row
+ * goes and `chat_messages` cascades from it, so there is nothing left to ask us
+ * for afterwards.
  */
 export function ThreadList({ threads, activeThreadId, onSelect, onDelete, onCreate, maxThreads }: ThreadListProps) {
   return (
@@ -50,7 +55,7 @@ export function ThreadList({ threads, activeThreadId, onSelect, onDelete, onCrea
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={`Delete “${thread.title}” from this browser`}
+                aria-label={`Delete “${thread.title}”`}
                 onClick={() => onDelete(thread.id)}
                 className="opacity-0 transition-opacity focus-visible:opacity-100 group-hover/thread:opacity-100"
               >
@@ -62,7 +67,7 @@ export function ThreadList({ threads, activeThreadId, onSelect, onDelete, onCrea
       </ul>
 
       <p className="text-muted-foreground text-xs">
-        {threads.length} of {maxThreads} conversations kept in this browser. The oldest is dropped past that.
+        {threads.length} of {maxThreads} conversations kept. The oldest is dropped past that.
       </p>
     </div>
   );

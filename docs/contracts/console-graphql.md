@@ -367,7 +367,7 @@ error."* and could not tell a deliberate refusal from an outage.
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
 `activitySummary` / `activitySeries` / `topKeys` / `usageByModel`; **Logs** `generations` (+ the CSV
 download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
-**Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatCredential`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
+**Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatThreads` / `chatThread` `+ chatCredential` / `createChatThread` / `setChatThreadModel` / `appendChatMessage` / `deleteChatThread`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
 `updatePreferences` / `exportEvidence`.
 
@@ -396,21 +396,59 @@ type ChatCredential {
   modelScope: [String!]!
 }
 
+type ChatMessage {
+  id: ID!
+  role: ChatRole!
+  "The one documented exception to \"no request content is stored\" (ADR-007 §4)."
+  content: String!
+  "The gateway's refusal for a turn that ended badly. A failed turn stays in the transcript."
+  error: String
+  createdAt: DateTime!
+}
+
+type ChatThread {
+  id: ID!
+  title: String!
+  modelId: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  "Oldest first. Empty on the thread list, which asks for titles only."
+  messages: [ChatMessage!]!
+}
+
 extend type Query {
   "Public: the screen needs the limits before a session exists, and none of them is a fact about a viewer."
   chatSettings: ChatSettings!
+  "This member's conversations in the workspace, most recently used first."
+  chatThreads(workspaceId: ID!): [ChatThread!]!
+  chatThread(workspaceId: ID!, threadId: ID!): ChatThread!
 }
 
 extend type Mutation {
   "Rotates: this user's own live console_chat key in the workspace is revoked first, and no one else's."
   chatCredential(input: ChatCredentialInput!): ChatCredential!
+
+  createChatThread(input: CreateChatThreadInput!): ChatThread!
+  setChatThreadModel(input: CreateChatThreadInput!, threadId: ID!): ChatThread!
+  "Records a turn that has already happened. This does not call a model."
+  appendChatMessage(input: AppendChatMessageInput!): ChatMessage!
+  deleteChatThread(workspaceId: ID!, threadId: ID!): Boolean!
 }
 ```
 
-`historyStorage` exists so the console does not decide for itself what it may promise. Today every
-deployment answers `BROWSER_LOCAL`, and the screen's disclosure copy is derived from that value —
-`ATTESTED_SERVER` is reserved for when SUP-179 has established whether a tenant PVC survives a node
-reboot. A field rather than a constant, because the claim has to be the deployment's, not the bundle's.
+`historyStorage` exists so the console does not decide for itself what it may promise. Every deployment
+now answers `ATTESTED_SERVER`: threads live in `chat_threads` / `chat_messages` inside the attested
+boundary, encrypted at rest by the in-TEE LUKS disk. That value licenses a *confidentiality* claim and
+emphatically not a durability one — the state disk is ephemeral by design, the durability work was
+deferred and the risk accepted (2026-09-30), and every surface that mentions storage says so in the same
+breath. `BROWSER_LOCAL` stays in the enum as the honest answer for a deployment with no such storage.
+
+**There is no `sendMessage`, and there will not be.** `appendChatMessage` *records* a turn that has
+already happened; the browser calls the model itself over `/v1/chat/completions`. That is what keeps the
+metering invariant intact: a mutation that called a model would be a second inference path and would put
+prompt text on the surface `generations` is guarded to keep clean. The console calls it twice per
+exchange — the question when it is sent, the answer when the stream settles — so a tab that dies
+mid-answer leaves the question in the transcript rather than losing the turn.
 
 `chatCredential` is a real `/v1` credential reaching a browser, so it is scoped to the chat-capable
 catalogue and expires in `chat.credentialTtl` (default 2 h). It is never returned twice: asking again

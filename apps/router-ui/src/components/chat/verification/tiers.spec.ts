@@ -138,7 +138,39 @@ describe('bundleSourceNote', () => {
 });
 
 describe('HISTORY_COPY', () => {
-  it('claims nothing about server storage while the history is local', () => {
+  it('names the boundary, the encryption and the maintenance risk together', () => {
+    /*
+     * The honesty rule at its sharpest. "Stored inside the attested boundary" is a
+     * *confidentiality* claim, and a reader hears it as a durability claim unless
+     * the sentence beside it says otherwise. Denis deferred the durability work
+     * and accepted the risk, so all three have to appear — and the caveat has to
+     * be in the summary, not buried at the end of the detail where it can be
+     * skimmed past.
+     */
+    const stored = HISTORY_COPY.attested_server;
+
+    expect(stored.summary).toMatch(/attested boundary/i);
+    expect(stored.summary).toMatch(/may be lost during maintenance/i);
+    expect(stored.detail).toMatch(/encrypted at rest/i);
+    expect(stored.detail).toMatch(/ephemeral by design/i);
+    expect(stored.detail).toMatch(/deleted outright/i);
+  });
+
+  it('promises no backup, retention window or recovery', () => {
+    // Words that would each be a promise nobody has made.
+    const stored = `${HISTORY_COPY.attested_server.summary} ${HISTORY_COPY.attested_server.detail}`;
+
+    expect(stored).not.toMatch(/backed up|backup|restore|recover(ed|y)|guarantee/i);
+  });
+
+  it('still says the messages themselves reach the model, and are not stored there', () => {
+    // Server-side history must not be allowed to blur into "the router keeps your
+    // prompts": the metering path still records none.
+    expect(HISTORY_COPY.attested_server.detail).toMatch(/v1\/chat\/completions/);
+    expect(HISTORY_COPY.attested_server.detail).toMatch(/no content at all/i);
+  });
+
+  it('keeps the browser-local wording honest for a deployment that has no server storage', () => {
     // SUP-179 has not answered whether a tenant PVC survives a node reboot, so
     // the browser-local copy must not describe storage inside the boundary.
     const local = HISTORY_COPY.browser_local;

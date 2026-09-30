@@ -161,20 +161,38 @@ the intended outcome — it is exactly the endpoint Gatekeeper refuses, and the 
 badge's strongest sentence over a VM the registry has just declined to vouch for. It is unreachable
 today, since no producer publishes a measurement.
 
-### 4. History stays in the browser until the platform can promise otherwise
+### 4. History is stored inside the boundary, and is explicitly not durable
 
-Threads live in `localStorage`, one key per workspace, hard-deleted on request. The screen reads
-`chatSettings.historyStorage` — today always `BROWSER_LOCAL` — and derives its disclosure copy from
-it, so it cannot describe storage that does not exist.
+Threads live in `chat_threads` / `chat_messages` on the deployment's own state,
+which sits inside the attested boundary and is encrypted at rest by the in-TEE
+LUKS disk: the host sees ciphertext and the key never persists. A transcript is
+scoped to `(workspace, member)` — a workspace has members, and one member's demo
+conversation is not another's to read — and deletion is a delete, with
+`chat_messages` cascading from its thread.
 
-Server-side history waits on **SUP-179**: the router's PostgreSQL is a single replica on a tenant
-PVC, and swarm-cloud's `storage-layers.md` says the node state disk is ephemeral by design. Until
-someone can say whether that volume survives a node reboot, "stored inside the attested boundary" is
-a durability promise nobody has made. `invariants.spec.ts` asserts that `chat_threads` and
-`chat_messages` do not exist, so the tables cannot land ahead of the answer.
+These two tables are **the one documented exception** to "no request content
+reaches this database". The metering invariant is untouched and still absolute
+for `generations`: a chat message travels to the model over the ordinary
+`/v1/chat/completions` path, which records tokens, cost and model and no content.
+What is stored here is the transcript the user asked us to keep. The exception is
+bounded by two tests rather than by reviewer memory — `invariants.spec.ts`
+asserts that `chat_messages.content` is the *only* content column in the schema,
+and `app/chat/chat-content-boundary.spec.ts` asserts the four edges the content
+must not cross: logs, analytics events, the evidence snapshot, and the export.
 
-Until then the exposure of a chat message is *exactly* the exposure of an API request: it travels to
-the model over `/v1`, which records tokens, cost and model and no content at all.
+**What this deliberately does not claim is durability.** Denis deferred the
+durability work and accepted the risk (2026-09-30, after SUP-179): the in-TEE
+state disk is ephemeral by design, so infrastructure maintenance can take a
+transcript with it. "Stored inside the attested boundary" is a *confidentiality*
+claim, and a reader will hear it as a durability claim unless the sentence beside
+it says otherwise — so every surface that mentions storage names the maintenance
+risk in the same breath, and in the summary rather than buried in the detail.
+`tiers.spec.ts` pins that wording in both directions: the words that must appear,
+and the words that must not (`backup`, `restore`, `recover`, `guarantee`).
+
+The console still reads `chatSettings.historyStorage` rather than assuming, and
+derives its copy from the answer. `BROWSER_LOCAL` remains in the enum because it
+is the honest answer for a deployment with no such storage.
 
 ### 5. Sanity limits, not business rules
 
@@ -203,7 +221,8 @@ cross-implementation conformance vectors where Web Crypto exists.
 
 ## Consequences
 
-- One new nullable column (`api_keys.purpose`) and no new tables.
+- One new nullable column (`api_keys.purpose`), and two new tables —
+  `chat_threads` and `chat_messages` — which are the documented exception above.
 - The console bundle now imports `@confidential-router/attestation`, which is inside its 200 KB
   gzipped budget (`libs/attestation/src/__tests__/bundle-size.spec.ts`).
 - The extension half of tier 2 is a swarm-cloud change (`apps/swarm-chrome-extension`). Until it
@@ -212,3 +231,8 @@ cross-implementation conformance vectors where Web Crypto exists.
 - The chat is unusable on a non-secure origin by construction (§6). An operator
   deploying the console over plain HTTP on a named host gets a locked chat and a
   message saying why; the API is unaffected.
+- A transcript can be lost to infrastructure maintenance, by accepted decision.
+  If durability is ever wanted, it is a platform change (a replicated storage
+  class for cluster spaces, or a confidential backup target) and not a console
+  one — and the copy in `tiers.ts` plus the landing's `consoleChat` constant are
+  the two places that would then change together.

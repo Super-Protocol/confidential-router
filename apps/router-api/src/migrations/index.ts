@@ -3,6 +3,7 @@ import { InviteCodes1758800000000 } from './1758800000000-InviteCodes.js';
 import { FeedbackGrants1758900000000 } from './1758900000000-FeedbackGrants.js';
 import { WorkspaceFirstRequest1759000000000 } from './1759000000000-WorkspaceFirstRequest.js';
 import { ConsoleChatKeys1759100000000 } from './1759100000000-ConsoleChatKeys.js';
+import { ChatHistory1759200000000 } from './1759200000000-ChatHistory.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -16,4 +17,5 @@ export const MIGRATIONS = [
   FeedbackGrants1758900000000,
   WorkspaceFirstRequest1759000000000,
   ConsoleChatKeys1759100000000,
+  ChatHistory1759200000000,
 ];

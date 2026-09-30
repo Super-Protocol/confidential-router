@@ -54,3 +54,81 @@ export const CHAT_CREDENTIAL = graphql(`
     }
   }
 `);
+
+/**
+ * The thread list. Titles only — a sidebar does not need transcripts, and asking
+ * for them would put every conversation in the workspace on the wire to render
+ * one of them.
+ */
+export const CHAT_THREADS = graphql(`
+  query ChatThreads($workspaceId: ID!) {
+    chatThreads(workspaceId: $workspaceId) {
+      id
+      title
+      modelId
+      updatedAt
+    }
+  }
+`);
+
+/** The open conversation, oldest turn first. */
+export const CHAT_THREAD = graphql(`
+  query ChatThread($workspaceId: ID!, $threadId: ID!) {
+    chatThread(workspaceId: $workspaceId, threadId: $threadId) {
+      id
+      title
+      modelId
+      updatedAt
+      messages {
+        id
+        role
+        content
+        error
+        createdAt
+      }
+    }
+  }
+`);
+
+export const CREATE_CHAT_THREAD = graphql(`
+  mutation CreateChatThread($input: CreateChatThreadInput!) {
+    createChatThread(input: $input) {
+      id
+      title
+      modelId
+      updatedAt
+    }
+  }
+`);
+
+export const SET_CHAT_THREAD_MODEL = graphql(`
+  mutation SetChatThreadModel($input: CreateChatThreadInput!, $threadId: ID!) {
+    setChatThreadModel(input: $input, threadId: $threadId) {
+      id
+      modelId
+    }
+  }
+`);
+
+/**
+ * Records a turn that has already happened. Called twice per exchange — once
+ * when the question is sent, once when the answer settles — so a tab that dies
+ * mid-stream leaves the question in the transcript rather than losing the turn.
+ */
+export const APPEND_CHAT_MESSAGE = graphql(`
+  mutation AppendChatMessage($input: AppendChatMessageInput!) {
+    appendChatMessage(input: $input) {
+      id
+      role
+      content
+      error
+      createdAt
+    }
+  }
+`);
+
+export const DELETE_CHAT_THREAD = graphql(`
+  mutation DeleteChatThread($workspaceId: ID!, $threadId: ID!) {
+    deleteChatThread(workspaceId: $workspaceId, threadId: $threadId)
+  }
+`);

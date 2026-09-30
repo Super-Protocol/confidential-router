@@ -2,12 +2,13 @@
 
 import { cn } from '@confidential-router/ui/lib/utils';
 import * as React from 'react';
-import type { ChatMessage } from './chat-history';
+import type { PendingMessage, StoredMessage } from './chat-history';
 
 export interface MessageListProps {
-  messages: ChatMessage[];
-  /** True while the last assistant turn is still arriving. */
-  streaming: boolean;
+  /** The stored transcript, oldest first. */
+  messages: readonly StoredMessage[];
+  /** The assistant turn still arriving, which is not stored yet. */
+  pending: PendingMessage | null;
 }
 
 /**
@@ -17,47 +18,62 @@ export interface MessageListProps {
  * being shown back inside the console, and a renderer here would be a parser
  * trusting a string the router deliberately does not inspect. `whitespace-pre-wrap`
  * keeps code blocks and lists legible without one.
+ *
+ * The streaming turn is drawn from `pending` rather than from `messages`, because
+ * it is not a message yet — it becomes a row when the stream settles. Keeping the
+ * two apart is what stops a half-arrived answer being indistinguishable from
+ * history on a reload.
  */
-export function MessageList({ messages, streaming }: MessageListProps) {
+export function MessageList({ messages, pending }: MessageListProps) {
   const end = React.useRef<HTMLDivElement>(null);
 
-  // Follows the stream. `messages` changes identity on every delta, which is
+  // Follows the stream. The pending content changes on every delta, which is
   // exactly the cadence a transcript should scroll at — the effect body never
-  // reads it, it only has to run when it changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `messages` is the trigger, not an input.
+  // reads either value, it only has to run when they change.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: both are triggers, not inputs.
   React.useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
-  }, [messages]);
+  }, [messages, pending?.content]);
 
   return (
     <div className="flex flex-col gap-4">
-      {messages.map((message, index) => (
-        <div
-          key={message.id}
-          className={cn('flex flex-col gap-1', message.role === 'user' ? 'items-end' : 'items-start')}
-        >
-          <span className="px-1 text-muted-foreground text-xs">{message.role === 'user' ? 'You' : 'Model'}</span>
-          <div
-            className={cn(
-              'max-w-[min(42rem,90%)] whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm',
-              message.role === 'user' ? 'bg-accent text-accent-foreground' : 'border bg-card',
-              message.error ? 'border-destructive/40' : null,
-            )}
-          >
-            {message.content.length > 0 ? (
-              message.content
-            ) : streaming && index === messages.length - 1 ? (
-              <span className="text-muted-foreground">…</span>
-            ) : null}
-            {message.error ? (
-              <p role="alert" className="mt-2 text-destructive text-xs">
-                {message.error}
-              </p>
-            ) : null}
-          </div>
-        </div>
+      {messages.map((message) => (
+        <Bubble key={message.id} mine={message.role === 'USER'} content={message.content} error={message.error} />
       ))}
+      {pending ? <Bubble mine={false} content={pending.content} error={pending.error ?? null} streaming /> : null}
       <div ref={end} />
+    </div>
+  );
+}
+
+function Bubble({
+  mine,
+  content,
+  error,
+  streaming = false,
+}: {
+  mine: boolean;
+  content: string;
+  error: string | null;
+  streaming?: boolean;
+}) {
+  return (
+    <div className={cn('flex flex-col gap-1', mine ? 'items-end' : 'items-start')}>
+      <span className="px-1 text-muted-foreground text-xs">{mine ? 'You' : 'Model'}</span>
+      <div
+        className={cn(
+          'max-w-[min(42rem,90%)] whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm',
+          mine ? 'bg-accent text-accent-foreground' : 'border bg-card',
+          error ? 'border-destructive/40' : null,
+        )}
+      >
+        {content.length > 0 ? content : streaming ? <span className="text-muted-foreground">…</span> : null}
+        {error ? (
+          <p role="alert" className="mt-2 text-destructive text-xs">
+            {error}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

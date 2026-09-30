@@ -1,19 +1,27 @@
 import { Field, GraphQLISODateTime, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { IsString } from 'class-validator';
+import { IsOptional, IsString, Length } from 'class-validator';
+import type { ChatMessage, ChatRole } from '../../../db/entities/chat-message.entity.js';
+import type { ChatThread } from '../../../db/entities/chat-thread.entity.js';
 
 /**
  * Where a console chat's conversation history is kept.
  *
  * The console reads this rather than assuming, because the answer decides what
- * the screen may *say*. `BROWSER_LOCAL` is today's answer: the thread never
- * leaves the visitor's own browser, so the screen must not claim server-side
- * storage, an encrypted-at-rest boundary, or a retention period it does not
- * have.
+ * the screen may *say*. `ATTESTED_SERVER` is today's answer: threads live in
+ * `chat_threads` / `chat_messages` on the deployment's own state, which sits
+ * inside the attested boundary and is encrypted at rest by the in-TEE LUKS disk
+ * — the host sees ciphertext and the key never persists.
  *
- * `ATTESTED_SERVER` is reserved for when the platform can answer SUP-179 —
- * whether a tenant PVC on the in-TEE LUKS state disk survives a node reboot.
- * Until it can, a stored history would be a durability promise nobody has made,
- * so the value is not yet emitted by any deployment.
+ * What that value does **not** license is a durability promise. Denis deferred
+ * the durability work and accepted the risk (2026-09-30, after SUP-179): the
+ * state disk is ephemeral by design, so a transcript can be lost during
+ * infrastructure maintenance. Every surface that mentions storage says that in
+ * the same breath; `ATTESTED_SERVER` means "stored inside the boundary", not
+ * "kept safe".
+ *
+ * `BROWSER_LOCAL` is kept in the enum because it is the honest answer for any
+ * deployment that has no such storage, and because the console still derives its
+ * copy from whichever value it is given rather than hard-coding one.
  */
 export const ChatHistoryStorageEnum = {
   BROWSER_LOCAL: 'browser_local',
@@ -84,4 +92,122 @@ export class ChatCredentialInputModel {
   @Field(() => ID)
   @IsString()
   workspaceId!: string;
+}
+
+/** GraphQL spelling of `ChatRole`; the values are what the column holds. */
+export const ChatRoleEnum = {
+  USER: 'user',
+  ASSISTANT: 'assistant',
+} as const satisfies Record<string, ChatRole>;
+
+registerEnumType(ChatRoleEnum, { name: 'ChatRole', description: 'Who said it. There is no system role.' });
+
+@ObjectType('ChatMessage', {
+  description:
+    'One turn of a conversation, content and all — the one documented exception to the rule that no ' +
+    'request content reaches this database (ADR-007 §4). `generations` still holds none.',
+})
+export class ChatMessageModel {
+  @Field(() => ID)
+  id!: string;
+
+  @Field(() => ChatRoleEnum)
+  role!: ChatRole;
+
+  @Field(() => String)
+  content!: string;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'The gateway’s refusal for a turn that ended badly. A failed turn stays in the transcript.',
+  })
+  error!: string | null;
+
+  @Field(() => GraphQLISODateTime)
+  createdAt!: Date;
+
+  static from(message: ChatMessage): ChatMessageModel {
+    return {
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      error: message.error,
+      createdAt: message.createdAt,
+    };
+  }
+}
+
+@ObjectType('ChatThread', { description: 'One conversation. Scoped to the member who started it, never shared.' })
+export class ChatThreadModel {
+  @Field(() => ID)
+  id!: string;
+
+  @Field(() => String, { description: 'Derived from the first user message, never typed by the user.' })
+  title!: string;
+
+  @Field(() => String)
+  modelId!: string;
+
+  @Field(() => GraphQLISODateTime)
+  createdAt!: Date;
+
+  @Field(() => GraphQLISODateTime)
+  updatedAt!: Date;
+
+  @Field(() => [ChatMessageModel], {
+    description: 'Oldest first. Empty on the thread list, which asks for titles only.',
+  })
+  messages!: ChatMessageModel[];
+
+  static from(thread: ChatThread, messages: ChatMessage[] = []): ChatThreadModel {
+    return {
+      id: thread.id,
+      title: thread.title,
+      modelId: thread.modelId,
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+      messages: messages.map((message) => ChatMessageModel.from(message)),
+    };
+  }
+}
+
+@InputType('CreateChatThreadInput')
+export class CreateChatThreadInputModel {
+  @Field(() => ID)
+  @IsString()
+  workspaceId!: string;
+
+  @Field(() => String)
+  @IsString()
+  @Length(1, 255)
+  modelId!: string;
+}
+
+@InputType('AppendChatMessageInput')
+export class AppendChatMessageInputModel {
+  @Field(() => ID)
+  @IsString()
+  workspaceId!: string;
+
+  @Field(() => ID)
+  @IsString()
+  threadId!: string;
+
+  @Field(() => ChatRoleEnum)
+  role!: ChatRole;
+
+  /**
+   * No `@Length` ceiling here on purpose: the real limit is
+   * `chat.maxMessageChars`, which the service reads from config and refuses
+   * against. A second number in a decorator would be the one that goes stale.
+   */
+  @Field(() => String)
+  @IsString()
+  content!: string;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  @Length(0, 512)
+  error?: string;
 }
