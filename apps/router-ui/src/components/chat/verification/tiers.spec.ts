@@ -7,6 +7,7 @@ import {
   EXTENSION_TIER,
   extensionTierState,
   GATEKEEPER_TIER,
+  gatekeeperDivergenceNote,
   HISTORY_COPY,
   PAGE_TIER,
   pageTierState,
@@ -81,6 +82,51 @@ describe('tier states', () => {
     expect(extensionTierState({ status: 'absent' })).toBe('unavailable');
     expect(extensionTierState({ status: 'verified', verdict: { ok: true } } as BridgeOutcome)).toBe('pass');
     expect(extensionTierState({ status: 'refused', verdict: { ok: false } } as BridgeOutcome)).toBe('fail');
+  });
+});
+
+describe('the tier-1 badge caveat', () => {
+  it('says a stronger check can refuse, not only that it is stronger (SUP-185)', () => {
+    /*
+     * The badge is what most readers see and all that some read. Saying the
+     * extension or Gatekeeper gives "a check the deployment cannot influence"
+     * implies a firmer yes; it does not prepare anyone for a no. On the live
+     * platform the no is what they get, so the word has to be here.
+     */
+    expect(PAGE_TIER.pass.caveat).toMatch(/refuse an endpoint this page unlocked/i);
+  });
+});
+
+describe('gatekeeperDivergenceNote', () => {
+  function gateWithRoot(status: 'pass' | 'fail' | 'unavailable' | null): GateResult {
+    return {
+      unlocked: true,
+      checks: status ? [{ id: 'root', status, detail: 'x' }] : [],
+      registry: null,
+      evidence: null,
+    };
+  }
+
+  it('warns before the quick-start when tier 1 could not settle the root', () => {
+    // The panel hands over four commands with the digest substituted. On the live
+    // platform they return `exit 3`. A reader must not learn that from the shell.
+    const note = gatekeeperDivergenceNote(gateWithRoot('unavailable'));
+
+    expect(note).toMatch(/may end in a refusal/i);
+    expect(note).toMatch(/authoritative/i);
+  });
+
+  it('is blunter when the page already saw the root check fail', () => {
+    expect(gatekeeperDivergenceNote(gateWithRoot('fail'))).toMatch(/Expect Gatekeeper to refuse/i);
+  });
+
+  it('stays silent when the root passed, so the warning keeps its meaning', () => {
+    expect(gatekeeperDivergenceNote(gateWithRoot('pass'))).toBeNull();
+  });
+
+  it('stays silent before tier 1 has run at all', () => {
+    expect(gatekeeperDivergenceNote(null)).toBeNull();
+    expect(gatekeeperDivergenceNote(gateWithRoot(null))).toBeNull();
   });
 });
 

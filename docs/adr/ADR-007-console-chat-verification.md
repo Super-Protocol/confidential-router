@@ -80,11 +80,39 @@ deployment: the signed `sp-vm` measurement registry, under an RSA key pinned in 
 byte-identical to the one `apps/gatekeeper/pkg/attestation/attestedroot/registry.go` pins, so the
 page and the gatekeeper accept the same set of images.
 
-Consequence, stated plainly because it is the honest part: the demo cloud publishes
-`rootCaTeeQuote: {"status": "not-implemented"}` today, so there is no measurement for the page to
-look up and the root check reports **"not established"** — neither a pass nor a failure. Rebuilding
-a launch measurement from firmware artefacts is not browser work; that is what tier 3 is for. The
-gate does not hold the composer for it, and the panel says so in words.
+Consequence, stated plainly because it is the honest part: the root check reports **"not
+established"** on the live platform — neither a pass nor a failure — and the gate does not hold the
+composer for it.
+
+*Why* it is not established took a correction (SUP-185). The first version read
+`rootCaTeeQuote: {"status": "not-implemented"}`, found nothing, and told the reader that the platform
+publishes no TEE quote for the hostname. That was false. The platform does publish one: a full
+SEV-SNP report, in the root certificate's TEE-evidence extension
+(`0.6.9.42.840.113741.1337.6`) — inside the very bundle the page had already parsed.
+
+So the page now reads it. `readRootAttestation` in `@confidential-router/attestation` decodes the
+three extensions a Super Swarm root carries, and the root row reports what is in them: the evidence
+type, the sp-vm release, and whether the report's `REPORT_DATA` commits to the root's own public key
+— which is a real cryptographic check, and the one thing on this row a browser can settle. A report
+that attests some *other* key makes the row **fail**: that is a negative result, not an absence.
+
+What stays out of reach is the last step, and it is worth being exact about why, because the
+plausible shortcut is a trap. The signed sp-vm registry is not indexed by the report's own
+`MEASUREMENT`. It is indexed by `SHA-256(normalised-launch-digest ‖ vmpl ‖ policy)`, where the
+digest is rebuilt page by page from the release's OVMF image and kernel artefacts for a canonical
+single-Milan-core VM — `snpmeasure.Normalize` in the gatekeeper. The report's measurement is hex of
+a length `isMeasurementHex` accepts, so feeding it to the registry would *work*, return
+`not-in-registry`, and have the page tell a reader that a sound deployment is not one Super Protocol
+vouches for. A wrong red is worse than an honest question mark, so the page does not do it and says
+what it cannot do instead.
+
+The row therefore also warns that Gatekeeper, which does rebuild the digest, may reach a different
+verdict — including refusing the endpoint the composer was just unlocked for. That is not
+hypothetical: on the demo cloud today the root measurement is absent from `Super-Protocol/sp-vm`, so
+the four commands tier 3 hands over end in `exit 3`. The tier-3 panel carries the same warning above
+the quick-start, and tier 1's badge caveat says a stronger check can refuse rather than only that it
+is stronger. A screen that let a reader discover the contradiction from a shell is a screen that
+knew and did not say.
 
 Evidence is fetched from the endpoint directly where CORS allows it and from this router's public
 `GET /v1/evidence/:endpoint` passthrough where it does not. The signature is checked either way, so

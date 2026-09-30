@@ -2,14 +2,18 @@ import {
   CertChainError,
   fingerprintsEqual,
   type ParsedChain,
+  type RootAttestation,
+  type RootNetworkType,
+  readRootAttestation,
   rootFingerprintFromPem,
   validateChain,
   verifyJws,
 } from '@confidential-router/attestation';
 import { isMeasurementHex, lookUpMeasurement, type RegistryVerdict } from './sp-vm-registry';
 
-/** The chain leaf, without pulling `@peculiar/x509` into the console's bundle twice. */
+/** The chain leaf and root, without naming `@peculiar/x509` in this file at all. */
 type ChainLeaf = ParsedChain['leaf'];
+type ChainRoot = ParsedChain['root'];
 
 /**
  * Tier 1 of the chat's verification: the page checks the endpoint's evidence
@@ -26,10 +30,23 @@ type ChainLeaf = ParsedChain['leaf'];
  *
  * So the root question is asked of something outside the deployment instead: the
  * signed sp-vm measurement registry (`sp-vm-registry.ts`), under a key pinned in
- * this bundle. When the platform publishes no TEE quote for a hostname — which is
- * the state of the demo cloud today, where `rootCaTeeQuote` is a
- * `{"status":"not-implemented"}` placeholder — that check reports `unavailable`
- * and the screen says so in words. It never reports a pass it did not get.
+ * this bundle.
+ *
+ * That lookup needs a measurement in the form the registry indexes, and on the
+ * live platform there is none to be had from a browser. `rootCaTeeQuote` is a
+ * `{"status":"not-implemented"}` placeholder, and the real quote — a full SEV-SNP
+ * report — sits in the root certificate's TEE-evidence extension, indexed under a
+ * *normalised launch digest* that only a rebuild from the release's firmware image
+ * produces. So the root check reports `unavailable` here, and the thing that
+ * matters is what it says while doing so.
+ *
+ * It used to say the platform published no quote for the hostname, which was
+ * false, and it said nothing about Gatekeeper reaching a different verdict on the
+ * very endpoint the composer had just been unlocked for (SUP-185). It now reads
+ * the extension (`readRootAttestation`), reports what is actually in it —
+ * including whether the report commits to the root's own key, which a page *can*
+ * check — and names the gap it cannot close. It never reports a pass it did not
+ * get, and it no longer reports an absence it did not observe.
  *
  * What a pass here does and does not mean is spelled out in `tiers.ts`, which
  * owns every user-visible string. Nothing in this file is allowed to say
@@ -79,6 +96,19 @@ export interface GateEvidence {
   quoteFormat: string | null;
   /** The measurement the registry was asked about, when the bundle published one. */
   measurement: string | null;
+  /**
+   * What the root certificate's own extensions say about the VM that enrolled it.
+   *
+   * Separate from `quoteFormat`, and the more informative of the two: the live
+   * platform leaves `rootCaTeeQuote` a placeholder and puts the real report here.
+   */
+  rootEvidenceLabel: string | null;
+  /** The sp-vm release the root's VM booted, when its evidence names one. */
+  rootBuild: string | null;
+  /** Whether the root's quote commits to the root's own key; null when undecided. */
+  rootKeyBinding: boolean | null;
+  /** The Super Protocol network the root declares. Reported, never enforced. */
+  rootNetworkType: RootNetworkType | null;
 }
 
 export interface GateResult {
@@ -99,6 +129,13 @@ export interface GateOptions {
   now?: Date;
   /** Skips the network in tests; also the seam the extension bridge does not use. */
   registryLookup?: typeof lookUpMeasurement;
+  /**
+   * Reads the root's attestation extensions. A seam only because the branches it
+   * selects between are the point of the root row, and the fixture PKI's roots
+   * carry no such extensions — the reader itself is held to a real Super Swarm
+   * root in `libs/attestation`.
+   */
+  rootAttestationReader?: typeof readRootAttestation;
 }
 
 /**
@@ -179,10 +216,12 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
   checks.push(await checkBinding(payload.certFingerprint, bundle.tlsLeaf));
 
   const measurement = measurementOf(payload, bundle);
+  const attestation = await (options.rootAttestationReader ?? readRootAttestation)(chain.root);
   const root = await checkRoot({
     quote: bundle.rootCaTeeQuote,
     measurement,
     rootSubject: chain.rootSubject,
+    attestation,
     lookUp: options.registryLookup ?? lookUpMeasurement,
     fetcher: options.fetcher,
   });
@@ -202,6 +241,10 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
       rootFingerprint: chain.rootFingerprint,
       quoteFormat: quoteFormatOf(bundle.rootCaTeeQuote),
       measurement,
+      rootEvidenceLabel: attestation.evidence?.label ?? null,
+      rootBuild: attestation.evidence?.build ?? null,
+      rootKeyBinding: attestation.evidence?.keyBinding ?? null,
+      rootNetworkType: attestation.networkType,
     },
   };
 }
@@ -337,7 +380,7 @@ function shapeOf(
 }
 
 type ChainOutcome =
-  | { ok: true; check: GateCheck; leaf: ChainLeaf; rootSubject: string; rootFingerprint: string }
+  | { ok: true; check: GateCheck; leaf: ChainLeaf; root: ChainRoot; rootSubject: string; rootFingerprint: string }
   | { ok: false; check: GateCheck };
 
 async function checkChain(bundle: RawBundle, now: Date | undefined): Promise<ChainOutcome> {
@@ -346,6 +389,7 @@ async function checkChain(bundle: RawBundle, now: Date | undefined): Promise<Cha
     return {
       ok: true,
       leaf: parsed.leaf,
+      root: parsed.root,
       rootSubject: parsed.root.subject,
       rootFingerprint: parsed.rootFingerprint,
       check: {
@@ -473,26 +517,24 @@ async function checkBinding(signedFingerprint: string, tlsLeafPem: string | unde
 /**
  * Whether the root this chain terminates at belongs to a VM Super Protocol
  * vouches for — the one question the page cannot answer out of the bundle itself.
+ *
+ * Four things can be true, and they are four different sentences. Saying the
+ * wrong one is not a cosmetic defect on this screen: the row is the only place a
+ * reader is told what the green badge above it does *not* cover, so a row that
+ * blames the platform for an absence, where the real state is "the quote is here
+ * and I cannot finish the check", spends the reader's trust on a false claim
+ * (SUP-185).
  */
 async function checkRoot(input: {
   quote: unknown;
   measurement: string | null;
   rootSubject: string;
+  attestation: RootAttestation;
   lookUp: typeof lookUpMeasurement;
   fetcher: typeof fetch | undefined;
 }): Promise<{ check: GateCheck; registry: RegistryVerdict | null }> {
   if (!input.measurement) {
-    const format = quoteFormatOf(input.quote);
-    return {
-      registry: null,
-      check: {
-        id: 'root',
-        status: 'unavailable',
-        detail: format
-          ? `The deployment publishes a ${format} quote but no measurement this page can look up, so nothing here says the root ${input.rootSubject} is one of Super Protocol's. Tiers 2 and 3 answer that.`
-          : `The platform publishes no TEE quote for this hostname yet, so nothing here says the root ${input.rootSubject} is one of Super Protocol's. Tiers 2 and 3 answer that.`,
-      },
-    };
+    return { registry: null, check: rootWithoutLookup(input.quote, input.rootSubject, input.attestation) };
   }
 
   const verdict = await input.lookUp(input.measurement, { fetcher: input.fetcher });
@@ -532,6 +574,15 @@ async function checkRoot(input: {
  * The bundle contract does not fix a location, so the known ones are tried in
  * order of specificity — the same list `parseEvidenceBundle` reads for the
  * evidence modal — and only a value that is hex of the right length is used.
+ *
+ * The root certificate's TEE-evidence extension is deliberately *not* a fourth
+ * candidate, even though `readRootAttestation` decodes a measurement out of it.
+ * That value is the report's own hardware `MEASUREMENT`; the registry is indexed
+ * by the normalised launch digest derived from it, and the two differ for every
+ * VM. It is the right length and the right alphabet, so `isMeasurementHex` would
+ * wave it through and the registry would answer `not-in-registry` — a page
+ * telling a reader a healthy deployment is not one Super Protocol vouches for.
+ * Only a value a producer published *as* a registry measurement belongs here.
  */
 function measurementOf(payload: unknown, bundle: RawBundle): string | null {
   const evidence = (payload as { evidence?: { measurements?: unknown } } | undefined)?.evidence;
@@ -550,6 +601,82 @@ function measurementOf(payload: unknown, bundle: RawBundle): string | null {
     }
   }
   return null;
+}
+
+/**
+ * What to say when there is no measurement the registry indexes.
+ *
+ * Never a pass: the registry is the only thing outside the deployment that could
+ * answer this, and it has not been asked. But "not established" has to be
+ * qualified by *why*, because the reasons differ in what the reader should do
+ * next — and one of them is not a "why nobody could answer" at all but a
+ * refusal in its own right.
+ */
+function rootWithoutLookup(quote: unknown, rootSubject: string, attestation: RootAttestation): GateCheck {
+  const evidence = attestation.evidence;
+
+  if (evidence && evidence.keyBinding === false) {
+    /*
+     * A real negative result, and the one thing on this row a page can establish
+     * on its own: the quote in this certificate attests some *other* public key.
+     * Either the certificate is not the one the VM enrolled or the quote was
+     * lifted from elsewhere. Gatekeeper treats it as fatal, and so does this row.
+     */
+    return {
+      id: 'root',
+      status: 'fail',
+      detail: `The root ${rootSubject} carries an ${evidence.label} quote, but that quote's report data does not commit to this root's public key — so it attests some other key, not this one. Do not trust this endpoint on the strength of this page: run Gatekeeper, which refuses a root whose quote does not bind its own key.`,
+    };
+  }
+
+  if (evidence) {
+    /*
+     * The live platform. The quote is right here in the root certificate, its
+     * report commits to the root's key, and the page still cannot finish: the
+     * sp-vm registry is indexed by a *normalised launch digest* — the digest
+     * rebuilt page by page from the release's OVMF image and kernel artefacts for
+     * a canonical single-core VM, then wrapped — and neither the report's own
+     * MEASUREMENT nor anything else in the bundle is that value. Handing the
+     * report's measurement to the registry would answer "not one of ours" for a
+     * sound VM, which is why it is not done.
+     */
+    const bound =
+      evidence.keyBinding === true ? " and that quote's report data commits to this root's own public key" : '';
+    const release = evidence.build ? ` for sp-vm ${evidence.build}` : '';
+    return {
+      id: 'root',
+      status: 'unavailable',
+      detail: `The root ${rootSubject} carries an ${evidence.label} quote${release}${bound}. What this page cannot do is the last step: Super Protocol's registry indexes a VM by a launch measurement rebuilt from that release's firmware image, which is not browser work. So nothing here says this VM is one Super Protocol vouches for — and Gatekeeper, which does rebuild it, may reach a different verdict on this endpoint, including refusing it. Tier 3 below is how you find out.`,
+    };
+  }
+
+  if (attestation.carriesEvidence) {
+    // Present but undecodable. Still not an absence, and the reader is owed the
+    // distinction: a malformed extension is a platform problem worth reporting,
+    // not a hostname that publishes nothing.
+    return {
+      id: 'root',
+      status: 'unavailable',
+      detail: `The root ${rootSubject} carries a TEE evidence extension this page could not read (${attestation.error ?? 'unknown reason'}), so nothing here says either way whether this VM is one of Super Protocol's. Run Gatekeeper, which reads the extension in full.`,
+    };
+  }
+
+  const format = quoteFormatOf(quote);
+  if (format) {
+    return {
+      id: 'root',
+      status: 'unavailable',
+      detail: `The deployment publishes a ${format} quote but no measurement this page can look up, and the root ${rootSubject} carries no TEE evidence of its own. Nothing here says this VM is one of Super Protocol's. Tiers 2 and 3 answer that.`,
+    };
+  }
+
+  // The only case where an absence may be asserted — because both places a quote
+  // can live have now been looked in, and the sentence says which.
+  return {
+    id: 'root',
+    status: 'unavailable',
+    detail: `Neither this bundle's rootCaTeeQuote nor the root certificate ${rootSubject} carries a TEE quote, so nothing here says this VM is one of Super Protocol's. Tiers 2 and 3 answer that.`,
+  };
 }
 
 function quoteFormatOf(quote: unknown): string | null {

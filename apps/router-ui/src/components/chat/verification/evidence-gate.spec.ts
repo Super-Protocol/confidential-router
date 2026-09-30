@@ -1,3 +1,4 @@
+import type { RootAttestation, RootTeeEvidence } from '@confidential-router/attestation';
 import { loadBundle } from '@confidential-router/attestation-fixtures';
 import { describe, expect, it, vi } from 'vitest';
 import { type CheckId, type CheckStatus, runEvidenceGate } from './evidence-gate';
@@ -31,10 +32,16 @@ function statusOf(checks: { id: CheckId; status: CheckStatus }[], id: CheckId): 
   return checks.find((check) => check.id === id)?.status;
 }
 
+/** The sentence a row shows the viewer — which is what most of SUP-185 was about. */
+function detailOf(result: { checks: { id: CheckId; detail: string }[] }, id: CheckId): string {
+  return result.checks.find((check) => check.id === id)?.detail ?? '';
+}
+
 async function run(options: {
   fetcher: typeof fetch;
   now?: Date;
   registryLookup?: Parameters<typeof runEvidenceGate>[0]['registryLookup'];
+  rootAttestationReader?: Parameters<typeof runEvidenceGate>[0]['rootAttestationReader'];
 }) {
   return runEvidenceGate({
     hostname: HOSTNAME,
@@ -43,8 +50,47 @@ async function run(options: {
     now: options.now ?? REFERENCE_NOW,
     fetcher: options.fetcher,
     registryLookup: options.registryLookup,
+    rootAttestationReader: options.rootAttestationReader,
   });
 }
+
+/**
+ * The root attestation a fixture root would have if the platform had issued it.
+ *
+ * The fixture PKI's roots carry no attestation extensions — they are plain
+ * self-signed CAs — so the branches of the root row are selected here instead.
+ * The reader itself is held to a real `Super Swarm Root CA` in
+ * `libs/attestation/src/__tests__/root-tee-evidence.spec.ts`; what these cases
+ * decide is what the *screen says* about each thing the reader can find.
+ */
+function reads(attestation: Partial<RootAttestation>): Parameters<typeof runEvidenceGate>[0]['rootAttestationReader'] {
+  return async () => ({
+    challengeType: null,
+    networkType: null,
+    carriesEvidence: false,
+    evidence: null,
+    error: null,
+    ...attestation,
+  });
+}
+
+/** The SEV-SNP evidence a real `Super Swarm Root CA` carries today. */
+const LIVE_EVIDENCE: RootTeeEvidence = {
+  type: 'sev-snp-qemu',
+  label: 'AMD SEV-SNP (QEMU)',
+  registryFolder: 'sev-snp',
+  build: 'build-370',
+  reportMeasurement: 'a'.repeat(96),
+  keyBinding: true,
+};
+
+/** The live platform's root, as `readRootAttestation` reports it. */
+const LIVE_SEV_SNP: Partial<RootAttestation> = {
+  challengeType: 'sev-snp',
+  networkType: 'untrusted',
+  carriesEvidence: true,
+  evidence: LIVE_EVIDENCE,
+};
 
 describe('a page that cannot verify at all', () => {
   it('blames its own origin, not the deployment, when Web Crypto is withheld', async () => {
@@ -86,11 +132,11 @@ describe('a bundle a gatekeeper would accept', () => {
     expect(result.evidence?.rootSubject).toBeTruthy();
   });
 
-  it('says the root is not established when the platform publishes no TEE quote', async () => {
-    // The state of the demo cloud today: `rootCaTeeQuote` is absent or a
-    // placeholder, so the page cannot say the root is one of Super Protocol's.
-    // It must report that as "not established", never as a pass and never as a
-    // failure, and it must not hold up the composer for it.
+  it('says the root is not established when nothing anywhere carries a quote', async () => {
+    // A bundle with no `rootCaTeeQuote` whose root carries no TEE evidence either:
+    // the page cannot say the root is one of Super Protocol's. It must report that
+    // as "not established", never as a pass and never as a failure, and it must
+    // not hold up the composer for it.
     const result = await run({ fetcher: servesFromEndpoint('valid-producer-asserted') });
 
     expect(statusOf(result.checks, 'root')).toBe('unavailable');
@@ -243,6 +289,140 @@ describe('the root check', () => {
 
     expect(lookUp).not.toHaveBeenCalled();
     expect(statusOf(result.checks, 'root')).toBe('unavailable');
-    expect(result.checks.find((check) => check.id === 'root')?.detail).toContain('no TEE quote');
+    // It may only claim an absence it actually observed, and it observed two
+    // places: the bundle field and the root certificate.
+    expect(detailOf(result, 'root')).toContain("Neither this bundle's rootCaTeeQuote nor the root certificate");
+  });
+});
+
+/**
+ * SUP-185. The live platform leaves `rootCaTeeQuote` a placeholder and puts a full
+ * SEV-SNP report in the root certificate's TEE-evidence extension. The row used to
+ * answer that with "the platform publishes no TEE quote for this hostname yet" —
+ * a false statement about the platform, made by the one screen whose whole design
+ * rule is that a word may only appear when the thing behind it happened.
+ */
+describe('a root whose certificate carries the quote', () => {
+  function serves(body: Record<string, unknown>): typeof fetch {
+    return (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  }
+
+  const placeholder = () => ({
+    ...loadBundle('valid-producer-asserted'),
+    rootCaTeeQuote: { status: 'not-implemented' },
+  });
+
+  it('never claims the platform published nothing', async () => {
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(detailOf(result, 'root')).not.toContain('publishes no TEE quote');
+    expect(detailOf(result, 'root')).not.toContain('Neither this bundle');
+  });
+
+  it('reports the evidence type, the release and the key binding it did check', async () => {
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    const detail = detailOf(result, 'root');
+    expect(detail).toContain('AMD SEV-SNP (QEMU)');
+    expect(detail).toContain('build-370');
+    expect(detail).toContain("commits to this root's own public key");
+    expect(result.evidence).toMatchObject({
+      rootEvidenceLabel: 'AMD SEV-SNP (QEMU)',
+      rootBuild: 'build-370',
+      rootKeyBinding: true,
+      rootNetworkType: 'untrusted',
+    });
+  });
+
+  it('warns that Gatekeeper may refuse the endpoint it just unlocked', async () => {
+    /*
+     * The contradiction a demo user hit in four pasted commands: the badge said
+     * "Verified by this page", the composer was open, and the panel's own
+     * quick-start returned `exit 3`. The row has to name that possibility.
+     */
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('unavailable');
+    expect(result.unlocked).toBe(true);
+    expect(detailOf(result, 'root')).toContain('may reach a different verdict');
+    expect(detailOf(result, 'root')).toContain('including refusing it');
+  });
+
+  it('still does not hand the report measurement to the registry', async () => {
+    /*
+     * The trap in the obvious fix. The report's own 48-byte MEASUREMENT is hex of
+     * a length `isMeasurementHex` accepts, so it would sail into a lookup — and
+     * the registry indexes the *normalised* launch digest, so the answer would be
+     * `not-in-registry`: the page accusing a sound deployment. Zero lookups is the
+     * assertion, because a wrong red here is worse than the honest question mark.
+     */
+    const lookUp = vi.fn();
+
+    const result = await run({
+      fetcher: serves(placeholder()),
+      registryLookup: lookUp as never,
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(lookUp).not.toHaveBeenCalled();
+    expect(result.registry).toBeNull();
+    expect(result.evidence?.measurement).toBeNull();
+  });
+
+  it('fails the row when the quote attests some other key', async () => {
+    // The one negative a page can establish on its own, so it is a cross rather
+    // than a question mark — and the copy says not to trust the endpoint on this
+    // page's word.
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads({
+        ...LIVE_SEV_SNP,
+        evidence: { ...LIVE_EVIDENCE, keyBinding: false },
+      }),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('fail');
+    expect(detailOf(result, 'root')).toContain("does not commit to this root's public key");
+  });
+
+  it('says it could not read an extension rather than that there was none', async () => {
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads({ carriesEvidence: true, error: 'malformed varint' }),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('unavailable');
+    expect(detailOf(result, 'root')).toContain('could not read (malformed varint)');
+    expect(detailOf(result, 'root')).not.toContain('carries no TEE');
+  });
+
+  it('leaves a producer-published measurement in charge when there is one', async () => {
+    /*
+     * Reading the extension must not shadow the path that already works: a
+     * producer that publishes a real registry measurement still gets the registry
+     * answer, not a "cannot finish" note.
+     */
+    const measurement = 'c'.repeat(64);
+    const bundle = {
+      ...loadBundle('valid-producer-asserted'),
+      rootCaTeeQuote: { format: 'amd-sev-snp', collateral: { measurements: { mrenclave: measurement } } },
+    };
+
+    const result = await run({
+      fetcher: serves(bundle),
+      registryLookup: async () => ({ status: 'vouched', measurement, url: 'https://registry.test/e.json' }),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('pass');
   });
 });

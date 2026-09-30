@@ -96,6 +96,22 @@ graphql:
   path: /graphql
   introspection: true
 
+# The console chat: sanity limits, not business rules. They exist so a demo
+# surface cannot become a free storage service, and are published to the browser
+# so the screen prunes rather than failing at the edge. `enabled: false` removes
+# the screen and refuses the credential mutation. See ADR-007 §5.
+#
+# Every value below is also the schema default; the block is here because this
+# file's job is to show the shape (SUP-185).
+chat:
+  enabled: true
+  maxMessageChars: 8000
+  maxThreads: 50
+  maxMessagesPerThread: 200
+  # Hours, not days: the key the chat mints for itself only has to survive one
+  # sitting at the screen.
+  credentialTtl: 2h
+
 # The Gatekeeper screen's download links, read from GitHub Releases. Nothing is
 # fetched until the console asks; set a token if the anonymous rate limit bites.
 gatekeeper:

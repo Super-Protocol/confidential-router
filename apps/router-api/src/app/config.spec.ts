@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -248,6 +248,54 @@ describe('the committed development seed', () => {
       'http://evidence-publisher:8081/qwen25-72b/.well-known/swarm-evidence',
       'http://evidence-publisher:8081/deepseek-v3/.well-known/swarm-evidence',
     ]);
+  });
+});
+
+describe('the committed development config', () => {
+  /**
+   * `conf/router.yaml` says of itself that everything in it is also the schema
+   * default, so deleting the file changes nothing — it exists to show the shape.
+   * Nothing held it to either half of that, and the chat section was missing from
+   * it entirely while ADR-007 §5 pointed readers at it (SUP-185). Two assertions,
+   * because they catch different mistakes: a value that contradicts its default,
+   * and a documented section that is simply not there.
+   */
+  function committedConfig(): { raw: object; parsed: ReturnType<typeof RouterConfigSchema.parse> } {
+    const raw = expandEnvPlaceholders(
+      parseYaml(readFileSync(join(REPO_ROOT, 'apps/router-api/conf/router.yaml'), 'utf8')) as object,
+      {},
+    );
+    return {
+      raw,
+      parsed: RouterConfigSchema.parse({ ...raw, auth: { ...(raw as { auth?: object }).auth, secret: SECRET } }),
+    };
+  }
+
+  it('contradicts no schema default, so deleting the file really would change nothing', () => {
+    const { parsed } = committedConfig();
+    const defaults = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    // Only the sections the file spells out: it does not restate the whole
+    // schema, and the ones it omits are not what this guards.
+    expect(parsed.chat).toEqual(defaults.chat);
+    expect(parsed.rateLimits).toEqual(defaults.rateLimits);
+    expect(parsed.graphql).toEqual(defaults.graphql);
+  });
+
+  it('actually spells out the sections the ADRs send readers to it for', () => {
+    /*
+     * The one the parity check above cannot make: `chat` carries a schema
+     * prefault, so an absent block parses to the defaults just as a present one
+     * does. Only the raw document can say whether the shape is on show.
+     */
+    const { raw } = committedConfig();
+
+    expect(Object.keys(raw as Record<string, unknown>)).toEqual(
+      expect.arrayContaining(['server', 'database', 'backends', 'rateLimits', 'auth', 'chat', 'gatekeeper']),
+    );
+    expect(Object.keys((raw as { chat: Record<string, unknown> }).chat)).toEqual(
+      expect.arrayContaining(['enabled', 'maxMessageChars', 'maxThreads', 'maxMessagesPerThread', 'credentialTtl']),
+    );
   });
 });
 

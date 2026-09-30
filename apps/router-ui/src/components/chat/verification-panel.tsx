@@ -12,11 +12,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@confidential-router/ui/components/dialog';
-import { Check, CircleHelp, CircleX, RefreshCw } from 'lucide-react';
+import { Check, CircleHelp, CircleX, RefreshCw, TriangleAlert } from 'lucide-react';
 import type * as React from 'react';
 import { resolvedSetupScript, resolvedSetupSteps } from '../gatekeeper/setup-commands';
 import type { CheckStatus, GateCheck } from './verification/evidence-gate';
-import { bundleSourceNote, CHECK_LABELS, EXTENSION_TIER, GATEKEEPER_TIER, PAGE_TIER } from './verification/tiers';
+import {
+  bundleSourceNote,
+  CHECK_LABELS,
+  EXTENSION_TIER,
+  GATEKEEPER_TIER,
+  gatekeeperDivergenceNote,
+  PAGE_TIER,
+} from './verification/tiers';
 import type { VerificationState } from './verification/use-verification';
 
 export interface VerificationPanelProps {
@@ -50,6 +57,7 @@ export function VerificationPanel({
   const { gate, extension, pageState, extensionState } = verification;
   const page = PAGE_TIER[pageState === 'unavailable' ? 'pending' : pageState];
   const extensionTier = EXTENSION_TIER[extensionState];
+  const divergence = gatekeeperDivergenceNote(gate);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -121,6 +129,15 @@ export function VerificationPanel({
             variant={GATEKEEPER_TIER.variant}
             caveat={GATEKEEPER_TIER.caveat}
           >
+            {divergence ? (
+              <p
+                className="mb-3 flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+                role="status"
+              >
+                <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+                <span className="min-w-0">{divergence}</span>
+              </p>
+            ) : null}
             <ol className="space-y-3">
               {resolvedSetupSteps({ hostname, evidenceDigestHex: evidenceDigestHex }).map((step, index) => (
                 <li key={step.command} className="space-y-1">

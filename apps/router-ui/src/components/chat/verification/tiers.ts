@@ -51,8 +51,15 @@ export const PAGE_TIER: Record<Exclude<TierState, 'unavailable'>, TierPresentati
   pass: {
     id: 'page',
     label: 'Verified by this page',
+    /*
+     * "…for a stronger answer" is not enough here, and saying only that was the
+     * defect: a reader is entitled to know that the stronger answer can be *no*.
+     * Tier 1 does not include the root check, so an endpoint this badge unlocks is
+     * an endpoint Gatekeeper may refuse — which is exactly what the live platform
+     * did (SUP-185). The badge has to carry that, not just the panel.
+     */
     caveat:
-      'This page checked the endpoint’s signed evidence itself — but the page came from the same deployment, so this is self-reported. Install the extension or run Gatekeeper for a check the deployment cannot influence.',
+      'This page checked the endpoint’s signed evidence itself — but the page came from the same deployment, so this is self-reported, and it does not include the check that decides whether Super Protocol vouches for the VM behind this endpoint. Gatekeeper makes that one, and can refuse an endpoint this page unlocked.',
     variant: 'warning',
   },
   fail: {
@@ -152,6 +159,29 @@ export function lockedReasonOf(gate: GateResult | null): string {
   if (!gate) return PAGE_TIER.pending.caveat;
   const failed = gate.checks.find((check) => check.status === 'fail');
   return failed ? failed.detail : PAGE_TIER.pending.caveat;
+}
+
+/**
+ * The warning that belongs beside tier 3's quick-start when tier 1 left the root
+ * question open.
+ *
+ * The panel hands over four commands with the digest already substituted, so a
+ * reader runs them expecting to confirm what the screen just said. When the root
+ * row is anything but a pass, Gatekeeper is applying a check this page could not,
+ * and `exit 3` is a live possibility — on the demo cloud today it is the actual
+ * outcome. A quick-start that can end in a refusal has to say so before it is
+ * copied, or the screen is letting the reader discover a contradiction it already
+ * knew about.
+ *
+ * Null when the root row passed, or before tier 1 has finished: there is nothing
+ * to warn about, and a warning that is always on is one nobody reads.
+ */
+export function gatekeeperDivergenceNote(gate: GateResult | null): string | null {
+  const root = gate?.checks.find((check) => check.id === 'root');
+  if (!root || root.status === 'pass') return null;
+  return root.status === 'fail'
+    ? 'Expect Gatekeeper to refuse this endpoint. This page already found the root check failing, and Gatekeeper enforces it — its answer is the authoritative one.'
+    : 'These commands may end in a refusal rather than a confirmation. Gatekeeper rebuilds the VM measurement and checks it against Super Protocol’s registry — the one check above that this page could not complete — so it can deny an endpoint this page unlocked. Its answer is the authoritative one either way.';
 }
 
 /** Where the bundle came from, said plainly. */

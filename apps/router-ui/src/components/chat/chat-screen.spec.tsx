@@ -44,7 +44,12 @@ const PASSING_GATE = {
     { id: 'signature', status: 'pass', detail: 'The evidence is signed by the chain leaf.' },
     { id: 'freshness', status: 'pass', detail: 'Signed 2 minutes ago.' },
     { id: 'binding', status: 'pass', detail: 'The published TLS certificate matches.' },
-    { id: 'root', status: 'unavailable', detail: 'The platform publishes no TEE quote for this hostname yet.' },
+    {
+      id: 'root',
+      status: 'unavailable',
+      detail:
+        'The root CN=Super Swarm Root CA carries an AMD SEV-SNP (QEMU) quote for sp-vm build-370, and Gatekeeper may reach a different verdict on this endpoint.',
+    },
   ],
   registry: null,
   evidence: {
@@ -57,6 +62,10 @@ const PASSING_GATE = {
     rootFingerprint: 'sha256/eN7J30KqI96yWxc5VLOpL5VPQYyBKAA2K3HhPBIBXgg',
     quoteFormat: null,
     measurement: null,
+    rootEvidenceLabel: 'AMD SEV-SNP (QEMU)',
+    rootBuild: 'build-370',
+    rootKeyBinding: true,
+    rootNetworkType: 'untrusted',
   },
 };
 
@@ -248,6 +257,21 @@ describe('the evidence gate', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(/gatekeeper endpoint add router --upstream https:\/\/llama-33-70b/)).toBeInTheDocument();
+  });
+
+  it('warns beside the gatekeeper commands that they may end in a refusal (SUP-185)', async () => {
+    /*
+     * The mocked gate leaves the root row unsettled, which is the live platform's
+     * state. The panel must say so where the commands are handed over — a reader
+     * who copies them and gets `exit 3` was told, by the screen, to expect a
+     * confirmation.
+     */
+    render();
+    await screen.findByText('Verified by this page');
+
+    await userEvent.click(screen.getByRole('button', { name: /what has been verified/i }));
+
+    expect(await screen.findByText(/may end in a refusal rather than a confirmation/i)).toBeInTheDocument();
   });
 });
 
