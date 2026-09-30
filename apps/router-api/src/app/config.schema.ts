@@ -413,14 +413,23 @@ const ChatSchema = z
      *
      * A ceiling on one message, not on the conversation: the model's own context
      * window is the real limit on the thread, and it is per model, so the screen
-     * reads it from the catalogue rather than from here.
+     * reads it from the catalogue rather than from here. It is also one of the
+     * three factors in the per-member storage bound — see `maxThreads` below.
      */
     maxMessageChars: integerish().pipe(z.number().int().min(1).max(1_000_000)).prefault(8_000),
     /**
-     * How many threads one workspace may keep, and how many messages one thread
-     * may hold. Both are enforced where the history lives — today the visitor's
-     * own browser — and both are published to it, so the screen prunes rather
+     * How many threads one member may keep, and how many messages one thread may
+     * hold. Both are enforced in `ChatService` before the insert, and both are
+     * published to the browser, so the screen prunes and shows a counter rather
      * than failing at the edge.
+     *
+     * **These three numbers multiply into the storage a single member can
+     * occupy**, which is the thing to look at when tuning a deployment:
+     * `maxThreads × maxMessagesPerThread × maxMessageChars`. At the defaults that
+     * is 50 × 200 × 8 000 ≈ **80 MB per member**, on a state disk shared with the
+     * database. Bounded, which is the point of having the caps at all — but a
+     * demo cloud sizing its volume for a mailing wave should do that arithmetic
+     * rather than read the individual numbers as small.
      */
     maxThreads: integerish().pipe(z.number().int().min(1).max(1_000)).prefault(50),
     maxMessagesPerThread: integerish().pipe(z.number().int().min(2).max(10_000)).prefault(200),

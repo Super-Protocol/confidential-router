@@ -450,6 +450,16 @@ prompt text on the surface `generations` is guarded to keep clean. The console c
 exchange — the question when it is sent, the answer when the stream settles — so a tab that dies
 mid-answer leaves the question in the transcript rather than losing the turn.
 
+**A corollary worth stating plainly: a client can store an `ASSISTANT` turn the model never produced.**
+That follows from recording rather than attesting, and it is by design. The router does not witness the
+exchange — that is the whole point of the browser calling `/v1` itself — so it cannot distinguish a
+model's answer from a string the caller typed. The reason this costs nothing is who can read the result:
+a transcript is scoped to `(workspace, member)`, so the only person a forged turn can mislead is the
+person who wrote it. Nothing downstream treats these rows as evidence of anything — they are not
+metering, not billing, not attestation, and never leave the boundary. If a surface ever wants a
+transcript it can *trust*, the metering record (`generations`) is the witnessed one, and it deliberately
+holds no content.
+
 `chatCredential` is a real `/v1` credential reaching a browser, so it is scoped to the chat-capable
 catalogue and expires in `chat.credentialTtl` (default 2 h). It is never returned twice: asking again
 mints a new key and revokes the previous one, because the plaintext of that one was shown once.

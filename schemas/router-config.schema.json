@@ -550,7 +550,7 @@
           "minimum": 1,
           "maximum": 1000,
           "default": 50,
-          "description": "How many threads one workspace may keep, so a demo surface cannot become a free storage service."
+          "description": "How many threads one member may keep, so a demo surface cannot become a free storage service. Note the product maxThreads × maxMessagesPerThread × maxMessageChars is the storage one member can occupy — about 80 MB at the defaults."
         },
         "maxMessagesPerThread": {
           "type": "integer",
