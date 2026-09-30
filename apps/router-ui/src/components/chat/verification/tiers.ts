@@ -131,6 +131,7 @@ export function extensionTierState(outcome: BridgeOutcome | null): TierState {
 
 /** How each check reads in the verification panel's list. */
 export const CHECK_LABELS = {
+  webcrypto: 'Web Crypto available in this page',
   bundle: 'Signed evidence retrieved',
   chain: 'Certificate chain',
   signature: 'Evidence signature',
@@ -138,6 +139,20 @@ export const CHECK_LABELS = {
   binding: 'TLS certificate binding',
   root: 'Root vouched for by Super Protocol',
 } as const;
+
+/**
+ * Why the composer is shut, in the words of the check that shut it.
+ *
+ * The first failing check's own `detail` rather than one generic sentence: "the
+ * evidence did not check out" is true of an expired certificate and misleading
+ * of a page that has no Web Crypto to check with. The user is about to press
+ * send, so this is the moment the distinction is worth most.
+ */
+export function lockedReasonOf(gate: GateResult | null): string {
+  if (!gate) return PAGE_TIER.pending.caveat;
+  const failed = gate.checks.find((check) => check.status === 'fail');
+  return failed ? failed.detail : PAGE_TIER.pending.caveat;
+}
 
 /** Where the bundle came from, said plainly. */
 export function bundleSourceNote(source: BundleSource): string {

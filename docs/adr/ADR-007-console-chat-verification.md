@@ -112,6 +112,25 @@ the model over `/v1`, which records tokens, cost and model and no content at all
 browser, and enforced where the history lives. They exist so a demo surface cannot become a free
 storage service. `chat.enabled: false` removes the screen and refuses `chatCredential`.
 
+### 6. The chat needs a secure origin, and says so when it does not have one
+
+Browsers expose `crypto.subtle` only in a secure context — HTTPS, or
+`http://localhost`. The verifier is Web Crypto from end to end, so a console
+served over plain HTTP on a *named* host cannot verify anything, and the chat
+stays locked. That is the correct outcome; the part worth deciding was what it
+*says*. Every signature stage failing with "SubtleCrypto is not available" made
+the panel report "the certificate chain is not valid", which accuses the
+deployment of something that is true of the page. So the gate answers Web Crypto
+first, before it fetches anything, and the message names the fix.
+
+A production deployment serves the console over HTTPS and is unaffected. Two
+places are not: a developer on a named http origin, and the console e2e suite,
+which serves `http://console.localtest.me:4300` on purpose so that cookie
+behaviour matches production (`apps/router-ui-e2e/src/origins.ts`). The suite
+therefore tests this refusal rather than the happy path, and the happy path is
+covered by the component tests, which run the verifier against the
+cross-implementation conformance vectors where Web Crypto exists.
+
 ## Consequences
 
 - One new nullable column (`api_keys.purpose`) and no new tables.
@@ -120,3 +139,6 @@ storage service. `chat.enabled: false` removes the screen and refuses `chatCrede
 - The extension half of tier 2 is a swarm-cloud change (`apps/swarm-chrome-extension`). Until it
   ships, tier 2 reports "no extension detected" everywhere, which is a correct statement.
 - A workspace that never opens the chat never has a `console_chat` key.
+- The chat is unusable on a non-secure origin by construction (§6). An operator
+  deploying the console over plain HTTP on a named host gets a locked chat and a
+  message saying why; the API is unaffected.

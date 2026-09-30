@@ -119,6 +119,14 @@ design, and why each tier says what it says, is ADR-007; what lives where:
   component writes its own. Tier 3 reuses `gatekeeper/setup-commands.ts` with the
   hostname and digest filled in.
 
+The verifier is Web Crypto from end to end, so **the chat needs a secure
+origin**: HTTPS, or `http://localhost`. On a named http origin the browser
+withholds `crypto.subtle`, the gate answers that first — before fetching
+anything — and the composer stays locked with a message naming the fix rather
+than blaming the deployment's certificate chain. That is why the e2e suite, which
+serves a named http origin deliberately, tests the refusal and leaves the happy
+path to the component tests.
+
 ## Evidence
 
 `src/components/evidence/` is the one place the console renders what an endpoint

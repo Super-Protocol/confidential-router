@@ -27,7 +27,7 @@ import { MessageList } from './message-list';
 import { ModelPicker } from './model-picker';
 import { CHAT_CREDENTIAL, CHAT_SCREEN_QUERY } from './operations';
 import { ThreadList } from './thread-list';
-import { HISTORY_COPY } from './verification/tiers';
+import { HISTORY_COPY, lockedReasonOf } from './verification/tiers';
 import { useVerification } from './verification/use-verification';
 import { VerificationBadge } from './verification-badge';
 
@@ -387,11 +387,7 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
             unlocked={verification.unlocked}
             streaming={streaming}
             maxChars={settings.maxMessageChars}
-            lockedReason={
-              verification.pageState === 'fail'
-                ? 'This endpoint’s evidence did not check out, so nothing will be sent.'
-                : 'Checking this endpoint’s evidence…'
-            }
+            lockedReason={lockedReasonOf(verification.gate)}
           />
         </div>
       </div>

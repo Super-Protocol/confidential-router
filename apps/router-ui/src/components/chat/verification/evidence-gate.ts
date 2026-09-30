@@ -44,7 +44,7 @@ export const ALLOWED_CLOCK_SKEW_MS = 60_000;
 
 export const EVIDENCE_PATH = '/.well-known/swarm-evidence';
 
-export type CheckId = 'bundle' | 'chain' | 'signature' | 'freshness' | 'binding' | 'root';
+export type CheckId = 'webcrypto' | 'bundle' | 'chain' | 'signature' | 'freshness' | 'binding' | 'root';
 
 export type CheckStatus = 'pass' | 'fail' | 'unavailable';
 
@@ -101,10 +101,45 @@ export interface GateOptions {
   registryLookup?: typeof lookUpMeasurement;
 }
 
-/** The checks that must pass before the composer unlocks. */
+/**
+ * The checks that must pass before the composer unlocks.
+ *
+ * `webcrypto` is absent on purpose: it is answered before any of these, by
+ * returning early, so it never reaches this list — and adding it here would make
+ * every happy path fail for want of a row nothing emits.
+ */
 const BLOCKING: readonly CheckId[] = ['bundle', 'chain', 'signature', 'freshness', 'binding'];
 
 export async function runEvidenceGate(options: GateOptions): Promise<GateResult> {
+  /*
+   * Web Crypto first, because without it there is no verifier at all.
+   *
+   * Browsers expose `crypto.subtle` only in a secure context: HTTPS, or
+   * `http://localhost`. A console served over plain HTTP on any *named* host —
+   * a developer's `http://console.localtest.me:4300`, an operator's internal
+   * hostname — therefore cannot verify anything, and every signature check below
+   * would fail with "SubtleCrypto is not available", which reads as though the
+   * deployment's evidence were bad. It is not: it is this page that cannot look.
+   * Saying which is the whole point of the tier.
+   */
+  if (typeof globalThis.crypto?.subtle === 'undefined') {
+    return {
+      unlocked: false,
+      checks: [
+        {
+          id: 'webcrypto',
+          status: 'fail',
+          detail:
+            'This page is not served over a secure origin, so the browser withholds the Web Crypto API that ' +
+            'verifying evidence needs. Nothing here has been checked — and nothing will be sent. Open the console ' +
+            'over HTTPS, or on http://localhost, which browsers treat as secure.',
+        },
+      ],
+      registry: null,
+      evidence: null,
+    };
+  }
+
   const fetched = await fetchBundle(options);
   if (!fetched.ok) {
     return {

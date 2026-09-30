@@ -204,7 +204,10 @@ describe('the evidence gate', () => {
 
     const message = await screen.findByLabelText('Message');
     await waitFor(() => expect(message).toBeDisabled());
-    expect(screen.getByText(/did not check out, so nothing will be sent/i)).toBeInTheDocument();
+    // The failing check's own words, not a generic sentence: "the evidence did
+    // not check out" would be true of an expired certificate and misleading of a
+    // page with no Web Crypto to check with.
+    expect(screen.getByText('The signature did not verify.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
 
     // The claim the whole tier exists to make: with a failed gate nothing reaches

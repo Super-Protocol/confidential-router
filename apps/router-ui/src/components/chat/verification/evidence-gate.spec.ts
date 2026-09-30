@@ -46,6 +46,34 @@ async function run(options: {
   });
 }
 
+describe('a page that cannot verify at all', () => {
+  it('blames its own origin, not the deployment, when Web Crypto is withheld', async () => {
+    /*
+     * Browsers expose `crypto.subtle` only in a secure context. A console served
+     * over plain HTTP on a named host cannot verify anything — and before this
+     * check existed, every signature stage failed with "SubtleCrypto is not
+     * available", which the panel rendered as "the certificate chain is not
+     * valid". That reads as an accusation against the deployment for something
+     * that is true of the page.
+     */
+    const subtle = globalThis.crypto.subtle;
+    Object.defineProperty(globalThis.crypto, 'subtle', { value: undefined, configurable: true });
+    const fetcher = vi.fn();
+    try {
+      const result = await run({ fetcher: fetcher as unknown as typeof fetch });
+
+      expect(result.unlocked).toBe(false);
+      expect(result.checks).toEqual([expect.objectContaining({ id: 'webcrypto', status: 'fail' })]);
+      expect(result.checks[0]?.detail).toMatch(/HTTPS/);
+      expect(result.checks[0]?.detail).toMatch(/nothing will be sent/i);
+      // And it does not go looking for evidence it could not check anyway.
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'subtle', { value: subtle, configurable: true });
+    }
+  });
+});
+
 describe('a bundle a gatekeeper would accept', () => {
   it('unlocks the composer and reports every blocking check as passed', async () => {
     const result = await run({ fetcher: servesFromEndpoint('valid-producer-asserted') });
