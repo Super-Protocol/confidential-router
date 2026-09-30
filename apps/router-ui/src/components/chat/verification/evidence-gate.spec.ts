@@ -2,6 +2,7 @@ import type { RootAttestation, RootTeeEvidence } from '@confidential-router/atte
 import { loadBundle } from '@confidential-router/attestation-fixtures';
 import { describe, expect, it, vi } from 'vitest';
 import { type CheckId, type CheckStatus, runEvidenceGate } from './evidence-gate';
+import { badgeTier, lockedReasonOf, pageTierState } from './tiers';
 
 /**
  * The gate is exercised against the language-neutral conformance vectors in
@@ -258,13 +259,22 @@ describe('the root check', () => {
     expect(result.evidence?.quoteFormat).toBe('intel-tdx-quote-v5');
   });
 
-  it('fails when the registry has no signature for it', async () => {
+  it('fails when the registry has no signature for it, and locks the composer', async () => {
+    /*
+     * A negative answer from the one thing outside the deployment that could give
+     * one, verified in this page under a pinned key — and the endpoint Gatekeeper
+     * refuses. Unreachable today (no producer publishes a measurement), but if one
+     * ever does and it is not registered, locking is the right outcome: the
+     * alternative is the badge's strongest sentence over a VM the registry has
+     * just declined to vouch for.
+     */
     const result = await run({
       fetcher: serves(bundleWithMeasurement()),
       registryLookup: async () => ({ status: 'not-in-registry', measurement }),
     });
 
     expect(statusOf(result.checks, 'root')).toBe('fail');
+    expect(result.unlocked).toBe(false);
   });
 
   it('reports "not established" when the registry could not be reached, and still unlocks', async () => {
@@ -292,6 +302,108 @@ describe('the root check', () => {
     // It may only claim an absence it actually observed, and it observed two
     // places: the bundle field and the root certificate.
     expect(detailOf(result, 'root')).toContain("Neither this bundle's rootCaTeeQuote nor the root certificate");
+  });
+});
+
+/**
+ * The other half of SUP-185's title: "and unlocks an endpoint Gatekeeper refuses".
+ *
+ * The rule is a distinction, so both sides of it need pinning. A row that came
+ * back *negative* holds the composer; a row nobody could *answer* never does. Get
+ * the first wrong and the screen says its strongest sentence over a forgery it has
+ * already proven; get the second wrong and a gap on the platform's side locks the
+ * demo surface permanently.
+ */
+describe('what holds the composer shut', () => {
+  function serves(body: Record<string, unknown>): typeof fetch {
+    return (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  }
+
+  const placeholder = () => ({
+    ...loadBundle('valid-producer-asserted'),
+    rootCaTeeQuote: { status: 'not-implemented' },
+  });
+
+  it('a root row that could not be answered does not, so the live platform stays usable', async () => {
+    /*
+     * The live endpoint: the quote is there, its key binding holds, and only the
+     * registry rebuild is out of a browser's reach. Locking here would shut the
+     * demo for a platform limitation the screen has already disclosed in words,
+     * and it would stay shut until sp-vm measurements became browser-derivable —
+     * which is to say, for good.
+     */
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('unavailable');
+    expect(result.unlocked).toBe(true);
+  });
+
+  it('a registry nobody could reach does not lock it either', async () => {
+    const measurement = 'f'.repeat(64);
+    const bundle = {
+      ...loadBundle('valid-producer-asserted'),
+      rootCaTeeQuote: { format: 'amd-sev-snp', collateral: { measurements: { mrenclave: measurement } } },
+    };
+
+    const result = await run({
+      fetcher: serves(bundle),
+      registryLookup: async () => ({ status: 'unavailable', reason: 'offline' }),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('unavailable');
+    expect(result.unlocked).toBe(true);
+  });
+
+  it('an unreadable extension does not lock it: "cannot read" is not "answered no"', async () => {
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads({ carriesEvidence: true, error: 'malformed varint' }),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('unavailable');
+    expect(result.unlocked).toBe(true);
+  });
+
+  it('a failed root row does, and the badge stops reading as a pass', async () => {
+    /*
+     * The contradiction QA traced on a minted lifted-evidence endpoint: a red row
+     * reading "Do not trust this endpoint on the strength of this page", behind a
+     * badge reading "Verified by this page", over an open composer. `pageTierState`
+     * derives the badge from `unlocked`, so closing the gate closes both.
+     */
+    const result = await run({
+      fetcher: serves(placeholder()),
+      rootAttestationReader: reads({ ...LIVE_SEV_SNP, evidence: { ...LIVE_EVIDENCE, keyBinding: false } }),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('fail');
+    expect(result.unlocked).toBe(false);
+    expect(pageTierState(result)).toBe('fail');
+    expect(badgeTier(pageTierState(result), 'unavailable').label).toBe('Evidence did not check out');
+    // The reason shown where the send button is has to be the root row's own
+    // words, not a generic sentence about evidence.
+    expect(lockedReasonOf(result)).toContain("does not commit to this root's public key");
+  });
+
+  it('still unlocks when every row that can be answered passed', async () => {
+    const measurement = 'b'.repeat(64);
+    const bundle = {
+      ...loadBundle('valid-producer-asserted'),
+      rootCaTeeQuote: { format: 'amd-sev-snp', collateral: { measurements: { mrenclave: measurement } } },
+    };
+
+    const result = await run({
+      fetcher: serves(bundle),
+      registryLookup: async () => ({ status: 'vouched', measurement, url: 'https://registry.test/e.json' }),
+      rootAttestationReader: reads(LIVE_SEV_SNP),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('pass');
+    expect(result.unlocked).toBe(true);
   });
 });
 
@@ -394,6 +506,9 @@ describe('a root whose certificate carries the quote', () => {
     expect(detailOf(result, 'root')).toContain("does not commit to this root's public key");
     // No bundle measurement here, so the sentence about one must not appear.
     expect(detailOf(result, 'root')).not.toContain('also publishes a measurement');
+    // And the composer stays shut: a row saying "do not trust this endpoint" over
+    // an open composer is the contradiction, not a nuance (SUP-185).
+    expect(result.unlocked).toBe(false);
   });
 
   it('refuses a non-binding quote even when the bundle asserts a vouched measurement', async () => {
@@ -434,6 +549,7 @@ describe('a root whose certificate carries the quote', () => {
     // And the reader is told why the registry was not the thing that decided it.
     expect(detailOf(result, 'root')).toContain('also publishes a measurement');
     expect(detailOf(result, 'root')).toContain('It was not consulted.');
+    expect(result.unlocked).toBe(false);
   });
 
   it('says it could not read an extension rather than that there was none', async () => {

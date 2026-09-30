@@ -139,13 +139,46 @@ export interface GateOptions {
 }
 
 /**
- * The checks that must pass before the composer unlocks.
+ * The checks that must come back `pass` before the composer unlocks.
  *
  * `webcrypto` is absent on purpose: it is answered before any of these, by
  * returning early, so it never reaches this list — and adding it here would make
  * every happy path fail for want of a row nothing emits.
+ *
+ * `root` is absent for a different reason, and `mustNotHaveFailed` below is the
+ * other half of the rule: a row the page *could not answer* must not hold the
+ * composer, or a gap on the platform's side locks the demo surface for good.
  */
 const BLOCKING: readonly CheckId[] = ['bundle', 'chain', 'signature', 'freshness', 'binding'];
+
+/**
+ * Whether the composer may open.
+ *
+ * Two clauses, because "not established" and "answered no" are different things
+ * and this is the one place the difference has teeth:
+ *
+ *  - every check in {@link BLOCKING} came back `pass`, and
+ *  - **no** check came back `fail`.
+ *
+ * The second clause is what `root` needs. Leaving it out was the other half of
+ * SUP-185: the row could show a cross reading "Do not trust this endpoint on the
+ * strength of this page" while the badge above it read "Verified by this page" and
+ * the composer sat open — the screen holding a negative it had proven itself and
+ * saying its strongest sentence over it. `unavailable` still never blocks, so the
+ * live platform, where the registry step is simply out of a browser's reach, keeps
+ * its unlocked composer and its disclosure.
+ *
+ * Stated as a principle rather than as `root`-when-failed because that is what it
+ * is: a check that came back negative blocks; a check nobody could answer does
+ * not. For the rows in `BLOCKING` it changes nothing — they return early on
+ * failure — so `root` is the only row it reaches today, and a later informational
+ * row that can genuinely fail gets the safe default rather than a silent pass.
+ */
+function unlocks(checks: readonly GateCheck[]): boolean {
+  const blockingPassed = BLOCKING.every((id) => checks.find((check) => check.id === id)?.status === 'pass');
+  const mustNotHaveFailed = !checks.some((check) => check.status === 'fail');
+  return blockingPassed && mustNotHaveFailed;
+}
 
 export async function runEvidenceGate(options: GateOptions): Promise<GateResult> {
   /*
@@ -228,7 +261,7 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
   checks.push(root.check);
 
   return {
-    unlocked: BLOCKING.every((id) => checks.find((check) => check.id === id)?.status === 'pass'),
+    unlocked: unlocks(checks),
     checks,
     registry: root.registry,
     evidence: {

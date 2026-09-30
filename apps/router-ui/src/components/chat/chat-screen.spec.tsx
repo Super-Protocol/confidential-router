@@ -76,6 +76,26 @@ const FAILING_GATE = {
   evidence: null,
 };
 
+/**
+ * Every row a page can answer passes — except the root, whose quote attests some
+ * other key. The artefact QA minted from the production evidence over a foreign
+ * key, and the state in which the screen used to show "Verified by this page" over
+ * a red "do not trust this endpoint" row (SUP-185).
+ */
+const REFUSED_ROOT_GATE = {
+  ...PASSING_GATE,
+  unlocked: false,
+  checks: [
+    ...PASSING_GATE.checks.filter((check) => check.id !== 'root'),
+    {
+      id: 'root',
+      status: 'fail',
+      detail:
+        "The root CN=Super Swarm Root CA carries an AMD SEV-SNP (QEMU) quote, but that quote's report data does not commit to this root's public key — so it attests some other key, not this one. Do not trust this endpoint on the strength of this page.",
+    },
+  ],
+};
+
 function settings(overrides: Record<string, unknown> = {}) {
   return {
     __typename: 'ChatSettings' as const,
@@ -225,6 +245,24 @@ describe('the evidence gate', () => {
     await userEvent.click(screen.getByRole('button', { name: /send/i }));
     expect(fetcher).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+
+  it('does not say “verified” over a root row it has refused', async () => {
+    /*
+     * The contradiction QA traced: the panel open on a red root row reading "Do
+     * not trust this endpoint on the strength of this page", and the screen behind
+     * it reading "Verified by this page" with the composer enabled. The badge is
+     * derived from the gate, so refusing the row has to close both — and the
+     * sentence beside the send button has to be the root row's own.
+     */
+    gate.result = REFUSED_ROOT_GATE;
+    render();
+
+    expect(await screen.findByText('Evidence did not check out')).toBeInTheDocument();
+    expect(screen.queryByText('Verified by this page')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeDisabled());
+    expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
+    expect(screen.getByText(/does not commit to this root.s public key/)).toBeInTheDocument();
   });
 
   it('labels a pass as this page’s own, self-reported check', async () => {

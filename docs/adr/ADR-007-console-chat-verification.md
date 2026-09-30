@@ -82,7 +82,7 @@ page and the gatekeeper accept the same set of images.
 
 Consequence, stated plainly because it is the honest part: the root check reports **"not
 established"** on the live platform — neither a pass nor a failure — and the gate does not hold the
-composer for it.
+composer for it. What *does* hold it is the next subsection; the two are easy to conflate and were.
 
 *Why* it is not established took a correction (SUP-185). The first version read
 `rootCaTeeQuote: {"status": "not-implemented"}`, found nothing, and told the reader that the platform
@@ -127,6 +127,39 @@ Evidence is fetched from the endpoint directly where CORS allows it and from thi
 `GET /v1/evidence/:endpoint` passthrough where it does not. The signature is checked either way, so
 a relayed bundle cannot be forged — but it can be staler than what the host serves now, and the
 panel says which source answered.
+
+### 3a. A row that answered "no" holds the composer; a row nobody could answer does not
+
+The unlock rule is two clauses, not one list: every check in `BLOCKING` must come back `pass`, **and
+no check may come back `fail`**. `root` is not in `BLOCKING` — that is deliberate and is what keeps
+the live platform usable — but a `fail` from it shuts the composer like any other.
+
+The distinction is the whole rule, and both halves matter:
+
+- **`unavailable` must not block.** On the live endpoint the quote is present, its key binding holds,
+  and only the registry rebuild is out of a browser's reach. Locking there would shut the demo
+  surface for a platform limitation the screen has already disclosed in words — and it would stay
+  shut until sp-vm measurements became browser-derivable, which is to say for good.
+- **`fail` must block.** A non-binding quote is the one negative this page establishes on its own,
+  with its own cryptography, and the row's copy tells the reader not to trust the endpoint over it.
+  A screen that prints that sentence behind a badge reading "Verified by this page", over an open
+  composer, is not disclosing a limit — it is contradicting itself.
+
+The second half was missing until QA traced it (SUP-185) on a bundle they minted for the purpose: the
+production TEE evidence, byte for byte, over a different key. Chain, signature, freshness and binding
+all pass; only the root row catches it; and the badge said "Verified by this page" anyway, because
+`BLOCKING` decided the composer without consulting the root row at all.
+
+It is stated as a principle rather than as `root`-when-failed because that is what it is: a check that
+came back negative blocks, a check nobody could answer does not. For the rows in `BLOCKING` it changes
+nothing — they return early on failure — so `root` is the only row it reaches today, and a later
+informational row that can genuinely fail gets the safe default rather than a silent pass.
+
+One consequence worth naming in advance: `not-in-registry` is a `fail`, so if the platform starts
+publishing measurements and one is not in the registry, that endpoint's composer will lock. That is
+the intended outcome — it is exactly the endpoint Gatekeeper refuses, and the alternative is the
+badge's strongest sentence over a VM the registry has just declined to vouch for. It is unreachable
+today, since no producer publishes a measurement.
 
 ### 4. History stays in the browser until the platform can promise otherwise
 
