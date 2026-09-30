@@ -111,6 +111,58 @@ describe('CreditTransaction', () => {
   });
 });
 
+/**
+ * The console chat's invariant (SUP-180).
+ *
+ * The chat is a demo surface for someone who will not install a gatekeeper, and
+ * the promise it makes is that talking to a model through the console is no
+ * worse for privacy than talking to it through the API. That promise is only
+ * worth the structure behind it: the conversation lives in the visitor's own
+ * browser, and the prompt itself travels the ordinary `/v1/chat/completions`
+ * path, which stores no content at all.
+ *
+ * So the `Generation` rules above are widened to the whole schema. If
+ * server-side history ever lands — it waits on SUP-179's verdict on tenant-PVC
+ * durability — the chat tables are the one documented exception, and they have
+ * to be *named* here rather than quietly slipping past a scan.
+ */
+describe('the schema as a whole', () => {
+  /** Tables allowed to hold a column named after content, and why. */
+  const CONTENT_EXCEPTIONS: Record<string, string> = {};
+
+  it('has no table outside the exceptions holding a column named after message content', () => {
+    const offenders = dataSource.entityMetadatas.flatMap((metadata) =>
+      metadata.columns
+        .map((column) => column.propertyName)
+        .filter((name) => CONTENT_NAMES.includes(name.toLowerCase()))
+        .filter(() => CONTENT_EXCEPTIONS[metadata.tableName] === undefined)
+        .map((name) => `${metadata.tableName}.${name}`),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('has no chat table yet, because server-side history waits on SUP-179', () => {
+    // A guard against landing the tables before the durability question is
+    // answered: history that a node reboot silently erases must not be described
+    // to a user as storage. Replace this expectation in the same change that
+    // adds the tables, and name them in CONTENT_EXCEPTIONS above.
+    const tables = dataSource.entityMetadatas.map((metadata) => metadata.tableName);
+
+    expect(tables).not.toContain('chat_threads');
+    expect(tables).not.toContain('chat_messages');
+  });
+});
+
+describe('ApiKey', () => {
+  it('bounds purpose to an identifier-sized length, so it cannot become a notes field', () => {
+    const purpose = dataSource.getMetadata('api_keys').columns.find((column) => column.propertyName === 'purpose');
+
+    expect(purpose).toBeDefined();
+    expect(Number(purpose?.length)).toBeLessThanOrEqual(32);
+  });
+});
+
 describe('User', () => {
   it('is mapped read-only: TypeORM never synchronises the Better Auth table', () => {
     const metadata = dataSource.getMetadata('user');

@@ -1,0 +1,109 @@
+import { describe, expect, it } from 'vitest';
+import type { GateResult } from './evidence-gate';
+import type { BridgeOutcome } from './extension-bridge';
+import {
+  badgeTier,
+  bundleSourceNote,
+  EXTENSION_TIER,
+  extensionTierState,
+  GATEKEEPER_TIER,
+  HISTORY_COPY,
+  PAGE_TIER,
+  pageTierState,
+} from './tiers';
+
+describe('the tier labels', () => {
+  it('never say “verified” without saying who verified', () => {
+    // The whole feature turns on this. A badge reading "Verified" alone is the
+    // single most misleading string the product could ship, because a page
+    // served by the deployment it is checking cannot make that claim.
+    const labels = [
+      ...Object.values(PAGE_TIER).map((tier) => tier.label),
+      ...Object.values(EXTENSION_TIER).map((tier) => tier.label),
+      GATEKEEPER_TIER.label,
+    ];
+
+    for (const label of labels) {
+      if (/verified/i.test(label)) {
+        expect(label, `"${label}" must attribute the verification`).toMatch(/this page|extension/i);
+      }
+    }
+  });
+
+  it('gives every tier a caveat, so a label never travels alone', () => {
+    for (const tier of [...Object.values(PAGE_TIER), ...Object.values(EXTENSION_TIER), GATEKEEPER_TIER]) {
+      expect(tier.caveat.length, `${tier.id}/${tier.label}`).toBeGreaterThan(40);
+    }
+  });
+
+  it('tells the reader, in tier 1’s own copy, that the check is self-reported', () => {
+    expect(PAGE_TIER.pass.caveat).toMatch(/self-reported/i);
+    expect(PAGE_TIER.pass.caveat).toMatch(/extension|gatekeeper/i);
+  });
+
+  it('claims independence only for the extension', () => {
+    expect(EXTENSION_TIER.pass.label).toMatch(/independently/i);
+    expect(PAGE_TIER.pass.label).not.toMatch(/independently/i);
+  });
+});
+
+describe('badgeTier', () => {
+  it('shows the extension’s pass over the page’s', () => {
+    expect(badgeTier('pass', 'pass')).toBe(EXTENSION_TIER.pass);
+  });
+
+  it('lets a refusal outrank a pass, whichever tier refused', () => {
+    // The extension is the less credulous of the two. If it says no while the
+    // page says yes, the badge says no.
+    expect(badgeTier('pass', 'fail')).toBe(EXTENSION_TIER.fail);
+    expect(badgeTier('fail', 'unavailable')).toBe(PAGE_TIER.fail);
+  });
+
+  it('falls back to the page’s own result when no extension is present', () => {
+    expect(badgeTier('pass', 'unavailable')).toBe(PAGE_TIER.pass);
+  });
+
+  it('stays pending while either tier is still working', () => {
+    expect(badgeTier('pending', 'unavailable')).toBe(PAGE_TIER.pending);
+    expect(badgeTier('pass', 'pending')).toBe(PAGE_TIER.pending);
+  });
+});
+
+describe('tier states', () => {
+  it('reads a missing gate result as pending, not as a failure', () => {
+    expect(pageTierState(null)).toBe('pending');
+    expect(pageTierState({ unlocked: true } as GateResult)).toBe('pass');
+    expect(pageTierState({ unlocked: false } as GateResult)).toBe('fail');
+  });
+
+  it('reads an absent extension as unavailable, which is not a refusal', () => {
+    expect(extensionTierState(null)).toBe('pending');
+    expect(extensionTierState({ status: 'absent' })).toBe('unavailable');
+    expect(extensionTierState({ status: 'verified', verdict: { ok: true } } as BridgeOutcome)).toBe('pass');
+    expect(extensionTierState({ status: 'refused', verdict: { ok: false } } as BridgeOutcome)).toBe('fail');
+  });
+});
+
+describe('bundleSourceNote', () => {
+  it('warns that a relayed bundle may be older than what the endpoint serves', () => {
+    expect(bundleSourceNote('router')).toMatch(/older/i);
+    expect(bundleSourceNote('endpoint')).toMatch(/directly/i);
+  });
+});
+
+describe('HISTORY_COPY', () => {
+  it('claims nothing about server storage while the history is local', () => {
+    // SUP-179 has not answered whether a tenant PVC survives a node reboot, so
+    // the browser-local copy must not describe storage inside the boundary.
+    const local = HISTORY_COPY.browser_local;
+
+    expect(local.summary).toMatch(/this browser/i);
+    expect(`${local.summary} ${local.detail}`).not.toMatch(/encrypted at rest|attested boundary|retention/i);
+  });
+
+  it('says plainly that the messages themselves still reach the model', () => {
+    // Local history must not be allowed to read as "nothing leaves the browser".
+    expect(HISTORY_COPY.browser_local.detail).toMatch(/do travel to the model/i);
+    expect(HISTORY_COPY.browser_local.detail).toMatch(/no content/i);
+  });
+});

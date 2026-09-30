@@ -251,6 +251,33 @@ describe('the committed development seed', () => {
   });
 });
 
+describe('the console chat section', () => {
+  it('is on by default, with limits that make it a demo surface rather than storage', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    expect(config.chat).toEqual({
+      enabled: true,
+      maxMessageChars: 8_000,
+      maxThreads: 50,
+      maxMessagesPerThread: 200,
+      credentialTtl: 7_200_000,
+    });
+  });
+
+  it('parses credentialTtl as a duration, like every other window', () => {
+    writeFileSync(configFile, 'chat:\n  credentialTtl: 45m\n  maxThreads: 5\n', 'utf8');
+
+    const config = loadRouterConfig({ env: env() });
+
+    expect(config.chat.credentialTtl).toBe(2_700_000);
+    expect(config.chat.maxThreads).toBe(5);
+  });
+
+  it('can be switched off entirely', () => {
+    expect(loadRouterConfig({ env: env({ CR_API_CHAT__ENABLED: 'false' }) }).chat.enabled).toBe(false);
+  });
+});
+
 describe('the top-up bounds', () => {
   it('defaults to $5 and $10 000', () => {
     const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });

@@ -367,6 +367,51 @@ error."* and could not tell a deliberate refusal from an outage.
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
 `activitySummary` / `activitySeries` / `topKeys` / `usageByModel`; **Logs** `generations` (+ the CSV
 download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
-**Gatekeeper** `gatekeeperRelease`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
+**Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatCredential`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
 `updatePreferences` / `exportEvidence`.
+
+## As shipped (SUP-180) — the console chat
+
+Two operations, and deliberately nothing else. The chat's messages do not cross this schema: they go to
+`POST /v1/chat/completions` with the key `chatCredential` mints, like any other client (ADR-007).
+
+```graphql
+enum ChatHistoryStorage { BROWSER_LOCAL ATTESTED_SERVER }
+
+type ChatSettings {
+  enabled: Boolean!
+  maxMessageChars: Int!
+  maxThreads: Int!
+  maxMessagesPerThread: Int!
+  historyStorage: ChatHistoryStorage!
+  chatModelIds: [String!]!
+}
+
+type ChatCredential {
+  apiKeyId: ID!
+  secret: String!
+  expiresAt: DateTime!
+  baseUrl: String!
+  modelScope: [String!]!
+}
+
+extend type Query {
+  "Public: the screen needs the limits before a session exists, and none of them is a fact about a viewer."
+  chatSettings: ChatSettings!
+}
+
+extend type Mutation {
+  "Rotates: any live console_chat key of the workspace is revoked first."
+  chatCredential(input: ChatCredentialInput!): ChatCredential!
+}
+```
+
+`historyStorage` exists so the console does not decide for itself what it may promise. Today every
+deployment answers `BROWSER_LOCAL`, and the screen's disclosure copy is derived from that value —
+`ATTESTED_SERVER` is reserved for when SUP-179 has established whether a tenant PVC survives a node
+reboot. A field rather than a constant, because the claim has to be the deployment's, not the bundle's.
+
+`chatCredential` is a real `/v1` credential reaching a browser, so it is scoped to the chat-capable
+catalogue and expires in `chat.credentialTtl` (default 2 h). It is never returned twice: asking again
+mints a new key and revokes the previous one, because the plaintext of that one was shown once.

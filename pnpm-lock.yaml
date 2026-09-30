@@ -288,6 +288,9 @@ importers:
       '@apollo/client':
         specifier: ^4.2.12
         version: 4.2.12(graphql-ws@6.2.1(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rxjs@7.8.2)(subscriptions-transport-ws@0.11.0(graphql@16.14.2))
+      '@confidential-router/attestation':
+        specifier: workspace:*
+        version: link:../../libs/attestation
       '@confidential-router/ui':
         specifier: workspace:*
         version: link:../../libs/ui
@@ -316,6 +319,9 @@ importers:
         specifier: ^2.0.8
         version: 2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
+      '@confidential-router/attestation-fixtures':
+        specifier: workspace:*
+        version: link:../../libs/attestation-fixtures
       '@graphql-codegen/cli':
         specifier: ^7.3.1
         version: 7.3.1(@parcel/watcher@2.6.0)(@types/node@24.13.3)(graphql@16.14.2)(supports-color@8.1.1)(typescript@5.9.3)

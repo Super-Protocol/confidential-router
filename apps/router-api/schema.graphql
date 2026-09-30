@@ -48,6 +48,11 @@ type ApiKey {
 
   """Leading characters of the key, for display: `sk-tee-v1-4f`."""
   prefix: String!
+
+  """
+  Set when the console minted the key for itself, so the Keys table can say so.
+  """
+  purpose: ApiKeyPurpose
   requestsPerMinute: Int
   revokedAt: DateTime
 
@@ -65,6 +70,13 @@ type ApiKeyCreated {
 
   """The full key. It is not stored and cannot be shown again."""
   secret: String!
+}
+
+"""
+Why a key exists when a person did not create it. Null for every key a person did.
+"""
+enum ApiKeyPurpose {
+  CONSOLE_CHAT
 }
 
 """Charge the saved card when the balance falls below the threshold."""
@@ -110,6 +122,67 @@ type CertSummary {
   issuer: String!
   notAfter: String!
   subject: String!
+}
+
+"""
+A short-lived workspace API key the Chat screen uses to call /v1/chat/completions. It is an ordinary key: the same guard authenticates it and the same meter bills it.
+"""
+type ChatCredential {
+  """The key row, so the console can name it in the Keys table."""
+  apiKeyId: ID!
+
+  """
+  The OpenAI-compatible base URL to send it to, e.g. https://api.example/v1.
+  """
+  baseUrl: String!
+
+  """When it stops authenticating. Hours, not days."""
+  expiresAt: DateTime!
+
+  """Model ids this key may call — exactly the chat-capable catalogue."""
+  modelScope: [String!]!
+
+  """
+  The plaintext key. Returned once, held in memory by the tab, never stored.
+  """
+  secret: String!
+}
+
+input ChatCredentialInput {
+  workspaceId: ID!
+}
+
+"""
+Where a console chat keeps its history. The console derives its own disclosure copy from this.
+"""
+enum ChatHistoryStorage {
+  ATTESTED_SERVER
+  BROWSER_LOCAL
+}
+
+"""
+What the console Chat screen is allowed to do, and where its history lives. Public: the limits are the same for everyone and the screen has to know them before a session exists.
+"""
+type ChatSettings {
+  """
+  Model ids the chat may use — every enabled model that declares the `chat` capability, in config order.
+  """
+  chatModelIds: [String!]!
+
+  """False removes the screen; `chatCredential` is refused too."""
+  enabled: Boolean!
+
+  """See `ChatHistoryStorage`."""
+  historyStorage: ChatHistoryStorage!
+
+  """Longest single message the composer accepts."""
+  maxMessageChars: Int!
+
+  """How many messages one thread may hold."""
+  maxMessagesPerThread: Int!
+
+  """How many threads one workspace may keep before the oldest is pruned."""
+  maxThreads: Int!
 }
 
 """Where to send the browser to pay."""
@@ -660,6 +733,11 @@ type ModelUsage {
 
 type Mutation {
   """
+  A short-lived key for the console chat. Rotates: any previous chat key is revoked.
+  """
+  chatCredential(input: ChatCredentialInput!): ChatCredential!
+
+  """
   Creates a key and returns its secret. The secret is never retrievable again.
   """
   createApiKey(input: CreateApiKeyInput!): ApiKeyCreated!
@@ -739,6 +817,9 @@ type Query {
 
   """Every key in the workspace, newest first."""
   apiKeys(workspaceId: ID!): [ApiKey!]!
+
+  """Limits and history location for the console chat. Public."""
+  chatSettings: ChatSettings!
 
   """Balance, admission state and automatic top-up settings."""
   creditBalance(workspaceId: ID!): CreditBalance!

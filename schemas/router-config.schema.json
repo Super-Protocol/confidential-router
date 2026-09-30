@@ -528,6 +528,45 @@
         }
       }
     },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The console's Chat screen (SUP-180). Sanity limits only: the chat calls the same /v1/chat/completions as any other client, with a real workspace key, and is metered the same way.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Off removes the screen and refuses the credential mutation, for a deployment that wants the API and nothing else."
+        },
+        "maxMessageChars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 8000,
+          "description": "Longest single message the composer accepts. The limit on a whole thread is the model's own context window, which the screen reads from the catalogue."
+        },
+        "maxThreads": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 50,
+          "description": "How many threads one workspace may keep, so a demo surface cannot become a free storage service."
+        },
+        "maxMessagesPerThread": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 10000,
+          "default": 200,
+          "description": "How many messages one thread may hold."
+        },
+        "credentialTtl": {
+          "type": "string",
+          "pattern": "^[0-9]+(ms|s|m|h|d)$",
+          "default": "2h",
+          "description": "How long the key the chat mints for itself stays valid. Hours, not days: it only has to survive one sitting at the screen."
+        }
+      }
+    },
     "log": {
       "type": "object",
       "additionalProperties": false,

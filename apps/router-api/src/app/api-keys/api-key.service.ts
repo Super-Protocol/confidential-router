@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
-import { ApiKey } from '../db/entities/api-key.entity.js';
+import { ApiKey, type ApiKeyPurpose } from '../db/entities/api-key.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { displayPrefixOf, hashApiKey, looksLikeApiKey, mintApiKey } from './api-key-token.js';
 
@@ -15,9 +15,15 @@ export interface CreateApiKeyInput {
   requestsPerMinute?: number | null;
   tokensPerMinute?: number | null;
   expiresAt?: Date | null;
+  /** See {@link ApiKeyPurpose}. Omitted for anything a person created. */
+  purpose?: ApiKeyPurpose | null;
 }
 
-export type UpdateApiKeyInput = Partial<Omit<CreateApiKeyInput, 'workspaceId' | 'createdByUserId'>>;
+/**
+ * `purpose` is deliberately not updatable: it records why a key was minted, and
+ * a user renaming their own key must not be able to turn it into the console's.
+ */
+export type UpdateApiKeyInput = Partial<Omit<CreateApiKeyInput, 'workspaceId' | 'createdByUserId' | 'purpose'>>;
 
 export interface CreatedApiKey {
   key: ApiKey;
@@ -67,6 +73,7 @@ export class ApiKeyService {
       requestsPerMinute: input.requestsPerMinute ?? null,
       tokensPerMinute: input.tokensPerMinute ?? null,
       expiresAt: input.expiresAt ?? null,
+      purpose: input.purpose ?? null,
       lastUsedAt: null,
       revokedAt: null,
       createdByUserId: input.createdByUserId,
@@ -87,6 +94,21 @@ export class ApiKeyService {
    */
   async countLive(workspaceId: string): Promise<number> {
     return this.keys.count({ where: { workspaceId, revokedAt: IsNull() } });
+  }
+
+  /**
+   * The workspace's live keys of one purpose, newest first.
+   *
+   * Used to rotate the console chat's own credential: the plaintext of the
+   * previous one was shown once and is gone, so "reuse it" is not an option —
+   * the screen mints a new key and revokes what it finds here, which is also
+   * what cleans up after a browser that closed mid-session.
+   */
+  async listLiveByPurpose(workspaceId: string, purpose: ApiKeyPurpose): Promise<ApiKey[]> {
+    return this.keys.find({
+      where: { workspaceId, purpose, revokedAt: IsNull() },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   /** Scoped by workspace, so an id from another tenant simply does not resolve. */
