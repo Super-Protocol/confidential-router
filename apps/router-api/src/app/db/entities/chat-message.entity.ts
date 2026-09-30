@@ -10,12 +10,15 @@ export type ChatRole = 'user' | 'assistant';
  *
  * The second half of the exception documented on {@link ChatThread}. `content`
  * is the only unbounded-text column in the schema that holds anything a user
- * typed or a model answered, and it is bounded in practice by
- * `chat.maxMessageChars`, which `ChatService` enforces before the insert.
+ * typed or a model answered, and it is bounded by `chat.maxMessageChars`, which
+ * `ChatService` enforces before the insert — refusing a question over it, and
+ * cutting an answer over it short rather than discarding tokens already paid
+ * for.
  *
  * `error` exists because a failed turn is part of the transcript: a stream that
  * died halfway is more honest kept, with what arrived and why it stopped, than
- * silently dropped. It holds the gateway's own refusal message, never a stack.
+ * silently dropped. It holds the gateway's own refusal message — or the note
+ * that the answer was cut at the ceiling — never a stack.
  */
 @Entity({ name: 'chat_messages' })
 @Index('IDX_chat_messages_threadId_createdAt', ['threadId', 'createdAt'])

@@ -415,6 +415,14 @@ const ChatSchema = z
      * window is the real limit on the thread, and it is per model, so the screen
      * reads it from the catalogue rather than from here. It is also one of the
      * three factors in the per-member storage bound — see `maxThreads` below.
+     *
+     * It reaches the two roles differently, and has to (SUP-187). A **question**
+     * over it is refused, which is the point of publishing it: the console stores
+     * the question before it calls a model, so the refusal lands before any
+     * inference is paid for. An **answer** over it is kept and cut short, with
+     * the cut recorded on the turn — by then the tokens have been spent and the
+     * reader has watched the answer arrive, so throwing it away would be the
+     * expensive mistake, not the safe one.
      */
     maxMessageChars: integerish().pipe(z.number().int().min(1).max(1_000_000)).prefault(8_000),
     /**

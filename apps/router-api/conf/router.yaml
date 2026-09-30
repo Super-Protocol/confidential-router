@@ -104,6 +104,9 @@ graphql:
 # Every value below is also the schema default; the block is here because this
 # file's job is to show the shape (SUP-185).
 chat:
+  # One ceiling, two behaviours: a question over it is refused before the browser
+  # calls a model, an answer over it is kept and cut short — by then it has been
+  # paid for (SUP-187).
   enabled: true
   maxMessageChars: 8000
   maxThreads: 50

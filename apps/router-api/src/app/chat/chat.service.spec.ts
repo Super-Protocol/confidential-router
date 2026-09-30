@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ENTITIES } from '../db/entities/index.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
-import { ChatService, DEFAULT_TITLE, titleFrom } from './chat.service.js';
+import { ChatService, DEFAULT_TITLE, TRUNCATED, titleFrom } from './chat.service.js';
 
 /**
  * Against a real SQLite schema rather than mocks: the caps, the pruning and the
@@ -110,13 +110,58 @@ describe('appending a turn', () => {
     expect(message?.error).toBe('The stream ended early.');
   });
 
-  it('refuses a message past the configured ceiling', async () => {
+  it('refuses a question past the configured ceiling, before any inference is paid for', async () => {
     const thread = await service.createThread(ALICE, 'vendor/model', at(1));
 
     await expect(
       service.appendMessage({ ...ALICE, threadId: thread.id, role: 'user', content: 'x'.repeat(21) }),
     ).rejects.toThrow(BadRequestException);
     expect((await service.threadWithMessages(ALICE, thread.id)).messages).toHaveLength(0);
+  });
+
+  /*
+   * The same ceiling, the other role, and deliberately not the same act
+   * (SUP-187). An assistant turn only arrives here after the answer has been
+   * streamed to the reader and billed, so refusing it would throw away
+   * something already bought and leave the question unanswered in the
+   * transcript. It is kept and cut, and the cut is on the record.
+   */
+  it('keeps an answer past the ceiling, cut short and marked', async () => {
+    const thread = await service.createThread(ALICE, 'vendor/model', at(1));
+
+    await service.appendMessage({ ...ALICE, threadId: thread.id, role: 'assistant', content: 'a'.repeat(25) }, at(2));
+
+    const [message] = (await service.threadWithMessages(ALICE, thread.id)).messages;
+    expect(message?.content).toBe('a'.repeat(20));
+    expect(message?.error).toBe(TRUNCATED);
+  });
+
+  it('keeps the gateway’s own refusal alongside the truncation note', async () => {
+    const thread = await service.createThread(ALICE, 'vendor/model', at(1));
+
+    await service.appendMessage(
+      {
+        ...ALICE,
+        threadId: thread.id,
+        role: 'assistant',
+        content: 'a'.repeat(25),
+        error: 'The stream ended early.',
+      },
+      at(2),
+    );
+
+    const [message] = (await service.threadWithMessages(ALICE, thread.id)).messages;
+    expect(message?.error).toBe(`The stream ended early. ${TRUNCATED}`);
+  });
+
+  it('leaves an answer that fits exactly alone', async () => {
+    const thread = await service.createThread(ALICE, 'vendor/model', at(1));
+
+    await service.appendMessage({ ...ALICE, threadId: thread.id, role: 'assistant', content: 'a'.repeat(20) }, at(2));
+
+    const [message] = (await service.threadWithMessages(ALICE, thread.id)).messages;
+    expect(message?.content).toBe('a'.repeat(20));
+    expect(message?.error).toBeNull();
   });
 
   it('moves the thread it touched to the top of the list', async () => {

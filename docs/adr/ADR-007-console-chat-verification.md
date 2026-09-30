@@ -200,6 +200,13 @@ is the honest answer for a deployment with no such storage.
 browser, and enforced where the history lives. They exist so a demo surface cannot become a free
 storage service. `chat.enabled: false` removes the screen and refuses `chatCredential`.
 
+`maxMessageChars` is one number and two behaviours, which is deliberate (SUP-187). A **question** over
+it is refused, and that refusal is worth having precisely because it happens *before* the browser calls
+a model — nothing has been metered yet. An **answer** over it has already been streamed to the reader
+and billed, so it is kept, cut to the same ceiling, and the cut is recorded in the turn's `error`, which
+is what the screen shows and what the console filters out of the next prompt. One ceiling rather than a
+larger second one for answers, because the number is a factor in the per-member storage bound.
+
 ### 6. The chat needs a secure origin, and says so when it does not have one
 
 Browsers expose `crypto.subtle` only in a secure context — HTTPS, or

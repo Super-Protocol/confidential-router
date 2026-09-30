@@ -1,5 +1,5 @@
 import { Field, GraphQLISODateTime, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { IsOptional, IsString, Length } from 'class-validator';
+import { IsEnum, IsOptional, IsString, Length } from 'class-validator';
 import type { ChatMessage, ChatRole } from '../../../db/entities/chat-message.entity.js';
 import type { ChatThread } from '../../../db/entities/chat-thread.entity.js';
 
@@ -193,7 +193,15 @@ export class AppendChatMessageInputModel {
   @IsString()
   threadId!: string;
 
+  /**
+   * Decorated, and it has to be: the global `ValidationPipe` runs with
+   * `whitelist` + `forbidNonWhitelisted`, so an undecorated `@Field` is stripped
+   * and then refused as a property that "should not exist". Without this line
+   * every `appendChatMessage` was a Bad Request and the console stored nothing
+   * at all (SUP-187).
+   */
   @Field(() => ChatRoleEnum)
+  @IsEnum(ChatRoleEnum)
   role!: ChatRole;
 
   /**

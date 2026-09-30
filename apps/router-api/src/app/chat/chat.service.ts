@@ -122,18 +122,15 @@ export class ChatService {
    * the part a demo is about.
    */
   async appendMessage(input: AppendInput, now: Date = new Date()): Promise<ChatMessage> {
-    const max = this.config.chat.maxMessageChars;
-    if (input.content.length > max) {
-      throw new BadRequestException(`A chat message may be at most ${max} characters.`);
-    }
+    const bounded = this.withinMessageCap(input);
     const thread = await this.requireThread(input, input.threadId);
 
     const message = this.messages.create({
       id: randomUUID(),
       threadId: thread.id,
       role: input.role,
-      content: input.content,
-      error: input.error ?? null,
+      content: bounded.content,
+      error: bounded.error,
       createdAt: now,
     });
     await this.messages.save(message);
@@ -141,7 +138,7 @@ export class ChatService {
     // The title is the opening question, taken once. A thread that already has a
     // user turn keeps the title it was given.
     if (input.role === 'user' && thread.title === DEFAULT_TITLE) {
-      thread.title = titleFrom(input.content);
+      thread.title = titleFrom(bounded.content);
     }
     thread.updatedAt = now;
     await this.threads.save(thread);
@@ -154,6 +151,45 @@ export class ChatService {
   async deleteThread(scope: ThreadScope, threadId: string): Promise<void> {
     const thread = await this.requireThread(scope, threadId);
     await this.threads.remove(thread);
+  }
+
+  /**
+   * `chat.maxMessageChars` applied to the turn — which is not the same act for
+   * the two roles, and used to be (SUP-187).
+   *
+   * For a **user** turn the cap is a refusal, and that is the valuable
+   * behaviour: the console stores the question before it calls the model, so an
+   * oversized message is turned away *before any inference is paid for*.
+   *
+   * For an **assistant** turn the same refusal was the wrong answer. That turn
+   * only reaches this method after the answer has been streamed to the reader
+   * and metered against the workspace's credit, so refusing it throws away
+   * something already bought and leaves a question in the transcript with no
+   * reply. The answer is kept, cut to the same ceiling, and the cut is recorded
+   * in `error` — which is the field for "this turn did not end cleanly" and is
+   * shown as such. The console also drops errored turns from the next prompt,
+   * so a shortened answer is never replayed to the model as if it were whole.
+   *
+   * The ceiling stays one number for both roles on purpose: it is one of the
+   * three factors in the per-member storage bound documented on the config
+   * schema, and a second, larger one for answers would quietly multiply it.
+   */
+  private withinMessageCap(input: AppendInput): { content: string; error: string | null } {
+    const max = this.config.chat.maxMessageChars;
+    const error = input.error ?? null;
+    if (input.content.length <= max) {
+      return { content: input.content, error };
+    }
+    if (input.role === 'user') {
+      throw new BadRequestException(`A chat message may be at most ${max} characters.`);
+    }
+    return {
+      content: input.content.slice(0, max),
+      // Both notes, when the turn also carried a gateway refusal: each explains
+      // something different about the row the reader is looking at. Clamped to
+      // the column, which is the only reason the length is named here.
+      error: (error ? `${error} ${TRUNCATED}` : TRUNCATED).slice(0, MAX_ERROR_CHARS),
+    };
   }
 
   private async requireThread(scope: ThreadScope, threadId: string): Promise<ChatThread> {
@@ -207,6 +243,12 @@ export class ChatService {
 
 /** What a thread is called until its first user message names it. */
 export const DEFAULT_TITLE = 'New conversation';
+
+/** What the transcript says about an answer that ran past `chat.maxMessageChars`. */
+export const TRUNCATED = 'This answer was longer than the deployment stores and has been cut short here.';
+
+/** `chat_messages.error` is a `varchar(512)`. */
+const MAX_ERROR_CHARS = 512;
 
 /**
  * The title a thread takes from its opening message: one line, a handful of

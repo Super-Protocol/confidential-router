@@ -450,6 +450,12 @@ prompt text on the surface `generations` is guarded to keep clean. The console c
 exchange — the question when it is sent, the answer when the stream settles — so a tab that dies
 mid-answer leaves the question in the transcript rather than losing the turn.
 
+`maxMessageChars` is enforced on the way in, and not identically for the two roles (SUP-187). A `USER`
+turn over the ceiling is refused — the console stores the question before it calls a model, so that
+refusal costs nothing. An `ASSISTANT` turn over the ceiling has already been streamed and metered, so it
+is stored cut to the ceiling with the cut recorded in `error`; the console drops errored turns from the
+next prompt, so a shortened answer is never replayed as though it were whole.
+
 **A corollary worth stating plainly: a client can store an `ASSISTANT` turn the model never produced.**
 That follows from recording rather than attesting, and it is by design. The router does not witness the
 exchange — that is the whole point of the browser calling `/v1` itself — so it cannot distinguish a
