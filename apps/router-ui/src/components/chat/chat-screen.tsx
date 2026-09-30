@@ -21,7 +21,7 @@ import {
   promptMessages,
   replaceMessage,
 } from './chat-history';
-import { streamChatCompletion } from './chat-stream';
+import { type StreamOutcome, streamChatCompletion } from './chat-stream';
 import { Composer } from './composer';
 import { MessageList } from './message-list';
 import { ModelPicker } from './model-picker';
@@ -35,6 +35,14 @@ type CatalogueModel = ChatScreenQuery['models'][number];
 
 /** Where the extension is published. Absent until it ships, which hides the link. */
 const EXTENSION_URL = undefined;
+
+/**
+ * The gateway's OpenAI error codes that mean "this key is no longer a key"
+ * (`app/api/v1/openai-error.ts`). They are the only refusals worth re-minting
+ * for: everything else — no credit, over the rate limit, a model outside scope —
+ * would fail again with a fresh key, and retrying would just double the work.
+ */
+const STALE_CREDENTIAL_CODES = new Set(['api_key_revoked', 'api_key_expired', 'invalid_api_key']);
 
 /**
  * The console's chat: a demo surface for someone who will not install a
@@ -195,7 +203,11 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
 
   const send = React.useCallback(
     async (content: string) => {
-      if (!model) return;
+      // The gate, checked here and not only in the Composer's `disabled`. The
+      // whole promise of tier 1 is that nothing reaches the model before the
+      // endpoint's evidence checks out, and a disabled control is a presentation
+      // detail — the function that actually sends has to hold the invariant.
+      if (!model || !verification.unlocked) return;
 
       let thread = activeThread;
       let next = history;
@@ -230,9 +242,9 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
       abort.current = controller;
       let streamed = '';
 
-      try {
+      const attempt = async (): Promise<StreamOutcome> => {
         const { secret, baseUrl } = await liveCredential();
-        const outcome = await streamChatCompletion({
+        return streamChatCompletion({
           baseUrl,
           apiKey: secret,
           model: model.id,
@@ -246,6 +258,30 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
             });
           },
         });
+      };
+
+      try {
+        let outcome = await attempt();
+
+        /*
+         * One retry when the gateway says the credential is gone.
+         *
+         * A chat key can stop authenticating while a tab still holds it — it
+         * expired, an operator revoked it from the Keys screen, or this user
+         * opened the chat in a second tab and rotated their own key. The cached
+         * secret is then worth nothing and the user is looking at a failed
+         * message, so the screen drops it and mints once rather than making them
+         * reload to recover.
+         *
+         * Guarded on `streamed` being empty: these refusals arrive from the
+         * guard, before any body, so in practice nothing has been emitted — and
+         * if something somehow had been, replaying the request would duplicate
+         * it in the transcript, which is worse than surfacing the error.
+         */
+        if (outcome.status === 'error' && STALE_CREDENTIAL_CODES.has(outcome.code ?? '') && streamed.length === 0) {
+          credential.current = null;
+          outcome = await attempt();
+        }
 
         setHistory((current) => {
           const settled =
@@ -269,7 +305,7 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
         abort.current = null;
       }
     },
-    [activeThread, commit, history, limits, liveCredential, model, store],
+    [activeThread, commit, history, limits, liveCredential, model, store, verification.unlocked],
   );
 
   const historyCopy = HISTORY_COPY[settings.historyStorage.toLowerCase()] ?? HISTORY_COPY.browser_local;

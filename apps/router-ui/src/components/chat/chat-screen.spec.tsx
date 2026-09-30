@@ -102,23 +102,66 @@ function screenMock(overrides: Record<string, unknown> = {}): MockLink.MockedRes
   };
 }
 
-function credentialMock(): MockLink.MockedResponse {
+function credentialMock(
+  overrides: { apiKeyId?: string; secret?: string; once?: boolean } = {},
+): MockLink.MockedResponse {
   return {
     request: { query: CHAT_CREDENTIAL, variables: { input: { workspaceId: WORKSPACE_ID } } },
     result: {
       data: {
         chatCredential: {
           __typename: 'ChatCredential' as const,
-          apiKeyId: 'key-1',
-          secret: 'sk-tee-v1-chat-secret',
+          apiKeyId: overrides.apiKeyId ?? 'key-1',
+          secret: overrides.secret ?? 'sk-tee-v1-chat-secret',
           expiresAt: '2099-01-01T00:00:00.000Z',
           baseUrl: 'https://api.router.test/v1',
           modelScope: ['meta/llama-3.3-70b-instruct:tdx'],
         },
       },
     },
-    maxUsageCount: Number.POSITIVE_INFINITY,
+    // `once` lets a test queue two mints and tell the resulting requests apart.
+    maxUsageCount: overrides.once ? 1 : Number.POSITIVE_INFINITY,
   };
+}
+
+/** The gateway's refusal when a key has stopped being a key. */
+function revokedKeyResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: { message: 'This API key has been revoked.', type: 'authentication_error', code: 'api_key_revoked' },
+    }),
+    { status: 401 },
+  );
+}
+
+/** Streams one answer back as Server-Sent Events, for a `fetch` that already resolved. */
+function sseAnswer(answer: string): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: answer } }] })}\n\n`),
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream' } },
+  );
+}
+
+/** Types a message into an unlocked composer and presses Send. */
+async function ask(question: string): Promise<void> {
+  const message = await screen.findByLabelText('Message');
+  await waitFor(() => expect(message).toBeEnabled());
+  await userEvent.type(message, question);
+  await userEvent.click(screen.getByRole('button', { name: /send/i }));
+}
+
+function bearerOf(call: unknown): string | undefined {
+  const [, init] = call as [string, RequestInit];
+  return (init.headers as Record<string, string>).authorization;
 }
 
 function render(mocks: MockLink.MockedResponse[] = [screenMock()]) {
@@ -155,12 +198,21 @@ describe('the evidence gate', () => {
     // A composer that accepted keystrokes before verification would make the gate
     // decorative. It has to be visibly shut at the moment a user would press send.
     gate.result = FAILING_GATE;
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
     render();
 
     const message = await screen.findByLabelText('Message');
     await waitFor(() => expect(message).toBeDisabled());
     expect(screen.getByText(/did not check out, so nothing will be sent/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
+
+    // The claim the whole tier exists to make: with a failed gate nothing reaches
+    // the network at all. `send` holds this itself as well as the control being
+    // disabled, so a later refactor of the Composer cannot quietly undo it.
+    await userEvent.click(screen.getByRole('button', { name: /send/i }));
+    expect(fetcher).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it('labels a pass as this page’s own, self-reported check', async () => {
@@ -248,6 +300,70 @@ describe('sending a message', () => {
     await userEvent.click(screen.getByRole('button', { name: /send/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Not enough credits.');
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('a credential that has stopped working', () => {
+  it('re-mints once and delivers the answer, rather than leaving the tab broken', async () => {
+    /*
+     * A chat key can die while a tab still holds it: it expired, an operator
+     * revoked it, or this user rotated their own key from a second tab. The tab
+     * must recover on the next message instead of needing a reload — which, when
+     * rotation was workspace-wide, is what two members chatting at once produced
+     * for each other.
+     */
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(revokedKeyResponse())
+      .mockImplementationOnce(async () => sseAnswer('Recovered, and here is the answer.'));
+    vi.stubGlobal('fetch', fetcher);
+    render([
+      screenMock(),
+      credentialMock({ apiKeyId: 'key-stale', secret: 'sk-tee-v1-stale', once: true }),
+      credentialMock({ apiKeyId: 'key-fresh', secret: 'sk-tee-v1-fresh', once: true }),
+    ]);
+
+    await ask('Does the chat recover?');
+
+    expect(await screen.findByText('Recovered, and here is the answer.')).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    // The second attempt used a *newly minted* key, not the cached dead one.
+    expect(bearerOf(fetcher.mock.calls[0])).toBe('Bearer sk-tee-v1-stale');
+    expect(bearerOf(fetcher.mock.calls[1])).toBe('Bearer sk-tee-v1-fresh');
+    // And no error was left on the turn that eventually succeeded.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it('retries exactly once, so a deployment refusing every key cannot spin', async () => {
+    const fetcher = vi.fn(async () => revokedKeyResponse());
+    vi.stubGlobal('fetch', fetcher);
+    render([screenMock(), credentialMock()]);
+
+    await ask('Will this loop?');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This API key has been revoked.');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('does not re-mint for a refusal a fresh key would not fix', async () => {
+    // No credit is no credit whichever key asks. Retrying would double the work
+    // and mint a key for nothing.
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'Not enough credits.', code: 'insufficient_credits' } }), {
+          status: 402,
+        }),
+    );
+    vi.stubGlobal('fetch', fetcher);
+    render([screenMock(), credentialMock()]);
+
+    await ask('Anything');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not enough credits.');
+    expect(fetcher).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 });

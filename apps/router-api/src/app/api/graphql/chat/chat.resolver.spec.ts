@@ -38,6 +38,7 @@ interface Harness {
   resolver: ChatResolver;
   create: ReturnType<typeof vi.fn>;
   revoke: ReturnType<typeof vi.fn>;
+  listLiveByPurpose: ReturnType<typeof vi.fn>;
   live: ApiKey[];
 }
 
@@ -50,6 +51,7 @@ function build(
     secret: 'sk-tee-v1-secret',
   }));
   const revoke = vi.fn(async (key: ApiKey) => key);
+  const listLiveByPurpose = vi.fn(async () => live);
 
   const config = {
     chat: { ...CHAT_DEFAULTS, ...options.chat },
@@ -58,14 +60,14 @@ function build(
 
   const resolver = new ChatResolver(
     config,
-    { create, revoke, listLiveByPurpose: vi.fn(async () => live) } as unknown as ApiKeyService,
+    { create, revoke, listLiveByPurpose } as unknown as ApiKeyService,
     { requireMembership: vi.fn(async () => ({ id: 'ws-1' })) } as unknown as WorkspaceScopeService,
     {
       list: () => options.models ?? [model('meta/llama-3.2-3b', ['chat', 'completions'])],
     } as unknown as CatalogService,
   );
 
-  return { resolver, create, revoke, live };
+  return { resolver, create, revoke, listLiveByPurpose, live };
 }
 
 describe('chatSettings', () => {
@@ -118,13 +120,29 @@ describe('chatCredential', () => {
     );
   });
 
-  it('revokes the chat key it replaces, so a workspace accumulates none', async () => {
+  it('revokes the chat key it replaces, so one user accumulates none', async () => {
     const previous = [{ id: 'old-1' } as ApiKey, { id: 'old-2' } as ApiKey];
     const harness = build({ live: previous });
 
     await harness.resolver.chatCredential(USER, { workspaceId: 'ws-1' });
 
     expect(harness.revoke.mock.calls.map(([key]) => (key as ApiKey).id)).toEqual(['old-1', 'old-2']);
+  });
+
+  it('rotates only this user’s keys, so one member cannot break another’s open tab', async () => {
+    // Rotating on workspace alone meant a second member opening the chat revoked
+    // the key the first member's tab was holding — and a reload just reversed
+    // who was broken. Two people chatting at once is the ordinary case for a
+    // demo surface, so the lookup has to be narrowed to the caller.
+    const harness = build({ live: [{ id: 'mine' } as ApiKey] });
+
+    await harness.resolver.chatCredential(USER, { workspaceId: 'ws-1' });
+
+    expect(harness.listLiveByPurpose).toHaveBeenCalledWith({
+      workspaceId: 'ws-1',
+      purpose: 'console_chat',
+      createdByUserId: USER.id,
+    });
   });
 
   it('is refused when the chat is switched off', async () => {

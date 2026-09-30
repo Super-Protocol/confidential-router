@@ -67,11 +67,19 @@ export class ChatResolver {
    * Revoking as we go is also what cleans up after a tab that closed without
    * ever spending its key.
    *
-   * The scope is the chat-capable catalogue, so a leaked copy of this key can do
-   * exactly what the screen could do and nothing else.
+   * Rotation is scoped to `(workspace, this user)`, not to the workspace. A
+   * workspace has members, and revoking every chat key in it would mean one
+   * person opening the chat silently breaking the tab another person has open —
+   * for as long as their cached secret would otherwise have lasted. Two members
+   * chatting at once is the ordinary case for a demo surface, not an edge one.
+   *
+   * The model scope is the chat-capable catalogue, so a leaked copy of this key
+   * can do exactly what the screen could do and nothing else.
    */
   @Mutation(() => ChatCredentialModel, {
-    description: 'A short-lived key for the console chat. Rotates: any previous chat key is revoked.',
+    description:
+      'A short-lived key for the console chat. Rotates: this user’s own previous chat key in the workspace ' +
+      'is revoked, and no one else’s.',
   })
   @UseGuards(SessionGuard)
   async chatCredential(
@@ -88,7 +96,12 @@ export class ChatResolver {
       throw new ForbiddenException('This router serves no chat-capable model.');
     }
 
-    for (const previous of await this.apiKeys.listLiveByPurpose(workspace.id, 'console_chat')) {
+    const superseded = await this.apiKeys.listLiveByPurpose({
+      workspaceId: workspace.id,
+      purpose: 'console_chat',
+      createdByUserId: user.id,
+    });
+    for (const previous of superseded) {
       await this.apiKeys.revoke(previous);
     }
 

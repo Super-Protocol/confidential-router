@@ -31,8 +31,12 @@ function fakeWindow() {
     posted,
     listenerCount: () => listeners.size,
     reply(data: unknown) {
+      this.replyFrom(target, data);
+    },
+    /** Plays a message back as if it came from `source`, to test the channel check. */
+    replyFrom(source: unknown, data: unknown) {
       for (const listener of [...listeners]) {
-        listener({ data, source: target } as unknown as MessageEvent);
+        listener({ data, source } as unknown as MessageEvent);
       }
     },
   };
@@ -114,6 +118,19 @@ describe('requestExtensionVerification', () => {
     expect(outcome.status).toBe('refused');
   });
 
+  it('ignores a verdict posted from another frame, and times out instead', async () => {
+    // End to end through the listener, not only through `verdictOf`: the defect
+    // this covers was a docstring that claimed the source check while the code
+    // accepted any message whose *data* looked right.
+    const window = fakeWindow();
+    const pending = requestExtensionVerification({ hostname: 'a.test', target: window.target, timeoutMs: 20 });
+    const id = (window.posted[0] as { id: string }).id;
+
+    window.replyFrom({ name: 'someone-elses-frame' }, reply(id, { rootName: 'Attacker Root CA' }));
+
+    await expect(pending).resolves.toEqual({ status: 'absent' });
+  });
+
   it('ignores an answer to somebody else’s question', async () => {
     const window = fakeWindow();
     const pending = requestExtensionVerification({ hostname: 'a.test', target: window.target, timeoutMs: 20 });
@@ -137,34 +154,53 @@ describe('requestExtensionVerification', () => {
 });
 
 describe('verdictOf', () => {
-  const event = (data: unknown): MessageEvent => ({ data }) as MessageEvent;
+  /** The window the page posted into, and therefore the only source it may hear from. */
+  const ours = { name: 'our-window' };
+  const event = (data: unknown, source: unknown = ours): MessageEvent => ({ data, source }) as MessageEvent;
 
-  it('accepts a well-formed answer', () => {
-    expect(verdictOf(event(reply('req-1')), 'req-1')?.ok).toBe(true);
+  it('accepts a well-formed answer posted into our own window', () => {
+    expect(verdictOf(event(reply('req-1')), 'req-1', ours)?.ok).toBe(true);
+  });
+
+  it('rejects an answer posted from anywhere but the window we posted into', () => {
+    /*
+     * The check the rest of this function cannot substitute for. Tier 2 is the
+     * only path that upgrades the badge to "independently verified", and every
+     * field below is a string an attacker can copy — so a frame that has a handle
+     * on this one could otherwise mint a verdict by replaying a valid-looking
+     * payload. Identity of the channel is the one part it cannot forge.
+     */
+    const otherFrame = { name: 'an-iframe-that-is-not-us' };
+
+    expect(verdictOf(event(reply('req-1'), otherFrame), 'req-1', ours)).toBeNull();
+    expect(verdictOf(event(reply('req-1'), null), 'req-1', ours)).toBeNull();
+    // Built without the helper's default, so an event carrying no `source` at
+    // all — which is what a non-window sender looks like — is covered too.
+    expect(verdictOf({ data: reply('req-1') } as MessageEvent, 'req-1', ours)).toBeNull();
   });
 
   it('rejects anything not announcing itself as the extension', () => {
-    // Any page on the internet can post into this window. The source marker, the
-    // message type and the correlation id are what keep a stranger's message from
-    // being read as a verification result.
-    expect(verdictOf(event({ ...reply('req-1'), source: 'evil.example' }), 'req-1')).toBeNull();
-    expect(verdictOf(event({ ...reply('req-1'), type: 'something-else' }), 'req-1')).toBeNull();
-    expect(verdictOf(event(null), 'req-1')).toBeNull();
-    expect(verdictOf(event('a string'), 'req-1')).toBeNull();
+    // Belt and braces behind the source check: the type marker and the
+    // correlation id keep an unrelated same-window message — our own request
+    // echoing back, another library's chatter — from being read as a verdict.
+    expect(verdictOf(event({ ...reply('req-1'), source: 'evil.example' }), 'req-1', ours)).toBeNull();
+    expect(verdictOf(event({ ...reply('req-1'), type: 'something-else' }), 'req-1', ours)).toBeNull();
+    expect(verdictOf(event(null), 'req-1', ours)).toBeNull();
+    expect(verdictOf(event('a string'), 'req-1', ours)).toBeNull();
   });
 
   it('rejects a protocol version it was not built against', () => {
     // The two halves ship from different repositories. A future extension that
     // changes the shape must not have its answer read under the old rules.
-    expect(verdictOf(event({ ...reply('req-1'), version: BRIDGE_VERSION + 1 }), 'req-1')).toBeNull();
+    expect(verdictOf(event({ ...reply('req-1'), version: BRIDGE_VERSION + 1 }), 'req-1', ours)).toBeNull();
   });
 
   it('rejects an answer with no verdict in it', () => {
-    expect(verdictOf(event({ ...reply('req-1'), ok: 'yes' }), 'req-1')).toBeNull();
+    expect(verdictOf(event({ ...reply('req-1'), ok: 'yes' }), 'req-1', ours)).toBeNull();
   });
 
   it('drops fields it does not recognise rather than passing them through', () => {
-    const verdict = verdictOf(event({ ...reply('req-1'), channelBinding: 'vibes', rootName: 42 }), 'req-1');
+    const verdict = verdictOf(event({ ...reply('req-1'), channelBinding: 'vibes', rootName: 42 }), 'req-1', ours);
 
     expect(verdict).toMatchObject({ ok: true, channelBinding: undefined, rootName: undefined });
   });

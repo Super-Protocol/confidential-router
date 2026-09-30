@@ -402,7 +402,7 @@ extend type Query {
 }
 
 extend type Mutation {
-  "Rotates: any live console_chat key of the workspace is revoked first."
+  "Rotates: this user's own live console_chat key in the workspace is revoked first, and no one else's."
   chatCredential(input: ChatCredentialInput!): ChatCredential!
 }
 ```
@@ -415,3 +415,9 @@ reboot. A field rather than a constant, because the claim has to be the deployme
 `chatCredential` is a real `/v1` credential reaching a browser, so it is scoped to the chat-capable
 catalogue and expires in `chat.credentialTtl` (default 2 h). It is never returned twice: asking again
 mints a new key and revokes the previous one, because the plaintext of that one was shown once.
+
+Rotation is narrowed to `(workspaceId, createdByUserId)`. A workspace has members, and revoking every
+`console_chat` key in it would mean one member opening the chat breaking the tab another member has
+open until their cached secret expired. Clients should still treat a `401` of code `api_key_revoked`,
+`api_key_expired` or `invalid_api_key` as "mint again and retry once" — that is what the console does,
+and it is the only reason a caller needs to read those codes.

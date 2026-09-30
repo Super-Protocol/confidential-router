@@ -92,7 +92,7 @@ export function requestExtensionVerification(options: BridgeOptions): Promise<Br
     };
 
     const onMessage = (event: MessageEvent): void => {
-      const verdict = verdictOf(event, id);
+      const verdict = verdictOf(event, id, target);
       if (!verdict) return;
       finish({ status: verdict.ok ? 'verified' : 'refused', verdict });
     };
@@ -109,12 +109,27 @@ export function requestExtensionVerification(options: BridgeOptions): Promise<Br
 /**
  * Reads an answer, or returns null for anything that is not one.
  *
- * `event.source === target` is the check that matters: any page on the internet
- * can post into this window, so an answer is only accepted from this window
- * itself — which is where a content script posts from. The correlation id then
- * rejects a reply to somebody else's question.
+ * `event.source === expectedSource` is the check that matters, and it is a check
+ * on the *channel* rather than on the payload: `window.postMessage` is reachable
+ * by any frame that has a handle on this one, and every field below is a string
+ * an attacker can simply copy. Tier 2 is the only path that upgrades the badge to
+ * "independently verified", so the one thing that must not be forgeable is where
+ * the answer came from — and a content script posts from this very window, which
+ * is the property being asserted here.
+ *
+ * `event.origin` is deliberately not also checked: a same-window post carries
+ * this document's own origin, so it adds nothing over the identity comparison,
+ * and it is `"null"` in a sandboxed frame — a condition that would reject a
+ * legitimate answer for no gain.
+ *
+ * The correlation id then rejects a reply to somebody else's question, and the
+ * version rejects an answer shaped by a protocol this build does not know.
  */
-export function verdictOf(event: MessageEvent, expectedId: string): ExtensionVerdict | null {
+export function verdictOf(event: MessageEvent, expectedId: string, expectedSource: unknown): ExtensionVerdict | null {
+  // Identity, not a string compare: this is the assertion that the answer was
+  // posted into this window rather than merely addressed to it.
+  if (event.source !== expectedSource) return null;
+
   const data = event.data as Record<string, unknown> | null | undefined;
   if (!data || typeof data !== 'object') return null;
   if (data.source !== EXTENSION_SOURCE) return null;

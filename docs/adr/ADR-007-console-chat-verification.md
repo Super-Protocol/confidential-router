@@ -34,8 +34,18 @@ second thing to audit, and the whole claim of the screen is that it is not privi
 
 The key is minted by `chatCredential`, marked `api_keys.purpose = 'console_chat'`, scoped to the
 chat-capable catalogue, and short-lived (`chat.credentialTtl`, default 2 h). It is held in the tab's
-memory only. Asking for one rotates it: the previous chat key of that workspace is revoked, because
-its plaintext was shown once and is unrecoverable, so there is nothing to reuse.
+memory only. Asking for one rotates it: **this user's own** previous chat key in that workspace is
+revoked, because its plaintext was shown once and is unrecoverable, so there is nothing to reuse.
+
+Rotation is scoped to `(workspace, user)` and not to the workspace, which is the narrower query on
+purpose. A workspace has members; revoking every chat key in it meant one person opening the chat
+silently breaking the tab another person had open, for as long as their cached secret would otherwise
+have lasted — and a reload only reversed who was broken. Two members chatting at once is the ordinary
+case for a demo surface. The browser closes the remaining gap: on `api_key_revoked`,
+`api_key_expired` or `invalid_api_key` the screen drops its cached secret and mints **once** more, so
+a key that dies under a tab for any other reason — an operator revoking it from the Keys screen, the
+same user rotating from a second tab — costs one retry rather than a reload. Refusals a fresh key
+would not fix, such as `insufficient_credits`, are not retried.
 
 ### 2. Three tiers, three different claims, never blurred
 
@@ -49,6 +59,13 @@ Tier 1 **gates the composer**: nothing is sent until it passes. Tier 2 is featur
 tiny versioned `postMessage` protocol and can only *upgrade* the badge or refuse — an absent
 extension is never an error and never blocks anything. A tier-2 refusal outranks a tier-1 pass,
 because the extension is the less credulous of the two.
+
+Tier 2's answer is accepted on the identity of the channel — `event.source` must be the very window
+the request was posted into — and not on the shape of the payload. Every field in a verdict is a
+string an attacker can copy, and tier 2 is the only path that reaches the word "independently", so
+where the answer came from is the one part that must not be forgeable. `event.origin` is deliberately
+not also checked: a same-window post carries this document's own origin, so it adds nothing, and it is
+`"null"` inside a sandboxed frame, which would reject a legitimate answer for no gain.
 
 This does not reopen ADR-002. Each tier is the *viewer's own agent* reporting what it did; the
 router never learns the answer, stores it, or displays one of its own.

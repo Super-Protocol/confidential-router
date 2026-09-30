@@ -97,16 +97,31 @@ export class ApiKeyService {
   }
 
   /**
-   * The workspace's live keys of one purpose, newest first.
+   * Live keys of one purpose, newest first, narrowed to a single creator.
    *
    * Used to rotate the console chat's own credential: the plaintext of the
    * previous one was shown once and is gone, so "reuse it" is not an option —
    * the screen mints a new key and revokes what it finds here, which is also
    * what cleans up after a browser that closed mid-session.
+   *
+   * `createdByUserId` is required rather than optional, and that is the whole
+   * point of the method: a workspace has several members, and rotating on
+   * workspace alone would mean one member opening the chat revokes the key
+   * another member's open tab is holding. Making the caller name the creator
+   * means the narrower query cannot be forgotten by omitting an argument.
    */
-  async listLiveByPurpose(workspaceId: string, purpose: ApiKeyPurpose): Promise<ApiKey[]> {
+  async listLiveByPurpose(scope: {
+    workspaceId: string;
+    purpose: ApiKeyPurpose;
+    createdByUserId: string;
+  }): Promise<ApiKey[]> {
     return this.keys.find({
-      where: { workspaceId, purpose, revokedAt: IsNull() },
+      where: {
+        workspaceId: scope.workspaceId,
+        purpose: scope.purpose,
+        createdByUserId: scope.createdByUserId,
+        revokedAt: IsNull(),
+      },
       order: { createdAt: 'DESC' },
     });
   }

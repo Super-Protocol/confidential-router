@@ -733,7 +733,7 @@ type ModelUsage {
 
 type Mutation {
   """
-  A short-lived key for the console chat. Rotates: any previous chat key is revoked.
+  A short-lived key for the console chat. Rotates: this user’s own previous chat key in the workspace is revoked, and no one else’s.
   """
   chatCredential(input: ChatCredentialInput!): ChatCredential!
 

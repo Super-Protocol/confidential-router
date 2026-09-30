@@ -111,7 +111,9 @@ design, and why each tier says what it says, is ADR-007; what lives where:
 - `verification/extension-bridge.ts` — **tier 2**, a tiny versioned
   `postMessage` protocol, feature-detected. The extension half is a swarm-cloud
   change; until it ships every browser reports "no extension detected", which is
-  a true statement and blocks nothing.
+  a true statement and blocks nothing. A verdict is accepted on `event.source`
+  being the window the request went into — the payload's own fields are all
+  copyable, and this is the only tier that says "independently".
 - `verification/tiers.ts` — **every user-visible claim about verification**, in
   one file, each label paired with the caveat that has to travel with it. No
   component writes its own. Tier 3 reuses `gatekeeper/setup-commands.ts` with the
