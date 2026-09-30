@@ -518,12 +518,14 @@ async function checkBinding(signedFingerprint: string, tlsLeafPem: string | unde
  * Whether the root this chain terminates at belongs to a VM Super Protocol
  * vouches for — the one question the page cannot answer out of the bundle itself.
  *
- * Four things can be true, and they are four different sentences. Saying the
- * wrong one is not a cosmetic defect on this screen: the row is the only place a
- * reader is told what the green badge above it does *not* cover, so a row that
- * blames the platform for an absence, where the real state is "the quote is here
- * and I cannot finish the check", spends the reader's trust on a false claim
- * (SUP-185).
+ * Several things can be true, and they are different sentences. Saying the wrong
+ * one is not a cosmetic defect on this screen: the row is the only place a reader
+ * is told what the green badge above it does *not* cover, so a row that blames the
+ * platform for an absence, where the real state is "the quote is here and I cannot
+ * finish the check", spends the reader's trust on a false claim (SUP-185).
+ *
+ * One of them is a refusal, and it is settled before any of the others: see
+ * `liftedEvidenceRefusal`.
  */
 async function checkRoot(input: {
   quote: unknown;
@@ -533,6 +535,11 @@ async function checkRoot(input: {
   lookUp: typeof lookUpMeasurement;
   fetcher: typeof fetch | undefined;
 }): Promise<{ check: GateCheck; registry: RegistryVerdict | null }> {
+  const lifted = liftedEvidenceRefusal(input.rootSubject, input.attestation, input.measurement !== null);
+  if (lifted) {
+    return { registry: null, check: lifted };
+  }
+
   if (!input.measurement) {
     return { registry: null, check: rootWithoutLookup(input.quote, input.rootSubject, input.attestation) };
   }
@@ -604,30 +611,60 @@ function measurementOf(payload: unknown, bundle: RawBundle): string | null {
 }
 
 /**
+ * The one negative this row can establish on its own, and the only answer that
+ * outranks the registry.
+ *
+ * The quote in the root certificate attests some *other* public key: either the
+ * certificate is not the one the VM enrolled, or the quote was lifted from a VM
+ * that was. Gatekeeper refuses such a root outright, and this row has to agree —
+ * on every path, which is the part that was wrong when this was first written.
+ *
+ * It used to live inside `rootWithoutLookup`, so it only bound the no-measurement
+ * case. A bundle publishing a `mrenclave` the registry vouches for went straight
+ * to the lookup and painted the row green — its strongest sentence — while the
+ * page already held the proof that the root's own quote says nothing about this
+ * key. The published measurement is a producer-controlled string that nothing
+ * binds to this root, so it cannot answer the question the quote just failed;
+ * checking it would only decide whether *some* VM is vouched for. Hence the guard
+ * runs first, and the registry is not consulted at all: there is no verdict it
+ * could return that would change this row, and a page that has decided to refuse
+ * has no business making another cross-origin request about it.
+ */
+function liftedEvidenceRefusal(
+  rootSubject: string,
+  attestation: RootAttestation,
+  bundlePublishesMeasurement: boolean,
+): GateCheck | null {
+  const evidence = attestation.evidence;
+  // `undefined !== false` covers the no-evidence case, so this is the whole guard:
+  // only a decoded quote that actively failed the binding gets past it.
+  if (evidence?.keyBinding !== false) return null;
+
+  // Named explicitly, because a reader looking at a red row on a bundle whose
+  // measurement *is* registered deserves to know the registry was not what
+  // decided this, and why its answer would not have helped.
+  const collision = bundlePublishesMeasurement
+    ? ` This bundle also publishes a measurement for the registry to vouch for, which is not an answer to this: a registry entry proves some VM is one of Super Protocol's, not that this root's key is that VM's. It was not consulted.`
+    : '';
+
+  return {
+    id: 'root',
+    status: 'fail',
+    detail: `The root ${rootSubject} carries an ${evidence.label} quote, but that quote's report data does not commit to this root's public key — so it attests some other key, not this one.${collision} Do not trust this endpoint on the strength of this page: run Gatekeeper, which refuses a root whose quote does not bind its own key.`,
+  };
+}
+
+/**
  * What to say when there is no measurement the registry indexes.
  *
  * Never a pass: the registry is the only thing outside the deployment that could
  * answer this, and it has not been asked. But "not established" has to be
  * qualified by *why*, because the reasons differ in what the reader should do
- * next — and one of them is not a "why nobody could answer" at all but a
- * refusal in its own right.
+ * next. A root whose quote does not bind its own key never reaches here —
+ * `liftedEvidenceRefusal` has already refused it.
  */
 function rootWithoutLookup(quote: unknown, rootSubject: string, attestation: RootAttestation): GateCheck {
   const evidence = attestation.evidence;
-
-  if (evidence && evidence.keyBinding === false) {
-    /*
-     * A real negative result, and the one thing on this row a page can establish
-     * on its own: the quote in this certificate attests some *other* public key.
-     * Either the certificate is not the one the VM enrolled or the quote was
-     * lifted from elsewhere. Gatekeeper treats it as fatal, and so does this row.
-     */
-    return {
-      id: 'root',
-      status: 'fail',
-      detail: `The root ${rootSubject} carries an ${evidence.label} quote, but that quote's report data does not commit to this root's public key — so it attests some other key, not this one. Do not trust this endpoint on the strength of this page: run Gatekeeper, which refuses a root whose quote does not bind its own key.`,
-    };
-  }
 
   if (evidence) {
     /*

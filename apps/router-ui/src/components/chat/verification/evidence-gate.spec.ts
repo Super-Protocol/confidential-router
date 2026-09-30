@@ -392,6 +392,48 @@ describe('a root whose certificate carries the quote', () => {
 
     expect(statusOf(result.checks, 'root')).toBe('fail');
     expect(detailOf(result, 'root')).toContain("does not commit to this root's public key");
+    // No bundle measurement here, so the sentence about one must not appear.
+    expect(detailOf(result, 'root')).not.toContain('also publishes a measurement');
+  });
+
+  it('refuses a non-binding quote even when the bundle asserts a vouched measurement', async () => {
+    /*
+     * The collision, and the defect CTO caught in the first cut of this fix: the
+     * refusal lived inside the no-measurement branch, so a bundle that also
+     * published an `mrenclave` the registry vouches for skipped it entirely and
+     * painted the row green — this screen's strongest sentence — while the page
+     * already held the proof that the root's own quote attests a different key.
+     *
+     * The measurement is a producer-controlled string that nothing binds to this
+     * root, so it cannot answer the question the quote just failed. Lifting real
+     * hardware evidence onto a foreign key and naming a registered VM beside it is
+     * two strings an attacker supplies; the row must not add them up to a pass.
+     */
+    const measurement = 'e'.repeat(64);
+    const vouched = vi.fn(async () => ({
+      status: 'vouched' as const,
+      measurement,
+      url: 'https://registry.test/entry.json',
+    }));
+    const bundle = {
+      ...loadBundle('valid-producer-asserted'),
+      rootCaTeeQuote: { format: 'amd-sev-snp', collateral: { measurements: { mrenclave: measurement } } },
+    };
+
+    const result = await run({
+      fetcher: serves(bundle),
+      registryLookup: vouched,
+      rootAttestationReader: reads({ ...LIVE_SEV_SNP, evidence: { ...LIVE_EVIDENCE, keyBinding: false } }),
+    });
+
+    expect(statusOf(result.checks, 'root')).toBe('fail');
+    // Not consulted at all: no verdict could change this row, and a page that has
+    // decided to refuse should not be making another cross-origin request.
+    expect(vouched).not.toHaveBeenCalled();
+    expect(result.registry).toBeNull();
+    // And the reader is told why the registry was not the thing that decided it.
+    expect(detailOf(result, 'root')).toContain('also publishes a measurement');
+    expect(detailOf(result, 'root')).toContain('It was not consulted.');
   });
 
   it('says it could not read an extension rather than that there was none', async () => {

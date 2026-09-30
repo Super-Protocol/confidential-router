@@ -96,6 +96,15 @@ type, the sp-vm release, and whether the report's `REPORT_DATA` commits to the r
 — which is a real cryptographic check, and the one thing on this row a browser can settle. A report
 that attests some *other* key makes the row **fail**: that is a negative result, not an absence.
 
+That refusal outranks the registry, and it is settled before the registry is asked at all. The first
+cut of this fix got it wrong in a way worth recording: the check lived inside the no-measurement
+branch, so a bundle that *also* published an `mrenclave` the registry vouches for skipped it and the
+row went green. Both of those are producer-controlled strings, and neither binds a registry entry to
+this root's key — a vouched measurement proves some VM is one of Super Protocol's, not that this
+root's key is that VM's. Adding them up to a pass is precisely the failure the tier rule exists to
+prevent, so `liftedEvidenceRefusal` runs first on every path and the lookup is skipped: no verdict it
+could return would change the row.
+
 What stays out of reach is the last step, and it is worth being exact about why, because the
 plausible shortcut is a trap. The signed sp-vm registry is not indexed by the report's own
 `MEASUREMENT`. It is indexed by `SHA-256(normalised-launch-digest ‖ vmpl ‖ policy)`, where the
