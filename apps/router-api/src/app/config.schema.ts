@@ -391,6 +391,67 @@ const FeedbackSchema = z
   })
   .prefault({});
 
+/**
+ * The console's Chat screen (SUP-180) — the demo surface for someone who will
+ * not install a gatekeeper.
+ *
+ * Nothing here is an inference setting: the chat calls the same
+ * `/v1/chat/completions` as any other client, with a real workspace key, and is
+ * metered and billed the same way. These are the sanity limits that stop a demo
+ * surface turning into free storage or a way to post a megabyte per keystroke,
+ * and they are config because they are a product judgement that will be tuned
+ * between campaigns.
+ *
+ * `enabled: false` removes the screen and refuses the credential mutation — for
+ * a deployment that wants the API and nothing else.
+ */
+const ChatSchema = z
+  .strictObject({
+    enabled: booleanish().prefault(true),
+    /**
+     * Longest single message the composer accepts.
+     *
+     * A ceiling on one message, not on the conversation: the model's own context
+     * window is the real limit on the thread, and it is per model, so the screen
+     * reads it from the catalogue rather than from here. It is also one of the
+     * three factors in the per-member storage bound — see `maxThreads` below.
+     *
+     * It reaches the two roles differently, and has to (SUP-187). A **question**
+     * over it is refused, which is the point of publishing it: the console stores
+     * the question before it calls a model, so the refusal lands before any
+     * inference is paid for. An **answer** over it is kept and cut short, with
+     * the cut recorded on the turn — by then the tokens have been spent and the
+     * reader has watched the answer arrive, so throwing it away would be the
+     * expensive mistake, not the safe one.
+     */
+    maxMessageChars: integerish().pipe(z.number().int().min(1).max(1_000_000)).prefault(8_000),
+    /**
+     * How many threads one member may keep, and how many messages one thread may
+     * hold. Both are enforced in `ChatService` before the insert, and both are
+     * published to the browser, so the screen prunes and shows a counter rather
+     * than failing at the edge.
+     *
+     * **These three numbers multiply into the storage a single member can
+     * occupy**, which is the thing to look at when tuning a deployment:
+     * `maxThreads × maxMessagesPerThread × maxMessageChars`. At the defaults that
+     * is 50 × 200 × 8 000 ≈ **80 MB per member**, on a state disk shared with the
+     * database. Bounded, which is the point of having the caps at all — but a
+     * demo cloud sizing its volume for a mailing wave should do that arithmetic
+     * rather than read the individual numbers as small.
+     */
+    maxThreads: integerish().pipe(z.number().int().min(1).max(1_000)).prefault(50),
+    maxMessagesPerThread: integerish().pipe(z.number().int().min(2).max(10_000)).prefault(200),
+    /**
+     * How long the key the chat mints for itself stays valid.
+     *
+     * Hours, not days: its only job is to survive one sitting at the screen. It
+     * is a real workspace credential that reaches the browser, so the window in
+     * which a copy is worth anything is the thing to keep small.
+     */
+    credentialTtl: durationMs('2h'),
+  })
+  .prefault({});
+
 const LogSchema = z
   .strictObject({
     level: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).prefault('info'),
@@ -449,6 +510,7 @@ export const RouterConfigSchema = z.strictObject({
   invites: InvitesSchema,
   analytics: AnalyticsSchema,
   feedback: FeedbackSchema,
+  chat: ChatSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,

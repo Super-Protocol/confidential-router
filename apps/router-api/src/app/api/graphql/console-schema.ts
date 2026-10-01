@@ -6,6 +6,7 @@ import { ApiKeysResolver } from './api-keys/api-keys.resolver.js';
 import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
 import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
+import { ChatResolver } from './chat/chat.resolver.js';
 import { CreditsResolver } from './credits/credits.resolver.js';
 import { FeedbackResolver } from './feedback/feedback.resolver.js';
 import { GatekeeperResolver } from './gatekeeper/gatekeeper.resolver.js';
@@ -27,6 +28,7 @@ export const CONSOLE_RESOLVERS = [
   ActivityResolver,
   ApiKeysResolver,
   CatalogResolver,
+  ChatResolver,
   CreditsResolver,
   EvidenceResolver,
   FeedbackResolver,

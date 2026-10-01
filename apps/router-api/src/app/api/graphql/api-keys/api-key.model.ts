@@ -1,11 +1,22 @@
-import { Field, GraphQLISODateTime, ID, InputType, Int, ObjectType } from '@nestjs/graphql';
+import { Field, GraphQLISODateTime, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
 import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
+import type { ApiKeyPurpose } from '../../../db/entities/api-key.entity.js';
 
 /** Longest a caller may make a scope list; the catalogue is nowhere near this. */
 const MAX_SCOPE_ENTRIES = 200;
 
 /** Money crosses GraphQL as a decimal string of micro-USD — see `console-graphql.md`. */
 const MICROS = /^\d{1,15}$/;
+
+/** GraphQL spelling of `ApiKeyPurpose`; the value is what the column holds. */
+export const ApiKeyPurposeEnum = {
+  CONSOLE_CHAT: 'console_chat',
+} as const satisfies Record<string, ApiKeyPurpose>;
+
+registerEnumType(ApiKeyPurposeEnum, {
+  name: 'ApiKeyPurpose',
+  description: 'Why a key exists when a person did not create it. Null for every key a person did.',
+});
 
 @ObjectType('ApiKey', { description: 'A /v1 credential. The secret itself is returned only at creation.' })
 export class ApiKeyModel {
@@ -17,6 +28,12 @@ export class ApiKeyModel {
 
   @Field(() => String, { description: 'Leading characters of the key, for display: `sk-tee-v1-4f`.' })
   prefix!: string;
+
+  @Field(() => ApiKeyPurposeEnum, {
+    nullable: true,
+    description: 'Set when the console minted the key for itself, so the Keys table can say so.',
+  })
+  purpose!: ApiKeyPurpose | null;
 
   @Field(() => [String], {
     nullable: true,

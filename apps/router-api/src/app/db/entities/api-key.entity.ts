@@ -3,6 +3,20 @@ import { bigIntColumn, idColumn, idPrimaryColumn, jsonColumn, timestampColumn } 
 import { Workspace } from './workspace.entity.js';
 
 /**
+ * Why a key exists, when it was not a person clicking "Create key".
+ *
+ * `null` is the ordinary case: a credential the user made for their own client.
+ * `console_chat` is the short-lived key the console's Chat screen mints for
+ * itself (SUP-180) — the chat calls the same `/v1/chat/completions` as any other
+ * client, so it needs a real key, and marking it is what lets the console find
+ * and rotate its own rather than accumulating them.
+ *
+ * A marker, not a permission: nothing in the gateway reads it, and a
+ * `console_chat` key authenticates and meters exactly like any other.
+ */
+export type ApiKeyPurpose = 'console_chat';
+
+/**
  * A `/v1/*` credential. Only `sha256(key)` is stored — the plaintext is shown
  * once, at creation, and cannot be recovered afterwards.
  */
@@ -25,6 +39,10 @@ export class ApiKey {
   /** First 12 characters of the key, for display only (`sk-tee-v1-4f`). */
   @Column({ type: 'varchar', length: 16 })
   prefix!: string;
+
+  /** See {@link ApiKeyPurpose}. Null for every key a person created. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  purpose!: ApiKeyPurpose | null;
 
   /** Model ids this key may call. `null` means every model. */
   @Column(jsonColumn({ nullable: true }))

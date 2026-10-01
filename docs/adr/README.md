@@ -11,6 +11,7 @@ immutable once `Accepted`; superseding decisions get a new number and link back.
 | [ADR-004](./ADR-004-console-auth.md) | Console authentication — OAuth (GitHub/Google) + email magic link, sessions in PostgreSQL | Accepted |
 | [ADR-005](./ADR-005-billing.md) | Billing — prepaid credits ledger + Stripe, no crypto | Accepted |
 | [ADR-006](./ADR-006-analytics.md) | Analytics — Plausible on the landing, PostHog EU behind our own server, no consent banner | Accepted |
+| [ADR-007](./ADR-007-console-chat-verification.md) | Console chat — no second inference path, three verification tiers labelled apart, history in the browser until SUP-179 | Accepted |
 
 Companion documents:
 

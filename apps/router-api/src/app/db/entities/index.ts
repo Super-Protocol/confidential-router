@@ -1,5 +1,7 @@
 import { ActivityRollup } from './activity-rollup.entity.js';
 import { ApiKey } from './api-key.entity.js';
+import { ChatMessage } from './chat-message.entity.js';
+import { ChatThread } from './chat-thread.entity.js';
 import { CreditTransaction } from './credit-transaction.entity.js';
 import { Endpoint } from './endpoint.entity.js';
 import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
@@ -15,6 +17,8 @@ import { WorkspaceMember } from './workspace-member.entity.js';
 
 export * from './activity-rollup.entity.js';
 export * from './api-key.entity.js';
+export * from './chat-message.entity.js';
+export * from './chat-thread.entity.js';
 export * from './credit-transaction.entity.js';
 export * from './endpoint.entity.js';
 export * from './evidence-snapshot.entity.js';
@@ -36,6 +40,8 @@ export * from './workspace-member.entity.js';
 export const ENTITIES = [
   ActivityRollup,
   ApiKey,
+  ChatMessage,
+  ChatThread,
   CreditTransaction,
   Endpoint,
   EvidenceSnapshot,

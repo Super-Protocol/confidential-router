@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { findNavItem, isNavItemActive, NAV_GROUPS, NAV_ITEMS } from './navigation';
 
 describe('navigation', () => {
-  it('covers the nine console screens', () => {
+  it('covers the ten console screens', () => {
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       'Overview',
       'Models',
+      'Chat',
       'API Keys',
       'Gatekeeper',
       'Activity',

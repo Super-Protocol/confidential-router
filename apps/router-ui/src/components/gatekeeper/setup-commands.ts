@@ -51,3 +51,35 @@ export const SETUP_STEPS: SetupStep[] = [
 export function setupScript(): string {
   return SETUP_STEPS.map((step) => step.command).join('\n');
 }
+
+/**
+ * The same four commands with the placeholders filled in.
+ *
+ * The Gatekeeper screen shows the generic form because it is reached before the
+ * user has chosen an endpoint. The chat's "verify this yourself" panel is the
+ * opposite situation: it already knows which hostname it just verified and which
+ * digest that evidence carried, so it can hand over commands that need no editing
+ * — which is the difference between a quick-start a reader skims and one they run.
+ *
+ * An absent digest leaves `sha256:<evidenceDigest>` in place rather than pasting
+ * an empty pin: a `trust add` with nothing after it would be a command that looks
+ * complete and trusts nothing.
+ */
+export function resolvedSetupSteps(input: { hostname: string; evidenceDigestHex?: string | null }): SetupStep[] {
+  return SETUP_STEPS.map((step) => ({
+    ...step,
+    command: step.command
+      .replace('https://<hostname>', `https://${input.hostname}`)
+      .replace(
+        'sha256:<evidenceDigest>',
+        input.evidenceDigestHex ? `sha256:${input.evidenceDigestHex}` : 'sha256:<evidenceDigest>',
+      ),
+  }));
+}
+
+/** All four resolved commands, in order, for the one-shot copy button. */
+export function resolvedSetupScript(input: { hostname: string; evidenceDigestHex?: string | null }): string {
+  return resolvedSetupSteps(input)
+    .map((step) => step.command)
+    .join('\n');
+}
