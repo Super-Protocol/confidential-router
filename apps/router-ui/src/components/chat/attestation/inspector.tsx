@@ -73,6 +73,16 @@ export default function AttestationInspector({
   const evidence = gate?.evidence ?? null;
   const tier = badgeTier(verification.pageState, verification.extensionState);
   const [openNode, setOpenNode] = React.useState<GraphNode | null>(null);
+  /*
+   * Which tab is open, held here rather than left to `Tabs`' own `defaultValue`.
+   *
+   * "Check again" sets the gate back to null for the length of the re-run, which
+   * unmounts the tabs along with everything else they contain — and a remounted
+   * `Tabs` goes back to its default. A reader who pressed it while looking at the
+   * graph was returned to the measurements list, which is the one moment they are
+   * most likely to be watching a specific node.
+   */
+  const [tab, setTab] = React.useState('measurements');
 
   const graph = React.useMemo(
     () => buildDeploymentGraph({ snapshot: evidence?.snapshot, declaredImages }),
@@ -114,7 +124,7 @@ export default function AttestationInspector({
           ) : evidence === null ? (
             <Degraded gate={gate} />
           ) : (
-            <Tabs defaultValue="measurements">
+            <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
                 <TabsTrigger value="measurements">Measurements</TabsTrigger>
                 <TabsTrigger value="graph">Deployment graph</TabsTrigger>

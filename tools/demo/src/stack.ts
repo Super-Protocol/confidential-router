@@ -112,6 +112,33 @@ export function demoRouterConfig(input: {
         hostname: input.hostname,
         tee: 'Intel TDX + H100 CC',
         evidenceUrl: input.evidenceUrl,
+        /*
+         * What this endpoint is declared to run, so the console's attestation
+         * panel has something to compare the signed evidence against.
+         *
+         * These are the two images of the `valid-rsa-deployment` conformance
+         * vector — the snapshot `tools/mock-evidence-host` publishes by default
+         * — written out rather than read back off the host on purpose. An
+         * operator's declaration is a statement made *before* and *apart from*
+         * the deployment; deriving it from the bundle would make the comparison
+         * circular, which is the whole thing the field exists to avoid.
+         *
+         * Pinning them literally also buys the demo its best beat: after
+         * `rotateDeployment()` the host republishes the same workloads at new
+         * digests, the declaration no longer covers them, and the panel goes
+         * loud red — a redeployment nobody declared, which is exactly what the
+         * comparison is for.
+         */
+        declaredImages: [
+          {
+            name: 'ghcr.io/super-protocol/router-api',
+            digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+          },
+          {
+            name: 'ghcr.io/berriai/litellm',
+            digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
+          },
+        ],
       },
     ],
     models: [

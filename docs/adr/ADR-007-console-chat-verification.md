@@ -283,6 +283,38 @@ without a verifier, and the suite runs axe over it in both themes and walks the
 graph with Tab. Each node is a `<button>` whose accessible name carries the
 digest and the verdict in words — a colour is not a statement.
 
+### 7a. One suite on a secure origin, because §6 left tier 1 unproven in a browser
+
+§6 is right about the trade and has an unstated cost: if the only browser suite
+runs on an origin the browser withholds Web Crypto from, then *nothing that
+happens after the gate gives up* is ever exercised in a browser. The console
+chat shipped with its happy path covered only by component tests — and the first
+time it was pointed at the demo stack it failed at `binding`, because
+`tools/mock-evidence-host` published no `tlsLeaf`. The field is in the bundle
+contract and the live platform publishes it; the Go gatekeeper ignores it
+because it observes the channel itself, so its absence had never cost anything
+and nothing noticed. A browser has no channel to observe, so for a browser it is
+the whole check.
+
+So the mock host publishes the leaf it is serving, and
+`playwright.secure.config.ts` runs one suite with the console and the API both on
+`127.0.0.1`, which browsers treat as trustworthy. Tier 1 runs there for real:
+bundle fetched, chain validated, JWS verified, graph drawn out of the payload
+that verified, and a `/__mock/rotate-deployment` in the middle to prove the
+undeclared-image path against an actually re-signed snapshot rather than a
+doctored fixture.
+
+It gives up the cookie isolation §6 bought, and that is the right price *for this
+one suite only*: `secure-origin.spec.ts` installs the handoff cookie directly and
+asserts nothing about cookies, while the suite that does care about them is
+unchanged on its named origins. The two configs now state each other's cost in
+their own headers, so neither reads as an accident.
+
+`tools/demo` declares the two images its own evidence host publishes, so the
+green verdict path is what the stand shows by default — and `rotateDeployment()`,
+already a beat in the demo story, now turns the panel red, which is the clearest
+thing the feature has to say.
+
 ## Consequences
 
 - One new nullable column (`api_keys.purpose`), and two new tables —
@@ -299,6 +331,11 @@ digest and the verdict in words — a colour is not a statement.
   router config at boot like every other column on that table.
 - `@xyflow/react` (MIT) is a new console dependency, loaded only by the
   attestation panel's chunk.
+- A third Playwright config and an `e2e-secure` target, run unconditionally in
+  CI — unconditionally because `nx affected` would skip it on exactly the
+  changes most likely to break it, the gate being a library.
+- `tools/mock-evidence-host` now publishes `tlsLeaf`. Producers already did; the
+  gatekeeper still ignores it.
 - The console's `EndpointEvidenceFields` fragment now asks for `declaredImages`,
   so Overview and Models carry it too. Neither renders it yet; the inspector is
   the only consumer.
