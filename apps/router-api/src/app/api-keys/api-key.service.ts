@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
-import { ApiKey } from '../db/entities/api-key.entity.js';
+import { ApiKey, type ApiKeyPurpose } from '../db/entities/api-key.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { displayPrefixOf, hashApiKey, looksLikeApiKey, mintApiKey } from './api-key-token.js';
 
@@ -15,9 +15,15 @@ export interface CreateApiKeyInput {
   requestsPerMinute?: number | null;
   tokensPerMinute?: number | null;
   expiresAt?: Date | null;
+  /** See {@link ApiKeyPurpose}. Omitted for anything a person created. */
+  purpose?: ApiKeyPurpose | null;
 }
 
-export type UpdateApiKeyInput = Partial<Omit<CreateApiKeyInput, 'workspaceId' | 'createdByUserId'>>;
+/**
+ * `purpose` is deliberately not updatable: it records why a key was minted, and
+ * a user renaming their own key must not be able to turn it into the console's.
+ */
+export type UpdateApiKeyInput = Partial<Omit<CreateApiKeyInput, 'workspaceId' | 'createdByUserId' | 'purpose'>>;
 
 export interface CreatedApiKey {
   key: ApiKey;
@@ -67,6 +73,7 @@ export class ApiKeyService {
       requestsPerMinute: input.requestsPerMinute ?? null,
       tokensPerMinute: input.tokensPerMinute ?? null,
       expiresAt: input.expiresAt ?? null,
+      purpose: input.purpose ?? null,
       lastUsedAt: null,
       revokedAt: null,
       createdByUserId: input.createdByUserId,
@@ -87,6 +94,36 @@ export class ApiKeyService {
    */
   async countLive(workspaceId: string): Promise<number> {
     return this.keys.count({ where: { workspaceId, revokedAt: IsNull() } });
+  }
+
+  /**
+   * Live keys of one purpose, newest first, narrowed to a single creator.
+   *
+   * Used to rotate the console chat's own credential: the plaintext of the
+   * previous one was shown once and is gone, so "reuse it" is not an option —
+   * the screen mints a new key and revokes what it finds here, which is also
+   * what cleans up after a browser that closed mid-session.
+   *
+   * `createdByUserId` is required rather than optional, and that is the whole
+   * point of the method: a workspace has several members, and rotating on
+   * workspace alone would mean one member opening the chat revokes the key
+   * another member's open tab is holding. Making the caller name the creator
+   * means the narrower query cannot be forgotten by omitting an argument.
+   */
+  async listLiveByPurpose(scope: {
+    workspaceId: string;
+    purpose: ApiKeyPurpose;
+    createdByUserId: string;
+  }): Promise<ApiKey[]> {
+    return this.keys.find({
+      where: {
+        workspaceId: scope.workspaceId,
+        purpose: scope.purpose,
+        createdByUserId: scope.createdByUserId,
+        revokedAt: IsNull(),
+      },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   /** Scoped by workspace, so an id from another tenant simply does not resolve. */

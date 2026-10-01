@@ -30,5 +30,13 @@
     "specs/**/*.tsx",
     ".next/types/**/*.ts"
   ],
-  "exclude": ["node_modules", ".next", "dist"]
+  "exclude": ["node_modules", ".next", "dist"],
+  "references": [
+    {
+      "path": "../../libs/attestation"
+    },
+    {
+      "path": "../../libs/attestation-fixtures"
+    }
+  ]
 }

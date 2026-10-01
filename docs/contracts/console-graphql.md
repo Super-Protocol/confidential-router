@@ -367,6 +367,111 @@ error."* and could not tell a deliberate refusal from an outage.
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
 `activitySummary` / `activitySeries` / `topKeys` / `usageByModel`; **Logs** `generations` (+ the CSV
 download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
-**Gatekeeper** `gatekeeperRelease`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
+**Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatThreads` / `chatThread` `+ chatCredential` / `createChatThread` / `setChatThreadModel` / `appendChatMessage` / `deleteChatThread`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
 `updatePreferences` / `exportEvidence`.
+
+## As shipped (SUP-180) — the console chat
+
+Two operations, and deliberately nothing else. The chat's messages do not cross this schema: they go to
+`POST /v1/chat/completions` with the key `chatCredential` mints, like any other client (ADR-007).
+
+```graphql
+enum ChatHistoryStorage { BROWSER_LOCAL ATTESTED_SERVER }
+
+type ChatSettings {
+  enabled: Boolean!
+  maxMessageChars: Int!
+  maxThreads: Int!
+  maxMessagesPerThread: Int!
+  historyStorage: ChatHistoryStorage!
+  chatModelIds: [String!]!
+}
+
+type ChatCredential {
+  apiKeyId: ID!
+  secret: String!
+  expiresAt: DateTime!
+  baseUrl: String!
+  modelScope: [String!]!
+}
+
+type ChatMessage {
+  id: ID!
+  role: ChatRole!
+  "The one documented exception to \"no request content is stored\" (ADR-007 §4)."
+  content: String!
+  "The gateway's refusal for a turn that ended badly. A failed turn stays in the transcript."
+  error: String
+  createdAt: DateTime!
+}
+
+type ChatThread {
+  id: ID!
+  title: String!
+  modelId: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  "Oldest first. Empty on the thread list, which asks for titles only."
+  messages: [ChatMessage!]!
+}
+
+extend type Query {
+  "Public: the screen needs the limits before a session exists, and none of them is a fact about a viewer."
+  chatSettings: ChatSettings!
+  "This member's conversations in the workspace, most recently used first."
+  chatThreads(workspaceId: ID!): [ChatThread!]!
+  chatThread(workspaceId: ID!, threadId: ID!): ChatThread!
+}
+
+extend type Mutation {
+  "Rotates: this user's own live console_chat key in the workspace is revoked first, and no one else's."
+  chatCredential(input: ChatCredentialInput!): ChatCredential!
+
+  createChatThread(input: CreateChatThreadInput!): ChatThread!
+  setChatThreadModel(input: CreateChatThreadInput!, threadId: ID!): ChatThread!
+  "Records a turn that has already happened. This does not call a model."
+  appendChatMessage(input: AppendChatMessageInput!): ChatMessage!
+  deleteChatThread(workspaceId: ID!, threadId: ID!): Boolean!
+}
+```
+
+`historyStorage` exists so the console does not decide for itself what it may promise. Every deployment
+now answers `ATTESTED_SERVER`: threads live in `chat_threads` / `chat_messages` inside the attested
+boundary, encrypted at rest by the in-TEE LUKS disk. That value licenses a *confidentiality* claim and
+emphatically not a durability one — the state disk is ephemeral by design, the durability work was
+deferred and the risk accepted (2026-09-30), and every surface that mentions storage says so in the same
+breath. `BROWSER_LOCAL` stays in the enum as the honest answer for a deployment with no such storage.
+
+**There is no `sendMessage`, and there will not be.** `appendChatMessage` *records* a turn that has
+already happened; the browser calls the model itself over `/v1/chat/completions`. That is what keeps the
+metering invariant intact: a mutation that called a model would be a second inference path and would put
+prompt text on the surface `generations` is guarded to keep clean. The console calls it twice per
+exchange — the question when it is sent, the answer when the stream settles — so a tab that dies
+mid-answer leaves the question in the transcript rather than losing the turn.
+
+`maxMessageChars` is enforced on the way in, and not identically for the two roles (SUP-187). A `USER`
+turn over the ceiling is refused — the console stores the question before it calls a model, so that
+refusal costs nothing. An `ASSISTANT` turn over the ceiling has already been streamed and metered, so it
+is stored cut to the ceiling with the cut recorded in `error`; the console drops errored turns from the
+next prompt, so a shortened answer is never replayed as though it were whole.
+
+**A corollary worth stating plainly: a client can store an `ASSISTANT` turn the model never produced.**
+That follows from recording rather than attesting, and it is by design. The router does not witness the
+exchange — that is the whole point of the browser calling `/v1` itself — so it cannot distinguish a
+model's answer from a string the caller typed. The reason this costs nothing is who can read the result:
+a transcript is scoped to `(workspace, member)`, so the only person a forged turn can mislead is the
+person who wrote it. Nothing downstream treats these rows as evidence of anything — they are not
+metering, not billing, not attestation, and never leave the boundary. If a surface ever wants a
+transcript it can *trust*, the metering record (`generations`) is the witnessed one, and it deliberately
+holds no content.
+
+`chatCredential` is a real `/v1` credential reaching a browser, so it is scoped to the chat-capable
+catalogue and expires in `chat.credentialTtl` (default 2 h). It is never returned twice: asking again
+mints a new key and revokes the previous one, because the plaintext of that one was shown once.
+
+Rotation is narrowed to `(workspaceId, createdByUserId)`. A workspace has members, and revoking every
+`console_chat` key in it would mean one member opening the chat breaking the tab another member has
+open until their cached secret expired. Clients should still treat a `401` of code `api_key_revoked`,
+`api_key_expired` or `invalid_api_key` as "mint again and retry once" — that is what the console does,
+and it is the only reason a caller needs to read those codes.

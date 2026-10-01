@@ -1,4 +1,4 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe, type ValidationPipeOptions } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -23,6 +23,26 @@ import { TYPEFORM_WEBHOOK_PATH } from './feedback/index.js';
  * which silently breaks every callback that carries a token.
  */
 export const AUTH_HANDLER_ROUTE = AUTH_BASE_PATH;
+
+/**
+ * The one global validation policy, exported so a test can put an input class
+ * through the very options production uses rather than a copy of them.
+ *
+ * `whitelist` is the sharp edge and the reason this is shared: it keeps only the
+ * properties that carry at least one class-validator decorator, and
+ * `forbidNonWhitelisted` then refuses the request outright because a property it
+ * has just stripped "should not exist". An undecorated `@Field` on an
+ * `@InputType` is therefore not a missing check — it is a mutation that can
+ * never be called at all (SUP-187). `input-validation.spec.ts` walks the whole
+ * schema against these options so the next one fails in CI instead of on a
+ * stand.
+ */
+export const VALIDATION_PIPE_OPTIONS: ValidationPipeOptions = {
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+  transformOptions: { enableImplicitConversion: false },
+};
 
 /**
  * Everything that has to happen to a created Nest app before it can listen,
@@ -79,14 +99,7 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: false },
-    }),
-  );
+  app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
 
   if (config.swagger.enabled) {
     const document = SwaggerModule.createDocument(

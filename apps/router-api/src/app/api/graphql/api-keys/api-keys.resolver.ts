@@ -145,6 +145,7 @@ function present(key: ApiKey): ApiKeyModel {
     id: key.id,
     name: key.name,
     prefix: key.prefix,
+    purpose: key.purpose,
     modelScope: key.modelScope,
     spendLimitMicros: key.spendLimitMicros === null ? null : String(key.spendLimitMicros),
     spentTotalMicros: String(key.spentTotalMicros),

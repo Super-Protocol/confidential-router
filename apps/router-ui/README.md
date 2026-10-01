@@ -35,7 +35,7 @@ containers from one image, two origins, and the browser has to call each.
 
 ## Routes
 
-`(console)` holds the nine screens from the prototype; `(auth)` holds the
+`(console)` holds the ten console screens; `(auth)` holds the
 signed-out shell. The route groups exist so the two never share a layout: the
 console layout mounts `SessionProvider`, and there is no session to fetch on the
 sign-in screen.
@@ -46,6 +46,7 @@ sign-in screen.
 | `/keys`, `/gatekeeper`                      | SUP-79  | built |
 | `/activity`, `/logs`                        | SUP-80  | built |
 | `/credits`, `/profile`, `/preferences`      | SUP-81  | built |
+| `/chat`                                     | SUP-180 | built |
 | `/login`, `/dev/components`                 | SUP-77  | built |
 
 A placeholder screen names the issue that builds it. The shell, tokens, data
@@ -82,8 +83,52 @@ value on the next render.
 cursor and links the CSV export, which is a REST endpoint on router-api rather
 than a GraphQL field.
 
-`src/components/navigation.ts` is the single source of truth for the nine
+`src/components/navigation.ts` is the single source of truth for the console
 screens: the sidebar, the breadcrumb trail and the placeholder copy all read it.
+
+### Chat (SUP-180)
+
+`/chat` is the demo surface for someone who will not install Gatekeeper, and it
+is the one screen that sends a request to `/v1` from the browser. The whole
+design, and why each tier says what it says, is ADR-007; what lives where:
+
+- `chat-stream.ts` — `POST /v1/chat/completions` with `stream: true` and the key
+  `chatCredential` minted. The same gateway, guard, meter and billing as any API
+  client; there is no console-only inference route, and adding one would break
+  the claim the screen makes.
+- `chat-history.ts` — what is left on this side now that the transcript is
+  server-side: `promptMessages`, which decides the turns the next request
+  carries, and the shape of the answer that is still arriving and is therefore
+  not a stored message yet. The transcript's own rules — titles, the two caps,
+  pruning, hard delete, one member's threads never appearing in another's list —
+  are `router-api`'s, tested against a real schema in
+  `app/chat/chat.service.spec.ts`.
+- `verification/evidence-gate.ts` — **tier 1**. Runs the stages of
+  `@confidential-router/attestation` in the page and locks the composer until
+  they pass. It calls the stages individually rather than `verifyHostname`,
+  because a page served by the deployment under test has no independent trust
+  store to answer "is this root one of ours" with.
+- `verification/sp-vm-registry.ts` — which is why the root question goes to
+  Super Protocol's signed measurement registry instead, under a key pinned here
+  and byte-identical to the one the Go gatekeeper pins. Keep the two in step.
+- `verification/extension-bridge.ts` — **tier 2**, a tiny versioned
+  `postMessage` protocol, feature-detected. The extension half is a swarm-cloud
+  change; until it ships every browser reports "no extension detected", which is
+  a true statement and blocks nothing. A verdict is accepted on `event.source`
+  being the window the request went into — the payload's own fields are all
+  copyable, and this is the only tier that says "independently".
+- `verification/tiers.ts` — **every user-visible claim about verification**, in
+  one file, each label paired with the caveat that has to travel with it. No
+  component writes its own. Tier 3 reuses `gatekeeper/setup-commands.ts` with the
+  hostname and digest filled in.
+
+The verifier is Web Crypto from end to end, so **the chat needs a secure
+origin**: HTTPS, or `http://localhost`. On a named http origin the browser
+withholds `crypto.subtle`, the gate answers that first — before fetching
+anything — and the composer stays locked with a message naming the fix rather
+than blaming the deployment's certificate chain. That is why the e2e suite, which
+serves a named http origin deliberately, tests the refusal and leaves the happy
+path to the component tests.
 
 ## Evidence
 
@@ -100,7 +145,9 @@ published, and every screen that shows an endpoint uses it:
 
 The vocabulary is fixed by ADR-002: the router publishes evidence and never
 learns whether anyone verified it, so nothing in this directory may say
-*verified*, *valid* or *trusted*. The chain is described as terminating at a
+*verified*, *valid* or *trusted*. `components/chat/verification/` is not an
+exception to that rule but an application of it: there the *browser* is the one
+checking, and each tier's label names which agent reached the verdict. The chain is described as terminating at a
 named root; whether that root is trusted is a fact about the viewer's gatekeeper,
 which this console has never seen. `STALE` is the prototype's "signing key
 rotating" state — a bundle exists but is outside the freshness window.

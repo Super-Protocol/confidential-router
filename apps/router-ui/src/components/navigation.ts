@@ -5,6 +5,7 @@ import {
   KeyRound,
   LayoutDashboard,
   type LucideIcon,
+  MessagesSquare,
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
@@ -25,7 +26,7 @@ export interface NavGroup {
 }
 
 /**
- * The nine console screens, grouped as in the prototype. This is the single
+ * The console screens, grouped as in the prototype. This is the single
  * source of truth for the sidebar, the breadcrumb trail and the page titles —
  * three places that drifted apart in swarm-cloud because each kept its own list.
  */
@@ -44,6 +45,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/models',
         icon: BookText,
         summary: 'Every model this router serves, its endpoint, context window and price.',
+      },
+      {
+        label: 'Chat',
+        href: '/chat',
+        icon: MessagesSquare,
+        summary: 'Talk to a served model, with the endpoint verified in this browser first.',
       },
     ],
   },

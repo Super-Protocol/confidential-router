@@ -5,6 +5,11 @@
     "rootDir": "./src",
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
     "declaration": true,
+    // Real JavaScript, not just declarations: this is the one library the Next
+    // console imports, and `next build` resolves the package's `import` entry
+    // rather than the workspace's `@confidential-router/source` condition. A
+    // declaration-only `dist` would leave that entry pointing at nothing.
+    "emitDeclarationOnly": false,
     "lib": ["es2022", "dom"],
     "types": ["node"]
   },

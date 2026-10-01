@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@apollo/client": "^4.2.12",
+    "@confidential-router/attestation": "workspace:*",
     "@confidential-router/ui": "workspace:*",
     "@graphql-typed-document-node/core": "^3.2.0",
     "graphql": "^16.13.1",
@@ -19,6 +20,7 @@
     "sonner": "^2.0.8"
   },
   "devDependencies": {
+    "@confidential-router/attestation-fixtures": "workspace:*",
     "@graphql-codegen/cli": "^7.3.1",
     "@graphql-codegen/client-preset": "^6.1.3",
     "@tailwindcss/postcss": "^4.3.3"

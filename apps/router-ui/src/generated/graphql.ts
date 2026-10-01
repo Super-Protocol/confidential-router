@@ -4,6 +4,14 @@ type Exact<T extends { [key: string]: unknown }> = { [K in keyof T]: T[K] };
 /** Internal type. DO NOT USE DIRECTLY. */
 export type Incremental<T> = T | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never };
 import type { TypedDocumentNode as DocumentNode } from '@graphql-typed-document-node/core';
+export type AppendChatMessageInput = {
+  content: string;
+  error?: string | null | undefined;
+  role: ChatRole;
+  threadId: string | number;
+  workspaceId: string | number;
+};
+
 export type AutoTopUpInput = {
   /** Micro-USD. Required when enabling. */
   amountMicros?: string | null | undefined;
@@ -17,6 +25,20 @@ export type Bucket =
   | 'DAY'
   | 'HOUR';
 
+export type ChatCredentialInput = {
+  workspaceId: string | number;
+};
+
+/** Where a console chat keeps its history. The console derives its own disclosure copy from this. */
+export type ChatHistoryStorage =
+  | 'ATTESTED_SERVER'
+  | 'BROWSER_LOCAL';
+
+/** Who said it. There is no system role. */
+export type ChatRole =
+  | 'ASSISTANT'
+  | 'USER';
+
 export type CreateApiKeyInput = {
   expiresAt?: string | null | undefined;
   /** Restrict the key to these model ids. Omit for all. */
@@ -25,6 +47,11 @@ export type CreateApiKeyInput = {
   requestsPerMinute?: number | null | undefined;
   spendLimitMicros?: string | null | undefined;
   tokensPerMinute?: number | null | undefined;
+  workspaceId: string | number;
+};
+
+export type CreateChatThreadInput = {
+  modelId: string;
   workspaceId: string | number;
 };
 
@@ -97,6 +124,11 @@ export type InviteRefusalReason =
   | 'EXPIRED'
   | 'NOT_FOUND';
 
+export type ModelCapability =
+  | 'CHAT'
+  | 'COMPLETIONS'
+  | 'EMBEDDINGS';
+
 export type SetAutoTopUpInput = {
   settings: AutoTopUpInput;
   workspaceId: string | number;
@@ -163,6 +195,63 @@ export type SignedInQueryVariables = Exact<{ [key: string]: never; }>;
 
 
 export type SignedInQuery = { me: { id: string } };
+
+export type ChatScreenQueryVariables = Exact<{ [key: string]: never; }>;
+
+
+export type ChatScreenQuery = { chatSettings: { enabled: boolean, maxMessageChars: number, maxThreads: number, maxMessagesPerThread: number, historyStorage: ChatHistoryStorage, chatModelIds: Array<string> }, models: Array<{ id: string, name: string, contextLength: number, capabilities: Array<ModelCapability>, tee: string, pricing: { promptPer1m: string, completionPer1m: string }, endpoint: { id: string, name: string, hostname: string, tee: string, evidenceState: EvidenceState, latestEvidence: { id: string, endpointId: string, issuedAt: string, fetchedAt: string, quoteAgeSeconds: number, quoteFormat: string | null, evidenceDigest: string, evidenceDigestHex: string, certFingerprint: string, certFingerprintHex: string, containerImages: Array<string>, jws: string, measurements: Array<{ name: string, value: string }>, chain: Array<{ subject: string, issuer: string, notAfter: string, fingerprint: string, fingerprintHex: string, isRoot: boolean }> } | null } }> };
+
+export type ChatCredentialMutationVariables = Exact<{
+  input: ChatCredentialInput;
+}>;
+
+
+export type ChatCredentialMutation = { chatCredential: { apiKeyId: string, secret: string, expiresAt: string, baseUrl: string, modelScope: Array<string> } };
+
+export type ChatThreadsQueryVariables = Exact<{
+  workspaceId: string | number;
+}>;
+
+
+export type ChatThreadsQuery = { chatThreads: Array<{ id: string, title: string, modelId: string, updatedAt: string }> };
+
+export type ChatThreadQueryVariables = Exact<{
+  workspaceId: string | number;
+  threadId: string | number;
+}>;
+
+
+export type ChatThreadQuery = { chatThread: { id: string, title: string, modelId: string, updatedAt: string, messages: Array<{ id: string, role: ChatRole, content: string, error: string | null, createdAt: string }> } };
+
+export type CreateChatThreadMutationVariables = Exact<{
+  input: CreateChatThreadInput;
+}>;
+
+
+export type CreateChatThreadMutation = { createChatThread: { id: string, title: string, modelId: string, updatedAt: string } };
+
+export type SetChatThreadModelMutationVariables = Exact<{
+  input: CreateChatThreadInput;
+  threadId: string | number;
+}>;
+
+
+export type SetChatThreadModelMutation = { setChatThreadModel: { id: string, modelId: string } };
+
+export type AppendChatMessageMutationVariables = Exact<{
+  input: AppendChatMessageInput;
+}>;
+
+
+export type AppendChatMessageMutation = { appendChatMessage: { id: string, role: ChatRole, content: string, error: string | null, createdAt: string } };
+
+export type DeleteChatThreadMutationVariables = Exact<{
+  workspaceId: string | number;
+  threadId: string | number;
+}>;
+
+
+export type DeleteChatThreadMutation = { deleteChatThread: boolean };
 
 export type CreditBalanceFieldsFragment = { workspaceId: string, balanceMicros: string, spendable: boolean, minTopUpMicros: string, maxTopUpMicros: string, purchasesAvailable: boolean, autoTopUp: { enabled: boolean, available: boolean, thresholdMicros: string | null, amountMicros: string | null, lastChargedAt: string | null } };
 
@@ -341,6 +430,14 @@ export const ActivityDocument = {"kind":"Document","definitions":[{"kind":"Opera
 export const ActivityUsageByModelDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"ActivityUsageByModel"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"from"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"DateTime"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"to"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"DateTime"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"limit"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"Int"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"usageByModel"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"workspaceId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}}},{"kind":"Argument","name":{"kind":"Name","value":"from"},"value":{"kind":"Variable","name":{"kind":"Name","value":"from"}}},{"kind":"Argument","name":{"kind":"Name","value":"to"},"value":{"kind":"Variable","name":{"kind":"Name","value":"to"}}},{"kind":"Argument","name":{"kind":"Name","value":"limit"},"value":{"kind":"Variable","name":{"kind":"Name","value":"limit"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"modelId"}},{"kind":"Field","name":{"kind":"Name","value":"name"}},{"kind":"Field","name":{"kind":"Name","value":"requests"}},{"kind":"Field","name":{"kind":"Name","value":"promptTokens"}},{"kind":"Field","name":{"kind":"Name","value":"completionTokens"}},{"kind":"Field","name":{"kind":"Name","value":"spendMicros"}},{"kind":"Field","name":{"kind":"Name","value":"evidenceCoverage"}}]}}]}}]} as unknown as DocumentNode<ActivityUsageByModelQuery, ActivityUsageByModelQueryVariables>;
 export const SignInOptionsDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"SignInOptions"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"signInOptions"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"bootstrap"}},{"kind":"Field","name":{"kind":"Name","value":"github"}},{"kind":"Field","name":{"kind":"Name","value":"google"}},{"kind":"Field","name":{"kind":"Name","value":"magicLink"}},{"kind":"Field","name":{"kind":"Name","value":"password"}},{"kind":"Field","name":{"kind":"Name","value":"passwordMinLength"}},{"kind":"Field","name":{"kind":"Name","value":"inviteRequired"}}]}}]}}]} as unknown as DocumentNode<SignInOptionsQuery, SignInOptionsQueryVariables>;
 export const SignedInDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"SignedIn"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"me"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}}]}}]}}]} as unknown as DocumentNode<SignedInQuery, SignedInQueryVariables>;
+export const ChatScreenDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"ChatScreen"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"chatSettings"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"enabled"}},{"kind":"Field","name":{"kind":"Name","value":"maxMessageChars"}},{"kind":"Field","name":{"kind":"Name","value":"maxThreads"}},{"kind":"Field","name":{"kind":"Name","value":"maxMessagesPerThread"}},{"kind":"Field","name":{"kind":"Name","value":"historyStorage"}},{"kind":"Field","name":{"kind":"Name","value":"chatModelIds"}}]}},{"kind":"Field","name":{"kind":"Name","value":"models"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"name"}},{"kind":"Field","name":{"kind":"Name","value":"contextLength"}},{"kind":"Field","name":{"kind":"Name","value":"capabilities"}},{"kind":"Field","name":{"kind":"Name","value":"tee"}},{"kind":"Field","name":{"kind":"Name","value":"pricing"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"promptPer1m"}},{"kind":"Field","name":{"kind":"Name","value":"completionPer1m"}}]}},{"kind":"Field","name":{"kind":"Name","value":"endpoint"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"FragmentSpread","name":{"kind":"Name","value":"EndpointEvidenceFields"}}]}}]}}]}},{"kind":"FragmentDefinition","name":{"kind":"Name","value":"EvidenceSnapshotFields"},"typeCondition":{"kind":"NamedType","name":{"kind":"Name","value":"EvidenceSnapshot"}},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"endpointId"}},{"kind":"Field","name":{"kind":"Name","value":"issuedAt"}},{"kind":"Field","name":{"kind":"Name","value":"fetchedAt"}},{"kind":"Field","name":{"kind":"Name","value":"quoteAgeSeconds"}},{"kind":"Field","name":{"kind":"Name","value":"quoteFormat"}},{"kind":"Field","name":{"kind":"Name","value":"evidenceDigest"}},{"kind":"Field","name":{"kind":"Name","value":"evidenceDigestHex"}},{"kind":"Field","name":{"kind":"Name","value":"certFingerprint"}},{"kind":"Field","name":{"kind":"Name","value":"certFingerprintHex"}},{"kind":"Field","name":{"kind":"Name","value":"containerImages"}},{"kind":"Field","name":{"kind":"Name","value":"measurements"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"name"}},{"kind":"Field","name":{"kind":"Name","value":"value"}}]}},{"kind":"Field","name":{"kind":"Name","value":"chain"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"subject"}},{"kind":"Field","name":{"kind":"Name","value":"issuer"}},{"kind":"Field","name":{"kind":"Name","value":"notAfter"}},{"kind":"Field","name":{"kind":"Name","value":"fingerprint"}},{"kind":"Field","name":{"kind":"Name","value":"fingerprintHex"}},{"kind":"Field","name":{"kind":"Name","value":"isRoot"}}]}},{"kind":"Field","name":{"kind":"Name","value":"jws"}}]}},{"kind":"FragmentDefinition","name":{"kind":"Name","value":"EndpointEvidenceFields"},"typeCondition":{"kind":"NamedType","name":{"kind":"Name","value":"Endpoint"}},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"name"}},{"kind":"Field","name":{"kind":"Name","value":"hostname"}},{"kind":"Field","name":{"kind":"Name","value":"tee"}},{"kind":"Field","name":{"kind":"Name","value":"evidenceState"}},{"kind":"Field","name":{"kind":"Name","value":"latestEvidence"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"FragmentSpread","name":{"kind":"Name","value":"EvidenceSnapshotFields"}}]}}]}}]} as unknown as DocumentNode<ChatScreenQuery, ChatScreenQueryVariables>;
+export const ChatCredentialDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"ChatCredential"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ChatCredentialInput"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"chatCredential"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"apiKeyId"}},{"kind":"Field","name":{"kind":"Name","value":"secret"}},{"kind":"Field","name":{"kind":"Name","value":"expiresAt"}},{"kind":"Field","name":{"kind":"Name","value":"baseUrl"}},{"kind":"Field","name":{"kind":"Name","value":"modelScope"}}]}}]}}]} as unknown as DocumentNode<ChatCredentialMutation, ChatCredentialMutationVariables>;
+export const ChatThreadsDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"ChatThreads"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"chatThreads"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"workspaceId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"modelId"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}}]}}]}}]} as unknown as DocumentNode<ChatThreadsQuery, ChatThreadsQueryVariables>;
+export const ChatThreadDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"ChatThread"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"threadId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"chatThread"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"workspaceId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}}},{"kind":"Argument","name":{"kind":"Name","value":"threadId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"threadId"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"modelId"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}},{"kind":"Field","name":{"kind":"Name","value":"messages"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"role"}},{"kind":"Field","name":{"kind":"Name","value":"content"}},{"kind":"Field","name":{"kind":"Name","value":"error"}},{"kind":"Field","name":{"kind":"Name","value":"createdAt"}}]}}]}}]}}]} as unknown as DocumentNode<ChatThreadQuery, ChatThreadQueryVariables>;
+export const CreateChatThreadDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"CreateChatThread"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"CreateChatThreadInput"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"createChatThread"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"modelId"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}}]}}]}}]} as unknown as DocumentNode<CreateChatThreadMutation, CreateChatThreadMutationVariables>;
+export const SetChatThreadModelDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"SetChatThreadModel"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"CreateChatThreadInput"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"threadId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"setChatThreadModel"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}},{"kind":"Argument","name":{"kind":"Name","value":"threadId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"threadId"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"modelId"}}]}}]}}]} as unknown as DocumentNode<SetChatThreadModelMutation, SetChatThreadModelMutationVariables>;
+export const AppendChatMessageDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"AppendChatMessage"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"AppendChatMessageInput"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"appendChatMessage"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"role"}},{"kind":"Field","name":{"kind":"Name","value":"content"}},{"kind":"Field","name":{"kind":"Name","value":"error"}},{"kind":"Field","name":{"kind":"Name","value":"createdAt"}}]}}]}}]} as unknown as DocumentNode<AppendChatMessageMutation, AppendChatMessageMutationVariables>;
+export const DeleteChatThreadDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"DeleteChatThread"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"threadId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"deleteChatThread"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"workspaceId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}}},{"kind":"Argument","name":{"kind":"Name","value":"threadId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"threadId"}}}]}]}}]} as unknown as DocumentNode<DeleteChatThreadMutation, DeleteChatThreadMutationVariables>;
 export const CreditsDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"Credits"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"first"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"Int"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"after"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"creditBalance"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"workspaceId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"FragmentSpread","name":{"kind":"Name","value":"CreditBalanceFields"}}]}},{"kind":"Field","name":{"kind":"Name","value":"creditTransactions"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"workspaceId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"workspaceId"}}},{"kind":"Argument","name":{"kind":"Name","value":"first"},"value":{"kind":"Variable","name":{"kind":"Name","value":"first"}}},{"kind":"Argument","name":{"kind":"Name","value":"after"},"value":{"kind":"Variable","name":{"kind":"Name","value":"after"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"totalCount"}},{"kind":"Field","name":{"kind":"Name","value":"pageInfo"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"hasNextPage"}},{"kind":"Field","name":{"kind":"Name","value":"endCursor"}}]}},{"kind":"Field","name":{"kind":"Name","value":"edges"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"cursor"}},{"kind":"Field","name":{"kind":"Name","value":"node"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"createdAt"}},{"kind":"Field","name":{"kind":"Name","value":"kind"}},{"kind":"Field","name":{"kind":"Name","value":"amountMicros"}},{"kind":"Field","name":{"kind":"Name","value":"reference"}},{"kind":"Field","name":{"kind":"Name","value":"description"}}]}}]}}]}}]}},{"kind":"FragmentDefinition","name":{"kind":"Name","value":"CreditBalanceFields"},"typeCondition":{"kind":"NamedType","name":{"kind":"Name","value":"CreditBalance"}},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"workspaceId"}},{"kind":"Field","name":{"kind":"Name","value":"balanceMicros"}},{"kind":"Field","name":{"kind":"Name","value":"spendable"}},{"kind":"Field","name":{"kind":"Name","value":"minTopUpMicros"}},{"kind":"Field","name":{"kind":"Name","value":"maxTopUpMicros"}},{"kind":"Field","name":{"kind":"Name","value":"purchasesAvailable"}},{"kind":"Field","name":{"kind":"Name","value":"autoTopUp"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"enabled"}},{"kind":"Field","name":{"kind":"Name","value":"available"}},{"kind":"Field","name":{"kind":"Name","value":"thresholdMicros"}},{"kind":"Field","name":{"kind":"Name","value":"amountMicros"}},{"kind":"Field","name":{"kind":"Name","value":"lastChargedAt"}}]}}]}}]} as unknown as DocumentNode<CreditsQuery, CreditsQueryVariables>;
 export const CreateCheckoutDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"CreateCheckout"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"CreateCheckoutInput"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"createCheckout"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"url"}},{"kind":"Field","name":{"kind":"Name","value":"ref"}}]}}]}}]} as unknown as DocumentNode<CreateCheckoutMutation, CreateCheckoutMutationVariables>;
 export const SetAutoTopUpDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"SetAutoTopUp"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"input"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"SetAutoTopUpInput"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"setAutoTopUp"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"input"},"value":{"kind":"Variable","name":{"kind":"Name","value":"input"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"FragmentSpread","name":{"kind":"Name","value":"CreditBalanceFields"}}]}}]}},{"kind":"FragmentDefinition","name":{"kind":"Name","value":"CreditBalanceFields"},"typeCondition":{"kind":"NamedType","name":{"kind":"Name","value":"CreditBalance"}},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"workspaceId"}},{"kind":"Field","name":{"kind":"Name","value":"balanceMicros"}},{"kind":"Field","name":{"kind":"Name","value":"spendable"}},{"kind":"Field","name":{"kind":"Name","value":"minTopUpMicros"}},{"kind":"Field","name":{"kind":"Name","value":"maxTopUpMicros"}},{"kind":"Field","name":{"kind":"Name","value":"purchasesAvailable"}},{"kind":"Field","name":{"kind":"Name","value":"autoTopUp"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"enabled"}},{"kind":"Field","name":{"kind":"Name","value":"available"}},{"kind":"Field","name":{"kind":"Name","value":"thresholdMicros"}},{"kind":"Field","name":{"kind":"Name","value":"amountMicros"}},{"kind":"Field","name":{"kind":"Name","value":"lastChargedAt"}}]}}]}}]} as unknown as DocumentNode<SetAutoTopUpMutation, SetAutoTopUpMutationVariables>;
