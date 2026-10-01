@@ -92,7 +92,30 @@ endpoints:
     # which is what stops this from becoming a way to file one endpoint's
     # evidence under another.
     evidenceUrl: http://evidence-mirror.cr-prod.svc.cluster.local/deepseek-v3
+  - name: qwen25-72b
+    hostname: qwen25-72b.tee.swarm.cloud
+    tee: AMD SEV-SNP
+    # What this endpoint is supposed to run, pinned by digest. The console's
+    # attestation panel compares it against the digests in the endpoint's signed
+    # deployment evidence and marks anything the list does not cover.
+    declaredImages:
+      - name: ghcr.io/super-protocol/router-api
+        digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+      - name: ghcr.io/berriai/litellm
+        digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
 ```
+
+`declaredImages` is optional and is a statement of intent, never a verdict — the
+same kind of thing as `tee`. It exists so the comparison the console makes has
+two independent sides: the signed snapshot says what the deployment *runs*, this
+list says what it is *supposed to* run, and comparing the snapshot against
+digests derived from the same snapshot would prove nothing. Leaving it out is a
+distinct answer from declaring an empty list: omitted, the panel reports that
+nothing was declared and paints no image green; `declaredImages: []` means the
+endpoint is declared to run nothing, under which every image in the evidence is
+undeclared. The shape is the one a marketplace AppDefinition pins a component's
+images with (`swarm-marketplace-spec` §2.7), so a listing can become the source
+later without the field changing.
 
 **`models[]`** is the catalogue `/v1/models` serves and the console renders. It
 maps a public model id to a LiteLLM model and to the endpoint that serves it.

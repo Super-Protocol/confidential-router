@@ -87,6 +87,55 @@ describe('a real Super Swarm root', () => {
     expect(evidence?.reportMeasurement).toBe(REPORT_MEASUREMENT);
   });
 
+  it('reads the policy and TCB fields the gatekeeper reports for this same root', async () => {
+    /*
+     * The three values pinned here are the three the Go verifier's own fixture
+     * test asserts for the live root — `SecurityFields{VMPL: 0, SnpFirmwareTCB:
+     * 27, ReportVersion: 5}` in `attestedroot/verifier_test.go`. Holding both
+     * readers to the same numbers is the point: a console showing a TCB level
+     * the gatekeeper disagrees with would be worse than a console showing none.
+     */
+    const { evidence } = await readRootAttestation(new X509Certificate(LIVE_ROOT_PEM));
+    const security = evidence?.security;
+
+    expect(security).not.toBeNull();
+    expect(security?.reportVersion).toBe(5);
+    expect(security?.vmpl).toBe(0);
+    expect(security?.launchTcb.snp).toBe(27);
+
+    // The rest of the launch TCB, so a platform held back on one component shows
+    // up here rather than silently behind the single SNP number.
+    expect(security?.launchTcb).toEqual({
+      raw: '0x581b00000000000a',
+      bootLoader: 10,
+      tee: 0,
+      snp: 27,
+      microcode: 88,
+    });
+    // This VM launched on the TCB it still runs, and asks to be held to it.
+    expect(security?.currentTcb.raw).toBe(security?.launchTcb.raw);
+    expect(security?.reportedTcb.raw).toBe(security?.launchTcb.raw);
+  });
+
+  it('decomposes the guest policy, and says debug is not permitted', async () => {
+    // `debugAllowed` is the one bit whose bad value nobody tolerates: it means
+    // the host may decrypt the guest. The live root's policy is 0x30000 — SMT
+    // allowed, the ABI's reserved bit 17 set, and nothing else.
+    const { evidence } = await readRootAttestation(new X509Certificate(LIVE_ROOT_PEM));
+
+    expect(evidence?.security?.policy).toEqual({
+      raw: '0x30000',
+      abiMajor: 0,
+      abiMinor: 0,
+      smtAllowed: true,
+      migrateMaAllowed: false,
+      debugAllowed: false,
+      singleSocketRequired: false,
+      ciphertextHiding: false,
+      pageSwapDisabled: false,
+    });
+  });
+
   it('confirms the report commits to this certificate’s own public key', async () => {
     /*
      * The one cryptographic statement a browser can get out of the extension

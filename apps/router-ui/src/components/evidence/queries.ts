@@ -49,6 +49,10 @@ export const ENDPOINT_EVIDENCE_FIELDS = graphql(`
     hostname
     tee
     evidenceState
+    declaredImages {
+      name
+      digest
+    }
     latestEvidence {
       ...EvidenceSnapshotFields
     }

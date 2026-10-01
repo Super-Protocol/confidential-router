@@ -52,6 +52,7 @@ describe('SQLite', () => {
         'WorkspaceFirstRequest1759000000000',
         'ConsoleChatKeys1759100000000',
         'ChatHistory1759200000000',
+        'EndpointDeclaredImages1759300000000',
       ]);
     } finally {
       await dataSource.destroy();
@@ -85,6 +86,11 @@ describe('SQLite', () => {
     try {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
+
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('endpoints', 'declaredImages')).toBe(false);
+      // The tables the previous migration added are untouched.
+      expect(await queryRunner.hasTable('chat_messages')).toBe(true);
 
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasTable('chat_messages')).toBe(false);

@@ -83,6 +83,9 @@ const LIVE_EVIDENCE: RootTeeEvidence = {
   build: 'build-370',
   reportMeasurement: 'a'.repeat(96),
   keyBinding: true,
+  // The gate never reads the policy or TCB fields — they are the inspector's —
+  // so the branches these cases select do not depend on them.
+  security: null,
 };
 
 /** The live platform's root, as `readRootAttestation` reports it. */
@@ -131,6 +134,47 @@ describe('a bundle a gatekeeper would accept', () => {
     }
     expect(result.evidence).toMatchObject({ hostname: HOSTNAME, source: 'endpoint' });
     expect(result.evidence?.rootSubject).toBeTruthy();
+  });
+
+  it('carries the signed snapshot through, so the inspector draws the attested document', async () => {
+    /*
+     * The one claim the attestation inspector rests on: the graph it draws comes
+     * out of the JWS this gate just verified, not out of a second request. If the
+     * snapshot stopped arriving here the inspector would have to fetch it, and
+     * then there would be two documents on one screen with one signature between
+     * them.
+     */
+    const result = await run({ fetcher: servesFromEndpoint('valid-producer-asserted') });
+    const payload = JSON.parse(
+      Buffer.from(
+        (loadBundle('valid-producer-asserted') as { jws: string }).jws.split('.')[1] as string,
+        'base64url',
+      ).toString('utf8'),
+    ) as { evidence: unknown };
+
+    expect(result.evidence?.snapshot).toEqual(payload.evidence);
+    expect(result.evidence?.kind).toBe('DeploymentEvidence');
+    expect(result.evidence?.jws).toBe((loadBundle('valid-producer-asserted') as { jws: string }).jws);
+  });
+
+  it('summarises every certificate of the chain, with the terminal one marked as the root', async () => {
+    // The inspector lists the chain down to the TEE-quoted root, and the
+    // fingerprint a reader compares with their gatekeeper's trusted root is the
+    // last one — so "which one is the root" has to be a fact, not a guess made in
+    // the view layer.
+    const result = await run({ fetcher: servesFromEndpoint('valid-producer-asserted') });
+    const chain = result.evidence?.chain ?? [];
+
+    expect(chain.length).toBe((loadBundle('valid-producer-asserted') as { certChain: string[] }).certChain.length);
+    expect(chain.filter((certificate) => certificate.isRoot)).toHaveLength(1);
+    expect(chain.at(-1)?.isRoot).toBe(true);
+    expect(chain.at(-1)?.subject).toBe(result.evidence?.rootSubject);
+    // The root's fingerprint is the one the chain validation already derived, so
+    // the two surfaces cannot disagree about which value to compare.
+    expect(chain.at(-1)?.fingerprint).toBe(result.evidence?.rootFingerprint);
+    for (const certificate of chain) {
+      expect(certificate.fingerprint).toMatch(/^sha256\/[A-Za-z0-9_-]{43}$/);
+    }
   });
 
   it('says the root is not established when nothing anywhere carries a quote', async () => {

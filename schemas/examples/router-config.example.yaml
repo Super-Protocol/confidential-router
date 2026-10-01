@@ -29,6 +29,13 @@ endpoints:
   - name: qwen25-72b
     hostname: qwen25-72b.tee.swarm.cloud
     tee: AMD SEV-SNP
+    # Optional: what this endpoint is supposed to run. The console's attestation
+    # panel compares it against the digests the signed evidence carries.
+    declaredImages:
+      - name: ghcr.io/super-protocol/router-api
+        digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+      - name: ghcr.io/berriai/litellm
+        digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
   - name: deepseek-v3
     hostname: deepseek-v3.tee.swarm.cloud
     tee: Intel TDX + H100 CC

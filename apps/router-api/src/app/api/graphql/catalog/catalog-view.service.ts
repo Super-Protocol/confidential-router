@@ -53,6 +53,7 @@ export class CatalogViewService {
         name: endpoint.name,
         hostname: endpoint.hostname,
         tee: endpoint.tee,
+        declaredImages: endpoint.declaredImages,
         latestEvidence: snapshot ? EvidenceSnapshotModel.from(snapshot, now) : null,
         evidenceState: this.evidence.stateOfSnapshot(snapshot, now),
         tokensRouted30d: tokens.get(endpoint.id) ?? 0,

@@ -12,13 +12,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@confidential-router/ui/components/dialog';
-import { Check, CircleHelp, CircleX, RefreshCw, TriangleAlert } from 'lucide-react';
+import { RefreshCw, TriangleAlert } from 'lucide-react';
 import type * as React from 'react';
 import { resolvedSetupScript, resolvedSetupSteps } from '../gatekeeper/setup-commands';
-import type { CheckStatus, GateCheck } from './verification/evidence-gate';
+import { CheckRow } from './verification/check-row';
 import {
   bundleSourceNote,
-  CHECK_LABELS,
   EXTENSION_TIER,
   GATEKEEPER_TIER,
   gatekeeperDivergenceNote,
@@ -208,31 +207,4 @@ function Tier({
       {children}
     </section>
   );
-}
-
-function CheckRow({ check }: { check: GateCheck }) {
-  return (
-    <li className="flex gap-2.5 text-sm">
-      <CheckIcon status={check.status} />
-      <div className="min-w-0">
-        <p className="font-medium">{CHECK_LABELS[check.id]}</p>
-        <p className="text-muted-foreground text-xs">{check.detail}</p>
-      </div>
-    </li>
-  );
-}
-
-/**
- * Three states, three glyphs — and `unavailable` is deliberately not a cross.
- * "Nobody could be asked" is not "the answer was no", and drawing them the same
- * way would be the screen telling a lie the code is careful not to.
- */
-function CheckIcon({ status }: { status: CheckStatus }) {
-  if (status === 'pass') {
-    return <Check className="mt-0.5 size-4 shrink-0 text-brand" aria-label="Passed" />;
-  }
-  if (status === 'fail') {
-    return <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" aria-label="Failed" />;
-  }
-  return <CircleHelp className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="Not established" />;
 }

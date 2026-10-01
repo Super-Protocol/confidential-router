@@ -30,7 +30,7 @@ function model(id: string, capabilities: CatalogModel['capabilities']): CatalogM
     capabilities,
     promptPer1mMicros: 1,
     completionPer1mMicros: 1,
-    endpoint: { id: 'ep-1', name: 'router', hostname: 'router.test', tee: 'tdx' },
+    endpoint: { id: 'ep-1', name: 'router', hostname: 'router.test', tee: 'tdx', declaredImages: null },
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
   };
 }
