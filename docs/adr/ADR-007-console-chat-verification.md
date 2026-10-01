@@ -256,5 +256,8 @@ cross-implementation conformance vectors where Web Crypto exists.
   If durability is ever wanted, it is a platform change (a replicated storage
   class for cluster spaces, or a confidential backup target) and not a console
   one — and `maintenanceCaveat` in `tiers.ts` plus the landing's `consoleChat`
-  constant are the two places that would then change together, which is what the
-  `TODO(SUP-183)` beside each of them says.
+  constant are the two places that would then change together. The
+  `TODO(SUP-183)` beside `maintenanceCaveat` is what names both of them, and it
+  is the only marker this repository can hold: the landing is a separate
+  repository, and an ADR claiming a marker over there would be asserting
+  insurance it cannot see.
