@@ -361,7 +361,53 @@ test.describe('a deployment where registration is by invitation', () => {
     // The open-sign-up copy invited the visitor to carry on without the credit.
     // Here there is nothing to carry on to.
     await expect(page.getByTestId('invite-unavailable')).toBeHidden();
+    // And it does not guess which refusal it is — the lookup cannot know (SUP-176).
+    await expect(alert).not.toContainText('may already have been claimed');
   });
+
+  /**
+   * A spent code and a code nobody ever issued, side by side, in a browser
+   * (SUP-176).
+   *
+   * The lookup answers the same `unavailable` to both by design, so the only
+   * place the two come apart is the sign-up's typed 403 — and the console used to
+   * hold the button that would fetch it, which made the two indistinguishable to
+   * everyone who was not using `curl`. Both halves run the same script; the only
+   * difference is what the router answers.
+   */
+  for (const [code, sentence] of [
+    ['invite_already_claimed', 'already been claimed'],
+    ['invite_expired_or_unknown', 'may have expired'],
+  ] as const) {
+    test(`submits a code the lookup refused and shows the router's own refusal: ${code}`, async ({ page }) => {
+      await mockLookup(page, { valid: false, reason: 'unavailable' });
+      await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
+      // Registered after `mockInviteFlow`, so it wins: the router refuses instead
+      // of creating the account, and this handler is what records the attempt.
+      const attempts: Array<Record<string, unknown>> = [];
+      await page.route('**/auth/sign-up/email', (route) => {
+        attempts.push(route.request().postDataJSON() as Record<string, unknown>);
+        return route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ code, message: 'refused' }),
+        });
+      });
+
+      await page.goto(signUpUrl());
+      await expect(page.getByTestId('invite-unavailable-required')).toBeVisible();
+      await fillInAndSubmit(page);
+
+      await expect(page.getByTestId(`invite-refused-${code}`)).toContainText(sentence);
+      // The snapshot it replaces is gone, so there is one sentence on screen.
+      await expect(page.getByTestId('invite-unavailable-required')).toBeHidden();
+      // The refusal the visitor read is the one answered to their own code.
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({ inviteCode: NORMALISED });
+      // Refused before the insert, so the visitor is still on the form.
+      await expect(page).toHaveURL(/\/signup/);
+    });
+  }
 
   test('lets a good code through, unchanged', async ({ page }) => {
     await mockLookup(page, { valid: true, grantMicros: GRANT_MICROS, campaign: CAMPAIGN });

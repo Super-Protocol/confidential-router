@@ -82,9 +82,28 @@ export function SignUpForm() {
    * never whether an account can be created.
    */
   const inviteRequired = data?.signInOptions.inviteRequired ?? false;
-  // Nothing else can produce an account here, so a code that has not been
-  // confirmed is a submission the router is certain to refuse.
-  const blockedOnInvite = inviteRequired && invite.kind !== 'ready';
+  /**
+   * Nothing else can produce an account here, so an unconfirmed code is normally
+   * a submission the router is certain to refuse — held back rather than sent.
+   *
+   * `unavailable` is the exception, and SUP-176 is why. That answer is settled
+   * and final, and it is deliberately imprecise: the public lookup collapses
+   * claimed, expired, withdrawn and never-issued into one reason so that it
+   * cannot be used to tell a real code from a guess. The router keeps the
+   * distinction and answers it as a typed 403 from `user.create.before` — ahead
+   * of the insert, so a refused submit creates no account, no session and no
+   * grant. Holding the button here is what made a spent link and a typo read
+   * identically in a browser; submitting is the only way the visitor reads the
+   * one refusal they can act on alone. It leaks nothing new either: that POST
+   * already answers the three codes to any caller, and it costs an email and a
+   * password per guess, where the lookup this protects is a free GET.
+   *
+   * `checking` and `unknown` stay held, because neither is an answer: one is
+   * about to arrive and the other can be asked for again, and "wait" is honest
+   * advice in both. `none` stays held too — there is no code to submit, and the
+   * notice above already says what the router would.
+   */
+  const blockedOnInvite = inviteRequired && invite.kind !== 'ready' && invite.kind !== 'unavailable';
 
   // One per page load, anonymous, and a volume rather than a funnel step —
   // linking it to the account that appears later would need an identifier stored

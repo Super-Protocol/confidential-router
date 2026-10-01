@@ -363,8 +363,73 @@ describe('a deployment where registration is by invitation', () => {
     // The old copy, which invited the visitor to carry on without the credit,
     // would be a lie here: there is no account to be had without a code.
     expect(screen.queryByTestId('invite-unavailable')).not.toBeInTheDocument();
+  });
+
+  // SUP-176. The lookup cannot say which refusal it is, so the sentence it
+  // renders must not pretend to, and must not be the last word either.
+  it('does not guess why the lookup refused the code', async () => {
+    vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}`, assign });
+    routeFetch({ invite: { valid: false, reason: 'unavailable' } });
+    renderForm(required);
+
+    const alert = await screen.findByTestId('invite-unavailable-required');
+    expect(alert.textContent).not.toMatch(/may already have been claimed|mistyped/i);
+    expect(alert).toHaveTextContent('already claimed or was never issued');
+  });
+
+  it('lets the form submit on a refused lookup, so the router can say which refusal it is', async () => {
+    vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}`, assign });
+    routeFetch({ invite: { valid: false, reason: 'unavailable' } });
+    renderForm(required);
+
+    await screen.findByTestId('invite-unavailable-required');
+    await fillIn();
+
+    // Held before SUP-176, which is what kept the typed refusal below out of
+    // every browser: the submit it arrives on could never be made.
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeEnabled();
+    expect(screen.queryByTestId('sign-up-blocked-on-invite')).not.toBeInTheDocument();
+
+    await submit();
+    expect(bodyOf('/auth/sign-up/email').inviteCode).toBe(NORMALISED);
+  });
+
+  it.each([
+    ['invite_already_claimed', 'already been claimed'],
+    ['invite_expired_or_unknown', 'may have expired'],
+  ])('reads a spent code and an unissued one differently in the browser: %s', async (code, sentence) => {
+    vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}`, assign });
+    routeFetch({
+      invite: { valid: false, reason: 'unavailable' },
+      // Both codes look identical to the lookup; only the sign-up tells them apart.
+      signUp: jsonResponse({ code, message: 'refused' }, false, 403),
+    });
+    renderForm(required);
+
+    await screen.findByTestId('invite-unavailable-required');
+    await fillIn();
+    await submit();
+
+    expect(await screen.findByTestId(`invite-refused-${code}`)).toHaveTextContent(sentence);
+    expect(screen.queryByTestId('invite-unavailable-required')).not.toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it.each(['checking', 'unknown'])('still holds the button while the code has no answer at all: %s', async (kind) => {
+    vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}`, assign });
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/v1/invites/')) {
+        // `checking` never settles; `unknown` settles on a transport failure.
+        return kind === 'checking' ? new Promise(() => {}) : Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve(jsonResponse({}, true, 202));
+    });
+    renderForm(required);
+
+    await screen.findByTestId(kind === 'checking' ? 'invite-checking' : 'invite-unknown');
     await fillIn();
     expect(screen.getByRole('button', { name: 'Create account' })).toBeDisabled();
+    expect(callTo('/auth/sign-up/email')).toBeUndefined();
   });
 
   it('renders each refusal the router can answer with, distinctly', async () => {

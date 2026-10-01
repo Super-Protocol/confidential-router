@@ -509,8 +509,20 @@ other two finish as navigations and cannot be answered with a body, so Better Au
 redirects to the error callback the console named, with `?error=<code>` on it —
 the same three values either way, which is what lets the console have one set of
 copy. `signInOptions { inviteRequired }` reports the setting, so the sign-up screen
-says "registration is by invitation", keeps the code input open, blocks submission
-until a code passes the live lookup, and renders each refusal as its own alert.
+says "registration is by invitation", keeps the code input open, and renders each
+refusal as its own alert.
+
+**The typed refusal has to be reachable from a browser** (SUP-176). The screen's
+pre-check calls the public lookup, which answers one `unavailable` for a spent
+code and for one that was never issued alike — so while the console held the
+submit button behind that answer, the two refusals that read differently were
+readable only by `curl`, and the visitor whose link really had been spent got a
+sentence that opened by suggesting a typo. So the button is held only while the
+lookup has *no* answer — in flight, or unreachable — and a settled `unavailable`
+submits: the gate runs before the insert, so the 403 costs nothing and is the one
+place the distinction exists. It is not a new oracle either, because that POST
+already answers the three codes to any caller, at the price of an email and a
+password per guess; the free `GET /v1/invites/:code` stays collapsed.
 
 **One window the check does not cover.** The pre-check is a read, and the seat is
 still claimed by the atomic `UPDATE` inside the grant that follows the insert. It

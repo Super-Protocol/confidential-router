@@ -22,6 +22,13 @@
  * The public lookup `GET /v1/invites/:code` is unchanged and still collapses
  * every unusable code into one `unavailable` — it answers about a code nobody
  * has committed to, where even `already_claimed` is more than it needs to say.
+ *
+ * That split is load-bearing in one direction: because the lookup says less than
+ * this does, these three are the *only* place a browser can learn that a link was
+ * spent rather than mistyped, so the console submits a code its pre-check called
+ * `unavailable` instead of holding the button (SUP-176). Nothing here has to
+ * change for that — the refusal already precedes the insert — but it is why
+ * widening the lookup would be the wrong fix and why this set must stay typed.
  */
 
 import type { InviteUnusableReason } from './invites.service.js';
