@@ -215,8 +215,18 @@ export function InviteNotice({
 
       {/* On an invite-only deployment the same answer means something else: the
           code is not worth less credit, it is the difference between having an
-          account and not. So it is an alert with the sign-up blocked behind it,
-          not a footnote saying to carry on. */}
+          account and not. So it is an alert rather than a footnote saying to
+          carry on.
+
+          It does not guess which refusal it is, and that is the whole of
+          SUP-176. The public lookup collapses claimed, expired, withdrawn and
+          never-issued into one `unavailable` on purpose, so this sentence has no
+          way to know — and the old copy filled the gap with "it may already have
+          been claimed", which told the one visitor whose link really was spent
+          that they had probably mistyped it. The router does know and answers a
+          typed refusal to the submit, which is why the sign-up is no longer held
+          behind this state: the sentence below sends the visitor to get the
+          answer instead of inventing it. */}
       {state.kind === 'unavailable' ? (
         required ? (
           <div
@@ -226,12 +236,10 @@ export function InviteNotice({
           >
             <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
             <div className="min-w-0">
-              <p className="font-medium text-sm">
-                {INVITE_REFUSAL_COPY.invite_expired_or_unknown.title} It may already have been claimed.
-              </p>
+              <p className="font-medium text-sm">This invitation cannot be used.</p>
               <p className="text-muted-foreground text-xs leading-relaxed">
-                Registration here is by invitation, so this one has to work before an account can be created. Check the
-                link you were sent, or ask for a new code.
+                Submit the form to find out whether it was already claimed or was never issued — nothing is created by
+                asking. You can also paste a different code below.
               </p>
             </div>
           </div>
