@@ -134,6 +134,12 @@ docker run -e ROUTER_UI_API_ORIGIN=https://api.example.com -p 3001:3001 \
   ghcr.io/super-protocol/confidential-router/router-ui:latest
 ```
 
+Everything the Gatekeeper page prints is derived from that one value, so the
+setup commands it shows are runnable as printed on whatever origin the image is
+deployed to. The exception is `ROUTER_UI_SWARM_ROOT_PEM_URL`, the published
+location of the Swarm cloud's root CA: set it when this cloud's CA is not the one
+Super Protocol publishes at `router.superprotocol.com/swarm-root.pem`.
+
 ## Deploying `router-api`
 
 ```bash

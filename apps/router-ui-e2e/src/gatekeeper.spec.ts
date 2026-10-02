@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { type GraphQLFixtures, signIn } from './fixtures';
+import { API_ORIGIN } from './origins';
 
 const RELEASE = {
   __typename: 'GatekeeperRelease',
@@ -61,7 +62,7 @@ test.describe('Gatekeeper', () => {
     await expect(page.getByRole('link', { name: /Release notes/ })).toHaveAttribute('href', RELEASE.notesUrl);
   });
 
-  test('explains the flow, the checks and the four setup commands', async ({ page, baseURL }) => {
+  test('explains the flow, the checks and the pre-filled setup sequence', async ({ page, baseURL }) => {
     await signIn(page, baseURL as string, OPERATIONS);
 
     await page.goto('/gatekeeper');
@@ -70,9 +71,14 @@ test.describe('Gatekeeper', () => {
     await expect(page.getByText('Fail closed')).toBeVisible();
     await expect(page.getByText('Fail open')).toBeVisible();
     await expect(page.getByText('gatekeeper init', { exact: true })).toBeVisible();
-    await expect(page.getByText('gatekeeper endpoint add router --upstream https://<hostname>')).toBeVisible();
-    await expect(page.getByText('gatekeeper endpoint trust add router sha256:<evidenceDigest>')).toBeVisible();
+    // Copy-paste runnable as printed: the origin this console was configured
+    // with, and a pin that needs no value fetched from elsewhere (SUP-193).
+    await expect(
+      page.getByText(`gatekeeper endpoint add router --upstream ${API_ORIGIN} --listen 127.0.0.1:8787`),
+    ).toBeVisible();
+    await expect(page.getByText('gatekeeper endpoint trust add router --from-upstream')).toBeVisible();
     await expect(page.getByText('gatekeeper run', { exact: true })).toBeVisible();
+    await expect(page.getByText(/<hostname>|<evidenceDigest>/)).toHaveCount(0);
   });
 
   test('offers a checksum-verifying one-liner for each platform', async ({ page, baseURL }) => {
@@ -87,12 +93,17 @@ test.describe('Gatekeeper', () => {
         'curl -fsSL https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.sh | sh',
       ),
     ).toBeVisible();
+    await expect(page.getByText(/verifies it against the release checksums/)).toBeVisible();
+
+    // One sequence at a time, in the reader's own shell: the whole block switches
+    // with the tab, because two of its lines are a pipe (SUP-193).
+    await page.getByRole('tab', { name: 'Windows' }).click();
     await expect(
       page.getByText(
         'irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex',
       ),
     ).toBeVisible();
-    await expect(page.getByText(/verifies it against the release checksums/)).toBeVisible();
+    await expect(page.getByText(/gatekeeper trust roots add swarm-prod --pem-file swarm-root.pem/)).toBeVisible();
   });
 
   test('keeps the setup usable when no build has been published', async ({ page, baseURL }) => {
