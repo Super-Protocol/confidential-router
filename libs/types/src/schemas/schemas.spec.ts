@@ -280,6 +280,23 @@ describe('router-config rules', () => {
     cfg.models[0].pricing.promptPer1mMicros = 0.28;
     expect(validate(cfg)).toBe(false);
   });
+
+  it('a declared image must be pinned by a sha256 digest, not by a tag', () => {
+    // The field's whole purpose is to be compared against a digest in the signed
+    // evidence. A tag here would be a declaration nothing can be matched against,
+    // which would read on the panel as an operator problem rather than a config one.
+    const cfg = base();
+    cfg.endpoints[1].declaredImages = [{ name: 'ghcr.io/super-protocol/router-api', digest: 'v1.4.0' }];
+    expect(validate(cfg)).toBe(false);
+  });
+
+  it('accepts an endpoint that declares no images at all', () => {
+    // Absent is the state most deployments are in, and it is not an error: the
+    // console reports that nothing was declared rather than implying a match.
+    const cfg = base();
+    for (const endpoint of cfg.endpoints) delete endpoint.declaredImages;
+    expect(validate(cfg), errorsOf(validate)).toBe(true);
+  });
 });
 
 /**

@@ -1,11 +1,15 @@
 import {
   CertChainError,
+  type EvidencePayload,
   fingerprintsEqual,
   type ParsedChain,
   type RootAttestation,
+  type RootEvidenceType,
   type RootNetworkType,
+  type RootReportSecurity,
   readRootAttestation,
   rootFingerprintFromPem,
+  sha256Fingerprint,
   validateChain,
   verifyJws,
 } from '@confidential-router/attestation';
@@ -84,12 +88,48 @@ export interface GateCheck {
  */
 export type BundleSource = 'endpoint' | 'router';
 
+/**
+ * One certificate of the published chain, as the inspector lists it.
+ *
+ * Summarised here rather than in the panel because the certificates themselves
+ * are `@peculiar/x509` objects the gate already holds and the panel should never
+ * need to parse: everything downstream reads strings.
+ */
+export interface GateCertificate {
+  subject: string;
+  issuer: string;
+  notBefore: string;
+  notAfter: string;
+  /** `sha256/<base64url>` of the DER — the form the bundle and Gatekeeper use. */
+  fingerprint: string;
+  /** True for the terminal, self-signed certificate: the TEE-quoted root. */
+  isRoot: boolean;
+}
+
 export interface GateEvidence {
   hostname: string;
   source: BundleSource;
   issuedAt: string;
+  /** The payload's own `kind`; a router endpoint publishes DeploymentEvidence. */
+  kind: EvidencePayload['kind'];
   evidenceDigest: string | null;
   certFingerprint: string;
+  /**
+   * The *signed* deployment snapshot, verbatim — `payload.evidence` of the JWS
+   * this page just verified, not a copy fetched from anywhere else.
+   *
+   * This is what the deployment graph is drawn from, and the reason it is
+   * carried here rather than re-requested: the graph is meant to *be* the
+   * attested document rather than an illustration beside it, and a second fetch
+   * would be a second thing that can disagree. `undefined` when the producer
+   * published a digest without the snapshot behind it, which the contract allows
+   * and which the panel reports as "nothing to draw" rather than as a failure.
+   */
+  snapshot: unknown;
+  /** The compact JWS as published, so a reader can take the signed bytes away. */
+  jws: string;
+  /** Every certificate of the published chain, leaf → root. */
+  chain: GateCertificate[];
   rootSubject: string | null;
   rootFingerprint: string | null;
   /** `rootCaTeeQuote.format`, or null when the platform published no usable quote. */
@@ -109,6 +149,20 @@ export interface GateEvidence {
   rootKeyBinding: boolean | null;
   /** The Super Protocol network the root declares. Reported, never enforced. */
   rootNetworkType: RootNetworkType | null;
+  /** Which hardware branch the root's evidence carries, when it carries one. */
+  rootEvidenceType: RootEvidenceType | null;
+  /** Verbatim enrolment-challenge extension, e.g. `sev-snp`. */
+  rootChallengeType: string | null;
+  /**
+   * The report's own 48-byte `MEASUREMENT`, hex. Shown because it is the
+   * report's headline field — and explicitly *not* the registry lookup key; see
+   * `measurementOf`.
+   */
+  rootReportMeasurement: string | null;
+  /** The root report's policy and TCB fields, when they could be read. */
+  rootSecurity: RootReportSecurity | null;
+  /** Why an extension that is present could not be used. */
+  rootAttestationError: string | null;
 }
 
 export interface GateResult {
@@ -268,8 +322,13 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
       hostname: bundle.hostname,
       source,
       issuedAt: payload.issuedAt,
+      kind: payload.kind,
       evidenceDigest: 'evidenceDigest' in payload ? (payload.evidenceDigest as string) : null,
       certFingerprint: payload.certFingerprint,
+      // The verified payload's own member, not the envelope's and not a refetch.
+      snapshot: 'evidence' in payload ? payload.evidence : undefined,
+      jws: bundle.jws,
+      chain: chain.summary,
       rootSubject: chain.rootSubject,
       rootFingerprint: chain.rootFingerprint,
       quoteFormat: quoteFormatOf(bundle.rootCaTeeQuote),
@@ -278,6 +337,11 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
       rootBuild: attestation.evidence?.build ?? null,
       rootKeyBinding: attestation.evidence?.keyBinding ?? null,
       rootNetworkType: attestation.networkType,
+      rootEvidenceType: attestation.evidence?.type ?? null,
+      rootChallengeType: attestation.challengeType,
+      rootReportMeasurement: attestation.evidence?.reportMeasurement ?? null,
+      rootSecurity: attestation.evidence?.security ?? null,
+      rootAttestationError: attestation.error,
     },
   };
 }
@@ -413,8 +477,39 @@ function shapeOf(
 }
 
 type ChainOutcome =
-  | { ok: true; check: GateCheck; leaf: ChainLeaf; root: ChainRoot; rootSubject: string; rootFingerprint: string }
+  | {
+      ok: true;
+      check: GateCheck;
+      leaf: ChainLeaf;
+      root: ChainRoot;
+      rootSubject: string;
+      rootFingerprint: string;
+      summary: GateCertificate[];
+    }
   | { ok: false; check: GateCheck };
+
+/**
+ * Subject, issuer, validity and fingerprint of each certificate the chain check
+ * just validated, leaf → root.
+ *
+ * Fingerprints are computed rather than copied out of the bundle, which
+ * publishes only the leaf's: the point of listing the chain is that a reader can
+ * compare the terminal value with the root their own Gatekeeper trusts, and a
+ * value this page derived from the DER it validated is the one that means
+ * something.
+ */
+async function summariseChain(parsed: ParsedChain): Promise<GateCertificate[]> {
+  return Promise.all(
+    parsed.certs.map(async (certificate, index) => ({
+      subject: certificate.subject,
+      issuer: certificate.issuer,
+      notBefore: certificate.notBefore.toISOString(),
+      notAfter: certificate.notAfter.toISOString(),
+      fingerprint: await sha256Fingerprint(new Uint8Array(certificate.rawData)),
+      isRoot: index === parsed.certs.length - 1,
+    })),
+  );
+}
 
 async function checkChain(bundle: RawBundle, now: Date | undefined): Promise<ChainOutcome> {
   try {
@@ -425,6 +520,7 @@ async function checkChain(bundle: RawBundle, now: Date | undefined): Promise<Cha
       root: parsed.root,
       rootSubject: parsed.root.subject,
       rootFingerprint: parsed.rootFingerprint,
+      summary: await summariseChain(parsed),
       check: {
         id: 'chain',
         status: 'pass',
@@ -440,9 +536,7 @@ async function checkChain(bundle: RawBundle, now: Date | undefined): Promise<Cha
   }
 }
 
-type SignatureOutcome =
-  | { ok: true; check: GateCheck; payload: { hostname: string; issuedAt: string; certFingerprint: string } }
-  | { ok: false; check: GateCheck };
+type SignatureOutcome = { ok: true; check: GateCheck; payload: EvidencePayload } | { ok: false; check: GateCheck };
 
 async function checkSignature(bundle: RawBundle, leaf: ChainLeaf): Promise<SignatureOutcome> {
   try {

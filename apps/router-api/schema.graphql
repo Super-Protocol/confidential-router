@@ -321,6 +321,17 @@ A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date
 """
 scalar DateTime
 
+"""
+One container image the operator declares this endpoint runs, pinned by digest. A statement of intent from the config, never a verification result — the console compares it against the digests in the endpoint's signed deployment evidence and reports the difference.
+"""
+type DeclaredImage {
+  """sha256:<64 hex>."""
+  digest: String!
+
+  """Image reference without tag or digest."""
+  name: String!
+}
+
 input DisableInviteCodesInput {
   """Every code of one campaign."""
   campaign: String
@@ -336,6 +347,10 @@ input DisableInviteCodesInput {
 A router hostname the platform publishes evidence for. Projected from the router config; never created or edited through this API.
 """
 type Endpoint {
+  """
+  The operator-declared image allow-list, or null when the config declares none. Null and an empty list mean different things: null is "nothing was declared", an empty list is "this endpoint is declared to run nothing".
+  """
+  declaredImages: [DeclaredImage!]
   evidenceState: EvidenceState!
   hostname: String!
   id: ID!

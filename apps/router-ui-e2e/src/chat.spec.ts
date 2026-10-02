@@ -177,6 +177,31 @@ test.describe('Chat', () => {
     await expect(page.getByRole('button', { name: `Delete “${THREAD_TITLE}”` })).toHaveCSS('opacity', '1');
   });
 
+  test('offers “Inspect attestation”, and draws no graph from evidence that did not check out', async ({
+    page,
+    baseURL,
+  }) => {
+    /*
+     * The degraded path, which is the only one this origin can reach — and the
+     * one worth having in a real browser: a panel that rendered an empty canvas
+     * here would read as "this deployment runs nothing", which is a far more
+     * convincing wrong answer than a stated failure.
+     *
+     * The populated panel is audited at `/dev/attestation`, where the same
+     * component is handed a verified result without a verifier; see
+     * `accessibility.spec.ts`.
+     */
+    await openChat(page, baseURL as string);
+
+    await page.getByRole('button', { name: 'Inspect attestation' }).click();
+
+    const dialog = page.getByRole('dialog', { name: /Attestation for this endpoint/i });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText(/Nothing below is drawn from this endpoint/)).toBeVisible();
+    await expect(dialog.getByText(/withholds the Web Crypto API/i)).toBeVisible();
+    await expect(dialog.getByRole('tab', { name: 'Deployment graph' })).toHaveCount(0);
+  });
+
   test('says so, rather than showing a dead composer, when the chat is switched off', async ({ page, baseURL }) => {
     await openChat(page, baseURL as string, chatOperations({ chatSettings: { enabled: false } }));
 

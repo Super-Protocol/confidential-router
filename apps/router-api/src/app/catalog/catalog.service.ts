@@ -4,7 +4,7 @@ import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, Not } from 'typeorm';
 import { routerConfig } from '../config.js';
-import { Endpoint } from '../db/entities/endpoint.entity.js';
+import { type DeclaredImage, Endpoint } from '../db/entities/endpoint.entity.js';
 import { Model, type ModelCapability } from '../db/entities/model.entity.js';
 
 /** A router hostname, as the gateway needs it: config values plus the projected row id. */
@@ -13,6 +13,8 @@ export interface CatalogEndpoint {
   name: string;
   hostname: string;
   tee: string;
+  /** The operator's image allow-list, or null when the config declares none. */
+  declaredImages: DeclaredImage[] | null;
 }
 
 /** A model the gateway can route to, joined with its endpoint and frozen prices. */
@@ -109,10 +111,19 @@ export class CatalogService implements OnApplicationBootstrap {
           hostname: endpoint.hostname,
           tee: endpoint.tee,
           evidenceUrl: endpoint.evidenceUrl ?? null,
+          // `?? null` rather than `?? []`: an absent allow-list and an empty one
+          // are different statements, and the console renders them differently.
+          declaredImages: endpoint.declaredImages ?? null,
           enabled: true,
           updatedAt: now,
         });
-        endpoints.set(endpoint.name, { id, name: endpoint.name, hostname: endpoint.hostname, tee: endpoint.tee });
+        endpoints.set(endpoint.name, {
+          id,
+          name: endpoint.name,
+          hostname: endpoint.hostname,
+          tee: endpoint.tee,
+          declaredImages: endpoint.declaredImages ?? null,
+        });
       }
 
       for (const model of enabledModels) {
