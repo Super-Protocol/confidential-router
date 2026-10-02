@@ -99,7 +99,7 @@ jobs:
       # is never briefly visible as `latest` before the step below decides
       # whether it should be.
       - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
           # `--skip=validate` because `gatekeeper-v0.1.0` is not a semantic
@@ -267,7 +267,7 @@ jobs:
       # say exactly which nightly it is.
       - name: Build the artifacts
         if: steps.moved.outputs.skip == 'false'
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
           args: release --snapshot --clean --skip=publish
