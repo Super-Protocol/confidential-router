@@ -112,6 +112,93 @@ test.describe('accessibility', () => {
     expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
   });
 
+  for (const theme of ['dark', 'light'] as const) {
+    test(`the attestation inspector has no serious axe violations in ${theme} mode`, async ({ page }) => {
+      /*
+       * Audited at `/dev/attestation` rather than on the chat screen, because the
+       * populated panel cannot exist here: tier 1 needs Web Crypto, this suite
+       * serves a named http origin on purpose (`origins.ts`), and browsers
+       * withhold Web Crypto from one. The review route hands the real component
+       * the result the component tests use, so what is audited is the panel with
+       * a graph, a dozen digests and a full measurements list in it.
+       */
+      await page.addInitScript((value) => window.localStorage.setItem('theme', value), theme);
+      await page.goto('/dev/attestation');
+      await page.getByRole('button', { name: 'Inspect attestation' }).first().click();
+
+      const dialog = page.getByRole('dialog', { name: /Attestation for this endpoint/i });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
+      await expect(dialog.getByRole('button', { name: /^Ingress host/ }).first()).toBeVisible();
+
+      const violations = await auditPage(page);
+      expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    });
+  }
+
+  test('the deployment graph is walkable with the keyboard, node by node', async ({ page }) => {
+    await page.goto('/dev/attestation');
+    await page.getByRole('button', { name: 'Inspect attestation' }).first().click();
+
+    const dialog = page.getByRole('dialog', { name: /Attestation for this endpoint/i });
+    await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
+
+    const first = dialog.getByRole('button', { name: /^Ingress host/ }).first();
+    await expect(first).toBeVisible();
+    await first.focus();
+
+    /*
+     * Tab order has to be the order the panel says it is — hosts, services, then
+     * each workload followed by its own containers — because a reader who cannot
+     * see the columns has only that sentence to go on. Depth rather than column
+     * on purpose: having just heard a workload's name, the useful next thing is
+     * what that workload runs.
+     */
+    const visited: string[] = [];
+    for (let step = 0; step < 12; step += 1) {
+      const name = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
+      if (name) visited.push(name);
+      await page.keyboard.press('Tab');
+    }
+
+    // Twelve nodes, every one a tab stop: two ingress hosts, three services,
+    // then each workload trailed by the containers it runs — litellm with one,
+    // router-api with its init container and its own, router-ui with one.
+    expect(visited.map((name) => name.split(' ')[0])).toEqual([
+      'Ingress',
+      'Ingress',
+      'Service',
+      'Service',
+      'Service',
+      'Workload',
+      'Container',
+      'Workload',
+      'Container',
+      'Container',
+      'Workload',
+      'Container',
+    ]);
+
+    // And Enter on a node opens its raw signed fields, without a pointer.
+    const container = dialog.getByRole('button', { name: /^Container router-api/ }).first();
+    await container.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: 'router-api' }).getByText(/signed snapshot/)).toBeVisible();
+  });
+
+  test('an undeclared image is named in words, not only in red', async ({ page }) => {
+    // The one claim on this panel a reader cannot check by eye. A colour is not a
+    // statement, so the accessible name of the node carries the verdict too.
+    await page.goto('/dev/attestation');
+    await page.getByRole('button', { name: 'Inspect attestation' }).nth(1).click();
+
+    const dialog = page.getByRole('dialog', { name: /Attestation for this endpoint/i });
+    await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
+
+    await expect(dialog.getByText(/runs an image the operator did not declare/)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /^Container router-ui.*undeclared/s })).toBeVisible();
+  });
+
   test('the mobile drawer is reachable and labelled at a phone width', async ({ page, baseURL }) => {
     await signIn(page, baseURL as string, CONSOLE_OPERATIONS);
     await page.setViewportSize({ width: 390, height: 844 });

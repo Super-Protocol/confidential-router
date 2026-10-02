@@ -11,6 +11,15 @@ export interface VerificationState {
   gate: GateResult | null;
   /** Tier 2. Null while the handshake is outstanding. */
   extension: BridgeOutcome | null;
+  /**
+   * When tier 1 concluded, in this browser's clock. Null while it is running.
+   *
+   * The inspector shows it beside the evidence's own `issuedAt`, which is the
+   * pair that matters: a bundle signed two minutes ago and checked two minutes
+   * ago is a different statement from the same bundle checked yesterday, and the
+   * second is what a left-open tab shows.
+   */
+  checkedAt: Date | null;
   pageState: TierState;
   extensionState: TierState;
   /** True once tier 1 has passed. The composer is disabled until it is. */
@@ -34,6 +43,7 @@ export interface UseVerificationInput {
  */
 export function useVerification({ hostname, endpointName }: UseVerificationInput): VerificationState {
   const [gate, setGate] = React.useState<GateResult | null>(null);
+  const [checkedAt, setCheckedAt] = React.useState<Date | null>(null);
   const [extension, setExtension] = React.useState<BridgeOutcome | null>(null);
   const [attempt, setAttempt] = React.useState(0);
 
@@ -46,10 +56,13 @@ export function useVerification({ hostname, endpointName }: UseVerificationInput
     // whose verdict may be shown.
     let current = true;
     setGate(null);
+    setCheckedAt(null);
     setExtension(null);
 
     void runEvidenceGate({ hostname, endpointName, apiOrigin: publicConfig().apiOrigin }).then((result) => {
-      if (current) setGate(result);
+      if (!current) return;
+      setGate(result);
+      setCheckedAt(new Date());
     });
     void requestExtensionVerification({ hostname }).then((outcome) => {
       if (current) setExtension(outcome);
@@ -65,6 +78,7 @@ export function useVerification({ hostname, endpointName }: UseVerificationInput
 
   return {
     gate,
+    checkedAt,
     extension,
     pageState,
     extensionState,

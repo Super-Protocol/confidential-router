@@ -217,6 +217,13 @@ jobs:
             --exclude=gatekeeper,@confidential-router/router-api-e2e \
             --outputStyle=static
 
+      # Unconditional, and a separate target, because it is the only suite that
+      # runs the console on a secure context — which is the only way tier 1's
+      # verifier runs in a browser at all. `nx affected` would skip it on the
+      # changes most likely to break it, since the gate lives in a library.
+      - name: Run the secure-origin e2e suite (tier 1, against the live stack)
+        run: pnpm nx run @confidential-router/router-ui-e2e:e2e-secure --outputStyle=static
+
       - name: Upload the Playwright report
         if: failure()
         uses: actions/upload-artifact@v5

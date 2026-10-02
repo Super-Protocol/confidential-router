@@ -20,6 +20,12 @@ const CROSS_APP = 'cross-app.spec.ts';
 /** Owned by `playwright.image.config.ts`: it needs Docker and a built image. */
 const IMAGE_ORIGINS = 'image-origins.spec.ts';
 
+/**
+ * Owned by `playwright.secure.config.ts`: it needs a *secure context*, which is
+ * exactly what the origins below are not. See that file.
+ */
+const SECURE_ORIGIN = 'secure-origin.spec.ts';
+
 /** Not a spec — the origins both this file and the specs are built from. */
 const ORIGINS = 'origins.ts';
 
@@ -51,7 +57,7 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: [CROSS_APP, IMAGE_ORIGINS],
+      testIgnore: [CROSS_APP, IMAGE_ORIGINS, SECURE_ORIGIN],
     },
     {
       // Serial, and after the mocked project: it shares one router-api process

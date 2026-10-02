@@ -63,11 +63,32 @@ const LiteLlmSchema = z
 
 const BackendsSchema = z.strictObject({ litellm: LiteLlmSchema }).prefault({});
 
+/**
+ * One entry of an endpoint's image allow-list: the same `{ name, digest }` pair a
+ * marketplace AppDefinition pins a component's images with
+ * (`swarm-marketplace-spec` §2.7), so when listings land the source can move
+ * without the shape changing.
+ */
+const DeclaredImageSchema = z.strictObject({
+  name: z.string().min(1),
+  digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+});
+
 const EndpointSchema = z.strictObject({
   name,
   hostname: z.string().min(1),
   tee: z.string().min(1),
   evidenceUrl: z.url().optional(),
+  /**
+   * What the operator says this endpoint runs. Compared in the console against
+   * the digests the endpoint's *signed* evidence carries, which is the only
+   * comparison worth making: both sides of it come from different places.
+   *
+   * Absent is a distinct state from empty, and both are honest: `undefined`
+   * means nothing was declared, and the console says so rather than painting an
+   * unchecked image green.
+   */
+  declaredImages: z.array(DeclaredImageSchema).optional(),
   enabled: booleanish().prefault(true),
 });
 

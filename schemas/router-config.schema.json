@@ -158,6 +158,28 @@
             "format": "uri",
             "description": "Override for fetching this endpoint's own bundle from inside the cluster. Operator-only."
           },
+          "declaredImages": {
+            "type": "array",
+            "uniqueItems": true,
+            "description": "Allow-list of the container images this endpoint is supposed to run, pinned by digest \u2014 the same shape as a marketplace AppDefinition's component `images` (swarm-marketplace-spec \u00a72.7). The console compares it against the digests in the endpoint's signed deployment evidence: an image the evidence carries and this list does not is surfaced as undeclared. Operator-declared, so it is a statement of intent and never a verdict; omit it and the console reports that nothing was declared rather than implying a match.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "digest"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Image reference without tag or digest, e.g. ghcr.io/super-protocol/router-api."
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "description": "Pinned image digest."
+                }
+              }
+            }
+          },
           "enabled": {
             "type": "boolean",
             "default": true

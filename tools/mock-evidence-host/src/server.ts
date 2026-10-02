@@ -193,6 +193,26 @@ export async function startMockEvidenceHost(options: MockEvidenceHostOptions = {
       certFingerprint: state.boundFingerprint,
       jws: await signCompactJws(payload, state.leaf.privateKey),
       certChain: [state.leaf.pem, state.authority.intermediate.pem, state.authority.root.pem],
+      /*
+       * The leaf this host is serving on TLS right now, published the way the
+       * platform publishes it.
+       *
+       * It is the producer-asserted half of the channel binding
+       * (`AttestationBundle.tlsLeaf`): a verifier with channel access — the Go
+       * gatekeeper — ignores it and compares the leaf it observed on its own
+       * handshake, but a *browser* cannot see that certificate, so the published
+       * one is the only thing it can hash and check against the signed
+       * `certFingerprint`. Omitting it left this host less faithful than the
+       * producer it imitates, and made the console's tier 1 fail at `binding`
+       * against the demo stack for a reason no deployment has.
+       *
+       * `state.leaf` rather than a stored copy, so every deny path keeps its
+       * meaning: `breakChannelBinding()` swaps the leaf and leaves
+       * `boundFingerprint` stale, and this field then publishes the *new* leaf
+       * beside the old fingerprint — which is the mismatch that path exists to
+       * produce, now visible to a browser as well as to a gatekeeper.
+       */
+      tlsLeaf: state.leaf.pem,
     };
     if (quote) {
       bundle.rootCaTeeQuote = quote;

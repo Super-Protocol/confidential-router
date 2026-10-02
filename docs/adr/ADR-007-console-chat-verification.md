@@ -240,6 +240,95 @@ therefore tests this refusal rather than the happy path, and the happy path is
 covered by the component tests, which run the verifier against the
 cross-implementation conformance vectors where Web Crypto exists.
 
+### 7. "Inspect attestation": the measurements, and a graph of the signed document
+
+The badge answers *has this been verified, and by whom*. There is a second
+question — *what does the document actually say* — and it needs a screen of its
+own: the measurements in full, and the deployment the evidence describes, drawn
+out (SUP-190). Four decisions hold it together.
+
+**It consumes tier 1's result and verifies nothing.** The panel is a function of
+the `useVerification` state the chat screen already holds; "Check again" calls
+that hook's own `recheck`. A second fetch-and-parse path would be a second thing
+to keep in step with the gate, and the first time they diverged the screen would
+be showing one answer beside a badge that reached another. To make the reuse
+possible, `runEvidenceGate` now carries three things it previously discarded:
+the verified payload's `evidence` snapshot, a summary of every certificate in
+the chain, and the root report's policy and TCB fields.
+
+**The graph is drawn from the signed snapshot, not from a live API.** That is the
+point of it rather than an implementation note: the picture *is* the attested
+document, so a reader who trusts the signature has to accept the picture — and
+the panel says so in those words. `runEvidenceGate` returns no evidence at all
+once a check fails, so a failure cannot reach the graph; the panel also states
+the failure in the words of the failing check rather than rendering an empty
+canvas, because a graph of a document whose signature did not verify would read
+as "this deployment runs nothing", which is a more convincing wrong answer than
+a stated failure.
+
+**A container's digest is compared against something outside the evidence.**
+`endpoints[].declaredImages` is an operator-declared allow-list, `{ name, digest }`
+per image — the same shape a marketplace AppDefinition pins a component's images
+with (`swarm-marketplace-spec` §2.7), so when listings land the source can move
+without the shape changing. Comparing the snapshot against digests derived from
+the same snapshot would be a green tick that proves nothing, which is why the
+other side of the comparison is config. Five verdicts, and only one of them is
+green: *declared*; *undeclared build* (the operator declares this image at
+another digest — the loudest, because the declaration proves they know the
+component); *undeclared*; *not digest-pinned* (a tag cannot be matched against a
+pin even in principle); and *nothing declared*, which is where most deployments
+are today. An absent allow-list and an empty one are different statements and
+are stored and rendered differently: null is "nothing was declared", `[]` is
+"this endpoint is declared to run nothing".
+
+**It is a separate chunk, and a test says so.** react-flow is ~65 KB gzipped and
+the chat is a screen most people open to type a message, so the panel is reached
+only through a dynamic `import()` in `inspect-button.tsx`.
+`attestation/code-split.spec.ts` walks the chat screen's static import graph and
+fails if anything under `components/chat/attestation` except that button —
+or `@xyflow/react` itself — becomes statically reachable. The entry button costs
+about 1.5 KB gzipped on the `/chat` cold load; the panel costs nothing until it
+is opened.
+
+The panel's own accessibility is audited at `/dev/attestation`, a review route in
+the same spirit as `/dev/components`: the populated panel cannot exist on the e2e
+suite's origin (§6), so the route hands the real component a verified result
+without a verifier, and the suite runs axe over it in both themes and walks the
+graph with Tab. Each node is a `<button>` whose accessible name carries the
+digest and the verdict in words — a colour is not a statement.
+
+### 7a. One suite on a secure origin, because §6 left tier 1 unproven in a browser
+
+§6 is right about the trade and has an unstated cost: if the only browser suite
+runs on an origin the browser withholds Web Crypto from, then *nothing that
+happens after the gate gives up* is ever exercised in a browser. The console
+chat shipped with its happy path covered only by component tests — and the first
+time it was pointed at the demo stack it failed at `binding`, because
+`tools/mock-evidence-host` published no `tlsLeaf`. The field is in the bundle
+contract and the live platform publishes it; the Go gatekeeper ignores it
+because it observes the channel itself, so its absence had never cost anything
+and nothing noticed. A browser has no channel to observe, so for a browser it is
+the whole check.
+
+So the mock host publishes the leaf it is serving, and
+`playwright.secure.config.ts` runs one suite with the console and the API both on
+`127.0.0.1`, which browsers treat as trustworthy. Tier 1 runs there for real:
+bundle fetched, chain validated, JWS verified, graph drawn out of the payload
+that verified, and a `/__mock/rotate-deployment` in the middle to prove the
+undeclared-image path against an actually re-signed snapshot rather than a
+doctored fixture.
+
+It gives up the cookie isolation §6 bought, and that is the right price *for this
+one suite only*: `secure-origin.spec.ts` installs the handoff cookie directly and
+asserts nothing about cookies, while the suite that does care about them is
+unchanged on its named origins. The two configs now state each other's cost in
+their own headers, so neither reads as an accident.
+
+`tools/demo` declares the two images its own evidence host publishes, so the
+green verdict path is what the stand shows by default — and `rotateDeployment()`,
+already a beat in the demo story, now turns the panel red, which is the clearest
+thing the feature has to say.
+
 ## Consequences
 
 - One new nullable column (`api_keys.purpose`), and two new tables —
@@ -252,6 +341,18 @@ cross-implementation conformance vectors where Web Crypto exists.
 - The chat is unusable on a non-secure origin by construction (§6). An operator
   deploying the console over plain HTTP on a named host gets a locked chat and a
   message saying why; the API is unaffected.
+- One more nullable column (`endpoints.declaredImages`), projected from the
+  router config at boot like every other column on that table.
+- `@xyflow/react` (MIT) is a new console dependency, loaded only by the
+  attestation panel's chunk.
+- A third Playwright config and an `e2e-secure` target, run unconditionally in
+  CI — unconditionally because `nx affected` would skip it on exactly the
+  changes most likely to break it, the gate being a library.
+- `tools/mock-evidence-host` now publishes `tlsLeaf`. Producers already did; the
+  gatekeeper still ignores it.
+- The console's `EndpointEvidenceFields` fragment now asks for `declaredImages`,
+  so Overview and Models carry it too. Neither renders it yet; the inspector is
+  the only consumer.
 - A transcript can be lost to infrastructure maintenance, by accepted decision.
   If durability is ever wanted, it is a platform change (a replicated storage
   class for cluster spaces, or a confidential backup target) and not a console

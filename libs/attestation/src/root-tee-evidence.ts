@@ -68,6 +68,84 @@ export type RootNetworkType = 'trusted' | 'untrusted';
 /** The registry sub-folder a type's measurements live in; TDX shares one. */
 export type RegistryFolder = 'sev-snp' | 'tdx';
 
+/**
+ * One SEV-SNP `TCB_VERSION`, decomposed.
+ *
+ * The 64-bit field packs four independent security-version numbers, and the one
+ * a reader means by "the TCB level" is {@link RootTcbVersion.snp} — the SNP
+ * firmware SVN, which is what the gatekeeper's `SecurityFields.SnpFirmwareTCB`
+ * reports. The other three are kept because a platform held back on one
+ * component shows up in exactly one of them, and `raw` is kept because it is the
+ * value an operator comparing with AMD's published levels has in front of them.
+ *
+ * Byte order is the AMD ABI's: bootloader, TEE, four reserved bytes, SNP,
+ * microcode — the same decomposition as go-sev-guest's `DecomposeTCBVersion`.
+ */
+export interface RootTcbVersion {
+  /** Lowercase hex of the raw 64-bit field, as the firmware reported it. */
+  raw: string;
+  bootLoader: number;
+  tee: number;
+  /** The SNP firmware security-version number. */
+  snp: number;
+  microcode: number;
+}
+
+/**
+ * The guest policy the report commits to, decomposed.
+ *
+ * Reported, never judged — the same rule the gatekeeper states on its own
+ * `SecurityFields`: whether, say, ciphertext hiding being off disqualifies a
+ * cloud is the operator's policy decision, and a reader cannot make it without
+ * seeing the bits. `debugAllowed` is the one field whose bad value nobody
+ * sensibly tolerates, because it means the host may decrypt the guest.
+ *
+ * Bit numbers are the AMD SEV-SNP ABI's, and the three the gatekeeper names
+ * (19, 24, 25) are deliberately the same constants: a surface disagreeing with
+ * the verifier about what a policy says would be worse than not showing it.
+ */
+export interface RootReportPolicy {
+  /** Lowercase hex of the raw 64-bit POLICY field. */
+  raw: string;
+  abiMajor: number;
+  abiMinor: number;
+  smtAllowed: boolean;
+  migrateMaAllowed: boolean;
+  /** The host may decrypt the guest. */
+  debugAllowed: boolean;
+  singleSocketRequired: boolean;
+  ciphertextHiding: boolean;
+  pageSwapDisabled: boolean;
+}
+
+/**
+ * The report fields that describe *how the VM was allowed to run*, as opposed to
+ * what it measured to.
+ *
+ * Read at fixed offsets into the 0x4a0-byte report (AMD SEV-SNP ABI, table 22),
+ * for the same reason the measurement and report data are: the structure is
+ * fixed-size, so a parse would be ceremony around four reads.
+ *
+ * SEV-SNP only. TDX's quote body carries the analogous fields at offsets that
+ * differ between quote versions, and this repository has no TDX root to prove an
+ * offset against — so they are left out rather than guessed, exactly as
+ * {@link RootTeeEvidence.keyBinding} is for TDX.
+ */
+export interface RootReportSecurity {
+  /** The attestation report format version. */
+  reportVersion: number;
+  guestSvn: number;
+  /** The privilege level the report was produced at; 0 is highest. */
+  vmpl: number;
+  policy: RootReportPolicy;
+  /** The TCB the VM launched against — the one the gatekeeper reports. */
+  launchTcb: RootTcbVersion;
+  /** The TCB the platform is running now, which may be newer than launch. */
+  currentTcb: RootTcbVersion;
+  /** The TCB the report asks a verifier to hold it to. */
+  reportedTcb: RootTcbVersion;
+}
+
 export interface RootTeeEvidence {
   type: RootEvidenceType;
   /** The type as the platform's own surfaces label it, e.g. "AMD SEV-SNP (QEMU)". */
@@ -90,6 +168,11 @@ export interface RootTeeEvidence {
    * attests a *different* key, and Gatekeeper treats that as fatal.
    */
   keyBinding: boolean | null;
+  /**
+   * The report's policy and TCB fields, or null when they could not be read —
+   * today that means TDX, whose offsets are not guessed.
+   */
+  security: RootReportSecurity | null;
 }
 
 export interface RootAttestation {
@@ -217,14 +300,39 @@ function unwrapDERString(value: Uint8Array): string | null {
 
 /**
  * Offsets into a SEV-SNP attestation report (AMD SEV-SNP ABI, table 22). The
- * report is a fixed 0x4a0-byte structure, so the two fields this reader needs
- * are reads at constants rather than a parse.
+ * report is a fixed 0x4a0-byte structure, so the fields this reader needs are
+ * reads at constants rather than a parse.
  */
 const SNP_REPORT_BYTES = 0x4a0;
+const SNP_VERSION_OFFSET = 0x00;
+const SNP_GUEST_SVN_OFFSET = 0x04;
+const SNP_POLICY_OFFSET = 0x08;
+const SNP_VMPL_OFFSET = 0x30;
+const SNP_CURRENT_TCB_OFFSET = 0x38;
 const SNP_REPORT_DATA_OFFSET = 0x50;
 const SNP_REPORT_DATA_BYTES = 64;
 const SNP_MEASUREMENT_OFFSET = 0x90;
 const SNP_MEASUREMENT_BYTES = 48;
+const SNP_REPORTED_TCB_OFFSET = 0x180;
+const SNP_LAUNCH_TCB_OFFSET = 0x1f0;
+
+/**
+ * Policy bit positions. The first three are the gatekeeper's own
+ * `policyBitDebug` / `policyBitCiphertextHiding` / `policyBitPageSwapDisabled`,
+ * repeated verbatim so the two cannot drift.
+ */
+const POLICY_BIT_DEBUG = 19n;
+const POLICY_BIT_CIPHERTEXT_HIDING = 24n;
+const POLICY_BIT_PAGE_SWAP_DISABLED = 25n;
+const POLICY_BIT_SMT = 16n;
+const POLICY_BIT_MIGRATE_MA = 18n;
+const POLICY_BIT_SINGLE_SOCKET = 20n;
+
+/** Byte positions inside a 64-bit `TCB_VERSION`; bytes 2-5 are reserved. */
+const TCB_BYTE_BOOT_LOADER = 0n;
+const TCB_BYTE_TEE = 1n;
+const TCB_BYTE_SNP = 6n;
+const TCB_BYTE_MICROCODE = 7n;
 
 /** SHA-256, the digest `REPORT_DATA` commits the public key with. */
 const SPKI_DIGEST_BYTES = 32;
@@ -286,7 +394,7 @@ async function decodeEvidence(serialized: Uint8Array, spki: Uint8Array): Promise
      * failure mode this whole feature exists to avoid. So it is left undecided
      * until there is a fixture, and Gatekeeper remains the answer for TDX.
      */
-    return { ...base, build: null, reportMeasurement: null, keyBinding: null };
+    return { ...base, build: null, reportMeasurement: null, keyBinding: null, security: null };
   }
 
   const report = snpReport(branch);
@@ -300,7 +408,83 @@ async function decodeEvidence(serialized: Uint8Array, spki: Uint8Array): Promise
       report.raw.subarray(SNP_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET + SNP_REPORT_DATA_BYTES),
       spki,
     ),
+    security: securityFieldsOf(report.raw),
   };
+}
+
+/**
+ * The report's policy and TCB fields.
+ *
+ * Mirrors the gatekeeper's `securityFieldsOf`, and widens it: the Go verifier
+ * reports the three policy bits an operator's Rego is most likely to police plus
+ * the launch TCB's SNP level, because that is what a *verdict* turns on. A
+ * reader being shown the report instead wants the whole policy word and all
+ * three TCB versions, so the raw values are carried alongside the decomposition
+ * — a reader comparing with AMD's published levels is comparing the raw value.
+ */
+function securityFieldsOf(report: Uint8Array): RootReportSecurity {
+  return {
+    reportVersion: readUint32LE(report, SNP_VERSION_OFFSET),
+    guestSvn: readUint32LE(report, SNP_GUEST_SVN_OFFSET),
+    vmpl: readUint32LE(report, SNP_VMPL_OFFSET),
+    policy: policyOf(readUint64LE(report, SNP_POLICY_OFFSET)),
+    launchTcb: tcbOf(readUint64LE(report, SNP_LAUNCH_TCB_OFFSET)),
+    currentTcb: tcbOf(readUint64LE(report, SNP_CURRENT_TCB_OFFSET)),
+    reportedTcb: tcbOf(readUint64LE(report, SNP_REPORTED_TCB_OFFSET)),
+  };
+}
+
+function policyOf(policy: bigint): RootReportPolicy {
+  return {
+    raw: `0x${policy.toString(16)}`,
+    abiMinor: Number(policy & 0xffn),
+    abiMajor: Number((policy >> 8n) & 0xffn),
+    smtAllowed: bitSet(policy, POLICY_BIT_SMT),
+    migrateMaAllowed: bitSet(policy, POLICY_BIT_MIGRATE_MA),
+    debugAllowed: bitSet(policy, POLICY_BIT_DEBUG),
+    singleSocketRequired: bitSet(policy, POLICY_BIT_SINGLE_SOCKET),
+    ciphertextHiding: bitSet(policy, POLICY_BIT_CIPHERTEXT_HIDING),
+    pageSwapDisabled: bitSet(policy, POLICY_BIT_PAGE_SWAP_DISABLED),
+  };
+}
+
+function tcbOf(tcb: bigint): RootTcbVersion {
+  return {
+    raw: `0x${tcb.toString(16).padStart(16, '0')}`,
+    bootLoader: tcbByte(tcb, TCB_BYTE_BOOT_LOADER),
+    tee: tcbByte(tcb, TCB_BYTE_TEE),
+    snp: tcbByte(tcb, TCB_BYTE_SNP),
+    microcode: tcbByte(tcb, TCB_BYTE_MICROCODE),
+  };
+}
+
+function bitSet(value: bigint, bit: bigint): boolean {
+  return ((value >> bit) & 1n) === 1n;
+}
+
+function tcbByte(value: bigint, index: bigint): number {
+  return Number((value >> (index * 8n)) & 0xffn);
+}
+
+/**
+ * Little-endian reads. The report is a C structure written by firmware on an
+ * x86 host, so every multi-byte field in it is little-endian; a `DataView` would
+ * need the same explicit flag and one more object per read.
+ */
+function readUint32LE(bytes: Uint8Array, offset: number): number {
+  return Number(readUintLE(bytes, offset, 4));
+}
+
+function readUint64LE(bytes: Uint8Array, offset: number): bigint {
+  return readUintLE(bytes, offset, 8);
+}
+
+function readUintLE(bytes: Uint8Array, offset: number, width: number): bigint {
+  let value = 0n;
+  for (let index = width - 1; index >= 0; index -= 1) {
+    value = (value << 8n) | BigInt(bytes[offset + index] as number);
+  }
+  return value;
 }
 
 /** The `amdSevSnpQemu` branch: the report and the release that produced it. */

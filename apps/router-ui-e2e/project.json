@@ -14,6 +14,17 @@
       },
       "cache": false
     },
+    "e2e-secure": {
+      "command": "playwright test --config playwright.secure.config.ts",
+      "options": {
+        "cwd": "{projectRoot}"
+      },
+      "dependsOn": [
+        "@confidential-router/router-ui:build",
+        "@confidential-router/router-api:build"
+      ],
+      "cache": false
+    },
     "typecheck": {
       "command": "tsc -p tsconfig.json",
       "options": {

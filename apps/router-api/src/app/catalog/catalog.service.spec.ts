@@ -69,6 +69,33 @@ describe('projection', () => {
     });
   });
 
+  it('projects the declared image allow-list, keeping "none declared" apart from "declares nothing"', async () => {
+    /*
+     * The console renders the two differently and must be able to: an absent
+     * list means nothing was declared, under which no image is painted green;
+     * an empty list means the endpoint is declared to run nothing, under which
+     * every image the evidence carries is undeclared. Collapsing them in the
+     * projection would make a missing declaration read as a clean one.
+     */
+    const declared = [{ name: 'ghcr.io/super-protocol/router-api', digest: `sha256:${'1'.repeat(64)}` }];
+
+    const service = await catalogue(
+      [
+        { ...ENDPOINT, declaredImages: declared },
+        { ...ENDPOINT, name: 'empty', hostname: 'empty.tee.example', declaredImages: [] },
+        { ...ENDPOINT, name: 'silent', hostname: 'silent.tee.example' },
+      ],
+      [MODEL],
+    );
+
+    const rows = dataSource.getRepository(Endpoint);
+    expect((await rows.findOneByOrFail({ name: 'primary' })).declaredImages).toEqual(declared);
+    expect((await rows.findOneByOrFail({ name: 'empty' })).declaredImages).toEqual([]);
+    expect((await rows.findOneByOrFail({ name: 'silent' })).declaredImages).toBeNull();
+    // And the in-memory catalogue the gateway reads carries the same three answers.
+    expect(service.find(MODEL.id)?.endpoint.declaredImages).toEqual(declared);
+  });
+
   it('keeps an endpoint s id across restarts, so old generations still resolve', async () => {
     await catalogue([ENDPOINT], [MODEL]);
     const first = await dataSource.getRepository(Endpoint).findOneByOrFail({ name: 'primary' });

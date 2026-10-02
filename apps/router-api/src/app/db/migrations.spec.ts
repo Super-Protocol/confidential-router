@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { MIGRATIONS } from '../../migrations/index.js';
 import { buildDataSourceOptions } from './data-source.js';
 
 /**
@@ -16,6 +17,21 @@ import { buildDataSourceOptions } from './data-source.js';
  */
 
 const POSTGRES_URL = process.env.CR_TEST_POSTGRES_URL;
+
+/**
+ * The migrations that should run, derived from the registry rather than typed out.
+ *
+ * Both dialect blocks used to carry the same hand-written list and a hand-written
+ * revert count beside it, and the PostgreSQL half has now been left behind by a
+ * new migration twice — a failure that only ever shows up in CI, because the
+ * PostgreSQL block is skipped on a laptop. Deriving them removes the half of the
+ * assertion that was only ever a transcription exercise, and keeps the half that
+ * is a real property: every registered migration applies, exactly once, in the
+ * order the registry lists them — and `SchemaBuilder.log()` below is what proves
+ * the result matches the entities, which is the check a stale list could never
+ * have made anyway.
+ */
+const EXPECTED_MIGRATIONS = MIGRATIONS.map((migration) => migration.name);
 
 let dir: string;
 
@@ -45,14 +61,7 @@ describe('SQLite', () => {
     const dataSource = await sqliteDataSource();
     try {
       const applied = await dataSource.runMigrations();
-      expect(applied.map((migration) => migration.name)).toEqual([
-        'InitialSchema1756600000000',
-        'InviteCodes1758800000000',
-        'FeedbackGrants1758900000000',
-        'WorkspaceFirstRequest1759000000000',
-        'ConsoleChatKeys1759100000000',
-        'ChatHistory1759200000000',
-      ]);
+      expect(applied.map((migration) => migration.name)).toEqual(EXPECTED_MIGRATIONS);
     } finally {
       await dataSource.destroy();
     }
@@ -85,6 +94,11 @@ describe('SQLite', () => {
     try {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
+
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('endpoints', 'declaredImages')).toBe(false);
+      // The tables the previous migration added are untouched.
+      expect(await queryRunner.hasTable('chat_messages')).toBe(true);
 
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasTable('chat_messages')).toBe(false);
@@ -150,14 +164,7 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     const dataSource = await postgresDataSource();
     try {
       const applied = await dataSource.runMigrations({ transaction: 'all' });
-      expect(applied.map((migration) => migration.name)).toEqual([
-        'InitialSchema1756600000000',
-        'InviteCodes1758800000000',
-        'FeedbackGrants1758900000000',
-        'WorkspaceFirstRequest1759000000000',
-        'ConsoleChatKeys1759100000000',
-        'ChatHistory1759200000000',
-      ]);
+      expect(applied.map((migration) => migration.name)).toEqual(EXPECTED_MIGRATIONS);
 
       const { upQueries } = await dataSource.driver.createSchemaBuilder().log();
       expect(upQueries.map((query) => query.query)).toEqual([]);
@@ -170,15 +177,22 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
     const dataSource = await postgresDataSource();
     try {
       await dataSource.runMigrations({ transaction: 'all' });
-      for (let index = 0; index < 6; index += 1) {
+      // One undo per registered migration, so the database ends where it started
+      // whatever the registry grows to. The count was hard-wired at 6 and silently
+      // stopped covering `InitialSchema` the moment a seventh landed.
+      for (let index = 0; index < EXPECTED_MIGRATIONS.length; index += 1) {
         await dataSource.undoLastMigration({ transaction: 'all' });
       }
 
       const queryRunner = dataSource.createQueryRunner();
+      expect(await queryRunner.hasColumn('endpoints', 'declaredImages')).toBe(false);
       expect(await queryRunner.hasTable('chat_threads')).toBe(false);
       expect(await queryRunner.hasTable('feedback_submissions')).toBe(false);
       expect(await queryRunner.hasTable('invite_codes')).toBe(false);
+      // `InitialSchema` is the last one undone, so an off-by-one in the loop above
+      // shows up here rather than as a clean-looking pass.
       expect(await queryRunner.hasTable('workspaces')).toBe(false);
+      expect(await queryRunner.hasTable('generations')).toBe(false);
       await queryRunner.release();
     } finally {
       await dataSource.destroy();

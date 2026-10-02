@@ -8,6 +8,7 @@ import { MessagesSquare, ShieldQuestionMark } from 'lucide-react';
 import * as React from 'react';
 import type { ChatScreenQuery } from '../../generated/graphql';
 import { useSession } from '../session/session-provider';
+import { InspectAttestationButton } from './attestation/inspect-button';
 import { type PendingMessage, promptMessages } from './chat-history';
 import { type StreamOutcome, streamChatCompletion } from './chat-stream';
 import { Composer } from './composer';
@@ -407,12 +408,27 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
           disabled={streaming}
         />
         {endpoint ? (
-          <div className="min-w-64 flex-1">
-            <VerificationBadge
+          <div className="flex min-w-64 flex-1 flex-wrap items-start gap-x-3 gap-y-2">
+            <div className="min-w-48 flex-1">
+              <VerificationBadge
+                verification={verification}
+                hostname={endpoint.hostname}
+                evidenceDigestHex={endpoint.latestEvidence?.evidenceDigestHex ?? null}
+                extensionUrl={EXTENSION_URL}
+              />
+            </div>
+            {/*
+              Beside the badge, not inside its panel: the badge answers "has this
+              been verified, and by whom", and this opens the much longer answer
+              to "what does the document actually say". Its chunk is fetched on
+              the first press, so the chat screen's own bundle is unchanged for
+              everyone who never asks.
+            */}
+            <InspectAttestationButton
               verification={verification}
               hostname={endpoint.hostname}
-              evidenceDigestHex={endpoint.latestEvidence?.evidenceDigestHex ?? null}
-              extensionUrl={EXTENSION_URL}
+              teeLabel={endpoint.tee ?? null}
+              declaredImages={endpoint.declaredImages ?? null}
             />
           </div>
         ) : null}

@@ -10,6 +10,9 @@ export {
   type RootAttestation,
   type RootEvidenceType,
   type RootNetworkType,
+  type RootReportPolicy,
+  type RootReportSecurity,
+  type RootTcbVersion,
   type RootTeeEvidence,
   readRootAttestation,
 } from './root-tee-evidence.js';
