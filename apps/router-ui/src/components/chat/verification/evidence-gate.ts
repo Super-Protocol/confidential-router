@@ -430,6 +430,11 @@ async function fetchBundle(options: GateOptions): Promise<FetchOutcome> {
  * cross-origin read however related the two names are. An absent `location` —
  * a non-browser caller of this module — counts as not same-origin, which only
  * decides which request is tried first.
+ *
+ * Note it compares against the URL that is actually fetched, which carries no
+ * port. A console on `https://host:8443` therefore reads as cross-origin from
+ * `https://host/.well-known/…` — which is correct rather than merely tolerable,
+ * because those two *are* different origins to the browser enforcing this.
  */
 function servesThisPage(options: GateOptions): boolean {
   const origin = options.pageOrigin ?? globalThis.location?.origin;

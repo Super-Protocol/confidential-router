@@ -456,7 +456,7 @@ describe('GET /v1/evidence', () => {
   });
 
   it('says an endpoint has not been fetched yet, rather than denying it', async () => {
-    const response = await request(server()).get('/v1/evidence/silent').expect(503);
+    const response = await request(server()).get('/v1/evidence/silent').set('Origin', CONSOLE_ORIGIN).expect(503);
 
     // 503 and not 404: a deployment still waiting on its first poll is a few
     // seconds of starting up, and "status 404" read on the gate's locked
@@ -467,6 +467,11 @@ describe('GET /v1/evidence', () => {
     // Never an empty 200: a caller that verifies what it is handed must not
     // have to tell a bundle from the absence of one.
     expect(response.body.version).toBeUndefined();
+    // The refusal has to cross origins too, or the gate renders "status 503"
+    // for a reason it was told and could not read. `enableCors` is global
+    // middleware, so this holds for error responses — asserted rather than
+    // assumed, because it is the half of the fix that is easy to lose.
+    expect(response.headers['access-control-allow-origin']).toBe(CONSOLE_ORIGIN);
   });
 
   it('hands back the rootCaTeeQuote sentinel the platform published, through the database', async () => {
