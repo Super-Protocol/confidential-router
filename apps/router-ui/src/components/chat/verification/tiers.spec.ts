@@ -138,36 +138,62 @@ describe('bundleSourceNote', () => {
 });
 
 describe('HISTORY_COPY', () => {
-  it('names the boundary, the encryption and the maintenance risk together', () => {
+  it('keeps the inline line affirmative, and nothing but', () => {
     /*
-     * The honesty rule at its sharpest. "Stored inside the attested boundary" is a
-     * *confidentiality* claim, and a reader hears it as a durability claim unless
-     * the sentence beside it says otherwise. Denis deferred the durability work
-     * and accepted the risk, so all three have to appear — and the caveat has to
-     * be in the summary, not buried at the end of the detail where it can be
-     * skimmed past.
+     * Denis's complaint about 0.8.0, in one assertion. The caveat inline turned
+     * the composer's footer into a warning banner on the product's main demo
+     * surface, so `summary` is the confidentiality claim and only that: no
+     * durability word, no "but", nothing a reader has to be reassured about
+     * before they have typed anything.
      */
     const stored = HISTORY_COPY.attested_server;
 
-    expect(stored.summary).toMatch(/attested boundary/i);
-    expect(stored.summary).toMatch(/may be lost during maintenance/i);
+    expect(stored.summary).toBe('Stored inside the attested boundary');
+    expect(stored.summary).not.toMatch(/lost|maintenance|ephemeral|cannot|not durable/i);
+  });
+
+  it('still names the boundary, the encryption and the deletion, one click away', () => {
+    /*
+     * The honesty requirement from the CTO's SUP-180 review is unchanged — only
+     * its placement moved. Every claim the inline line used to carry is still
+     * published; it is published in the popover.
+     */
+    const stored = HISTORY_COPY.attested_server;
+
     expect(stored.detail).toMatch(/encrypted at rest/i);
-    expect(stored.detail).toMatch(/ephemeral by design/i);
     expect(stored.detail).toMatch(/deleted outright/i);
+    expect(stored.maintenanceCaveat).toMatch(/may be lost during infrastructure maintenance/i);
+  });
+
+  it('quotes the durability caveat as the privacy policy’s one sentence', () => {
+    /*
+     * The UI and /privacy §5a say the same sentence, not two paraphrases of it:
+     * the landing repo's `consoleChat.maintenanceRisk` is the phrase, and §5a
+     * renders it as "Your conversations …". A product that hedges the policy, or
+     * a policy that hedges the product, is the contradiction a reader finds.
+     *
+     * One sentence, deliberately: SUP-183 deletes it from both surfaces in the
+     * release train that ships replicated PostgreSQL, and a single sentence is a
+     * deletion rather than an edit.
+     */
+    expect(HISTORY_COPY.attested_server.maintenanceCaveat).toBe(
+      'Your conversations may be lost during infrastructure maintenance.',
+    );
   });
 
   it('promises no backup, retention window or recovery', () => {
     // Words that would each be a promise nobody has made.
-    const stored = `${HISTORY_COPY.attested_server.summary} ${HISTORY_COPY.attested_server.detail}`;
+    const stored = HISTORY_COPY.attested_server;
+    const published = `${stored.summary} ${stored.detail} ${stored.transport} ${stored.maintenanceCaveat}`;
 
-    expect(stored).not.toMatch(/backed up|backup|restore|recover(ed|y)|guarantee/i);
+    expect(published).not.toMatch(/backed up|backup|restore|recover(ed|y)|guarantee/i);
   });
 
   it('still says the messages themselves reach the model, and are not stored there', () => {
     // Server-side history must not be allowed to blur into "the router keeps your
     // prompts": the metering path still records none.
-    expect(HISTORY_COPY.attested_server.detail).toMatch(/v1\/chat\/completions/);
-    expect(HISTORY_COPY.attested_server.detail).toMatch(/no content at all/i);
+    expect(HISTORY_COPY.attested_server.transport).toMatch(/v1\/chat\/completions/);
+    expect(HISTORY_COPY.attested_server.transport).toMatch(/no content at all/i);
   });
 
   it('keeps the browser-local wording honest for a deployment that has no server storage', () => {
@@ -179,9 +205,15 @@ describe('HISTORY_COPY', () => {
     expect(`${local.summary} ${local.detail}`).not.toMatch(/encrypted at rest|attested boundary|retention/i);
   });
 
+  it('carries no maintenance caveat where maintenance cannot take anything', () => {
+    // Browser-local history was never on the deployment, so the sentence would be
+    // a borrowed worry — and a caveat that is always on is one nobody reads.
+    expect(HISTORY_COPY.browser_local.maintenanceCaveat).toBeNull();
+  });
+
   it('says plainly that the messages themselves still reach the model', () => {
     // Local history must not be allowed to read as "nothing leaves the browser".
-    expect(HISTORY_COPY.browser_local.detail).toMatch(/do travel to the model/i);
-    expect(HISTORY_COPY.browser_local.detail).toMatch(/no content/i);
+    expect(HISTORY_COPY.browser_local.transport).toMatch(/do travel to the model/i);
+    expect(HISTORY_COPY.browser_local.transport).toMatch(/no content/i);
   });
 });

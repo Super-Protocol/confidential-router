@@ -20,6 +20,7 @@ import { EmptyState } from '@confidential-router/ui/components/empty-state';
 import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Input } from '@confidential-router/ui/components/input';
 import { Label } from '@confidential-router/ui/components/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@confidential-router/ui/components/popover';
 import {
   Select,
   SelectContent,
@@ -260,6 +261,14 @@ export function ComponentGallery() {
                 </DialogHeader>
               </DialogContent>
             </Dialog>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline">Open popover</Button>
+              </PopoverTrigger>
+              <PopoverContent className="text-muted-foreground text-xs">
+                Where a claim’s small print goes when it would read as a warning inline — see the chat’s storage note.
+              </PopoverContent>
+            </Popover>
             <Button variant="outline" onClick={() => toast.success('Evidence JWS copied')}>
               Show toast
             </Button>
