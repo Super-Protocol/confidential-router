@@ -184,11 +184,25 @@ must not cross: logs, analytics events, the evidence snapshot, and the export.
 durability work and accepted the risk (2026-09-30, after SUP-179): the in-TEE
 state disk is ephemeral by design, so infrastructure maintenance can take a
 transcript with it. "Stored inside the attested boundary" is a *confidentiality*
-claim, and a reader will hear it as a durability claim unless the sentence beside
-it says otherwise — so every surface that mentions storage names the maintenance
-risk in the same breath, and in the summary rather than buried in the detail.
-`tiers.spec.ts` pins that wording in both directions: the words that must appear,
-and the words that must not (`backup`, `restore`, `recover`, `guarantee`).
+claim, and a reader will hear it as a durability claim unless something beside it
+says otherwise — so every surface that mentions storage carries the maintenance
+risk too. `tiers.spec.ts` pins that wording in both directions: the words that
+must appear, and the words that must not (`backup`, `restore`, `recover`,
+`guarantee`).
+
+**Amended by SUP-189: the caveat is published one click away, not inline.** The
+first cut put it in the summary, which left "may be lost during maintenance"
+permanently under the composer — a warning banner on the surface a prospect is
+shown first, and the reaction it drew. The requirement did not change, its
+placement did: the inline line is now the affirmative half alone (`Stored inside
+the attested boundary`), and an ⓘ beside it opens a popover carrying the
+encryption, the deletion — with a link that focuses the delete control for the
+open conversation — and the durability caveat, quoted as the single sentence
+/privacy §5a publishes. `storage-note.spec.tsx` asserts the split in both
+directions, because the defect was never a wrong sentence; it was a true sentence
+in the wrong place, and only a placement test catches that. The caveat carries a
+`TODO(SUP-183)`: the release train that ships replicated PostgreSQL deletes it
+from the popover and from /privacy together.
 
 The console still reads `chatSettings.historyStorage` rather than assuming, and
 derives its copy from the answer. `BROWSER_LOCAL` remains in the enum because it
@@ -342,5 +356,9 @@ thing the feature has to say.
 - A transcript can be lost to infrastructure maintenance, by accepted decision.
   If durability is ever wanted, it is a platform change (a replicated storage
   class for cluster spaces, or a confidential backup target) and not a console
-  one — and the copy in `tiers.ts` plus the landing's `consoleChat` constant are
-  the two places that would then change together.
+  one — and `maintenanceCaveat` in `tiers.ts` plus the landing's `consoleChat`
+  constant are the two places that would then change together. The
+  `TODO(SUP-183)` beside `maintenanceCaveat` is what names both of them, and it
+  is the only marker this repository can hold: the landing is a separate
+  repository, and an ADR claiming a marker over there would be asserting
+  insurance it cannot see.

@@ -60,6 +60,41 @@ function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = 
   };
 }
 
+const THREAD_ID = 'thread-1';
+const THREAD_TITLE = 'What runs inside the enclave?';
+
+/**
+ * One stored conversation, for the cases that need a row on screen — the storage
+ * note's delete hand-off is a claim about a control that has to exist.
+ */
+function storedThread() {
+  const thread = {
+    __typename: 'ChatThread',
+    id: THREAD_ID,
+    title: THREAD_TITLE,
+    modelId: MODEL_ID,
+    updatedAt: '2026-10-01T10:00:00.000Z',
+  };
+  return {
+    ChatThreads: { chatThreads: [thread] },
+    ChatThread: {
+      chatThread: {
+        ...thread,
+        messages: [
+          {
+            __typename: 'ChatMessage',
+            id: 'm1',
+            role: 'USER',
+            content: THREAD_TITLE,
+            error: null,
+            createdAt: '2026-10-01T10:00:00.000Z',
+          },
+        ],
+      },
+    },
+  };
+}
+
 async function openChat(page: Page, baseURL: string, operations = chatOperations()): Promise<string[]> {
   const inference: string[] = [];
   // Any request to the gateway is a failure of the gate, so it is recorded
@@ -105,15 +140,41 @@ test.describe('Chat', () => {
     await expect(dialog.getByText(`gatekeeper endpoint add router --upstream https://${ENDPOINT_HOST}`)).toBeVisible();
   });
 
-  test('names the storage boundary and the maintenance risk in the same sentence', async ({ page, baseURL }) => {
+  test('shows the storage boundary inline and the caveat in the popover behind it', async ({ page, baseURL }) => {
     await openChat(page, baseURL as string);
 
-    // Rendered, not just present in a constant: the caveat has to survive into
-    // the markup a reader actually sees, beside the boundary claim rather than
-    // somewhere further down the page.
-    const note = page.getByText(/stored inside the attested boundary/i);
-    await expect(note).toBeVisible();
-    await expect(note).toContainText('may be lost during maintenance');
+    // Rendered, not just present in a constant: both halves have to survive into
+    // the markup a reader sees — the claim where they cannot miss it, the caveat
+    // where they went looking for it, and never the other way round (SUP-189).
+    await expect(page.getByText('Stored inside the attested boundary')).toBeVisible();
+    await expect(page.getByText(/may be lost/i)).toHaveCount(0);
+
+    await page.getByRole('button', { name: /what this means for your conversations/i }).click();
+
+    const note = page.getByRole('dialog');
+    await expect(note.getByText(/encrypted at rest/i)).toBeVisible();
+    await expect(note.getByText('Your conversations may be lost during infrastructure maintenance.')).toBeVisible();
+  });
+
+  test('hands the reader the delete control, and closes behind itself', async ({ page, baseURL }) => {
+    /*
+     * The half of the hand-off that only a real browser can answer. Two things
+     * have to hold and neither is visible to jsdom: Radix dismisses the popover
+     * when focus leaves its layer, and the bin — `opacity-0` until its row is
+     * hovered or focused — actually becomes visible once focus lands there. A
+     * link that left the popover covering the control, or revealed nothing,
+     * would pass every unit test in the repository.
+     */
+    await openChat(page, baseURL as string, { ...chatOperations(), ...storedThread() });
+
+    await page.getByRole('button', { name: /what this means for your conversations/i }).click();
+    await page.getByRole('button', { name: 'Show the delete control' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: THREAD_TITLE, exact: true })).toBeFocused();
+    // `toBeVisible` would pass at `opacity: 0` — Playwright counts a transparent
+    // element as visible — so the reveal is asserted on the computed value.
+    await expect(page.getByRole('button', { name: `Delete “${THREAD_TITLE}”` })).toHaveCSS('opacity', '1');
   });
 
   test('offers “Inspect attestation”, and draws no graph from evidence that did not check out', async ({

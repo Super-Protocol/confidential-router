@@ -24,6 +24,7 @@ import {
   DELETE_CHAT_THREAD,
   SET_CHAT_THREAD_MODEL,
 } from './operations';
+import { StorageNote } from './storage-note';
 import { ThreadList } from './thread-list';
 import { HISTORY_COPY, lockedReasonOf } from './verification/tiers';
 import { useVerification } from './verification/use-verification';
@@ -74,8 +75,10 @@ function refresh(pending: Promise<unknown>): void {
  *    state disk is ephemeral by design, so a conversation can be lost during
  *    infrastructure maintenance. The screen derives its storage note from
  *    `chatSettings.historyStorage` rather than hard-coding one, so it cannot
- *    describe storage the deployment does not have, and the note names the
- *    maintenance caveat in the same breath as the boundary.
+ *    describe storage the deployment does not have. The line under the composer
+ *    is the affirmative half only; the durability caveat is one click away in
+ *    the note's popover, where it is read rather than merely displayed
+ *    (`storage-note.tsx`, SUP-189).
  */
 export function ChatScreen() {
   const { activeWorkspace } = useSession();
@@ -377,6 +380,17 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
 
   const historyCopy = HISTORY_COPY[settings.historyStorage.toLowerCase()] ?? HISTORY_COPY.attested_server;
 
+  // The row of the open conversation, so the storage note's "deletable by you"
+  // can hand over the control rather than describe it.
+  const activeRow = React.useRef<HTMLButtonElement | null>(null);
+  /*
+   * And only while that row is actually on screen. `activeThreadId` is set the
+   * moment a new conversation's first message creates it, a refetch behind it —
+   * so between the two the id is live and the row is not, and a link offered
+   * then would focus nothing at all.
+   */
+  const activeRowRendered = threads.some((thread) => thread.id === activeThreadId);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start gap-3">
@@ -426,6 +440,7 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
             threads={threads}
             activeThreadId={activeThreadId}
             maxThreads={settings.maxThreads}
+            activeRowRef={activeRow}
             onSelect={setActiveThreadId}
             onCreate={() => {
               // No thread is created until the first message: an empty one would
@@ -477,9 +492,10 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
         </div>
       </div>
 
-      <p className="max-w-prose text-muted-foreground text-xs">
-        <span className="text-foreground">{historyCopy.summary}</span> {historyCopy.detail}
-      </p>
+      <StorageNote
+        copy={historyCopy}
+        onRevealDelete={activeRowRendered ? () => activeRow.current?.focus() : undefined}
+      />
     </div>
   );
 }
