@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { loadCaseBody, loadConformanceManifest } from '@confidential-router/attestation-fixtures';
@@ -17,6 +18,8 @@ import { createHarness, type Harness, pathOf } from './app-harness.js';
  */
 
 const PUBLISHING = 'router.example.test';
+/** A console on its own host, listed in `validClientOrigins` — the real topology. */
+const CONSOLE_ORIGIN = 'https://console.example.test';
 const SILENT = 'silent.example.test';
 const PLATFORM = 'platform.example.test';
 const DIGEST = 'sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs';
@@ -116,6 +119,14 @@ beforeAll(async () => {
   harness = await createHarness({
     config: {
       version: 1,
+      // The deployment the CORS cases are about: the API answers on the
+      // `published` endpoint's own hostname, the console lives elsewhere.
+      // `validClientOrigins` is set through the environment below, which is
+      // where the harness puts its own default and therefore wins over this file.
+      server: { publicBaseUrl: `https://${PUBLISHING}` },
+      // A public `publicBaseUrl` refuses the credit-minting manual provider
+      // (SUP-167), and this suite buys nothing.
+      billing: { provider: 'disabled' },
       endpoints: [
         {
           name: 'published',
@@ -162,6 +173,7 @@ beforeAll(async () => {
         freshnessWindow: '87600h',
       },
     },
+    env: { CR_API_SERVER__VALID_CLIENT_ORIGINS: CONSOLE_ORIGIN },
   });
 
   cookies = await signIn('evidence@example.com');
@@ -369,10 +381,28 @@ describe('the console view', () => {
   });
 });
 
-describe('GET /v1/evidence/:endpoint', () => {
+/**
+ * The passthrough — and, on every real deployment, the only copy of a published
+ * bundle a browser can read (SUP-191).
+ *
+ * `/.well-known/swarm-evidence` is served by the platform's own gateway, below
+ * this service's CORS layer, with no `Access-Control-Allow-Origin` at all; a
+ * console on `console.…` therefore cannot read the evidence of an API on
+ * `api.…`, and the chat's tier-1 gate has nothing to verify. These routes are
+ * `/v1/*` on the API host, so `configureApp`'s `validClientOrigins` applies.
+ * Nothing about authenticity rests on that: the document is a JWS over its own
+ * bytes, and the browser checks the signature whichever copy it got.
+ */
+describe('GET /v1/evidence', () => {
   it('serves the published bundle byte for byte, without a key', async () => {
     const response = await request(server()).get('/v1/evidence/published').expect(200);
 
+    // Hashed, not deep-compared: the acceptance check on a real deployment
+    // diffs this against what the gateway serves, and a document whose members
+    // this layer reordered is a different byte string with the same contents.
+    expect(createHash('sha256').update(response.text, 'utf8').digest('hex')).toBe(
+      createHash('sha256').update(JSON.stringify(bundle), 'utf8').digest('hex'),
+    );
     expect(response.body).toEqual(bundle);
   });
 
@@ -382,8 +412,61 @@ describe('GET /v1/evidence/:endpoint', () => {
     expect(response.body.certFingerprint).toBe(bundle.certFingerprint);
   });
 
-  it('404s for an endpoint that has published nothing', async () => {
-    await request(server()).get('/v1/evidence/silent').expect(404);
+  it('answers for the deployment itself, without the caller knowing an endpoint name', async () => {
+    // `server.publicBaseUrl` names the `published` endpoint's hostname, so
+    // "this deployment's evidence" has exactly one answer.
+    const own = await request(server()).get('/v1/evidence').expect(200);
+
+    expect(own.body).toEqual(bundle);
+  });
+
+  it('lets a console on another origin read the body it is handed', async () => {
+    for (const path of ['/v1/evidence', '/v1/evidence/published']) {
+      const response = await request(server()).get(path).set('Origin', CONSOLE_ORIGIN).expect(200);
+
+      // Without this the browser discards the response whatever it contains,
+      // which is the defect: the gate could not verify and the composer stayed
+      // shut on a deployment that was publishing perfectly good evidence.
+      expect(response.headers['access-control-allow-origin'], path).toBe(CONSOLE_ORIGIN);
+    }
+  });
+
+  it('withholds the header from an origin the deployment does not list', async () => {
+    const response = await request(server())
+      .get('/v1/evidence/published')
+      .set('Origin', 'https://not-our-console.example')
+      // Still 200: refusing CORS means omitting the header and letting the
+      // browser enforce it, not answering an error to a request that may be a
+      // `curl` with an Origin on it.
+      .expect(200);
+
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('forbids any cache from holding a bundle the deployment has stopped publishing', async () => {
+    for (const path of ['/v1/evidence', '/v1/evidence/published']) {
+      const response = await request(server()).get(path).expect(200);
+
+      // A bundle is re-signed every few minutes and the reader is comparing
+      // freshness with a gatekeeper looking at the live host. The responses
+      // carry an ETag, so without this the decision is a shared cache's
+      // heuristic.
+      expect(response.headers['cache-control'], path).toBe('no-store');
+    }
+  });
+
+  it('says an endpoint has not been fetched yet, rather than denying it', async () => {
+    const response = await request(server()).get('/v1/evidence/silent').expect(503);
+
+    // 503 and not 404: a deployment still waiting on its first poll is a few
+    // seconds of starting up, and "status 404" read on the gate's locked
+    // composer as this router denying the endpoint. The reason is typed so a
+    // screen branches on it instead of parsing the sentence.
+    expect(response.body).toMatchObject({ reason: 'evidence_not_fetched' });
+    expect(response.body.message).toContain(SILENT);
+    // Never an empty 200: a caller that verifies what it is handed must not
+    // have to tell a bundle from the absence of one.
+    expect(response.body.version).toBeUndefined();
   });
 
   it('hands back the rootCaTeeQuote sentinel the platform published, through the database', async () => {
@@ -395,8 +478,18 @@ describe('GET /v1/evidence/:endpoint', () => {
     expect(response.body.rootCaTeeQuote).toEqual({ status: 'not-implemented' });
   });
 
-  it('404s for an endpoint that does not exist', async () => {
-    await request(server()).get('/v1/evidence/nope').expect(404);
+  it('404s for an endpoint that does not exist, in its own error shape', async () => {
+    const response = await request(server()).get('/v1/evidence/nope').expect(404);
+
+    // `AppModule` orders `EvidenceModule` before `RestApiModule`, whose
+    // `V1FallbackController` claims everything else under `/v1`. Had it not,
+    // this would answer `{"error":{"code":"not_found"}}` — which the gate would
+    // read as a router that has no such endpoint for every path, including the
+    // ones it does have.
+    // The OpenAI envelope is `{"error":{"message","type","code"}}` and carries
+    // no top-level `statusCode`; Nest's own shape does.
+    expect(response.body).toMatchObject({ statusCode: 404 });
+    expect(response.body.message).toContain('nope');
   });
 });
 

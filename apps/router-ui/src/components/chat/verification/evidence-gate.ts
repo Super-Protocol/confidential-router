@@ -175,12 +175,19 @@ export interface GateResult {
 
 export interface GateOptions {
   hostname: string;
-  /** Endpoint *name*, for the router's `GET /v1/evidence/:endpoint` fallback. */
+  /** Endpoint *name*, for the router's `GET /v1/evidence/:endpoint` relay. */
   endpointName: string;
-  /** router-api's origin, for that fallback. */
+  /** router-api's origin, for that relay. */
   apiOrigin: string;
   fetcher?: typeof fetch;
   now?: Date;
+  /**
+   * The origin this page is served from, which decides which source is asked
+   * first (see {@link fetchBundle}). Defaults to the real one; a seam because
+   * the ordering rule is a claim about cross-origin reads and a test has to be
+   * able to put the page on either side of it.
+   */
+  pageOrigin?: string;
   /** Skips the network in tests; also the seam the extension bridge does not use. */
   registryLookup?: typeof lookUpMeasurement;
   /**
@@ -361,12 +368,28 @@ interface RawBundle {
 type FetchOutcome = { ok: true; bundle: RawBundle; source: BundleSource } | { ok: false; detail: string };
 
 /**
- * The host first, this router second.
+ * Both sources, in the order the page can actually read them.
  *
- * A direct fetch is the better evidence and is what a gatekeeper would do, but it
- * is a cross-origin request to a host that does not have to allow one — so a CORS
- * refusal must degrade to the router's passthrough rather than leaving the screen
- * unable to verify anything. Which one answered is recorded and shown.
+ * A direct fetch of the host's own evidence is the better evidence and is what a
+ * gatekeeper does: it is the live document, not a copy this router retrieved up
+ * to one poll interval ago. So it stays first **where it can succeed** — a
+ * console served from the evidence host's own origin, which is the dev stack and
+ * the e2e publisher.
+ *
+ * On every real deployment it cannot. The console and the API are different
+ * hosts, and `/.well-known/swarm-evidence` is served by the platform's own
+ * gateway, below this service's CORS layer, with no `Access-Control-Allow-Origin`
+ * at all — so the browser discards the response whatever it contains (SUP-191).
+ * Asking anyway still buys the whole request: the bundle is tens of kilobytes,
+ * downloaded and thrown away before the composer can unlock, plus a CORS error
+ * in the browser console that reads as a broken deployment and is not one. There,
+ * the router's relay — `/v1/*` on the API host, which does carry the header — is
+ * asked first.
+ *
+ * Both are always tried; only the order moves, so a relay that has nothing yet
+ * still falls through to a host that will answer, and `source` still records
+ * which one did. Nothing about trust rests on the order: the document is a JWS
+ * over its own bytes and every check below runs on whichever copy arrives.
  */
 async function fetchBundle(options: GateOptions): Promise<FetchOutcome> {
   const fetcher = options.fetcher ?? globalThis.fetch;
@@ -374,25 +397,43 @@ async function fetchBundle(options: GateOptions): Promise<FetchOutcome> {
     return { ok: false, detail: 'This browser exposes no fetch, so no evidence could be retrieved.' };
   }
 
-  const direct = await tryFetch(fetcher, `https://${options.hostname}${EVIDENCE_PATH}`, options.hostname);
-  if (direct.ok) {
-    return { ok: true, bundle: direct.bundle, source: 'endpoint' };
-  }
-
   const base = options.apiOrigin.replace(/\/+$/, '');
-  const relayed = await tryFetch(
-    fetcher,
-    `${base}/v1/evidence/${encodeURIComponent(options.endpointName)}`,
-    options.hostname,
-  );
-  if (relayed.ok) {
-    return { ok: true, bundle: relayed.bundle, source: 'router' };
+  const fromHost = () => tryFetch(fetcher, `https://${options.hostname}${EVIDENCE_PATH}`, options.hostname);
+  const fromRouter = () =>
+    tryFetch(fetcher, `${base}/v1/evidence/${encodeURIComponent(options.endpointName)}`, options.hostname);
+
+  const hostIsReadable = servesThisPage(options);
+  const first = await (hostIsReadable ? fromHost() : fromRouter());
+  if (first.ok) {
+    return { ok: true, bundle: first.bundle, source: hostIsReadable ? 'endpoint' : 'router' };
+  }
+  const second = await (hostIsReadable ? fromRouter() : fromHost());
+  if (second.ok) {
+    return { ok: true, bundle: second.bundle, source: hostIsReadable ? 'router' : 'endpoint' };
   }
 
+  const host = hostIsReadable ? first : second;
+  const router = hostIsReadable ? second : first;
   return {
     ok: false,
-    detail: `No evidence could be retrieved for ${options.hostname}: the host answered "${direct.detail}" and this router answered "${relayed.detail}".`,
+    detail: `No evidence could be retrieved for ${options.hostname}: the host answered "${host.detail}" and this router answered "${router.detail}".`,
   };
+}
+
+/**
+ * Whether this page is served by the very host whose evidence it is fetching —
+ * the one arrangement in which a direct read of `/.well-known/swarm-evidence`
+ * needs no CORS header to succeed.
+ *
+ * Deliberately exact rather than a registrable-suffix match: CORS is enforced on
+ * the full origin, so `console.example.test` reading `api.example.test` is a
+ * cross-origin read however related the two names are. An absent `location` —
+ * a non-browser caller of this module — counts as not same-origin, which only
+ * decides which request is tried first.
+ */
+function servesThisPage(options: GateOptions): boolean {
+  const origin = options.pageOrigin ?? globalThis.location?.origin;
+  return origin === `https://${options.hostname}`;
 }
 
 async function tryFetch(
@@ -407,7 +448,7 @@ async function tryFetch(
     return { ok: false, detail: (error as Error).message };
   }
   if (!response.ok) {
-    return { ok: false, detail: `status ${response.status}` };
+    return { ok: false, detail: await refusalOf(response) };
   }
   let body: unknown;
   try {
@@ -416,6 +457,31 @@ async function tryFetch(
     return { ok: false, detail: `body is not JSON (${(error as Error).message})` };
   }
   return shapeOf(body, expectedHostname);
+}
+
+/**
+ * What a refused response says, for the sentence the locked composer shows.
+ *
+ * A bare `status 503` is the one refusal that reads as the wrong thing: it is
+ * what the relay answers while the router is still waiting on its first poll of
+ * an endpoint, which is a few seconds of a healthy deployment starting up and not
+ * a service that is down. So a typed `reason` in the body is preferred over the
+ * code when there is one, and the status is kept for everything else — a 404 from
+ * the relay really does mean this router does not have that endpoint.
+ */
+async function refusalOf(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { reason?: unknown; message?: unknown };
+    if (typeof body?.reason === 'string' && body.reason.length > 0) {
+      return typeof body.message === 'string' && body.message.length > 0
+        ? `${body.reason}: ${body.message}`
+        : body.reason;
+    }
+  } catch {
+    // A refusal whose body is not JSON — a gateway's HTML error page — says
+    // nothing more than its status does.
+  }
+  return `status ${response.status}`;
 }
 
 /**
