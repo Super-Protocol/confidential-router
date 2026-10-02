@@ -625,16 +625,61 @@ describe('the conversation list', () => {
 });
 
 describe('what the screen says about storage', () => {
-  it('names the boundary and the maintenance risk in the same breath', async () => {
-    // Denis deferred the durability work and accepted the risk. "Stored inside
-    // the attested boundary" is a confidentiality claim, and a reader hears it as
-    // a durability claim unless the sentence beside it says otherwise.
+  it('shows the affirmative line inline and keeps the caveat out of it', async () => {
+    // What 0.8.0 got wrong: the durability caveat under the composer read as a
+    // warning banner on the product's main demo surface. The claim stays, the
+    // scare does not — the line is the confidentiality half and nothing else.
     render();
 
-    expect(await screen.findByText(/stored inside the attested boundary/i)).toBeInTheDocument();
-    expect(screen.getByText(/may be lost during maintenance/i)).toBeInTheDocument();
-    expect(screen.getByText(/encrypted at rest/i)).toBeInTheDocument();
-    expect(screen.getByText(/ephemeral by design/i)).toBeInTheDocument();
+    expect(await screen.findByText('Stored inside the attested boundary')).toBeInTheDocument();
+    expect(screen.queryByText(/may be lost/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/encrypted at rest/i)).not.toBeInTheDocument();
+  });
+
+  it('carries the encryption, the deletion and the caveat in the popover behind it', async () => {
+    // The honesty requirement is unchanged (CTO review on SUP-180): everything
+    // the line used to say is still published, one click away, in the privacy
+    // policy's own sentence.
+    render();
+
+    await userEvent.click(await screen.findByRole('button', { name: /what this means for your conversations/i }));
+
+    expect(await screen.findByText(/encrypted at rest/i)).toBeInTheDocument();
+    expect(screen.getByText(/deleted outright/i)).toBeInTheDocument();
+    expect(screen.getByText('Your conversations may be lost during infrastructure maintenance.')).toBeInTheDocument();
+    expect(screen.getByText(/v1\/chat\/completions/)).toBeInTheDocument();
+  });
+
+  it('hands over the delete control rather than describing where it is', async () => {
+    /*
+     * "Deletable by you" is a claim the screen can prove. The link focuses the
+     * open conversation's *row*, which is what reveals the bin beside it — not
+     * the bin itself, which deletes without confirming and has no business
+     * holding focus a reader did not aim there.
+     */
+    render([
+      screenMock(),
+      threadsMock(['a question worth deleting']),
+      threadMock([storedMessage('USER', 'a question worth deleting')], { title: 'a question worth deleting' }),
+    ]);
+
+    await userEvent.click(await screen.findByRole('button', { name: /what this means for your conversations/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /show the delete control/i }));
+
+    expect(screen.getByRole('button', { name: 'a question worth deleting' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: /delete “a question worth deleting”/i })).toBeInTheDocument();
+  });
+
+  it('offers no delete link while no conversation row is on screen', async () => {
+    // A link that focuses nothing is worse than no link, and the gap is real:
+    // a new conversation's id is live from its first message, its row only once
+    // the list refetches. With no row there is nothing to hand over.
+    render();
+
+    await userEvent.click(await screen.findByRole('button', { name: /what this means for your conversations/i }));
+
+    expect(await screen.findByText(/deleted outright/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show the delete control/i })).not.toBeInTheDocument();
   });
 });
 

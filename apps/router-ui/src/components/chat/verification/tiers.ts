@@ -198,23 +198,59 @@ export function bundleSourceNote(source: BundleSource): string {
  * The console asks the API (`chatSettings.historyStorage`) rather than deciding
  * for itself, so the screen cannot promise storage the deployment does not have.
  *
- * The `attested_server` wording is where the honesty rule bites hardest. Three
- * things are true and each is stated: the transcript is inside the boundary, it
- * is encrypted at rest, and **it may be lost during infrastructure maintenance**.
- * Denis deferred the durability work and accepted that risk (2026-09-30); the
- * state disk is ephemeral by design. "Stored inside the attested boundary" is a
- * confidentiality claim, and a reader will hear it as a durability claim unless
- * the sentence next to it says otherwise — so it does.
+ * Three things are true of `attested_server` and each is still said: the
+ * transcript is inside the boundary, it is encrypted at rest, and it may be lost
+ * during infrastructure maintenance. What changed in SUP-189 is *where* each is
+ * said. `summary` is the affirmative half and the only part rendered inline
+ * under the composer; everything that qualifies it — including
+ * `maintenanceCaveat` — lives in the popover behind it. The caveat was inline,
+ * which turned the product's main demo surface into a warning banner; it is no
+ * less honest one click away, and it is the reader who asks "what does that
+ * mean?" who needs it.
  */
-export const HISTORY_COPY: Record<string, { summary: string; detail: string }> = {
+export interface HistoryCopy {
+  /** The affirmative half. Inline under the composer, and nothing else is. */
+  summary: string;
+  /** Popover: where a thread actually lives, and what deleting one does. */
+  detail: string;
+  /** Popover: the message still reaches the model, metered and billed as ever. */
+  transport: string;
+  /**
+   * Popover: the durability caveat, or `null` when the storage has none worth
+   * one. Quoted verbatim from the privacy policy's §5a ("What we cannot promise:
+   * that it survives") so the console and the published policy say the same
+   * sentence rather than two paraphrases a reader has to reconcile.
+   */
+  maintenanceCaveat: string | null;
+}
+
+export const HISTORY_COPY: Record<string, HistoryCopy> = {
   attested_server: {
-    summary: 'This conversation is stored inside the attested boundary — and may be lost during maintenance.',
+    summary: 'Stored inside the attested boundary',
     detail:
-      'Threads are stored on the deployment’s own state, which sits inside the enclave and is encrypted at rest: the host sees ciphertext and the key never leaves the boundary. Only you can read your conversations, and a thread you delete is deleted outright — no archive, no copy to ask us for. What we cannot promise is that it survives: the state disk is ephemeral by design, so infrastructure maintenance can take your history with it. Keep anything you need elsewhere. The messages themselves travel to the model over the same /v1/chat/completions path an API client uses, which records tokens and cost and no content at all.',
+      'Threads are stored on the deployment’s own state, which sits inside the enclave and is encrypted at rest: the host sees ciphertext and the key never leaves the boundary. Only you can read your conversations, and a thread you delete is deleted outright — no archive, no copy to ask us for.',
+    transport:
+      'The messages themselves travel to the model over the same /v1/chat/completions path an API client uses, which records tokens and cost and no content at all.',
+    /*
+     * TODO(SUP-183): delete this sentence when replicated PostgreSQL ships.
+     *
+     * It is true only because the state disk is ephemeral by design and the
+     * durability work was deferred with the risk accepted (Denis, 2026-09-30).
+     * SUP-183 removes the reason for it, and the release train that ships it
+     * deletes the sentence in two places at once: here, and the landing repo's
+     * `src/content/legal.ts` (`consoleChat.maintenanceRisk`), which is what
+     * /privacy §5a renders. One of the two surviving the other is how a policy
+     * and a product start contradicting each other.
+     */
+    maintenanceCaveat: 'Your conversations may be lost during infrastructure maintenance.',
   },
   browser_local: {
     summary: 'This conversation is stored in this browser only.',
     detail:
-      'Threads live in this browser’s local storage and are never sent to the router. Deleting a thread removes it here and there is nothing to delete anywhere else. Clearing site data, or opening the console in another browser, loses the history. The messages themselves do travel to the model — over the same /v1/chat/completions path an API client uses, which records tokens and cost and no content at all.',
+      'Threads live in this browser’s local storage and are never sent to the router. Deleting a thread removes it here and there is nothing to delete anywhere else. Clearing site data, or opening the console in another browser, loses the history.',
+    transport:
+      'The messages themselves do travel to the model — over the same /v1/chat/completions path an API client uses, which records tokens and cost and no content at all.',
+    /* Nothing maintenance can take: the history was never on the deployment. */
+    maintenanceCaveat: null,
   },
 };

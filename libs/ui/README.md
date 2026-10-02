@@ -36,8 +36,8 @@ import '@confidential-router/ui/styles/globals.css';
 ## Components
 
 `avatar`, `badge`, `breadcrumb`, `button`, `card`, `dialog`, `dropdown-menu`,
-`input`, `label`, `select`, `sheet`, `skeleton`, `sonner` (toast), `table` and
-`tabs` are shadcn/ui primitives ported from swarm-cloud (see the repository
+`input`, `label`, `popover`, `select`, `sheet`, `skeleton`, `sonner` (toast),
+`table` and `tabs` are shadcn/ui primitives ported from swarm-cloud (see the repository
 NOTICE). The set is what the console uses today — port the next one from
 swarm-cloud when a screen needs it rather than stocking the shelf. Deviations are documented in the file header —
 currently a `brand` button variant and `success`/`warning`/`brand` badge
