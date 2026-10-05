@@ -76,6 +76,19 @@ export interface ParsedEvidenceBundle {
   chainSummary: CertificateSummary[];
   measurements: Record<string, unknown> | null;
   jws: string;
+  /**
+   * The document exactly as the publisher served it, member order included.
+   *
+   * It is the validated *input* rather than the schema's output, and that is the
+   * difference between relaying a document and rewriting it: `/v1/evidence` is
+   * the only copy of this document a browser can read on a real deployment
+   * (SUP-191), and a reader hashing what the router hands back against what the
+   * platform's gateway serves has to get the same digest. Zod's output is a
+   * fresh object carrying the declared members first and the pass-through ones
+   * after — the same document, a different byte string. Nothing downstream reads
+   * this member for anything but passing it on, so there is nothing to buy by
+   * storing the reordered copy.
+   */
   bundle: Record<string, unknown>;
 }
 
@@ -129,7 +142,7 @@ export function parseEvidenceBundle(raw: unknown, hostname: string): ParsedEvide
     chainSummary: summariseChain(bundle.data.certChain),
     measurements: measurementsOf(payload, bundle.data),
     jws: bundle.data.jws,
-    bundle: bundle.data as Record<string, unknown>,
+    bundle: raw as Record<string, unknown>,
   };
 }
 

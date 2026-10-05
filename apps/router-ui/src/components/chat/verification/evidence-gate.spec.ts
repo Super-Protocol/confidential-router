@@ -15,6 +15,10 @@ import { badgeTier, lockedReasonOf, pageTierState } from './tiers';
 const HOSTNAME = 'router.example.test';
 const ENDPOINT = 'router';
 const API_ORIGIN = 'https://api.router.test';
+/** The console's own host — a third origin, as on every real deployment. */
+const CONSOLE_ORIGIN = 'https://console.router.test';
+/** A console served by the evidence host itself: the dev stack and the e2e publisher. */
+const SAME_ORIGIN = `https://${HOSTNAME}`;
 
 /** The instant every fixture certificate's validity window is centred on. */
 const REFERENCE_NOW = new Date('2026-01-15T12:00:00.000Z');
@@ -41,6 +45,8 @@ function detailOf(result: { checks: { id: CheckId; detail: string }[] }, id: Che
 async function run(options: {
   fetcher: typeof fetch;
   now?: Date;
+  /** Where the console is served from; decides which source the gate asks first. */
+  pageOrigin?: string;
   registryLookup?: Parameters<typeof runEvidenceGate>[0]['registryLookup'];
   rootAttestationReader?: Parameters<typeof runEvidenceGate>[0]['rootAttestationReader'];
 }) {
@@ -49,6 +55,9 @@ async function run(options: {
     endpointName: ENDPOINT,
     apiOrigin: API_ORIGIN,
     now: options.now ?? REFERENCE_NOW,
+    // The deployment topology every case but the ordering ones is about: a
+    // console on its own host, which is every real deployment.
+    pageOrigin: options.pageOrigin ?? CONSOLE_ORIGIN,
     fetcher: options.fetcher,
     registryLookup: options.registryLookup,
     rootAttestationReader: options.rootAttestationReader,
@@ -247,25 +256,103 @@ describe('a bundle a gatekeeper would reject', () => {
   });
 });
 
+/**
+ * Which source answers, and which is asked first (SUP-191).
+ *
+ * The platform's gateway serves `/.well-known/swarm-evidence` with no
+ * `Access-Control-Allow-Origin`, so on a real deployment the host's own document
+ * is unreadable from the console however good it is — and the router's `/v1`
+ * relay, which goes through `validClientOrigins`, is the only copy a browser can
+ * get at. These cases pin that the gate asks whichever source it can actually
+ * read first, and still tries the other.
+ */
 describe('where the bundle comes from', () => {
-  it('falls back to this router’s passthrough when the endpoint refuses a cross-origin fetch', async () => {
-    // A CORS refusal surfaces in a browser as a rejected promise with no status,
-    // which is exactly what is simulated here.
+  const RELAY_URL = `${API_ORIGIN}/v1/evidence/${ENDPOINT}`;
+  const WELL_KNOWN_URL = `https://${HOSTNAME}/.well-known/swarm-evidence`;
+
+  /** A CORS refusal is a rejected promise with no status — not a response. */
+  function corsBlocked(url: string) {
+    return new TypeError(`Failed to fetch ${url}`);
+  }
+
+  it('verifies through the relay, without asking a host that cannot answer a browser', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.startsWith(`https://${HOSTNAME}`)) throw new TypeError('Failed to fetch');
-      if (input === `${API_ORIGIN}/v1/evidence/${ENDPOINT}`) {
+      if (input === RELAY_URL) {
         return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
       }
-      throw new Error(`unexpected fetch ${input}`);
+      throw corsBlocked(input);
     });
 
     const result = await run({ fetcher: fetcher as unknown as typeof fetch });
 
     expect(result.unlocked).toBe(true);
     expect(result.evidence?.source).toBe('router');
+    // The point of the ordering: the guaranteed-failing cross-origin request is
+    // not made at all, so there is no discarded download and no CORS error in
+    // the browser console on every chat open.
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([RELAY_URL]);
   });
 
-  it('reports both refusals when neither source answers', async () => {
+  it('still prefers the host’s own document when the console is served from it', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === WELL_KNOWN_URL) {
+        return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const result = await run({ fetcher: fetcher as unknown as typeof fetch, pageOrigin: SAME_ORIGIN });
+
+    // The live document beats a copy this router retrieved up to a poll interval
+    // ago, so where a direct read can succeed it is the one that is made.
+    expect(result.unlocked).toBe(true);
+    expect(result.evidence?.source).toBe('endpoint');
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([WELL_KNOWN_URL]);
+  });
+
+  it('falls through to the host when the relay has nothing yet', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === RELAY_URL) {
+        return new Response(JSON.stringify({ statusCode: 503, reason: 'evidence_not_fetched' }), { status: 503 });
+      }
+      return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
+    });
+
+    const result = await run({ fetcher: fetcher as unknown as typeof fetch });
+
+    expect(result.unlocked).toBe(true);
+    expect(result.evidence?.source).toBe('endpoint');
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([RELAY_URL, WELL_KNOWN_URL]);
+  });
+
+  it('locks the composer and names both refusals when neither source answers', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === RELAY_URL) {
+        return new Response(
+          JSON.stringify({
+            statusCode: 503,
+            reason: 'evidence_not_fetched',
+            message: 'This router has not yet retrieved evidence for endpoint "router".',
+          }),
+          { status: 503 },
+        );
+      }
+      throw corsBlocked(input);
+    });
+
+    const result = await run({ fetcher: fetcher as unknown as typeof fetch });
+
+    expect(result.unlocked).toBe(false);
+    expect(result.checks).toHaveLength(1);
+    expect(statusOf(result.checks, 'bundle')).toBe('fail');
+    // Both sides are named, each in its own words: a browser that was refused
+    // the host's document and a router that has not fetched one yet are two
+    // different things to fix.
+    expect(detailOf(result, 'bundle')).toContain('Failed to fetch');
+    expect(detailOf(result, 'bundle')).toContain('evidence_not_fetched');
+  });
+
+  it('reports a refusal whose body says nothing by its status', async () => {
     const fetcher = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
 
     const result = await run({ fetcher });

@@ -128,6 +128,17 @@ Evidence is fetched from the endpoint directly where CORS allows it and from thi
 a relayed bundle cannot be forged — but it can be staler than what the host serves now, and the
 panel says which source answered.
 
+Which is asked *first* follows from the same fact (SUP-191). On a real deployment CORS never allows
+the direct fetch: `/.well-known/swarm-evidence` is served by the platform's own gateway, below
+router-api's CORS layer, with no `Access-Control-Allow-Origin` at all — confirmed against
+`api.router.superprotocol.com`, where `/v1/*` answers with the correct header and the well-known path
+answers with none. Asking anyway still buys the whole request, tens of kilobytes downloaded and
+discarded before the composer can unlock, plus a CORS error in the browser console that reads as a
+broken deployment. So the direct fetch stays first only where it can succeed — a console served from
+the evidence host's own origin, which is the dev stack and the e2e publisher — and the relay is first
+otherwise. Both are always tried, so a relay with nothing yet still falls through to a host that will
+answer.
+
 ### 3a. A row that answered "no" holds the composer; a row nobody could answer does not
 
 The unlock rule is two clauses, not one list: every check in `BLOCKING` must come back `pass`, **and
