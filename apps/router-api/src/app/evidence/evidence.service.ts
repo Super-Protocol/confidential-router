@@ -69,6 +69,32 @@ export class EvidenceService {
   }
 
   /**
+   * The endpoint that *is* this deployment — what `GET /v1/evidence` answers for.
+   *
+   * Resolved from `server.publicBaseUrl`, which is the address the service
+   * publishes: on a router whose own API host is also an attested endpoint (every
+   * deployment of this product so far, `api.router.superprotocol.com` included)
+   * that hostname is the endpoint's, and the question has exactly one answer.
+   *
+   * The single-endpoint fallback is for the arrangement where it does not match
+   * and still cannot be ambiguous: the compose stack and the e2e harness publish
+   * on `127.0.0.1` while their one endpoint lives on a mock host's name. With two
+   * or more endpoints and no hostname match there is no honest answer, so there
+   * is none — the caller names the endpoint it means.
+   */
+  async ownEndpoint(): Promise<Endpoint | null> {
+    const hostname = hostnameOf(this.config.server.publicBaseUrl);
+    if (hostname) {
+      const match = await this.dataSource.getRepository(Endpoint).findOne({ where: { hostname } });
+      if (match) {
+        return match;
+      }
+    }
+    const enabled = await this.activeEndpoints();
+    return enabled.length === 1 ? (enabled[0] as Endpoint) : null;
+  }
+
+  /**
    * Fetches the endpoint's bundle now and files it. Backs both the poller and
    * the console's "Fetch fresh quote"; the same call in both places is what
    * keeps the button from being a second, subtly different code path.
@@ -234,6 +260,15 @@ export class EvidenceService {
   logFetchFailure(endpoint: Endpoint, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     this.logger.warn(`No evidence for endpoint "${endpoint.name}" (${endpoint.hostname}): ${message}`);
+  }
+}
+
+/** The host part of a configured URL, or null when it is not a URL at all. */
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
   }
 }
 

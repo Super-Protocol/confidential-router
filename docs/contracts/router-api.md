@@ -23,10 +23,11 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/completions` | required | legacy text completions, same streaming rules |
 | `POST /v1/embeddings` | optional | only if the model's `capabilities` include `embeddings` |
 | `GET /v1/generation?id=` | required | metering record of one generation (OpenRouter-style) |
-| `GET /v1/evidence/{endpoint}` | required | raw passthrough of the endpoint's latest published bundle; no key |
+| `GET /v1/evidence` | required | raw passthrough of **this deployment's** latest published bundle; no key |
+| `GET /v1/evidence/{endpoint}` | required | the same, for a named endpoint; no key |
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
-| `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api |
+| `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
 
@@ -167,17 +168,43 @@ chunks as they arrive from LiteLLM (no buffering); through the gatekeeper this i
 
 Only models within the key's scope are listed.
 
-### `GET /v1/evidence/{endpoint}`
+### `GET /v1/evidence` and `GET /v1/evidence/{endpoint}`
 
-`{endpoint}` is an endpoint **name** or **hostname** from the router config. Returns the most recently
-issued `/.well-known/swarm-evidence` bundle this router has fetched for it, byte for byte as published
-(`schemas/swarm-evidence-bundle.schema.json`). `404` when the endpoint is unknown or has published
-nothing yet.
+`{endpoint}` is an endpoint **name** or **hostname** from the router config. Without one, the route
+answers for **this deployment's own** endpoint: the one whose `hostname` is the host of
+`server.publicBaseUrl`, or — where that names no endpoint and there is only one — that one. With two or
+more endpoints and no match it answers `404` rather than guessing, and the caller names the endpoint it
+means.
+
+Either way the response is the most recently issued `/.well-known/swarm-evidence` bundle this router has
+fetched, **byte for byte as published** (`schemas/swarm-evidence-bundle.schema.json`) — the stored copy is
+the publisher's own document, member order included, so hashing this response and hashing what the
+platform's gateway serves for the same publication gives the same digest. `Cache-Control: no-store`: a
+bundle is re-signed every few minutes and a reader is comparing freshness and digests against the live
+host.
+
+Two refusals, told apart on purpose:
+
+| HTTP | Body | Means |
+| --- | --- | --- |
+| `404` | Nest's shape, `{"statusCode":404,"message":…}` | no such endpoint — or, on the bare path, this router cannot tell which is its own |
+| `503` | `{"statusCode":503,"reason":"evidence_not_fetched","message":…}` | the endpoint exists and nothing has been retrieved for it yet |
+
+They used to be one `404`, which read on the chat's locked composer as the router denying an endpoint it
+in fact has (SUP-191). Never an empty `200`: a caller that verifies what it is handed must not have to
+tell a bundle from the absence of one.
 
 Deliberately unauthenticated: the platform serves the same document publicly on the endpoint's own
 hostname, and a user comparing the two should not need an API key. Just as deliberately, the response is
 the bundle and nothing else — the router never validates a signature and never reports a verdict
 (ADR-002).
+
+**This is also the only copy of the document a browser can read.** `/.well-known/swarm-evidence` is
+served by the platform's own gateway, which sits below this service's CORS layer and sends no
+`Access-Control-Allow-Origin` at all, so a console on `console.…` cannot read the evidence of an API on
+`api.…`. These routes are `/v1/*` on the API host and go through `server.validClientOrigins`. Nothing
+about authenticity rests on that: the document is a JWS over its own bytes and the browser checks the
+signature whichever copy it got.
 
 ### `GET /v1/generation?id=gen-…`
 
