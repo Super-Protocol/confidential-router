@@ -1,18 +1,16 @@
 'use client';
 
 import { useQuery } from '@apollo/client/react';
-import { CodeBlock } from '@confidential-router/ui/components/code-block';
-import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import { EmptyState } from '@confidential-router/ui/components/empty-state';
 import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import { PackageOpen } from 'lucide-react';
 import { PageHeader } from '../page-header';
 import { DataFlowDiagram } from './data-flow-diagram';
-import { ComingLater, DownloadTable, InstallCommands, ReleaseMeta } from './downloads';
+import { ComingLater, DownloadTable, ReleaseMeta } from './downloads';
 import { FailModeExplainer } from './fail-mode-explainer';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
-import { SETUP_STEPS, setupScript } from './setup-commands';
+import { GatekeeperSetupBlock } from './setup-block';
 import { VerificationSteps } from './verification-steps';
 
 /**
@@ -55,12 +53,10 @@ export function GatekeeperScreen() {
               Download
             </h2>
             <p className="text-muted-foreground text-sm">
-              One static Go binary, no runtime dependencies. Verify what you downloaded against the published checksums
-              before you run it.
+              One static Go binary, no runtime dependencies. The install one-liner is step 1 of the setup below; prefer
+              to do it by hand, and these are the archives and the checksums to do it with.
             </p>
           </div>
-
-          <InstallCommands />
 
           {error ? (
             <ErrorState
@@ -91,30 +87,21 @@ export function GatekeeperScreen() {
         </section>
 
         <section className="space-y-3" aria-labelledby="setup-heading">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 id="setup-heading" className="font-semibold text-base">
-                Set it up
-              </h2>
-              <p className="text-muted-foreground text-sm">
-                Four commands. Nothing is registered with the router at any point.
-              </p>
-            </div>
-            <CopyButton value={setupScript()} label="Copy all four commands" variant="outline" size="sm" showLabel />
+          <div>
+            <h2 id="setup-heading" className="font-semibold text-base">
+              Set it up
+            </h2>
+            <p className="text-muted-foreground text-sm">
+              Six commands, already carrying this deployment's own API origin — paste them as they are. Nothing is
+              registered with the router at any point.
+            </p>
           </div>
 
-          <ol className="space-y-3">
-            {SETUP_STEPS.map((step, index) => (
-              <li key={step.command} className="rounded-lg border p-4">
-                <p className="font-medium text-sm">
-                  <span className="mr-2 font-mono text-muted-foreground">{index + 1}.</span>
-                  {step.title}
-                </p>
-                <p className="mt-1 mb-3 text-muted-foreground text-xs leading-relaxed">{step.detail}</p>
-                <CodeBlock code={step.command} copyLabel={`Copy: ${step.title}`} />
-              </li>
-            ))}
-          </ol>
+          {/*
+            The same block the chat's tier-3 panel shows, so the commands on the
+            two screens cannot drift (SUP-193).
+          */}
+          <GatekeeperSetupBlock />
         </section>
       </div>
     </>

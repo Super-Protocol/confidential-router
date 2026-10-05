@@ -21,6 +21,18 @@ export interface PublicConfig {
   graphqlHttp: string;
   /** Where Better Auth sends the browser back after a social or magic-link sign-in. */
   authCallbackUrl: string;
+  /**
+   * Where the Swarm cloud's root certificate authority is published, for the
+   * `gatekeeper trust roots add` line of the setup block (SUP-193).
+   *
+   * It is the one value in that sequence this deployment cannot *derive*, and
+   * deliberately so: a gatekeeper that took its trust anchor from the endpoint
+   * it is about to inspect would be trust-on-first-use with extra steps, and the
+   * console is served by the same deployment as the endpoint. So the URL points
+   * somewhere independent of both, and an operator who publishes the CA
+   * elsewhere overrides it rather than editing a command by hand.
+   */
+  swarmRootPemUrl: string;
 }
 
 /** The global the root layout writes and {@link publicConfig} reads. */
@@ -28,6 +40,16 @@ export const PUBLIC_CONFIG_GLOBAL = '__ROUTER_UI_PUBLIC_CONFIG__';
 
 /** Where an unconfigured console looks for the API — the compose demo's port. */
 export const DEFAULT_API_ORIGIN = 'http://127.0.0.1:3000';
+
+/**
+ * Where Super Protocol publishes the Super Swarm Root CA.
+ *
+ * The same certificate for every Swarm cloud — it is the platform's CA, not a
+ * per-deployment one — served from the campaign landing page, which is the URL
+ * the quick-start block there was verified against (SUP-155). A deployment that
+ * publishes it somewhere else sets `ROUTER_UI_SWARM_ROOT_PEM_URL`.
+ */
+export const DEFAULT_SWARM_ROOT_PEM_URL = 'https://router.superprotocol.com/swarm-root.pem';
 
 /** `process` is not guaranteed to exist in the browser bundle. */
 function environment(): Record<string, string | undefined> {
@@ -51,6 +73,7 @@ export function readPublicConfig(env: Record<string, string | undefined> = envir
     apiOrigin,
     graphqlHttp: setting(env.ROUTER_UI_GRAPHQL_HTTP) ?? `${apiOrigin}/graphql`,
     authCallbackUrl: setting(env.ROUTER_UI_AUTH_CALLBACK_URL) ?? '/',
+    swarmRootPemUrl: setting(env.ROUTER_UI_SWARM_ROOT_PEM_URL) ?? DEFAULT_SWARM_ROOT_PEM_URL,
   };
 }
 
@@ -61,7 +84,8 @@ function isPublicConfig(value: unknown): value is PublicConfig {
   return (
     typeof candidate.apiOrigin === 'string' &&
     typeof candidate.graphqlHttp === 'string' &&
-    typeof candidate.authCallbackUrl === 'string'
+    typeof candidate.authCallbackUrl === 'string' &&
+    typeof candidate.swarmRootPemUrl === 'string'
   );
 }
 

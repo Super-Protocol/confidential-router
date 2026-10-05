@@ -2,8 +2,6 @@
 
 import { Badge } from '@confidential-router/ui/components/badge';
 import { Button } from '@confidential-router/ui/components/button';
-import { CodeBlock } from '@confidential-router/ui/components/code-block';
-import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import {
   Dialog,
   DialogContent,
@@ -14,7 +12,7 @@ import {
 } from '@confidential-router/ui/components/dialog';
 import { RefreshCw, TriangleAlert } from 'lucide-react';
 import type * as React from 'react';
-import { resolvedSetupScript, resolvedSetupSteps } from '../gatekeeper/setup-commands';
+import { GatekeeperSetupBlock } from '../gatekeeper/setup-block';
 import { CheckRow } from './verification/check-row';
 import {
   bundleSourceNote,
@@ -137,31 +135,12 @@ export function VerificationPanel({
                 <span className="min-w-0">{divergence}</span>
               </p>
             ) : null}
-            <ol className="space-y-3">
-              {resolvedSetupSteps({ hostname, evidenceDigestHex: evidenceDigestHex }).map((step, index) => (
-                <li key={step.command} className="space-y-1">
-                  <p className="font-medium text-sm">
-                    <span className="text-muted-foreground">{index + 1}. </span>
-                    {step.title}
-                  </p>
-                  <CodeBlock code={step.command} copyLabel={`Copy: ${step.title}`} />
-                </li>
-              ))}
-            </ol>
-            <div className="mt-3">
-              <CopyButton
-                value={resolvedSetupScript({ hostname, evidenceDigestHex: evidenceDigestHex })}
-                label="Copy all four commands"
-                showLabel
-                variant="outline"
-              />
-            </div>
-            {evidenceDigestHex ? null : (
-              <p className="mt-2 text-muted-foreground text-xs">
-                This router holds no evidence digest for {hostname} yet, so the pin is left as a placeholder — take the
-                value from Overview once it publishes one.
-              </p>
-            )}
+            {/*
+              The same block `/gatekeeper` shows, from the same data: a reader who
+              finds the commands here and again on that page must not find two
+              different sequences (SUP-193).
+            */}
+            <GatekeeperSetupBlock upstream={`https://${hostname}`} evidenceDigestHex={evidenceDigestHex} />
           </Tier>
         </div>
 

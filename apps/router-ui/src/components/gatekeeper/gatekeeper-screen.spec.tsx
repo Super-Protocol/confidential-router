@@ -3,10 +3,10 @@ import { MockedProvider } from '@apollo/client/testing/react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_API_ORIGIN } from '../../lib/public-config';
 import { GatekeeperScreen } from './gatekeeper-screen';
 import { INSTALL_COMMANDS } from './install-commands';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
-import { SETUP_STEPS, setupScript } from './setup-commands';
 
 const RELEASE = {
   __typename: 'GatekeeperRelease',
@@ -94,49 +94,43 @@ describe('GatekeeperScreen', () => {
     renderScreen([releaseMock(null)]);
 
     expect(await screen.findByText('No published build yet')).toBeInTheDocument();
-    expect(screen.getByText(SETUP_STEPS[0].command)).toBeInTheDocument();
+    expect(screen.getByText('gatekeeper init')).toBeInTheDocument();
   });
 
   it('reports a failed release lookup without hiding the rest of the page', async () => {
     renderScreen([{ request: { query: GATEKEEPER_RELEASE_QUERY }, error: new Error('github unreachable') }]);
 
     expect(await screen.findByText('The release could not be loaded')).toBeInTheDocument();
-    expect(screen.getByText(SETUP_STEPS[3].command)).toBeInTheDocument();
+    expect(screen.getByText('gatekeeper run')).toBeInTheDocument();
   });
 
   it('offers a verified one-liner per platform, and says what it does before you paste it', async () => {
     renderScreen();
 
-    for (const entry of INSTALL_COMMANDS) {
-      expect(screen.getByText(entry.command)).toBeInTheDocument();
-    }
-
-    await userEvent.click(
-      screen.getByRole('button', { name: `Copy the ${INSTALL_COMMANDS[0].platform} install command` }),
-    );
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(INSTALL_COMMANDS[0].command);
+    expect(screen.getByText(INSTALL_COMMANDS[0].command)).toBeInTheDocument();
     expect(screen.getByText(/verifies it against the release checksums/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: INSTALL_COMMANDS[1].platform }));
+    expect(screen.getByText(INSTALL_COMMANDS[1].command)).toBeInTheDocument();
   });
 
-  it('still offers the one-liners when the release lookup failed — the scripts ship with every release', async () => {
+  it('still offers the one-liner when the release lookup failed — the scripts ship with every release', async () => {
     renderScreen([{ request: { query: GATEKEEPER_RELEASE_QUERY }, error: new Error('github unreachable') }]);
 
     expect(await screen.findByText('The release could not be loaded')).toBeInTheDocument();
-    for (const entry of INSTALL_COMMANDS) {
-      expect(screen.getByText(entry.command)).toBeInTheDocument();
-    }
+    expect(screen.getByText(INSTALL_COMMANDS[0].command)).toBeInTheDocument();
   });
 
-  it('lists the four setup commands in order, and copies them as a script', async () => {
+  // The bug: this page printed `--upstream https://<hostname>` to a reader who
+  // had arrived from the very deployment that is the hostname (SUP-193). What it
+  // renders now is whatever origin the *running* console was configured with.
+  it('fronts the configured API origin, with nothing left to substitute', async () => {
     renderScreen();
 
-    for (const step of SETUP_STEPS) {
-      expect(screen.getByText(step.command)).toBeInTheDocument();
-    }
-
-    await userEvent.click(screen.getByRole('button', { name: 'Copy all four commands' }));
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(setupScript());
+    expect(
+      screen.getByText(`gatekeeper endpoint add router --upstream ${DEFAULT_API_ORIGIN} --listen 127.0.0.1:8787`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/<hostname>|<evidenceDigest>/)).not.toBeInTheDocument();
   });
 
   it('shows the data flow, the four checks and both fail modes — the page is an explainer, not a control panel', () => {

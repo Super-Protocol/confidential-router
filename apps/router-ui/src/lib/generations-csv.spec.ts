@@ -25,6 +25,7 @@ describe('generationsCsvUrl', () => {
       apiOrigin: 'https://api.example.com',
       graphqlHttp: 'https://api.example.com/graphql',
       authCallbackUrl: '/',
+      swarmRootPemUrl: 'https://landing.example.com/swarm-root.pem',
     };
 
     expect(new URL(generationsCsvUrl({ workspaceId: 'ws-1' })).origin).toBe('https://api.example.com');
