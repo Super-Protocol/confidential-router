@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_API_ORIGIN,
+  DEFAULT_SWARM_ROOT_PEM_URL,
   PUBLIC_CONFIG_GLOBAL,
   type PublicConfig,
   publicConfig,
@@ -24,6 +25,7 @@ describe('readPublicConfig', () => {
       apiOrigin: 'https://api.example.com',
       graphqlHttp: 'https://api.example.com/graphql',
       authCallbackUrl: '/',
+      swarmRootPemUrl: DEFAULT_SWARM_ROOT_PEM_URL,
     });
   });
 
@@ -40,19 +42,24 @@ describe('readPublicConfig', () => {
         ROUTER_UI_API_ORIGIN: 'https://api.example.com',
         ROUTER_UI_GRAPHQL_HTTP: 'https://gql.example.com/query',
         ROUTER_UI_AUTH_CALLBACK_URL: '/models',
+        ROUTER_UI_SWARM_ROOT_PEM_URL: 'https://stand.example.com/swarm-root.pem',
       }),
     ).toEqual({
       apiOrigin: 'https://api.example.com',
       graphqlHttp: 'https://gql.example.com/query',
       authCallbackUrl: '/models',
+      swarmRootPemUrl: 'https://stand.example.com/swarm-root.pem',
     });
   });
 
   it('treats an empty or blank variable as unset — a chart that renders "" must not break the console', () => {
-    expect(readPublicConfig({ ROUTER_UI_API_ORIGIN: '  ', ROUTER_UI_GRAPHQL_HTTP: '' })).toEqual({
+    expect(
+      readPublicConfig({ ROUTER_UI_API_ORIGIN: '  ', ROUTER_UI_GRAPHQL_HTTP: '', ROUTER_UI_SWARM_ROOT_PEM_URL: ' ' }),
+    ).toEqual({
       apiOrigin: DEFAULT_API_ORIGIN,
       graphqlHttp: `${DEFAULT_API_ORIGIN}/graphql`,
       authCallbackUrl: '/',
+      swarmRootPemUrl: DEFAULT_SWARM_ROOT_PEM_URL,
     });
   });
 });
@@ -63,6 +70,7 @@ describe('publicConfig', () => {
       apiOrigin: 'https://one.example.com',
       graphqlHttp: 'https://one.example.com/graphql',
       authCallbackUrl: '/',
+      swarmRootPemUrl: 'https://one.example.com/swarm-root.pem',
     };
     inject(config);
 
@@ -74,6 +82,7 @@ describe('publicConfig', () => {
       apiOrigin: 'https://one.example.com',
       graphqlHttp: 'https://one.example.com/graphql',
       authCallbackUrl: '/',
+      swarmRootPemUrl: DEFAULT_SWARM_ROOT_PEM_URL,
     });
     expect(publicConfig().apiOrigin).toBe('https://one.example.com');
 
@@ -81,6 +90,7 @@ describe('publicConfig', () => {
       apiOrigin: 'https://two.example.com',
       graphqlHttp: 'https://two.example.com/graphql',
       authCallbackUrl: '/',
+      swarmRootPemUrl: DEFAULT_SWARM_ROOT_PEM_URL,
     });
     expect(publicConfig().apiOrigin).toBe('https://two.example.com');
   });
@@ -89,6 +99,22 @@ describe('publicConfig', () => {
     inject({ apiOrigin: 'https://one.example.com' });
 
     expect(publicConfig().apiOrigin).toBe(DEFAULT_API_ORIGIN);
+  });
+});
+
+describe('swarmRootPemUrl', () => {
+  // The URL lands in a `gatekeeper trust roots add` line the reader pastes
+  // (SUP-193), so a deployment that publishes the CA elsewhere has to be able to
+  // say so at run time — exactly like the API origin it sits beside.
+  it('is a real URL by default, because a placeholder there is a command nobody can run', () => {
+    expect(readPublicConfig({}).swarmRootPemUrl).toBe(DEFAULT_SWARM_ROOT_PEM_URL);
+    expect(DEFAULT_SWARM_ROOT_PEM_URL).toMatch(/^https:\/\/[^<>]+\.pem$/);
+  });
+
+  it('does not come from the API origin — a root served by the endpoint it vouches for proves nothing', () => {
+    const config = readPublicConfig({ ROUTER_UI_API_ORIGIN: 'https://api.example.com' });
+
+    expect(config.swarmRootPemUrl.startsWith(config.apiOrigin)).toBe(false);
   });
 });
 

@@ -13,10 +13,14 @@ pnpm nx run @confidential-router/router-ui:codegen     # regenerate the GraphQL 
 
 ## Configuration
 
-Three variables, all optional, all read from the environment **on every request**
+Four variables, all optional, all read from the environment **on every request**
 — see [`.env.example`](./.env.example). `ROUTER_UI_API_ORIGIN` is the one a
 deployment normally sets; `ROUTER_UI_GRAPHQL_HTTP` and
-`ROUTER_UI_AUTH_CALLBACK_URL` default from it.
+`ROUTER_UI_AUTH_CALLBACK_URL` default from it. `ROUTER_UI_SWARM_ROOT_PEM_URL`
+is the only value the console cannot derive from its own origin — the Gatekeeper
+setup block prints it in a `trust roots add` line, and a trust anchor served by
+the endpoint it vouches for would prove nothing — so it defaults to where Super
+Protocol publishes the Swarm CA.
 
 They used to be `NEXT_PUBLIC_*`, which `next build` inlines into the client
 bundle — one image, one API origin, and a new origin meant a new image. A
