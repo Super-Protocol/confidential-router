@@ -123,6 +123,20 @@ describe('loadRouterConfig', () => {
     expect(config).not.toHaveProperty('configFile');
   });
 
+  it('keeps CR_API_SECRETS_KEY out of the config tree entirely', () => {
+    // The data key for stored upstream API keys (ADR-008 §6). The tree is what a
+    // rendered ConfigMap and every validation error are made of, so the key must
+    // never become part of it — and a `strictObject` would refuse to boot over an
+    // unexpected `secretsKey` anyway. `secret-envelope.ts` reads the variable
+    // directly and is the only thing that does.
+    const config = loadRouterConfig({
+      env: env({ CR_API_SECRETS_KEY: 'a'.repeat(43) }),
+    });
+
+    expect(config).not.toHaveProperty('secretsKey');
+    expect(JSON.stringify(config)).not.toContain('a'.repeat(43));
+  });
+
   it('rejects an unknown key rather than silently dropping it', () => {
     // The JSON Schema is `additionalProperties: false`; the runtime schema has
     // to agree, or `CR_API_SERVER__PROT=4000` leaves the port on its default.
@@ -343,6 +357,69 @@ describe('the top-up bounds', () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].path).toEqual(['billing', 'maxTopUpMicros']);
+  });
+});
+
+describe('the external-endpoint sidecar section', () => {
+  it('defaults to a 10-minute re-attestation and a 5-second status poll', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    expect(config.externalEndpoints.reattestInterval).toBe(600_000);
+    expect(config.externalEndpoints.statusPollInterval).toBe(5_000);
+    expect(config.externalEndpoints.adminListen).toBe('127.0.0.1:9465');
+  });
+
+  it('accepts the whole of the range Denis ruled on, and nothing outside it', () => {
+    // Ruling 6: 10 minutes by default, bounded to [1m, 1h]. The upper bound is
+    // the point of the range — "hourly" was the acceptable worst case, so a
+    // longer interval is a boot error rather than a preference.
+    for (const reattestInterval of ['1m', '10m', '1h']) {
+      expect(
+        RouterConfigSchema.safeParse({ auth: { secret: SECRET }, externalEndpoints: { reattestInterval } }).success,
+      ).toBe(true);
+    }
+
+    for (const reattestInterval of ['30s', '1h1m', '24h']) {
+      const result = RouterConfigSchema.safeParse({
+        auth: { secret: SECRET },
+        externalEndpoints: { reattestInterval },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0].path).toEqual(['externalEndpoints', 'reattestInterval']);
+    }
+  });
+
+  it('refuses an admin listener that is not local', () => {
+    // The admin API answers with verdicts and local-only is the whole of its
+    // access control, so a routable address is refused at boot rather than bound.
+    for (const adminListen of ['0.0.0.0:9465', 'sidecar.svc.cluster.local:9465', '10.0.0.5:9465']) {
+      expect(
+        RouterConfigSchema.safeParse({ auth: { secret: SECRET }, externalEndpoints: { adminListen } }).success,
+      ).toBe(false);
+    }
+
+    for (const adminListen of ['127.0.0.1:9465', 'localhost:9465', '[::1]:9465', 'unix:/run/gk/admin.sock']) {
+      expect(
+        RouterConfigSchema.safeParse({ auth: { secret: SECRET }, externalEndpoints: { adminListen } }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('refuses a listener window in the privileged range', () => {
+    const result = RouterConfigSchema.safeParse({
+      auth: { secret: SECRET },
+      externalEndpoints: { listenPortBase: 80 },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a typo in the section rather than ignoring it', () => {
+    expect(
+      RouterConfigSchema.safeParse({ auth: { secret: SECRET }, externalEndpoints: { reattestInverval: '10m' } })
+        .success,
+    ).toBe(false);
   });
 });
 

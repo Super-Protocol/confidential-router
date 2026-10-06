@@ -12,7 +12,9 @@ import { CatalogModule } from './catalog/catalog.module.js';
 import { routerConfig } from './config.js';
 import { DbModule } from './db/db.module.js';
 import { EvidenceModule } from './evidence/index.js';
+import { ExternalEndpointsModule } from './external-endpoints/index.js';
 import { PreferencesModule } from './preferences/index.js';
+import { SecretsModule } from './secrets/index.js';
 
 @Module({
   imports: [
@@ -34,8 +36,10 @@ import { PreferencesModule } from './preferences/index.js';
     }),
     DbModule,
     AuthModule,
+    SecretsModule,
     CatalogModule,
     EvidenceModule,
+    ExternalEndpointsModule,
     BillingModule,
     ActivityModule,
     PreferencesModule,

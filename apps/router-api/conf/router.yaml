@@ -39,6 +39,15 @@ backends:
 endpoints: []
 models: []
 
+# The egress sidecar that attests external model endpoints (ADR-008). Nothing to
+# configure in development: no sidecar runs on a laptop, so the status poll logs
+# that it cannot reach one and every external endpoint stays `pending` — which is
+# the fail-closed state. The rendered file goes under `data/` — gitignored, beside
+# the dev database — rather than the container's volume path, which a laptop has no
+# permission to create.
+externalEndpoints:
+  configFile: data/gatekeeper/config.yaml
+
 # Default per-key budgets; a key may set lower ones of its own. Also applied
 # per workspace, so minting more keys does not multiply the tenant's budget.
 rateLimits:

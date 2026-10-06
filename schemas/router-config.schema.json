@@ -271,6 +271,49 @@
         }
       }
     },
+    "externalEndpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The egress sidecar that attests external model endpoints (ADR-008). The endpoints themselves are not configured here: an admin registers them at runtime and router-api renders them into the sidecar's own config file. This section configures the seam between the two processes. The upstream API keys are deliberately absent \u2014 they are stored encrypted in the database under CR_API_SECRETS_KEY and injected by router-api on the egress leg, never written into the rendered file.",
+      "properties": {
+        "configFile": {
+          "type": "string",
+          "minLength": 1,
+          "default": "/var/run/gatekeeper/config.yaml",
+          "description": "Where the rendered sidecar config is written \u2014 the shared emptyDir both containers mount. The sidecar's entrypoint watches this path and SIGHUPs its own process on change."
+        },
+        "adminListen": {
+          "type": "string",
+          "pattern": "^(unix:.+|(localhost|127(\\.[0-9]{1,3}){3}|\\[::1\\]):[0-9]{1,5})$",
+          "default": "127.0.0.1:9465",
+          "description": "The sidecar's admin API, which router-api polls for verdicts. unix:<path> or a loopback host:port only \u2014 it answers with verdicts, and local-only is the whole of its access control."
+        },
+        "listenPortBase": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 19000,
+          "description": "First loopback port the per-endpoint listeners are allocated from. Loopback is shared within the pod, so there is no Service, no cluster traffic and no exposure."
+        },
+        "listenPortRange": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096,
+          "default": 256,
+          "description": "How many consecutive ports the allocator may use, and therefore the ceiling on external endpoints."
+        },
+        "reattestInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "10m",
+          "description": "Background full re-verification period for every external endpoint. Bounded to [1m, 1h]: \"hourly\" was named as the acceptable worst case, so a longer interval is refused at boot rather than accepted as a preference."
+        },
+        "statusPollInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "5s",
+          "description": "How often router-api reads the sidecar's /status and /verdicts back. 0 disables the poll."
+        }
+      }
+    },
     "rateLimits": {
       "type": "object",
       "additionalProperties": false,

@@ -36,6 +36,19 @@ export class Generation {
   endpointId!: string;
 
   /**
+   * The external endpoint the request was forwarded to, or null for a model inside
+   * this cluster space (ADR-008 §6) — what `usage.endpoint` names for an external
+   * generation.
+   *
+   * Additive only. The egress leg that writes it is stage 3's, and whether
+   * `endpointId` should then become nullable is stage 3's question too: it owns
+   * the `/v1` surface this column is reported on, and loosening a column the
+   * console reads as non-null from here would be a schema change with no writer.
+   */
+  @Column(idColumn({ nullable: true }))
+  externalEndpointId!: string | null;
+
+  /**
    * The snapshot that was current when the request was served, or null when the
    * endpoint had published nothing. This is "evidence coverage": a fact about
    * publication, not a verdict about validity.

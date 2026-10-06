@@ -28,8 +28,16 @@ export const DEFAULT_CONFIG_FILE = 'conf/router.yaml';
  * them, but the env layer must skip them: `CR_API_VERSION` would otherwise
  * become `version: "1.2.3"` and collide with the config's own `version: 1`,
  * failing the boot on a variable that has nothing to do with the schema.
+ *
+ * `SECRETS_KEY` is reserved for the opposite reason, and it is the stronger one.
+ * It is the AES-256 data key for stored upstream API keys (ADR-008 §6), and it
+ * must never become part of the config tree: the tree is what the rendered
+ * ConfigMap and every validation error are made of, and both are readable
+ * places. Skipping it here is what keeps it a plain environment variable that
+ * only `secrets/secret-envelope.ts` ever reads — and what stops a `strictObject`
+ * refusing to boot over an unexpected `secretsKey` key.
  */
-export const RESERVED_ENV_SUFFIXES = ['CONFIG_FILE', 'VERSION'];
+export const RESERVED_ENV_SUFFIXES = ['CONFIG_FILE', 'VERSION', 'SECRETS_KEY'];
 
 /** Build or release identifier, surfaced by `/health`. Never part of the config. */
 export function serviceVersion(env: NodeJS.ProcessEnv = process.env): string {

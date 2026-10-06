@@ -96,6 +96,17 @@ describe('SQLite', () => {
       const queryRunner = dataSource.createQueryRunner();
 
       await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('external_endpoints')).toBe(false);
+      expect(await queryRunner.hasTable('trusted_measurements')).toBe(false);
+      expect(await queryRunner.hasTable('external_endpoint_events')).toBe(false);
+      expect(await queryRunner.hasColumn('models', 'origin')).toBe(false);
+      expect(await queryRunner.hasColumn('models', 'externalEndpointId')).toBe(false);
+      expect(await queryRunner.hasColumn('generations', 'externalEndpointId')).toBe(false);
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'externalEndpointId')).toBe(false);
+      // The column the previous migration added is untouched.
+      expect(await queryRunner.hasColumn('endpoints', 'declaredImages')).toBe(true);
+
+      await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('endpoints', 'declaredImages')).toBe(false);
       // The tables the previous migration added are untouched.
       expect(await queryRunner.hasTable('chat_messages')).toBe(true);
@@ -185,6 +196,7 @@ describe.skipIf(!POSTGRES_URL)('PostgreSQL', () => {
       }
 
       const queryRunner = dataSource.createQueryRunner();
+      expect(await queryRunner.hasTable('external_endpoints')).toBe(false);
       expect(await queryRunner.hasColumn('endpoints', 'declaredImages')).toBe(false);
       expect(await queryRunner.hasTable('chat_threads')).toBe(false);
       expect(await queryRunner.hasTable('feedback_submissions')).toBe(false);

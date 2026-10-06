@@ -96,6 +96,19 @@ evidence:
   pollInterval: 5m
   freshnessWindow: 24h
 
+# The egress sidecar that attests external model endpoints (ADR-008). The endpoints
+# are not listed here — an admin registers them in the console at runtime and
+# router-api renders them into the sidecar's own config file. Nor are the upstream
+# API keys: those are encrypted in the database under CR_API_SECRETS_KEY, which is
+# an environment variable from a Secret and never part of this file.
+externalEndpoints:
+  configFile: /var/run/gatekeeper/config.yaml   # the emptyDir both containers mount
+  adminListen: 127.0.0.1:9465                   # verdicts; loopback or a unix socket only
+  listenPortBase: 19000
+  listenPortRange: 256
+  reattestInterval: 10m                         # bounded to [1m, 1h]
+  statusPollInterval: 5s
+
 rateLimits:
   requestsPerMinute: 600
   tokensPerMinute: 2000000

@@ -21,6 +21,10 @@ import { z } from 'zod';
 
 const name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'must be a lowercase kebab-case name');
 
+/** Bounds on `externalEndpoints.reattestInterval` — Denis's ruling 6, ADR-008 §3. */
+export const MIN_REATTEST_INTERVAL_MS = 60_000;
+export const MAX_REATTEST_INTERVAL_MS = 3_600_000;
+
 const ServerSchema = z
   .strictObject({
     port: integerish().pipe(z.number().int().min(1).max(65535)).prefault(3000),
@@ -473,6 +477,74 @@ const ChatSchema = z
   })
   .prefault({});
 
+/**
+ * The egress sidecar that attests external model endpoints (ADR-008 §5).
+ *
+ * Nothing here is per-endpoint: the endpoints themselves live in
+ * `external_endpoints`, registered by an admin at runtime, and router-api renders
+ * them into the sidecar's own config file. What this section configures is the
+ * seam between the two processes — where the file goes, where the status API is,
+ * and the one tuning value Denis fixed a default and bounds for.
+ *
+ * Notably absent: the upstream API keys. They are sealed in the database and
+ * injected by router-api on the egress leg, never written into the rendered file
+ * and never handed to the sidecar's config (ADR-003 §8, ADR-008 §4).
+ */
+const ExternalEndpointsSchema = z
+  .strictObject({
+    /**
+     * Where the rendered sidecar config is written — the shared `emptyDir` both
+     * containers mount. The sidecar's entrypoint watches this path and SIGHUPs
+     * its own process on change.
+     */
+    configFile: z.string().min(1).prefault('/var/run/gatekeeper/config.yaml'),
+    /**
+     * The sidecar's admin API, which router-api polls for verdicts. Loopback or a
+     * unix socket only — it answers with verdicts, and that is the whole of its
+     * access control (`schemas/gatekeeper-config.schema.json`, `adminListenAddr`).
+     */
+    adminListen: z
+      .string()
+      .regex(
+        /^(unix:.+|(localhost|127(\.\d{1,3}){3}|\[::1]):\d{1,5})$/,
+        'must be unix:<path> or a loopback host:port, e.g. 127.0.0.1:9465',
+      )
+      .prefault('127.0.0.1:9465'),
+    /**
+     * First loopback port the per-endpoint listeners are allocated from. Shared
+     * only within the pod — no Service, no cluster traffic, no exposure.
+     */
+    listenPortBase: integerish().pipe(z.number().int().min(1024).max(65535)).prefault(19000),
+    /** How many consecutive ports the allocator may use, and therefore the endpoint ceiling. */
+    listenPortRange: integerish().pipe(z.number().int().positive().max(4096)).prefault(256),
+    /**
+     * Background full re-verification period for every external endpoint.
+     *
+     * 10 minutes by default and bounded to [1 minute, 1 hour] — Denis's ruling 6.
+     * The upper bound is the point of the range: "hourly" was named as the
+     * acceptable worst case, so a value above it is refused at boot rather than
+     * accepted as a preference.
+     */
+    reattestInterval: durationMs('10m'),
+    /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
+    statusPollInterval: durationMs('5s'),
+  })
+  .check((ctx) => {
+    const { reattestInterval } = ctx.value;
+    if (reattestInterval < MIN_REATTEST_INTERVAL_MS || reattestInterval > MAX_REATTEST_INTERVAL_MS) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['reattestInterval'],
+        message:
+          'externalEndpoints.reattestInterval must be between 1m and 1h (ADR-008 §3): below that the router ' +
+          "re-attests harder than it serves, and above it an admin's trust-list removal could take longer than " +
+          'the hour Denis accepted as the worst case.',
+      });
+    }
+  })
+  .prefault({});
+
 const LogSchema = z
   .strictObject({
     level: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).prefault('info'),
@@ -525,6 +597,7 @@ export const RouterConfigSchema = z.strictObject({
   endpoints: z.array(EndpointSchema).prefault([]),
   models: z.array(ModelSchema).prefault([]),
   evidence: EvidenceSchema,
+  externalEndpoints: ExternalEndpointsSchema,
   rateLimits: RateLimitsSchema,
   auth: AuthSchema,
   billing: BillingSchema,
@@ -541,3 +614,4 @@ export const RouterConfigSchema = z.strictObject({
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
+export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];

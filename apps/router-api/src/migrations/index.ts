@@ -5,6 +5,7 @@ import { WorkspaceFirstRequest1759000000000 } from './1759000000000-WorkspaceFir
 import { ConsoleChatKeys1759100000000 } from './1759100000000-ConsoleChatKeys.js';
 import { ChatHistory1759200000000 } from './1759200000000-ChatHistory.js';
 import { EndpointDeclaredImages1759300000000 } from './1759300000000-EndpointDeclaredImages.js';
+import { ExternalEndpoints1759400000000 } from './1759400000000-ExternalEndpoints.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -20,4 +21,5 @@ export const MIGRATIONS = [
   ConsoleChatKeys1759100000000,
   ChatHistory1759200000000,
   EndpointDeclaredImages1759300000000,
+  ExternalEndpoints1759400000000,
 ];

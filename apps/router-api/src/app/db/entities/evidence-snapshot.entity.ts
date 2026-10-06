@@ -1,6 +1,7 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn, type Relation } from 'typeorm';
 import { idColumn, idPrimaryColumn, jsonColumn, timestampColumn } from '../columns.js';
 import { Endpoint } from './endpoint.entity.js';
+import { ExternalEndpoint } from './external-endpoint.entity.js';
 
 export interface CertificateSummary {
   subject: string;
@@ -17,6 +18,11 @@ export interface CertificateSummary {
  * the user's Gatekeeper. Accordingly this table has no boolean about validity,
  * no verdict, no verifier identity — adding one would be a design regression,
  * and `evidence-snapshot.entity.spec.ts` fails the build if one appears.
+ *
+ * That holds for an external upstream's bundle too (ADR-008 §6): the verdict
+ * about it lives on {@link ExternalEndpoint}, which is re-derived live, and what
+ * is filed here is still only what the upstream published. Storing it is what
+ * lets the console relay the raw bundle for a user's own in-browser check.
  */
 @Entity({ name: 'evidence_snapshots' })
 @Index('IDX_evidence_snapshots_identity', ['endpointId', 'evidenceDigest', 'certFingerprint', 'issuedAt'], {
@@ -29,6 +35,19 @@ export class EvidenceSnapshot {
   @Index('IDX_evidence_snapshots_endpointId')
   @Column(idColumn())
   endpointId!: string;
+
+  /**
+   * The external upstream this bundle was published by, or null for one of this
+   * router's own endpoints (ADR-008 §6).
+   *
+   * Additive only, like `generations.externalEndpointId`: the poller leg that
+   * writes external bundles — and the identity key it will need, which has to
+   * cover this column because `endpointId` cannot be its discriminator — lands
+   * with the stage that extends the raw-bundle relay (§7).
+   */
+  @Index('IDX_evidence_snapshots_externalEndpointId')
+  @Column(idColumn({ nullable: true }))
+  externalEndpointId!: string | null;
 
   @Column(timestampColumn())
   fetchedAt!: Date;
@@ -74,4 +93,8 @@ export class EvidenceSnapshot {
   )
   @JoinColumn({ name: 'endpointId' })
   endpoint?: Relation<Endpoint>;
+
+  @ManyToOne(() => ExternalEndpoint, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'externalEndpointId' })
+  externalEndpoint?: Relation<ExternalEndpoint>;
 }

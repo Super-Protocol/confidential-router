@@ -87,9 +87,18 @@ Two sources, later wins:
    is read as snake_case: `CR_API_SERVER__PORT=4000` sets `server.port`,
    `CR_API_AUTH__GITHUB__CLIENT_ID` sets `auth.github.clientId`.
 
-   Two names under that prefix are meta-variables, not configuration, and are
-   skipped by the loader: `CR_API_CONFIG_FILE` (where to look) and
-   `CR_API_VERSION` (the build identifier `/health` reports).
+   Three names under that prefix are not configuration and are skipped by the
+   loader: `CR_API_CONFIG_FILE` (where to look), `CR_API_VERSION` (the build
+   identifier `/health` reports), and `CR_API_SECRETS_KEY`.
+
+   `CR_API_SECRETS_KEY` is the AES-256 data key for stored upstream API keys
+   (ADR-008 §6) — 32 random bytes, base64url- or hex-encoded, from a Kubernetes
+   Secret. It is skipped for a stronger reason than the other two: the config tree
+   is what a rendered ConfigMap and every validation message are made of, and both
+   are readable. `src/app/secrets/secret-envelope.ts` reads the variable directly
+   and is the only thing that does. With it unset the service boots normally and
+   says so; registering an external endpoint is what gets refused. Rotating it
+   makes every stored upstream key unreadable, so they have to be re-entered.
 
 Every section is strict. An unknown key — `CR_API_SERVER__PROT=4000`, a stray
 setting in the YAML — fails the boot rather than being silently dropped, which
@@ -167,6 +176,13 @@ schema the entities describe, on both databases — the PostgreSQL half runs whe
 a metered generation can take a foreign key on the model it used; an entry the
 config no longer lists is kept with `enabled = false` rather than deleted, so
 past generations still resolve. Nothing creates or edits either through the API.
+
+Since ADR-008 the `models` table has a second origin: `origin: 'external'` rows,
+registered by an admin at runtime and pointing at an `ExternalEndpoint` rather
+than at one of this router's own. They share the table so that `/v1/models`, key
+scopes, metering, Activity and Logs need no union, and the boot projection leaves
+them strictly alone — `CatalogService`'s retire clause carries `origin: 'config'`
+for exactly that reason. See "External model endpoints" below.
 
 A development catalogue — the design prototype's eight open-weight models across
 three confidential endpoints — is committed as `conf/router.dev-seed.yaml`:
@@ -314,6 +330,47 @@ user id: a public form that named its own account would be a way to mint $100
 into a stranger's. Inert until `feedback.form` is configured — no offer, and the
 webhook is a hard 404.
 
+## External model endpoints
+
+A model may live in **another** deployment or another Swarm cloud, registered at
+runtime by an admin and attested by this router before any prompt is proxied
+(ADR-008). The verification runs in a Go sidecar — the gatekeeper core, as a
+second container in this pod — so there is no second implementation of the
+pipeline to keep in step.
+
+This service drives it through a file and reads it back over a socket:
+
+- **`SidecarConfigWriterService`** renders `externalEndpoints.configFile` from
+  `external_endpoints` and `trusted_measurements` on boot and after every admin
+  mutation, atomically, and only when the bytes change. Every endpoint is rendered
+  `trust: cloud-measurement` and `failMode: closed`; there is no setting that
+  renders otherwise, and the file carries no secret — the upstream API key is
+  injected by router-api on the egress leg and the sidecar passes `Authorization`
+  through untouched. `testdata/sidecar-config.golden.yaml` is the committed shape.
+- **`ExternalEndpointStatusPollerService`** reads the sidecar's `/verdicts` every
+  `externalEndpoints.statusPollInterval` and projects each one onto its row and
+  its event timeline. A transition is an event; a repetition is not.
+- **`ExternalCatalogService`** holds the routable external models — a model is in
+  it **iff** its endpoint is enabled and `verified`, which is the fail-closed drop
+  of a failed re-attestation as seen from the admission side. The sidecar refuses
+  the same request at the egress; two independent refusals for one rule, because
+  the two halves live in different processes.
+
+Nothing here persists trust. On boot every external endpoint is forced back to
+`pending` — out of the catalogue, refusing routing — until the sidecar reports a
+live verdict, because the sidecar has thrown its own verdicts away too. The status
+columns and the timeline are the documented narrowing of data-model invariant 2:
+display and admission state re-derived from live verification, never an input to
+it.
+
+The upstream API key is the one reversible secret at rest in this service
+(`src/app/secrets/`): AES-256-GCM under `CR_API_SECRETS_KEY`, bound to the row
+that holds it, write-only through the API, with `apiKeyPrefix` kept for display
+and rotation expressed as a new write.
+
+On a laptop no sidecar runs, so the poll logs that it cannot reach one and every
+external endpoint stays `pending`. That is the fail-closed state, not a failure.
+
 ## The console GraphQL API
 
 Code-first Apollo at `/graphql`, one schema for all nine console screens
@@ -379,6 +436,8 @@ src/
     api-keys/             minting, hashing and authentication of /v1 credentials
     catalog/              config → endpoints/models projection, served from memory
     evidence/             bundle retrieval, snapshots, poller, coverage, /v1/evidence
+    external-endpoints/   sidecar config renderer, verdict status sync, external catalogue
+    secrets/              AES-256-GCM envelope for the one reversible secret at rest
     metering/             pricing, token estimation, evidence coverage, the meter
     activity/             SQL aggregates, the generation log and its CSV
     billing/              credits ledger, payment providers, automatic top-up
