@@ -13,6 +13,15 @@ export type OpenAiErrorType =
   | 'permission_error'
   | 'rate_limit_error'
   | 'upstream_error'
+  /**
+   * The router refusing to proxy to an upstream it has not verified.
+   *
+   * The same `type` the user-side gatekeeper emits, deliberately: for a model in
+   * another deployment the router *is* a gatekeeper (ADR-008 §1), and a client
+   * that already branches on `gatekeeper_error` should not need a second name for
+   * the same refusal. The error table in `docs/contracts/router-api.md` says so.
+   */
+  | 'gatekeeper_error'
   | 'server_error';
 
 export interface OpenAiErrorBody {
@@ -162,6 +171,41 @@ export const openAiErrors = {
 
   backendError: (message: string) =>
     new OpenAiApiError({ status: 502, type: 'upstream_error', code: 'backend_error', message }),
+
+  /**
+   * No live verdict admits the upstream this model lives on, so nothing was sent
+   * (ADR-008, decision 5). Raised both by the router's own admission check and by
+   * the sidecar's fail-closed 503, which is the same refusal one hop further out.
+   */
+  attestationFailed: (message: string) =>
+    new OpenAiApiError({
+      status: 503,
+      type: 'gatekeeper_error',
+      code: 'attestation_failed',
+      // `no-store`, like the sidecar's own denial: a cached refusal would outlive
+      // the verdict that caused it.
+      headers: { 'Cache-Control': 'no-store' },
+      message,
+    }),
+
+  /**
+   * The verdict was withdrawn while a generation was already streaming: the
+   * sidecar closed the connection under it (`pkg/proxy/endpoint.go` `applyVerdict`
+   * under `failMode: closed`).
+   *
+   * A separate code from {@link attestationFailed} because it answers a different
+   * question — the request was admitted, and then policy changed — and a client
+   * that retries a flaky backend should not retry this one until an admin acts.
+   * Denis's ruling 5 on SUP-221: the client sees policy, not flakiness.
+   */
+  attestationRevoked: (message: string) =>
+    new OpenAiApiError({
+      status: 503,
+      type: 'gatekeeper_error',
+      code: 'attestation_revoked',
+      headers: { 'Cache-Control': 'no-store' },
+      message,
+    }),
 
   internal: () =>
     new OpenAiApiError({

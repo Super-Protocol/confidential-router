@@ -1,13 +1,21 @@
 import type { Response as ExpressResponse } from 'express';
+import type { GenerationStatus } from '../../db/entities/generation.entity.js';
 import { computeCostMicros } from '../../metering/pricing.js';
 import { estimatePromptTokens, estimateTokens } from '../../metering/token-estimator.js';
 import type { GatewayContext, GenerationOutcome } from './gateway.types.js';
-import { asOpenAiError } from './openai-error.js';
+import { asOpenAiError, type OpenAiApiError } from './openai-error.js';
 import { deltaTextOf, finishReasonOf, readUsage, shapeResponse, type UsageCounts } from './response-shaping.js';
 import { dataPayloadOf, formatDataEvent, SSE_DONE, SSE_HEARTBEAT, splitSseEvents } from './sse.js';
 
 /** `docs/contracts/router-api.md`: a comment line while waiting for the first token. */
 export const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** What a leg makes of a stream that broke after its headers were out. */
+export interface StreamFailure {
+  error: OpenAiApiError;
+  /** What the meter should call it — `error`, or `aborted` when policy ended it. */
+  status: GenerationStatus;
+}
 
 export interface StreamRelayInput {
   context: GatewayContext;
@@ -20,7 +28,19 @@ export interface StreamRelayInput {
   abort: AbortController;
   /** Overridable so a test does not have to wait a quarter of a minute. */
   heartbeatIntervalMs?: number;
+  /**
+   * How this leg explains a stream that died mid-flight. Defaults to "the router
+   * failed", which is all the LiteLLM leg can honestly say about a dropped socket;
+   * the external leg asks the sidecar and can report a withdrawn verdict instead
+   * (ADR-008 §3, Denis's ruling 5).
+   */
+  failureMapper?: (failure: unknown) => Promise<StreamFailure>;
 }
+
+const DEFAULT_FAILURE_MAPPER = async (failure: unknown): Promise<StreamFailure> => ({
+  error: asOpenAiError(failure),
+  status: 'error',
+});
 
 /**
  * Forwards an SSE completion, event by event, as it arrives.
@@ -168,13 +188,15 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
   }
 
   let errorCode: string | null = null;
+  let meteredStatus: GenerationStatus = aborted ? 'aborted' : failure ? 'error' : 'ok';
   if (failure && !aborted) {
     // The status line is long gone, so the contract puts the error in the
     // stream: one last `data:` event carrying an OpenAI error object, then the
     // terminator the client is waiting for.
-    const error = asOpenAiError(failure);
-    errorCode = error.code;
-    emit(formatDataEvent(JSON.stringify(error.toBody())));
+    const mapped = await (input.failureMapper ?? DEFAULT_FAILURE_MAPPER)(failure);
+    errorCode = mapped.error.code;
+    meteredStatus = mapped.status;
+    emit(formatDataEvent(JSON.stringify(mapped.error.toBody())));
   }
   if (!sawDone && !aborted) {
     emit(SSE_DONE);
@@ -189,7 +211,7 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
   };
   return {
     ...counts,
-    status: aborted ? 'aborted' : failure ? 'error' : 'ok',
+    status: meteredStatus,
     errorCode,
     finishReason,
     timeToFirstTokenMs,
@@ -200,7 +222,7 @@ export function extensionFor(context: GatewayContext, counts: UsageCounts) {
   return {
     costMicros: computeCostMicros(counts, context.model),
     endpoint: context.model.endpoint.name,
-    evidenceDigest: context.coverage?.evidenceDigest ?? null,
+    evidenceDigest: context.evidenceDigest,
   };
 }
 

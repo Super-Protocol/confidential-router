@@ -228,8 +228,30 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | 404 | `invalid_request_error` | `model_not_found`, `not_found` |
 | 429 | `rate_limit_error` | `rate_limit_exceeded` (+ `Retry-After`, `X-RateLimit-Limit/Remaining/Reset`) |
 | 502 | `upstream_error` | `backend_unavailable`, `backend_error` |
-| 503 | `gatekeeper_error` | `attestation_failed` — emitted by the **gatekeeper**, never by the router |
+| 503 | `gatekeeper_error` | `attestation_failed`, `attestation_revoked` — see below |
 | 500 | `server_error` | `internal` |
+
+`gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
+ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at
+runtime — the router *is* a gatekeeper, and says so in the same vocabulary a client already branches on.
+
+- **`attestation_failed`** — nothing was sent. Raised when no live verdict admits the endpoint serving
+  the requested model, either by the router's own admission check (the model is registered but its
+  endpoint is `pending` or `denied`) or by the egress sidecar's fail-closed 503 one hop later, which
+  covers the window between a verdict flip and the status poll that projects it. The message names the
+  endpoint and the stage that denied. `Cache-Control: no-store`, because a cached refusal would outlive
+  the verdict that caused it.
+- **`attestation_revoked`** — the request was admitted and then policy changed: the verdict was
+  withdrawn while the generation was streaming, so the sidecar closed the connection under it. The
+  stream ends with this error as its last `data:` event followed by `[DONE]`, and the generation is
+  metered `aborted` with the tokens already delivered. A client retrying a flaky backend should not
+  retry this until an admin acts.
+
+A model whose endpoint holds no verdict is also **absent** from `GET /v1/models` and answers 404 on
+`GET /v1/models/{id}` — it is not listed-but-broken (ADR-008, decision 5). Everything else about an
+external model's request is identical to a built-in's: the same rate-limit buckets, the same metering
+row, the same SSE relay, the same response shape. `usage.endpoint` names the external endpoint and
+`usage.evidence_digest` carries the upstream digest the admitting verdict observed.
 
 Rate limits are four minute buckets, checked on admission in this order: requests per key, requests per
 workspace, tokens per key, tokens per workspace. `requestsPerMinute` / `tokensPerMinute` come from the key
@@ -252,6 +274,19 @@ pricing.completion_per_1m_micros / 1e6`, rounded up to 1 micro-USD, written as o
 `Authorization: Bearer <litellm key>` and `x-litellm-metadata` with the generation id; timeouts
 `backends.litellm.{connectTimeout, readTimeout}`. Plain HTTP inside the cluster (ADR-002 §4). For CI a mock
 LiteLLM (`docker/mock-litellm`) implements the same three routes with canned streaming output.
+
+## Router ↔ an external endpoint
+
+The other forward target, for a model in someone else's deployment (ADR-008 §4). The router posts the
+same three routes to `http://127.0.0.1:<listenPort>` — the egress sidecar's loopback listener for that
+endpoint, recorded on its `external_endpoints` row — with `model` rewritten to the registered upstream
+name and `Authorization: Bearer <upstream API key>` **injected by router-api** from the sealed envelope;
+the sidecar passes that header through untouched and holds no credential of its own. Timeouts
+`externalEndpoints.{connectTimeout, readTimeout}`.
+
+No `x-litellm-metadata` and no generation id go out: LiteLLM gets one because its logs are inside this
+cluster space, and another operator's are not. The sidecar dials the upstream over TLS verified against
+the pinned leaf only, never a CA bundle, and it is the only process here that holds a certificate.
 
 ## Compatibility promise
 

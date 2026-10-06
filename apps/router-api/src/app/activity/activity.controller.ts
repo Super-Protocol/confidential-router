@@ -11,6 +11,10 @@ const CSV_HEADER = [
   'createdAt',
   'modelId',
   'endpointId',
+  // Added with ADR-008's egress leg: a generation names exactly one endpoint, and
+  // for an external one `endpointId` is empty. Without this column the export
+  // would be the one place that cannot say where a request went.
+  'externalEndpointId',
   'apiKeyId',
   'status',
   'finishReason',
@@ -75,6 +79,7 @@ export class ActivityController {
             generation.createdAt.toISOString(),
             generation.modelId,
             generation.endpointId,
+            generation.externalEndpointId,
             generation.apiKeyId,
             generation.status,
             generation.finishReason,
