@@ -16,7 +16,11 @@ import type { CodegenConfig } from '@graphql-codegen/cli';
  * to `@apollo/client/react`.
  */
 const config: CodegenConfig = {
-  schema: '../router-api/schema.graphql',
+  // Two sources while SUP-225 is in flight: the committed SDL, plus the admin
+  // section's vocabulary as an overlay. `schema.contract-pending.graphql` says
+  // why it exists and how it goes away; `src/components/admin/schema-contract.spec.ts`
+  // is what makes "no silent drift" a build failure rather than a hope.
+  schema: ['../router-api/schema.graphql', './schema.contract-pending.graphql'],
   documents: ['src/**/*.{ts,tsx}', '!src/generated/**'],
   ignoreNoDocuments: false,
   generates: {

@@ -475,3 +475,283 @@ Rotation is narrowed to `(workspaceId, createdByUserId)`. A workspace has member
 open until their cached secret expired. Clients should still treat a `401` of code `api_key_revoked`,
 `api_key_expired` or `invalid_api_key` as "mint again and retry once" — that is what the console does,
 and it is the only reason a caller needs to read those codes.
+
+## As shipped (SUP-225) — the admin section
+
+The external-endpoint control plane (ADR-008 §7), split across two issues that code against this
+block and nothing else: **SUP-225** implements the resolvers in router-api, **SUP-226** the console
+screens. While SUP-225 is in flight the committed `schema.graphql` cannot carry these types — it is
+emitted from the resolvers — so the same SDL also lives at
+[`apps/router-ui/schema.contract-pending.graphql`](../../apps/router-ui/schema.contract-pending.graphql),
+which router-ui's codegen reads as an overlay. `apps/router-ui/src/components/admin/schema-contract.spec.ts`
+asserts the two are byte-identical and fails with a delete-the-overlay instruction the moment the real
+schema defines `externalEndpoints`. A contract change lands **here first**, and both sides follow.
+
+Three decisions in this block are worth reading before the SDL:
+
+1. **The vocabulary names the verifying party.** ADR-002 keeps *published / fresh / stale* for the
+   router's own endpoints because it never verifies itself. An external upstream is the mirror case —
+   there is a verifier, and it is this router — so the enum says `VERIFIED_BY_THIS_ROUTER` /
+   `DENIED_BY_THIS_ROUTER` and never a bare `verified` (ADR-008 §1).
+2. **`ExternalEndpointEvidence` is informational, never gating** (SUP-221 ruling 1). Admission is the
+   measurement check alone, which admits a *cloud* and cannot see which deployment on it answered
+   (threat T13). The console therefore renders the upstream's workloads and image digests for every
+   registered endpoint and on every change — `ExternalEndpointEvent.evidence` is what makes "on every
+   change" a field rather than a convention.
+3. **The two reads are session-scoped, not admin-scoped** (ruling 3, ADR-008 §7). A non-admin gets the
+   same rows with `apiKeyPrefix` and `upstreamModel` null; every mutation is `AdminGuard`. The nav
+   entry is admin-only, which is sidebar hygiene and not the access control.
+
+`me { isAdmin }` is new and is the only thing the browser gates on. The connection-link fast path the
+register dialog accepts has its own contract: [`connection-link.md`](./connection-link.md), with
+shared vectors in [`connection-link-vectors.json`](./connection-link-vectors.json).
+
+```graphql
+"""
+Where an external upstream stands with the verification *this router* performed.
+
+Deliberately not the own-endpoint vocabulary (`EvidenceState`: published / stale
+/ not published). That one is a statement about publication because the router
+never verifies itself (ADR-002); here there *is* a verifying party, so every
+value names it (ADR-008 §1).
+"""
+enum ExternalEndpointStatus {
+  """
+  Registered, no verdict read back yet. Serves nothing (ADR-008 §8).
+  """
+  PENDING
+  VERIFIED_BY_THIS_ROUTER
+  DENIED_BY_THIS_ROUTER
+  """
+  The operator's own switch — not a verdict.
+  """
+  DISABLED
+}
+
+"""
+Which anchor vouched for the measurement the verdict saw (SUP-139).
+"""
+enum MeasurementSource {
+  REGISTRY
+  OPERATOR_PINNED
+}
+
+"""
+The timeline's events. `VERIFIED_BY_THIS_ROUTER` / `DENIED_BY_THIS_ROUTER` rather
+than a bare `VERIFIED` / `DENIED` for the same reason as `ExternalEndpointStatus`:
+the vocabulary rule is absolute, and a timeline entry is exactly where a reader
+would otherwise lose track of who reached the verdict.
+"""
+enum ExternalEndpointEventKind {
+  REGISTERED
+  VERIFIED_BY_THIS_ROUTER
+  DENIED_BY_THIS_ROUTER
+  DIGEST_CHANGED
+  MEASUREMENT_CHANGED
+  DISABLED
+  KEY_ROTATED
+}
+
+"""
+One Kubernetes workload of the upstream's canonical snapshot.
+"""
+type EvidenceWorkload {
+  kind: String!
+  name: String!
+  namespace: String
+  containers: [String!]!
+}
+
+"""
+What a cloud-level admission actually let in: the upstream's workloads and image
+digests. Informational, never gating (SUP-221 ruling 1) — admission is the
+measurement check in ADR-008 §3 and nothing here.
+"""
+type ExternalEndpointEvidence {
+  snapshotId: ID!
+  fetchedAt: DateTime!
+  issuedAt: DateTime!
+  evidenceDigest: String!
+  evidenceDigestHex: String!
+  certFingerprint: String!
+  certFingerprintHex: String!
+  quoteFormat: String
+  """
+  Enclave image digests from the upstream's canonical snapshot.
+  """
+  containerImages: [String!]!
+  workloads: [EvidenceWorkload!]!
+  measurements: [Measurement!]!
+}
+
+"""
+One entry of an external endpoint's verdict timeline. History, never input: a
+past `VERIFIED_BY_THIS_ROUTER` is not current trust (ADR-008 §8).
+"""
+type ExternalEndpointEvent {
+  id: ID!
+  at: DateTime!
+  kind: ExternalEndpointEventKind!
+  """
+  ADR-003 §1 pipeline stage of a refusal: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy.
+  """
+  stage: String
+  reason: String
+  measurement: String
+  evidenceDigest: String
+  """
+  The evidence summary in force at this event, so ruling 1's "at registration and
+  on every change" is literally what the timeline renders. Null when no snapshot
+  was stored for it.
+  """
+  evidence: ExternalEndpointEvidence
+}
+
+type ExternalEndpointModel {
+  id: ID!
+  name: String!
+  """
+  The name the upstream knows it by. Admin only — null for a non-admin reader.
+  """
+  upstreamModel: String
+  contextLength: Int!
+  pricing: Pricing!
+  capabilities: [ModelCapability!]!
+}
+
+"""
+A model endpoint in another deployment, registered at runtime by an admin and
+attested by this router before any prompt is proxied (ADR-008).
+"""
+type ExternalEndpoint {
+  id: ID!
+  """
+  Immutable after registration: it is also the sidecar's endpoint key.
+  """
+  name: String!
+  baseUrl: String!
+  hostname: String!
+  enabled: Boolean!
+  status: ExternalEndpointStatus!
+  lastCheckedAt: DateTime
+  lastStage: String
+  lastReason: String
+  """
+  Normalised mrEnclave hex of the upstream cloud's root, as the verdict observed it.
+  """
+  measurementSeen: String
+  measurementSource: MeasurementSource
+  evidenceDigestSeen: String
+  """
+  The TLS leaf egress is pinned to; no CA bundle is consulted.
+  """
+  pinnedCertFingerprint: String
+  """
+  Leading characters of the upstream API key, so the console can identify a
+  credential it can never read. Admin only — null for a non-admin reader.
+  """
+  apiKeyPrefix: String
+  models: [ExternalEndpointModel!]!
+  """
+  Most recent first.
+  """
+  events: [ExternalEndpointEvent!]!
+  latestEvidence: ExternalEndpointEvidence
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+"""
+One VM launch measurement this deployment accepts for an external upstream — the
+admin trust list, and the sole authority on admission (ADR-008 §3).
+"""
+type TrustedMeasurement {
+  id: ID!
+  measurement: String!
+  note: String
+  addedByEmail: String
+  addedAt: DateTime!
+  """
+  Registered endpoints this row currently admits — what removing it would drop.
+  Computed from the measurement each endpoint's last verdict saw, so it is a
+  statement about the last check and not a promise about the next one.
+  """
+  admits: Int!
+}
+
+input ExternalModelInput {
+  id: String!
+  name: String!
+  upstreamModel: String!
+  contextLength: Int!
+  promptPer1mMicros: String!
+  completionPer1mMicros: String!
+  capabilities: [ModelCapability!]
+}
+
+input RegisterExternalEndpointInput {
+  name: String!
+  baseUrl: String!
+  """
+  The upstream's ordinary LLM API key (decision 3). Write-only: no read path returns it.
+  """
+  apiKey: String!
+  models: [ExternalModelInput!]!
+}
+
+"""
+`name` is absent on purpose — see `ExternalEndpoint.name`.
+"""
+input UpdateExternalEndpointInput {
+  baseUrl: String
+  models: [ExternalModelInput!]
+}
+
+input SetExternalEndpointEnabledInput {
+  enabled: Boolean!
+}
+
+input RotateExternalEndpointKeyInput {
+  apiKey: String!
+}
+
+input AddTrustedMeasurementInput {
+  measurement: String!
+  note: String
+}
+
+extend type User {
+  """
+  Whether this account is in `auth.adminEmails`. Nothing in the browser could
+  know before (`viewer.model.ts`), so the admin nav entry had nothing to gate on.
+  """
+  isAdmin: Boolean!
+}
+
+extend type Query {
+  """
+  Session, not admin: an operator curating external capacity in secret is the
+  configuration this product should make impossible to sell as confidential
+  (ADR-008 §7, ruling 3). A non-admin reader gets the same rows with
+  `apiKeyPrefix` and `upstreamModel` null.
+  """
+  externalEndpoints: [ExternalEndpoint!]!
+  externalEndpoint(id: ID!): ExternalEndpoint
+  """
+  Session, not admin — same reason.
+  """
+  trustedMeasurements: [TrustedMeasurement!]!
+}
+
+extend type Mutation {
+  registerExternalEndpoint(input: RegisterExternalEndpointInput!): ExternalEndpoint!
+  updateExternalEndpoint(id: ID!, input: UpdateExternalEndpointInput!): ExternalEndpoint!
+  setExternalEndpointEnabled(id: ID!, input: SetExternalEndpointEnabledInput!): ExternalEndpoint!
+  rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
+  addTrustedMeasurement(input: AddTrustedMeasurementInput!): TrustedMeasurement!
+  """
+  Takes effect on the next check, and drops every endpoint it was admitting.
+  """
+  removeTrustedMeasurement(id: ID!): Boolean!
+}
+```

@@ -2,6 +2,7 @@ import {
   Activity,
   BookText,
   CreditCard,
+  Globe,
   KeyRound,
   LayoutDashboard,
   type LucideIcon,
@@ -18,6 +19,14 @@ export interface NavItem {
   icon: LucideIcon;
   /** One line of "what is this screen for", used by placeholder pages. */
   summary: string;
+  /**
+   * Drawn only for a viewer `me { isAdmin }` reports as an administrator.
+   *
+   * The screens themselves read for any signed-in member on purpose (ADR-008 §7,
+   * ruling 3) — this flag keeps them out of everyone's sidebar, it is not the
+   * access control. The API is, and it scopes the credential fields away.
+   */
+  adminOnly?: boolean;
 }
 
 export interface NavGroup {
@@ -89,6 +98,25 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Administration',
+    items: [
+      {
+        label: 'External endpoints',
+        href: '/admin/endpoints',
+        icon: Globe,
+        summary: 'Models served by other deployments, and what this router\u2019s own verification says about each.',
+        adminOnly: true,
+      },
+      {
+        label: 'Trust list',
+        href: '/admin/trust',
+        icon: ShieldCheck,
+        summary: 'The launch measurements this deployment accepts for an external upstream.',
+        adminOnly: true,
+      },
+    ],
+  },
+  {
     label: 'Account',
     items: [
       {
@@ -114,6 +142,17 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
+
+/**
+ * The groups one viewer may see, with empty groups dropped — so a non-admin gets
+ * no "Administration" heading over nothing.
+ */
+export function visibleNavGroups(isAdmin: boolean): NavGroup[] {
+  if (isAdmin) return NAV_GROUPS;
+  return NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => !item.adminOnly) })).filter(
+    (group) => group.items.length > 0,
+  );
+}
 
 export function findNavItem(pathname: string): NavItem | undefined {
   return NAV_ITEMS.find((item) => item.href === pathname);
