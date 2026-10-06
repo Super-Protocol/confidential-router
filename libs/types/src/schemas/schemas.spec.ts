@@ -176,6 +176,54 @@ describe('gatekeeper-config rules', () => {
     cfg.endpoints[0].trustedEvidenceDigests = cfg.endpoints[0].trustedEvidence;
     expect(validate(cfg)).toBe(false);
   });
+
+  // ADR-008 §3: a per-endpoint alternative to digest pinning for a caller that registers
+  // upstreams at runtime. One mode per endpoint, and the weaker one is never implicit.
+  describe('trust: cloud-measurement', () => {
+    const measurementEndpoint = () => {
+      const cfg = base();
+      cfg.attestedRoots = { trustedMeasurements: ['a'.repeat(64)] };
+      cfg.endpoints[0].trust = 'cloud-measurement';
+      delete cfg.endpoints[0].trustedEvidence;
+      return cfg;
+    };
+
+    it('accepts an endpoint that trusts its cloud by measurement and pins nothing', () => {
+      expect(validate(measurementEndpoint()), errorsOf(validate)).toBe(true);
+    });
+
+    it('tolerates the empty list the mode requires, which the default mode rejects', () => {
+      const cfg = measurementEndpoint();
+      cfg.endpoints[0].trustedEvidence = [];
+      expect(validate(cfg), errorsOf(validate)).toBe(true);
+    });
+
+    it('rejects an endpoint in both modes: a pin there would not be enforced', () => {
+      const cfg = measurementEndpoint();
+      cfg.endpoints[0].trustedEvidence = [`sha256:${'a'.repeat(64)}`];
+      expect(validate(cfg)).toBe(false);
+      expect(errorsOf(validate)).toContain('/endpoints/0/trustedEvidence');
+    });
+
+    it('rejects an endpoint in neither mode', () => {
+      const cfg = base();
+      delete cfg.endpoints[0].trustedEvidence;
+      expect(validate(cfg)).toBe(false);
+      expect(errorsOf(validate)).toContain('trustedEvidence');
+    });
+
+    it('only allows the two named modes, and `evidence-digest` stays the default', () => {
+      const cfg = base();
+      cfg.endpoints[0].trust = 'evidence-digest';
+      expect(validate(cfg), errorsOf(validate)).toBe(true);
+
+      for (const bad of ['cloud_measurement', 'measurement', 'any', '']) {
+        const broken = measurementEndpoint();
+        broken.endpoints[0].trust = bad;
+        expect(validate(broken), bad).toBe(false);
+      }
+    });
+  });
 });
 
 describe('rego-input rules', () => {

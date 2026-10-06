@@ -322,3 +322,58 @@ func selfSignedPEM(t *testing.T) string {
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
+
+// `policy test` cannot run the attested-root check — no hardware report, no
+// firmware to rebuild a measurement from — which is the whole question for a
+// `trust: cloud-measurement` endpoint. The denial it produces therefore says
+// nothing about the measurement list, and the run has to say so rather than
+// let the tool quietly contradict the data plane.
+func TestEvaluateWarnsThatItCannotAnswerForACloudMeasurementEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	rootPEM := selfSignedPEM(t)
+	body := "version: 1\ntrustedRoots:\n  - name: swarm-cloud-prod\n    pem: |\n" +
+		indent(rootPEM, "      ") +
+		"attestedRoots:\n  trustedMeasurements:\n" +
+		"    - 842c5f2e1d0b4a9c7e6f3d8b5a2c9e0f1b4d7a6c3e8f5b2d9a0c7e4f1b6d3a8c\n" +
+		"endpoints:\n  - name: llama\n    listen: 127.0.0.1:8443\n" +
+		"    upstream: https://llama.tee.swarm.cloud\n    trust: cloud-measurement\n"
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := fixture{dir: dir, configPath: configPath, rootPEM: rootPEM}
+	bundlePath := f.writeBundle(t, pinned, []string{rootPEM})
+
+	result, err := policytesting.EvaluateFile(context.Background(), bundlePath, configPath, policytesting.Options{})
+	if err != nil {
+		t.Fatalf("EvaluateFile: %v", err)
+	}
+	if result.Decision.Allow {
+		t.Fatal("the built-in policy allowed without an attested root")
+	}
+	joined := strings.Join(result.Warnings, "\n")
+	for _, want := range []string{
+		"trust: cloud-measurement",
+		"did not evaluate the attested-root check",
+		"gatekeeper verify llama",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings do not mention %q: %v", want, result.Warnings)
+		}
+	}
+}
+
+// And the warning is specific to the mode: a digest-pinned endpoint's run is
+// unchanged, so the extra line cannot become noise everyone learns to skip.
+func TestADigestPinnedRunCarriesNoAttestedRootWarning(t *testing.T) {
+	f := newFixture(t, "")
+	bundlePath := f.writeBundle(t, pinned, []string{f.rootPEM})
+
+	result, err := policytesting.EvaluateFile(context.Background(), bundlePath, f.configPath, policytesting.Options{})
+	if err != nil {
+		t.Fatalf("EvaluateFile: %v", err)
+	}
+	if joined := strings.Join(result.Warnings, "\n"); strings.Contains(joined, "attested-root check") {
+		t.Errorf("a digest-pinned run gained the cloud-measurement warning: %v", result.Warnings)
+	}
+}

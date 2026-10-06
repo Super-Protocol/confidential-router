@@ -37,6 +37,12 @@ func GenerateTrustModule(snap trust.Snapshot) string {
 		b.WriteString("}\n\n")
 	}
 
+	// The operator's own measurement pins (`attestedRoots.trustedMeasurements`),
+	// which is what a `trust: cloud-measurement` endpoint is admitted against.
+	// Rendered unconditionally so a policy can iterate the set without first
+	// checking that the key exists.
+	b.WriteString("measurements := " + set(snap.Measurements) + "\n\n")
+
 	b.WriteString("endpoints := {")
 	if len(snap.Endpoints) == 0 {
 		b.WriteString("}\n")
@@ -47,6 +53,7 @@ func GenerateTrustModule(snap trust.Snapshot) string {
 		fmt.Fprintf(&b, "\t%s: {\n", quote(ep.Name))
 		fmt.Fprintf(&b, "\t\t\"hostname\": %s,\n", quote(ep.Hostname))
 		fmt.Fprintf(&b, "\t\t\"fail_mode\": %s,\n", quote(ep.FailMode))
+		fmt.Fprintf(&b, "\t\t\"trust\": %s,\n", quote(ep.Trust))
 		fmt.Fprintf(&b, "\t\t\"evidence_digests\": %s,\n", set(ep.Digests))
 		fmt.Fprintf(&b, "\t\t\"evidence_digests_hex\": %s,\n", set(ep.DigestsHex))
 		b.WriteString("\t},\n")

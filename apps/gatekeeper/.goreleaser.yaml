@@ -154,8 +154,14 @@ release:
     Every binary is a static `CGO_ENABLED=0` build of
     `{{ .ModulePath }}` at `{{ .FullCommit }}`.
 
+# The ghcr.io image for `gatekeeper run --headless` in a cluster is built from
+# ../../gatekeeper.dockerfile and published by the same workflow's `image` job
+# (SUP-222, ADR-008 §2). It is deliberately not a GoReleaser `docker` build: the
+# image needs a second binary (cmd/gatekeeper-sidecar, the entrypoint that
+# reloads a rendered configuration) and a non-root read-only-rootfs runner
+# stage, neither of which belongs in the archive matrix below.
+#
 # Not published yet, deliberately (SUP-64 decision Q7 — GitHub Releases only):
-# TODO(SUP-64): ghcr.io image for `gatekeeper run --headless` in a cluster.
 # TODO(SUP-64): Homebrew tap for `brew install super-protocol/tap/gatekeeper`.
 # TODO(SUP-64): nfpms deb/rpm packages, once a systemd unit ships as a package.
 # TODO(SUP-64): cosign keyless signing + SLSA provenance for the checksums file.

@@ -39,6 +39,32 @@ const (
 	FailOpen = "open"
 )
 
+// Trust modes of an endpoint: what the built-in policy requires before it
+// admits a verified bundle (ADR-008 §3).
+const (
+	// TrustEvidenceDigest admits only an evidenceDigest the endpoint's owner
+	// pinned in `trustedEvidence`. It is the default, the only mode the CLI
+	// writes, and the only one that identifies a *deployment*.
+	TrustEvidenceDigest = "evidence-digest"
+	// TrustCloudMeasurement admits any deployment running on a cloud whose root
+	// CA passed the attested-root check with a measurement listed in
+	// `attestedRoots.trustedMeasurements`.
+	//
+	// It is strictly weaker than [TrustEvidenceDigest]: *a measurement admits a
+	// cloud, never a deployment*. Every other leg still applies — the hardware
+	// report and its vendor chain, the reportData↔key binding, the measurement
+	// rebuild, `requireNetworkType`, the JWS, freshness and the observed
+	// channel binding — but which workload answers inside that cloud is not
+	// part of what was checked. It exists for a caller that registers upstreams
+	// at runtime and cannot approve each one by digest (ADR-008 decision 1);
+	// it is never written by `gatekeeper init` or the `endpoint` commands.
+	TrustCloudMeasurement = "cloud-measurement"
+)
+
+// trustModes are the accepted `trust` values, in the order error messages list
+// them.
+var trustModes = []string{TrustEvidenceDigest, TrustCloudMeasurement}
+
 // Built-in tuning defaults (ADR-003 §7); they are the bottom layer of the
 // precedence chain and are also what the JSON schema documents.
 const (
@@ -153,8 +179,23 @@ type Endpoint struct {
 	// writes and what `endpoint trust add --from-upstream` then fills in — but
 	// it can never admit traffic, which is what [Config.Validate] reports and
 	// [Config.ValidateEditable] tolerates.
-	TrustedEvidence DigestList     `yaml:"trustedEvidence"`
-	Tuning          EndpointTuning `yaml:",inline"`
+	TrustedEvidence DigestList `yaml:"trustedEvidence"`
+	// Trust selects what the built-in policy requires for this endpoint:
+	// [TrustEvidenceDigest] (the default, and what an empty value means) or
+	// [TrustCloudMeasurement]. The two are mutually exclusive — a
+	// `cloud-measurement` endpoint must not also carry `trustedEvidence`, so
+	// that nobody can read a stale pin as though it were still enforced.
+	Trust  string         `yaml:"trust,omitempty"`
+	Tuning EndpointTuning `yaml:",inline"`
+}
+
+// TrustMode resolves the endpoint's trust mode, mapping an unset value to the
+// digest-pinned default.
+func (e Endpoint) TrustMode() string {
+	if e.Trust == "" {
+		return TrustEvidenceDigest
+	}
+	return e.Trust
 }
 
 // Tuning is a fully resolved set of endpoint knobs — no inheritance left.

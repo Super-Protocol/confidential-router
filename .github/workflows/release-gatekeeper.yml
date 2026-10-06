@@ -10,12 +10,20 @@ name: Release gatekeeper
 #   * nightly, or on demand -> the rolling `gatekeeper-nightly` pre-release,
 #     rebuilt from the default branch when it has moved.
 #
+# A tag and a push to main additionally publish the container image (ADR-008 §2:
+# the gatekeeper also ships as an attested egress inside a pod). The image is
+# the *other* packaging, not a replacement: what a person installs is still a
+# binary from a Release.
+#
 # The tag prefix exists because this is a monorepo and the router will get tags
 # of its own; see apps/gatekeeper/.goreleaser.yaml for how the bare version is
 # recovered from it.
 
 on:
   push:
+    # A branch push publishes only the container image; the `release` job is
+    # tag-gated and `nightly` is schedule/dispatch-gated.
+    branches: [main]
     tags:
       - 'gatekeeper-v*'
   schedule:
@@ -50,6 +58,123 @@ jobs:
       # code that would not have passed review.
       - name: vet, test, static build and lint
         uses: ./.github/actions/go-checks
+
+  # The container image, published alongside the binaries (ADR-008 §2). Its
+  # digest is what a chart pins and therefore what a user's `evidenceDigest`
+  # covers, so it is built from the same commit the Release is cut from and
+  # attested to this run.
+  image:
+    name: Container image
+    needs: checks
+    if: >-
+      startsWith(github.ref, 'refs/tags/gatekeeper-v') ||
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      # For the build provenance attestation, which ties the published digest
+      # back to this workflow run.
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Not left to `docker/metadata-action`: the `gatekeeper-v` prefix contains
+      # a hyphen, which its own prerelease detection reads as a prerelease
+      # marker, and `${{ github.repository }}` keeps the owner's capitalisation
+      # while an OCI reference has to be lowercase. Same reasoning as
+      # release-router.yml.
+      - name: Resolve the version and image name
+        id: release
+        run: |
+          set -euo pipefail
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/gatekeeper" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/gatekeeper-v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/gatekeeper-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+          # The commit date, matching what GoReleaser stamps into the released
+          # binaries (`mod_timestamp`/`.CommitDate`), so `gatekeeper version`
+          # reads the same from the image as from the archive.
+          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.release.outputs.image }}
+          # `type=semver` is given the resolved version rather than the ref, so
+          # it still skips the moving tags and `latest` for a prerelease.
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
+            type=raw,value=build${{ github.run_number }}
+            type=ref,event=branch
+            type=sha,prefix=main-,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.title=gatekeeper
+            org.opencontainers.image.description=Confidential Router — gatekeeper, the attesting proxy
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: gatekeeper.dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # linux/amd64 and arm64: the binary is a pure-Go cross-compile, so
+          # arm64 costs a second `go build` rather than an emulated toolchain.
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=gatekeeper
+          cache-to: type=gha,mode=max,scope=gatekeeper
+          build-args: |
+            GATEKEEPER_VERSION=${{ steps.release.outputs.version || format('0.0.0-{0}', github.sha) }}
+            GATEKEEPER_COMMIT=${{ github.sha }}
+            GATEKEEPER_DATE=${{ steps.release.outputs.date }}
+
+      # The digest a chart pins, traceable to this run. Consumers check it with
+      # `gh attestation verify oci://<image>@<digest> --repo <repo>`.
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.release.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      # The digest is the deliverable: it is what app.yaml pins and what the
+      # user's canonical snapshot then covers, so it is printed where whoever
+      # bumps the chart can copy it.
+      - name: Summary
+        run: |
+          {
+            echo '### gatekeeper image'
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Publish the release

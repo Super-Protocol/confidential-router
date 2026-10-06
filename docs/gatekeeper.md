@@ -176,6 +176,77 @@ The list is plural so a **rollout can be pre-approved**: pin the new digest next
 to the old one, deploy, then unpin the old one. Nothing is refused in between.
 An endpoint with an empty list can never admit anything, and says so.
 
+### `trust: cloud-measurement` — the weaker mode, and who it is for
+
+> **A measurement admits a cloud, never a deployment.** This mode gives up the
+> one guarantee the rest of this document is about. Do not reach for it to avoid
+> the work of pinning a digest.
+
+Everything above assumes you can approve each upstream once, by digest. A caller
+that registers upstreams **at runtime** cannot: it learns of a new model endpoint
+and has to decide about it without a human in the loop. For that case — and only
+that case — an endpoint can declare a different question:
+
+```yaml
+endpoints:
+  - name: external-llama
+    listen: 127.0.0.1:8443
+    upstream: https://llama.other-cloud.example
+    trust: cloud-measurement   # admits any deployment on an accepted cloud
+    trustedEvidence: []        # must be empty: nothing here would be enforced
+```
+
+with the clouds you accept listed once, globally:
+
+```yaml
+attestedRoots:
+  trustedMeasurements:
+    - 842c…   # the VM measurement of a cloud's root CA, from `gatekeeper verify`
+```
+
+Admission then means: the bundle verified through the whole pipeline **and** the
+upstream's root CA passed the attested-root check **and** the measurement that
+check derived is on that list. What it does *not* mean is anything about *which
+workload* answered. Every deployment in that cloud — including one that was
+compromised or stood up by someone else with access to it — satisfies this
+endpoint. The rest of the chain is untouched: the hardware report and its vendor
+chain, the `reportData`↔key binding, the measurement rebuild,
+`requireNetworkType`, the JWS, freshness and the observed channel binding all
+still have to pass, and every user policy still runs.
+
+**The list is the sole authority here.** Unlike the user-side semantics of
+`trustedMeasurements` (which *add to* the registry's signatures — see below), a
+`cloud-measurement` endpoint admits only measurements on your list. A cloud Super
+Protocol's registry signed but you did not list is **denied**;
+`measurementSource` still reports the registry signature, and a user policy may
+read it, but it admits nothing on its own. Digest-pinned endpoints keep the
+original semantics exactly.
+
+Three more properties worth knowing:
+
+- `gatekeeper init`, `endpoint add` and `endpoint trust add` never write this
+  mode or produce it by default. It is set by editing the config file, which is
+  how a programmatic driver — the router's attested egress, ADR-008 §5 — renders
+  its config. `endpoint trust add` refuses to put a pin on such an endpoint
+  rather than writing one that would not be enforced.
+- The two modes are mutually exclusive, and the config refuses a file that
+  declares both or neither. `trust: cloud-measurement` with no
+  `attestedRoots.trustedMeasurements`, or with `attestedRoots.enabled: false`,
+  is also refused: it could never admit anything.
+- It needs the **attested-root** path, not merely a measurement that matches.
+  `trustedRoots` wins when both apply, and a root taken from that list derives
+  no measurement at all — so a cloud-measurement endpoint whose root you also
+  pinned by certificate is denied, and says so.
+
+A denial names which half is missing:
+
+```
+DENIED — policy: the built-in pin policy (gatekeeper.default) denied (measurement
+842c… is not listed in attestedRoots.trustedMeasurements — the Super Protocol
+registry does sign it, but in this mode the list is the sole authority and a
+registry signature admits nothing on its own)
+```
+
 ## What a verdict is made of
 
 ```
@@ -294,7 +365,9 @@ becomes "I accept this image".
   is compared against is derived, not asserted;
 - `attestedRoots.requireNetworkType` still applies;
 - every policy still runs, and the endpoint's own `trustedEvidence` pin still has
-  to match. A measurement admits a *cloud*; it never admits a deployment.
+  to match. A measurement admits a *cloud*; it never admits a deployment. (The
+  one endpoint that drops this last requirement declares it explicitly, with
+  `trust: cloud-measurement` — see above.)
 
 **What it means.** A pinned measurement is your signature where Super Protocol's
 would have been. It says "I looked at this image's identity and I accept it", and
@@ -374,6 +447,8 @@ deny. The full `input` document is `docs/contracts/rego-input.md`.
 
 ### The built-in policy
 
+One clause per trust mode; each endpoint is in exactly one of them.
+
 ```rego
 package gatekeeper.default
 
@@ -381,8 +456,22 @@ default allow := false
 
 allow if {
   input.attestation.verified == true
-  some digest in data.gatekeeper.trust.endpoints[input.endpoint].evidence_digests
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "evidence-digest"
+  some digest in endpoint.evidence_digests
   digest == input.evidence.evidenceDigest
+}
+
+# See "`trust: cloud-measurement` — the weaker mode" above. A measurement admits
+# a cloud, never a deployment, and `data.gatekeeper.trust.measurements` is the
+# sole authority: a registry signature alone does not admit here.
+allow if {
+  input.attestation.verified == true
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "cloud-measurement"
+  input.attestation.rootAttestation.attested == true
+  some measurement in data.gatekeeper.trust.measurements
+  measurement == input.attestation.rootAttestation.measurement
 }
 ```
 
@@ -496,6 +585,12 @@ gatekeeper policy test --bundle ./bundle.json --config ./config.yaml --endpoint 
 Same evaluation, no network, per-package results. `gatekeeper verify <endpoint>
 --json` gets you a bundle to feed it.
 
+It cannot run the attested-root check — that needs a hardware report and the
+firmware to rebuild a measurement from, neither of which is in a saved bundle.
+For a `trust: cloud-measurement` endpoint that is not a shortcut but the whole
+question, so the run says so in its warnings and its denial means nothing about
+your measurement list. `gatekeeper verify <endpoint>` is what answers for one.
+
 ## Operating it
 
 - **`gatekeeper run`** opens the dashboard when it has a terminal; `--headless`
@@ -511,6 +606,40 @@ Same evaluation, no network, per-package results. `gatekeeper verify <endpoint>
   `rootAnchor` — `trustedRoots`, `attested (registry)` or
   `attested (operator-pinned)` — so a review can tell what admitted a cloud
   without reconstructing the configuration that was in force at the time.
+
+### In a cluster
+
+What a person installs is a binary from a GitHub Release. The other packaging is
+a container image, for a pod that runs the gatekeeper as an **attested egress**
+next to the process it serves (ADR-008 §2):
+
+```
+ghcr.io/super-protocol/confidential-router/gatekeeper:<version>
+```
+
+It holds the same `CGO_ENABLED=0` binary the archives do, runs as uid 65532 on a
+read-only root filesystem, and writes nothing — so pin it by digest and give it
+nothing it does not need:
+
+```bash
+docker run --rm --read-only --user 65532 \
+  -v ./config.yaml:/etc/gatekeeper/config.yaml:ro \
+  -p 8443:8443 ghcr.io/super-protocol/confidential-router/gatekeeper@sha256:…
+```
+
+The entrypoint is not the gatekeeper itself but a supervisor, because in this
+shape the configuration is **rendered** rather than edited: it waits for
+`$GATEKEEPER_CONFIG` (default `/etc/gatekeeper/config.yaml`) to appear, runs
+`gatekeeper run --headless`, and sends SIGHUP whenever the file's contents
+change — so an edit by whoever renders it is applied in place, without
+`shareProcessNamespace` and without restarting endpoints that did not change. A
+re-render of identical bytes is not a change and costs nothing.
+`$GATEKEEPER_WATCH_INTERVAL` (default `2s`) tunes the poll. SIGTERM is passed
+through, so the gatekeeper drains its own listeners and the container exits with
+the gatekeeper's status.
+
+One-shot commands skip the supervisor:
+`--entrypoint /usr/local/bin/gatekeeper`.
 
 ## See also
 
