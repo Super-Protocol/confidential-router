@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { publicConfig } from '../../../lib/public-config';
-import { type GateResult, runEvidenceGate } from './evidence-gate';
+import { type EndpointKind, type GateResult, runEvidenceGate } from './evidence-gate';
 import { type BridgeOutcome, requestExtensionVerification } from './extension-bridge';
 import { extensionTierState, pageTierState, type TierState } from './tiers';
 
@@ -30,6 +30,11 @@ export interface VerificationState {
 export interface UseVerificationInput {
   hostname: string | null;
   endpointName: string | null;
+  /**
+   * Whose endpoint this is. `external` reads the bundle through this router's
+   * relay only, and asks no extension — see {@link useVerification}.
+   */
+  kind?: EndpointKind;
 }
 
 /**
@@ -41,7 +46,7 @@ export interface UseVerificationInput {
  * so it is asked in parallel rather than after tier 1 passes. An absent extension
  * resolves as "absent" after a short timeout and never blocks anything.
  */
-export function useVerification({ hostname, endpointName }: UseVerificationInput): VerificationState {
+export function useVerification({ hostname, endpointName, kind = 'own' }: UseVerificationInput): VerificationState {
   const [gate, setGate] = React.useState<GateResult | null>(null);
   const [checkedAt, setCheckedAt] = React.useState<Date | null>(null);
   const [extension, setExtension] = React.useState<BridgeOutcome | null>(null);
@@ -59,19 +64,23 @@ export function useVerification({ hostname, endpointName }: UseVerificationInput
     setCheckedAt(null);
     setExtension(null);
 
-    void runEvidenceGate({ hostname, endpointName, apiOrigin: publicConfig().apiOrigin }).then((result) => {
+    void runEvidenceGate({ hostname, endpointName, kind, apiOrigin: publicConfig().apiOrigin }).then((result) => {
       if (!current) return;
       setGate(result);
       setCheckedAt(new Date());
     });
-    void requestExtensionVerification({ hostname }).then((outcome) => {
-      if (current) setExtension(outcome);
-    });
+    if (kind === 'external') {
+      setExtension({ status: 'absent' });
+    } else {
+      void requestExtensionVerification({ hostname }).then((outcome) => {
+        if (current) setExtension(outcome);
+      });
+    }
 
     return () => {
       current = false;
     };
-  }, [hostname, endpointName, attempt]);
+  }, [hostname, endpointName, kind, attempt]);
 
   const pageState = pageTierState(gate);
   const extensionState = extensionTierState(extension);

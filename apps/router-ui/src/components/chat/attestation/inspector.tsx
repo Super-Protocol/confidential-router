@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@confidential-router/u
 import { RefreshCw } from 'lucide-react';
 import * as React from 'react';
 import { CheckRow } from '../verification/check-row';
+import type { EndpointKind } from '../verification/evidence-gate';
 import { badgeTier } from '../verification/tiers';
 import type { VerificationState } from '../verification/use-verification';
 import { DeploymentGraphView } from './deployment-graph';
@@ -29,8 +30,18 @@ export interface AttestationInspectorProps {
   hostname: string;
   /** The catalogue's operator-declared TEE label. */
   teeLabel: string | null;
-  /** The endpoint's image allow-list, or null when it declares none. */
+  /**
+   * The endpoint's image allow-list, or null when it declares none.
+   *
+   * Always null for an external upstream: nobody declared what another
+   * deployment runs, and v1 does not ask an operator to (ADR-008 §7). Null is
+   * already "nothing was declared" to the graph, whose five-verdict logic then
+   * draws the signed images without a comparison rather than reporting a
+   * mismatch against an empty list.
+   */
   declaredImages: readonly DeclaredImage[] | null;
+  /** Whose endpoint this is. `external` changes the provenance copy and nothing else. */
+  endpointKind?: EndpointKind;
 }
 
 /**
@@ -68,6 +79,7 @@ export default function AttestationInspector({
   hostname,
   teeLabel,
   declaredImages,
+  endpointKind = 'own',
 }: AttestationInspectorProps) {
   const { gate, extension, checkedAt } = verification;
   const evidence = gate?.evidence ?? null;
@@ -102,7 +114,9 @@ export default function AttestationInspector({
       >
         <DialogHeader className="border-b px-6 py-4">
           <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle>Attestation for this endpoint</DialogTitle>
+            <DialogTitle>
+              {endpointKind === 'external' ? 'Attestation for this external upstream' : 'Attestation for this endpoint'}
+            </DialogTitle>
             <Badge variant={tier.variant}>{tier.label}</Badge>
           </div>
           <DialogDescription className="max-w-prose">
@@ -113,13 +127,31 @@ export default function AttestationInspector({
               measurements and the graph on it.
             */}
             <span className="mt-1 block">{tier.caveat}</span>
+            {endpointKind === 'external' ? (
+              /*
+                And the one thing the tier caveat cannot say, because it is about
+                tiers rather than topology: your prompts do not travel to this
+                host over a channel your browser opened. They go to this router,
+                which proxies over a connection its own egress attested and
+                pinned. What this panel establishes is that the document below is
+                genuinely this upstream's, signed and fresh — not that the leg
+                carrying your prompt is the leg the document describes.
+              */
+              <span className="mt-1 block">
+                This is a deployment in someone else’s cluster. Your connection terminates at this router, which proxies
+                to it over a channel its egress attested and pinned — so what follows is the upstream’s own signed
+                evidence, verified in this page, and not a statement about the hop your prompt takes.
+              </span>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {gate === null ? (
             <p className="text-muted-foreground text-sm" role="status">
-              Fetching this endpoint’s signed evidence and checking it here in your browser…
+              {endpointKind === 'external'
+                ? 'Fetching this upstream’s signed evidence through this router’s relay and checking it here in your browser…'
+                : 'Fetching this endpoint’s signed evidence and checking it here in your browser…'}
             </p>
           ) : evidence === null ? (
             <Degraded gate={gate} />
@@ -132,6 +164,7 @@ export default function AttestationInspector({
               <TabsContent value="measurements" className="pt-4">
                 <Measurements
                   hostname={hostname}
+                  endpointKind={endpointKind}
                   teeLabel={teeLabel}
                   gate={gate}
                   evidence={evidence}

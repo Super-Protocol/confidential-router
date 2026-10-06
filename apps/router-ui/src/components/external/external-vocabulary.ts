@@ -1,0 +1,109 @@
+import type { ExternalEndpointStatus, ModelOrigin } from '../../generated/graphql';
+
+/**
+ * Every word the console says about an external upstream, in one file — and
+ * deliberately not the file that holds the words for our own endpoints.
+ *
+ * ## Why there are two vocabularies at all
+ *
+ * ADR-002 keeps *published / stale / not published* for the router's own
+ * endpoints because the router never verifies itself: the only honest statement
+ * is what the platform published, and the verdict belongs to the viewer's
+ * gatekeeper. Toward an external upstream the position is exactly inverted —
+ * there **is** a verifying party and it is this router — so every value here
+ * names it: *verified by this router*, *denied by this router* (ADR-008 §1).
+ *
+ * ## Why they are two files
+ *
+ * So that "the two vocabularies never mix in one component" is a property of the
+ * module graph rather than a reviewer's vigilance. A component that imported both
+ * maps would be one `?:` away from a badge that says *Published* about a
+ * deployment this router verified, or *Verified* about one it only watched —
+ * which is the single most expensive sentence this product could get wrong.
+ * `external-vocabulary.spec.ts` asserts the two label sets are disjoint and that
+ * neither borrows the other's words.
+ *
+ * ## Why no value is a bare "verified"
+ *
+ * A bare *verified* with no subject is the claim the product is not entitled to
+ * make anywhere: it reads as "verified, full stop", which only the viewer's own
+ * gatekeeper can say. The qualifier is part of the label, not a footnote beside
+ * it.
+ */
+
+export interface ExternalStatusPresentation {
+  /** Badge text in a table row. Always names this router. */
+  label: string;
+  /** `Badge` variant carrying the tone. */
+  variant: 'success' | 'warning' | 'secondary' | 'destructive';
+  /** Headline of the detail dialog. */
+  headline: string;
+  /** The paragraph under the headline — what the state means and what it does not. */
+  note: string;
+}
+
+export const EXTERNAL_STATUS_PRESENTATION: Record<ExternalEndpointStatus, ExternalStatusPresentation> = {
+  VERIFIED_BY_THIS_ROUTER: {
+    label: 'Verified by this router',
+    /*
+     * Warning rather than success, and the asymmetry is the point: this is the
+     * strongest thing the screen can say about an upstream and it is still a
+     * self-report by the party you are already trusting with the prompt. Our own
+     * endpoints get `success` for *Published* because that claim is weaker and
+     * fully checkable — "the platform published a bundle", which the reader can
+     * fetch and verify themselves.
+     */
+    variant: 'warning',
+    headline: 'This router verified this upstream',
+    note: 'This router fetched the upstream’s signed evidence, checked it, found the measurement on its trust list and pinned the TLS certificate the evidence names. That is a verdict reached by this deployment, not by you — and a measurement admits a cloud rather than a deployment, so it says which hardware answered and not which software. Inspect the relayed evidence to see what it actually let in.',
+  },
+  DENIED_BY_THIS_ROUTER: {
+    label: 'Denied by this router',
+    variant: 'destructive',
+    headline: 'This router refuses this upstream',
+    note: 'The last check failed, so nothing is proxied here: the model is listed and unavailable. Fail-closed is the rule rather than a retry policy — a request would be refused at two independent places, the catalogue and the egress.',
+  },
+  PENDING: {
+    label: 'Awaiting a verdict',
+    variant: 'secondary',
+    headline: 'No verdict yet',
+    note: 'Registered, and not yet checked — which is where every upstream starts and where every one of them restarts, because a verdict is never persisted as trust. It serves nothing until a check admits it.',
+  },
+  DISABLED: {
+    label: 'Switched off',
+    variant: 'secondary',
+    headline: 'Switched off by the operator',
+    note: 'An operator took this upstream out of service. That is a switch rather than a verdict: nothing here says the upstream failed a check.',
+  },
+};
+
+export function externalStatusPresentation(status: ExternalEndpointStatus): ExternalStatusPresentation {
+  return EXTERNAL_STATUS_PRESENTATION[status];
+}
+
+/**
+ * The origin badge: where a listed model runs.
+ *
+ * `CONFIG` has no badge, and that is a decision rather than an omission. A label
+ * on every row of the common case is a label nobody reads, and the information a
+ * reader needs is *this one is different* — which is what an absent badge on
+ * everything else makes legible. The word "External" also has to be the loud one:
+ * it is the row whose attestation story is not the one the rest of the console
+ * tells.
+ */
+export const MODEL_ORIGIN_PRESENTATION: Record<ModelOrigin, { label: string; description: string } | null> = {
+  CONFIG: null,
+  EXTERNAL: {
+    label: 'External',
+    description:
+      'This model runs in another deployment. Your connection still terminates at this router, which proxies to ' +
+      'the upstream over a channel it attested and pinned itself — so pinning this router does not transitively ' +
+      'verify the upstream, and the evidence relay is how you check it yourself.',
+  },
+};
+
+/** Availability, in words, for a reader who is shown no verdict at all. */
+export const EXTERNAL_AVAILABILITY = {
+  available: 'Available',
+  unavailable: 'Unavailable',
+} as const;

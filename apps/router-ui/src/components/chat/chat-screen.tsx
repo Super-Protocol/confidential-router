@@ -7,6 +7,7 @@ import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import { MessagesSquare, ShieldQuestionMark } from 'lucide-react';
 import * as React from 'react';
 import type { ChatScreenQuery } from '../../generated/graphql';
+import { ExternalInspectButton } from '../external/external-inspect-button';
 import { useSession } from '../session/session-provider';
 import { InspectAttestationButton } from './attestation/inspect-button';
 import { type PendingMessage, promptMessages } from './chat-history';
@@ -31,6 +32,7 @@ import { useVerification } from './verification/use-verification';
 import { VerificationBadge } from './verification-badge';
 
 type CatalogueModel = ChatScreenQuery['models'][number];
+type EndpointView = NonNullable<ChatScreenQuery['routerEndpoint']>;
 
 /** Where the extension is published. Absent until it ships, which hides the link. */
 const EXTENSION_URL = undefined;
@@ -145,16 +147,46 @@ export function ChatScreen() {
 
   // Keyed on the workspace: transcripts are stored per workspace, and switching
   // should start the screen over rather than carry one across tenants.
-  return <ChatSession key={activeWorkspace.id} workspaceId={activeWorkspace.id} models={models} settings={settings} />;
+  return (
+    <ChatSession
+      key={activeWorkspace.id}
+      workspaceId={activeWorkspace.id}
+      models={models}
+      routerEndpoint={data?.routerEndpoint ?? null}
+      settings={settings}
+    />
+  );
 }
 
 interface ChatSessionProps {
   workspaceId: string;
   models: CatalogueModel[];
+  /** The endpoint the browser is connected to — see {@link gateEndpointOf}. */
+  routerEndpoint: EndpointView | null;
   settings: NonNullable<ChatScreenQuery['chatSettings']>;
 }
 
-function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
+/**
+ * The endpoint tier 1 runs against: the one this browser's TLS connection
+ * terminates at.
+ *
+ * For a built-in model that is the endpoint serving it, and reading it off the
+ * model is both correct and the shorter path. For an external model there is no
+ * such endpoint — the model runs in another deployment — and the channel the
+ * browser is actually using is still this router's. So the gate falls back to
+ * `routerEndpoint`, which is the same endpoint `GET /v1/evidence` answers for.
+ *
+ * It is emphatically *not* the upstream. Verifying the upstream's bundle here and
+ * calling the result "this endpoint is verified, you may send" would gate the
+ * composer on a document about a connection this browser never opens, while
+ * saying nothing about the one it does (ADR-008 §1). The upstream gets its own
+ * button and its own check.
+ */
+function gateEndpointOf(model: CatalogueModel | undefined, routerEndpoint: EndpointView | null): EndpointView | null {
+  return model?.endpoint ?? routerEndpoint;
+}
+
+function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSessionProps) {
   const [activeThreadId, setActiveThreadId] = React.useState<string | null>(null);
   const [modelId, setModelId] = React.useState<string>(models[0]?.id ?? '');
   /** The assistant turn still arriving. Not a message until the stream settles. */
@@ -187,7 +219,8 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
   const [removeThread] = useMutation(DELETE_CHAT_THREAD);
 
   const model = models.find((candidate) => candidate.id === (activeThread?.modelId ?? modelId)) ?? models[0];
-  const endpoint = model?.endpoint;
+  const endpoint = gateEndpointOf(model, routerEndpoint);
+  const upstream = model?.externalUpstream ?? null;
 
   const verification = useVerification({
     hostname: endpoint?.hostname ?? null,
@@ -430,9 +463,33 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
               teeLabel={endpoint.tee ?? null}
               declaredImages={endpoint.declaredImages ?? null}
             />
+            {/*
+              And for an external model, the second check — the upstream's own
+              evidence, relayed and verified in this page. A separate button
+              because it is a separate claim about a separate channel; folding it
+              into the badge above would be the blend ADR-008 §1 forbids.
+            */}
+            {upstream ? <ExternalInspectButton upstream={upstream} /> : null}
           </div>
         ) : null}
       </div>
+
+      {upstream ? <ExternalModelNote hostname={upstream.hostname} /> : null}
+
+      {endpoint === null && model ? (
+        /*
+          A deployment with several endpoints and none the router can identify as
+          its own (`EvidenceService.ownEndpoint` refuses to guess), reached here
+          only by picking an external model. The composer stays shut because
+          `verification.unlocked` is false, and this says why rather than leaving
+          the badge row blank.
+        */
+        <p className="max-w-prose text-destructive text-sm">
+          This router cannot tell which of its endpoints your browser is connected to, so this page has nothing to
+          verify and the composer stays locked. Name the endpoint in the router configuration, or use a model served
+          from one of them.
+        </p>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
         <div className="lg:h-[32rem]">
@@ -497,5 +554,24 @@ function ChatSession({ workspaceId, models, settings }: ChatSessionProps) {
         onRevealDelete={activeRowRendered ? () => activeRow.current?.focus() : undefined}
       />
     </div>
+  );
+}
+
+/**
+ * One line, for the one thing a reader of this screen could not otherwise know:
+ * the model they picked does not run here.
+ *
+ * Above the transcript rather than in the inspector, because it is true before
+ * anyone opens a panel and it changes what the badge beside it means — that badge
+ * is about this router, which is the right subject for the composer's gate and
+ * the wrong one to read as a statement about where the prompt ends up.
+ */
+function ExternalModelNote({ hostname }: { hostname: string }) {
+  return (
+    <p className="max-w-prose text-muted-foreground text-xs">
+      This model runs in another deployment, <span className="break-all font-mono">{hostname}</span>. Your messages go
+      to this router, which attested that upstream itself and proxies over a channel it pinned — so the badge above is
+      about this router, and “Inspect upstream attestation” is where you check the other end.
+    </p>
   );
 }

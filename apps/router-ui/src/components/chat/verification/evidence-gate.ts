@@ -89,6 +89,24 @@ export interface GateCheck {
 export type BundleSource = 'endpoint' | 'router';
 
 /**
+ * Whose endpoint is being checked, which decides where its bundle may be read
+ * from.
+ *
+ * `own` is one of this deployment's endpoints: both sources are legitimate and
+ * {@link fetchBundle} tries whichever can succeed first.
+ *
+ * `external` is an upstream in another deployment (ADR-008). Only the relay is
+ * asked, and for a reason that outlives CORS: the relay serves the publication
+ * **this router's verdict named**, while the upstream's own host serves whatever
+ * it publishes right now. The second can legitimately be a newer deployment the
+ * router has not admitted — so a bundle fetched there would be a document about
+ * a channel nobody has verified, drawn under a panel saying this router verified
+ * one. A fetch that can disagree with the verdict beside it is worse than a fetch
+ * that cannot happen.
+ */
+export type EndpointKind = 'own' | 'external';
+
+/**
  * One certificate of the published chain, as the inspector lists it.
  *
  * Summarised here rather than in the panel because the certificates themselves
@@ -179,6 +197,8 @@ export interface GateOptions {
   endpointName: string;
   /** router-api's origin, for that relay. */
   apiOrigin: string;
+  /** Whose endpoint this is. Defaults to `own`; see {@link EndpointKind}. */
+  kind?: EndpointKind;
   fetcher?: typeof fetch;
   now?: Date;
   /**
@@ -286,10 +306,7 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
     {
       id: 'bundle',
       status: 'pass',
-      detail:
-        source === 'endpoint'
-          ? `The host served a swarm-evidence v1 bundle for ${bundle.hostname}.`
-          : `This router handed back the last bundle it retrieved for ${bundle.hostname}.`,
+      detail: bundleRetrievedDetail(options.kind ?? 'own', source, bundle.hostname),
     },
   ];
 
@@ -402,6 +419,21 @@ async function fetchBundle(options: GateOptions): Promise<FetchOutcome> {
   const fromRouter = () =>
     tryFetch(fetcher, `${base}/v1/evidence/${encodeURIComponent(options.endpointName)}`, options.hostname);
 
+  if ((options.kind ?? 'own') === 'external') {
+    // The relay and nothing else — see {@link EndpointKind}. The upstream's own
+    // host is never asked, so the panel cannot end up drawing a publication this
+    // router never admitted.
+    const relayed = await fromRouter();
+    return relayed.ok
+      ? { ok: true, bundle: relayed.bundle, source: 'router' }
+      : {
+          ok: false,
+          detail:
+            `No evidence could be relayed for the external upstream ${options.hostname}: this router answered ` +
+            `"${relayed.detail}".`,
+        };
+  }
+
   const hostIsReadable = servesThisPage(options);
   const first = await (hostIsReadable ? fromHost() : fromRouter());
   if (first.ok) {
@@ -436,6 +468,28 @@ async function fetchBundle(options: GateOptions): Promise<FetchOutcome> {
  * `https://host/.well-known/…` — which is correct rather than merely tolerable,
  * because those two *are* different origins to the browser enforcing this.
  */
+/**
+ * The `bundle` row's sentence, which is also the panel's provenance line in
+ * miniature.
+ *
+ * The external case names *both* the relay and the upstream, because either
+ * alone would mislead: "this router handed back a bundle" hides whose
+ * deployment it is about, and "the upstream published" hides that the bytes
+ * came through this router and are the publication its verdict named rather
+ * than whatever the host serves now.
+ */
+function bundleRetrievedDetail(kind: EndpointKind, source: BundleSource, hostname: string): string {
+  if (kind === 'external') {
+    return (
+      `This router relayed the bundle ${hostname} published — the publication its own verdict named. ` +
+      'The signature was checked here, in this page.'
+    );
+  }
+  return source === 'endpoint'
+    ? `The host served a swarm-evidence v1 bundle for ${hostname}.`
+    : `This router handed back the last bundle it retrieved for ${hostname}.`;
+}
+
 function servesThisPage(options: GateOptions): boolean {
   const origin = options.pageOrigin ?? globalThis.location?.origin;
   return origin === `https://${options.hostname}`;

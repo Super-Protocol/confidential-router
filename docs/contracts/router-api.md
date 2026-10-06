@@ -24,7 +24,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/embeddings` | optional | only if the model's `capabilities` include `embeddings` |
 | `GET /v1/generation?id=` | required | metering record of one generation (OpenRouter-style) |
 | `GET /v1/evidence` | required | raw passthrough of **this deployment's** latest published bundle; no key |
-| `GET /v1/evidence/{endpoint}` | required | the same, for a named endpoint; no key |
+| `GET /v1/evidence/{endpoint}` | required | the same, for a named endpoint — or for a registered external upstream; no key |
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
@@ -176,11 +176,16 @@ saw, which the console reads from `ExternalEndpoint.measurementSeen` rather than
 
 ### `GET /v1/evidence` and `GET /v1/evidence/{endpoint}`
 
-`{endpoint}` is an endpoint **name** or **hostname** from the router config. Without one, the route
-answers for **this deployment's own** endpoint: the one whose `hostname` is the host of
-`server.publicBaseUrl`, or — where that names no endpoint and there is only one — that one. With two or
-more endpoints and no match it answers `404` rather than guessing, and the caller names the endpoint it
-means.
+`{endpoint}` is an endpoint **name** or **hostname** from the router config, or the **name** of a
+registered external endpoint (ADR-008; name or hostname there too). Without one, the route answers for
+**this deployment's own** endpoint: the one whose `hostname` is the host of `server.publicBaseUrl`, or —
+where that names no endpoint and there is only one — that one. With two or more endpoints and no match
+it answers `404` rather than guessing, and the caller names the endpoint it means.
+
+Our own endpoints are resolved first. The two name spaces are separate tables on purpose — a collision
+between "a host we publish evidence for" and "a host we verify" would be a trust confusion — so a value
+matching both is a misconfiguration, and the safe reading of it is the one where this deployment answers
+for itself.
 
 Either way the response is the most recently issued `/.well-known/swarm-evidence` bundle this router has
 fetched, **byte for byte as published** (`schemas/swarm-evidence-bundle.schema.json`) — the stored copy is
@@ -188,6 +193,14 @@ the publisher's own document, member order included, so hashing this response an
 platform's gateway serves for the same publication gives the same digest. `Cache-Control: no-store`: a
 bundle is re-signed every few minutes and a reader is comparing freshness and digests against the live
 host.
+
+For an external endpoint it is specifically the publication **that endpoint's last verdict named**
+(`ExternalEndpoint.evidenceDigestSeen`), not merely the newest row the poller holds. Two rules meet
+there and both are needed: a fetched upstream bundle is *filed* only when the TLS leaf it claims is the
+leaf the egress sidecar pinned, and it is *served* only for the digest a verdict actually observed. A
+document from anyone but that upstream was never filed; a real but superseded publication of that
+upstream is never handed out. The upstream may well be publishing something newer — that is what the
+`503` below covers until the next verdict catches up.
 
 Two refusals, told apart on purpose:
 
@@ -200,10 +213,28 @@ They used to be one `404`, which read on the chat's locked composer as the route
 in fact has (SUP-191). Never an empty `200`: a caller that verifies what it is handed must not have to
 tell a bundle from the absence of one.
 
+For an external endpoint the `503` covers three situations and tells a caller none of them apart, on
+purpose: no verdict yet, a verdict whose publication this router has not managed to retrieve, and an
+upstream that republished between the verdict and the fetch. All three are "there is nothing here this
+router is entitled to call current", and none is a statement about the upstream.
+
+An external endpoint's **status does not change what this route does.** A `denied` or `disabled`
+upstream's last admitted publication is still relayed, and that is not a claim that the router would
+route there now: this surface has never carried a verdict in either direction (ADR-002), and the screens
+that do carry one say *denied by this router* in so many words (ADR-008 §1). Refusing here would make
+the relay the third place a verdict is expressed and the least legible of the three.
+
 Deliberately unauthenticated: the platform serves the same document publicly on the endpoint's own
 hostname, and a user comparing the two should not need an API key. Just as deliberately, the response is
 the bundle and nothing else — the router never validates a signature and never reports a verdict
 (ADR-002).
+
+That holds for an external upstream too, and the reasoning is the same document-shaped one rather than
+an oversight. What is relayed is a JWS the *upstream* publishes at its own public well-known path; this
+router adds nothing to it and asserts nothing about it. Ruling 3 on SUP-221 keeps endpoint URLs and
+verdict detail out of the anonymous **catalogue**, and that holds — `Model.externalUpstream` is null
+without a session. A caller here must already know the endpoint name, and what it learns is a document
+its publisher serves to the world.
 
 **This is also the only copy of the document a browser can read.** `/.well-known/swarm-evidence` is
 served by the platform's own gateway, which sits below this service's CORS layer and sends no

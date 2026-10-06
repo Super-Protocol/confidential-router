@@ -4,13 +4,14 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In } from 'typeorm';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
-import {
-  EVIDENCE_PATH,
-  EvidenceFetchError,
-  fetchEvidenceBundle,
-  type ParsedEvidenceBundle,
-  parseEvidenceBundle,
-} from '../evidence/index.js';
+// The leaf modules rather than `../evidence/index.js`, and not as a style
+// preference: that barrel re-exports `EvidenceModule`, whose controller relays
+// *this* service's stored bundles (SUP-227). Going through it would close an
+// import cycle whose only symptom is a Nest provider that is `undefined` at
+// decorator-evaluation time — "the argument at index [1] is available in the
+// current module?" pointing at a module that has nothing wrong with it.
+import { type ParsedEvidenceBundle, parseEvidenceBundle } from '../evidence/evidence-bundle.js';
+import { EVIDENCE_PATH, EvidenceFetchError, fetchEvidenceBundle } from '../evidence/evidence-fetcher.js';
 
 /**
  * Same budget as the own-endpoint poller: evidence is served by the platform's
@@ -154,6 +155,50 @@ export class ExternalEvidenceService {
       );
     }
     return this.record(endpoint.id, parsed, now);
+  }
+
+  /**
+   * The external endpoint a relay path names, or null.
+   *
+   * Name first and hostname second, the own-endpoint relay's order
+   * (`EvidenceService.endpointByNameOrHostname`), so `/v1/evidence/{endpoint}`
+   * takes the same two spellings whichever table answers it. The two namespaces
+   * are separate by design (`external_endpoints.name`), and the controller tries
+   * ours first — a hostname this deployment publishes evidence for is never
+   * also an upstream it verifies.
+   */
+  async endpointByNameOrHostname(value: string): Promise<ExternalEndpoint | null> {
+    const repository = this.dataSource.getRepository(ExternalEndpoint);
+    return (await repository.findOne({ where: { name: value } })) ?? repository.findOne({ where: { hostname: value } });
+  }
+
+  /**
+   * The upstream publication this endpoint's last verdict named, or null.
+   *
+   * Keyed on `evidenceDigestSeen` rather than "the newest row for this endpoint",
+   * and that is the whole of this method's judgement. The rule {@link refresh}
+   * files bundles under is *the leaf the sidecar pinned*; the rule for handing one
+   * out is *the digest a verdict actually saw*. Together they are what makes the
+   * relayed document a document about the channel the router verified — a bundle
+   * served by anyone but that upstream was never filed, and a real but superseded
+   * publication of that upstream is never surfaced.
+   *
+   * Null is therefore the honest answer in three different situations, and the
+   * caller reports all three the same way (503, not a denial): no verdict yet, a
+   * verdict whose publication this router has not managed to retrieve, and an
+   * upstream that republished between the verdict and the fetch.
+   */
+  async latestAdmitted(endpoint: ExternalEndpoint): Promise<EvidenceSnapshot | null> {
+    if (!endpoint.evidenceDigestSeen) {
+      return null;
+    }
+    return this.dataSource.getRepository(EvidenceSnapshot).findOne({
+      where: { externalEndpointId: endpoint.id, evidenceDigest: endpoint.evidenceDigestSeen },
+      // The most recently issued publication carrying that digest: a re-issue is
+      // the same facts under a newer signature, and the fresher one is what a
+      // reader comparing quote ages with the upstream's own host should get.
+      order: { issuedAt: 'DESC', fetchedAt: 'DESC' },
+    });
   }
 
   /**
