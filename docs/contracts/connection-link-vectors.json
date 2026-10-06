@@ -101,24 +101,96 @@
     }
   ],
   "refused": [
-    { "name": "not a URL", "link": "qwen3-coder#key=sk&model=m", "reason": "not_a_url" },
+    {
+      "name": "not a URL",
+      "link": "qwen3-coder#key=sk&model=m",
+      "reason": "not_a_url"
+    },
     { "name": "empty input", "link": "   ", "reason": "not_a_url" },
-    { "name": "http is never attestable", "link": "http://host.example/v1#key=sk&model=m", "reason": "insecure_scheme" },
-    { "name": "a non-web scheme", "link": "ftp://host.example/v1#key=sk&model=m", "reason": "insecure_scheme" },
-    { "name": "no fragment", "link": "https://host.example/v1", "reason": "missing_fragment" },
-    { "name": "an empty fragment", "link": "https://host.example/v1#", "reason": "missing_fragment" },
-    { "name": "key in the query string, where logs and referrers see it", "link": "https://host.example/v1?key=sk#model=m", "reason": "key_in_query" },
-    { "name": "api_key in the query string", "link": "https://host.example/v1?api_key=sk#key=sk&model=m", "reason": "key_in_query" },
-    { "name": "apiKey in the query string", "link": "https://host.example/v1?apiKey=sk#key=sk&model=m", "reason": "key_in_query" },
-    { "name": "token in the query string", "link": "https://host.example/v1?token=sk#key=sk&model=m", "reason": "key_in_query" },
-    { "name": "access_token in the query string", "link": "https://host.example/v1?access_token=sk#key=sk&model=m", "reason": "key_in_query" },
-    { "name": "two keys is a producer bug, not a last-one-wins", "link": "https://host.example/v1#key=a&key=b&model=m", "reason": "duplicate_param" },
-    { "name": "two models, likewise", "link": "https://host.example/v1#key=a&model=m1&model=m2", "reason": "duplicate_param" },
-    { "name": "an empty key", "link": "https://host.example/v1#key=&model=m", "reason": "empty_value" },
-    { "name": "a whitespace-only key", "link": "https://host.example/v1#key=%20%20&model=m", "reason": "empty_value" },
-    { "name": "an empty model", "link": "https://host.example/v1#key=sk&model=", "reason": "empty_value" },
-    { "name": "no key", "link": "https://host.example/v1#model=m", "reason": "missing_key" },
-    { "name": "no model", "link": "https://host.example/v1#key=sk", "reason": "missing_model" },
-    { "name": "a bare fragment that is not a parameter list", "link": "https://host.example/v1#sk-up-12", "reason": "missing_key" }
+    {
+      "name": "http is never attestable",
+      "link": "http://host.example/v1#key=sk&model=m",
+      "reason": "insecure_scheme"
+    },
+    {
+      "name": "a non-web scheme",
+      "link": "ftp://host.example/v1#key=sk&model=m",
+      "reason": "insecure_scheme"
+    },
+    {
+      "name": "no fragment",
+      "link": "https://host.example/v1",
+      "reason": "missing_fragment"
+    },
+    {
+      "name": "an empty fragment",
+      "link": "https://host.example/v1#",
+      "reason": "missing_fragment"
+    },
+    {
+      "name": "key in the query string, where logs and referrers see it",
+      "link": "https://host.example/v1?key=sk#model=m",
+      "reason": "key_in_query"
+    },
+    {
+      "name": "api_key in the query string",
+      "link": "https://host.example/v1?api_key=sk#key=sk&model=m",
+      "reason": "key_in_query"
+    },
+    {
+      "name": "apiKey in the query string",
+      "link": "https://host.example/v1?apiKey=sk#key=sk&model=m",
+      "reason": "key_in_query"
+    },
+    {
+      "name": "token in the query string",
+      "link": "https://host.example/v1?token=sk#key=sk&model=m",
+      "reason": "key_in_query"
+    },
+    {
+      "name": "access_token in the query string",
+      "link": "https://host.example/v1?access_token=sk#key=sk&model=m",
+      "reason": "key_in_query"
+    },
+    {
+      "name": "two keys is a producer bug, not a last-one-wins",
+      "link": "https://host.example/v1#key=a&key=b&model=m",
+      "reason": "duplicate_param"
+    },
+    {
+      "name": "two models, likewise",
+      "link": "https://host.example/v1#key=a&model=m1&model=m2",
+      "reason": "duplicate_param"
+    },
+    {
+      "name": "an empty key",
+      "link": "https://host.example/v1#key=&model=m",
+      "reason": "empty_value"
+    },
+    {
+      "name": "a whitespace-only key",
+      "link": "https://host.example/v1#key=%20%20&model=m",
+      "reason": "empty_value"
+    },
+    {
+      "name": "an empty model",
+      "link": "https://host.example/v1#key=sk&model=",
+      "reason": "empty_value"
+    },
+    {
+      "name": "no key",
+      "link": "https://host.example/v1#model=m",
+      "reason": "missing_key"
+    },
+    {
+      "name": "no model",
+      "link": "https://host.example/v1#key=sk",
+      "reason": "missing_model"
+    },
+    {
+      "name": "a bare fragment that is not a parameter list",
+      "link": "https://host.example/v1#sk-up-12",
+      "reason": "missing_key"
+    }
   ]
 }
