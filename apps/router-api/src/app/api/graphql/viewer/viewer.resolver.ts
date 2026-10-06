@@ -1,13 +1,16 @@
-import { UseGuards } from '@nestjs/common';
+import { Inject, UseGuards } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
 import { Args, GraphQLISODateTime, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import {
   type AuthenticatedRequest,
   CurrentUser,
+  isAdminEmail,
   SessionGuard,
   type SessionUser,
   UserProfileService,
   WorkspaceScopeService,
 } from '../../../auth/index.js';
+import { routerConfig } from '../../../config.js';
 import { PreferencesService } from '../../../preferences/index.js';
 import { GqlRequest } from '../common/gql-request.decorator.js';
 import { preferencesModel, UserPreferencesModel } from '../preferences/preferences.model.js';
@@ -24,12 +27,14 @@ import { UpdateProfileInput, ViewerModel } from './viewer.model.js';
 @Resolver(() => ViewerModel)
 @UseGuards(SessionGuard)
 export class ViewerResolver {
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly workspaces: WorkspaceScopeService,
     // Not `preferences`: that name is taken by the field resolver below, and a
     // constructor property would shadow the prototype method.
     private readonly settings: PreferencesService,
     private readonly profiles: UserProfileService,
+    @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
 
   /**
@@ -73,6 +78,10 @@ export class ViewerResolver {
       email: user.email,
       name: user.name,
       avatarUrl: user.image,
+      // Computed here rather than resolved on demand: it is a string comparison
+      // against config, and the console needs it on the first call of every page
+      // load to decide whether the admin nav entry exists at all.
+      isAdmin: isAdminEmail(user.email, this.config.auth.adminEmails),
       workspaces: memberships.map(({ workspace, role }) => ({
         id: workspace.id,
         name: workspace.name,

@@ -500,10 +500,35 @@ describe('GET /v1/evidence', () => {
 
 describe('the one architectural rule', () => {
   /**
-   * ADR-002: the router publishes evidence and never reports a verdict. A field
-   * called `verified`, `trusted` or `valid` appearing in this schema would be
-   * the design regression the whole product is built to avoid, so the schema is
-   * asserted rather than the intent documented.
+   * The admin trust list, and nothing else (ADR-008 §3, §7).
+   *
+   * Named exhaustively rather than matched by prefix, because the value of the
+   * check below is that a new field carrying a verdict about *this* deployment
+   * has to be argued for in a diff to this list. `trusted_measurements` is a list
+   * of measurements an operator accepts for someone else's upstream — a policy
+   * input, not a verdict the router reached, and certainly not one about itself.
+   */
+  const TRUST_LIST_OPERATIONS = [
+    'Query.trustedMeasurements',
+    'Mutation.addTrustedMeasurement',
+    'Mutation.updateTrustedMeasurement',
+    'Mutation.removeTrustedMeasurement',
+  ];
+
+  /**
+   * ADR-002: the router publishes evidence and never reports a verdict **about
+   * itself**. A field called `verified`, `trusted` or `valid` appearing in this
+   * schema would be the design regression the whole product is built to avoid, so
+   * the schema is asserted rather than the intent documented.
+   *
+   * ADR-008 §1 narrows the rule, and narrows it only in the direction the ADR
+   * argues for: toward an external upstream there *is* a verifying party and it is
+   * this router, so the external vocabulary says so. It says it in the
+   * `ExternalEndpointStatus` enum (`VERIFIED` / `DENIED`, rendered as *verified by
+   * this router*) and in the trust-list operations above — never in a field name,
+   * which is why the assertion below still covers every field on
+   * `ExternalEndpoint` itself. A bare `verified: Boolean` there would be exactly
+   * the claim ADR-002 refuses.
    */
   it('exposes no field that could carry a verification verdict', async () => {
     const response = await request(server())
@@ -515,12 +540,32 @@ describe('the one architectural rule', () => {
     const offenders: string[] = [];
     for (const type of response.body.data.__schema.types as { name: string; fields?: { name: string }[] }[]) {
       for (const field of type.fields ?? []) {
-        if (/verif|attested|untrusted|trusted|valid/i.test(field.name)) {
-          offenders.push(`${type.name}.${field.name}`);
+        const path = `${type.name}.${field.name}`;
+        if (/verif|attested|untrusted|trusted|valid/i.test(field.name) && !TRUST_LIST_OPERATIONS.includes(path)) {
+          offenders.push(path);
         }
       }
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  it('says what an external verdict is about by naming the party, in the enum and nowhere else', async () => {
+    const response = await request(server())
+      .post('/graphql')
+      .set('Cookie', cookies)
+      .send({ query: '{ __type(name: "ExternalEndpointStatus") { enumValues { name } } }' })
+      .expect(200);
+
+    // The whole of the external vocabulary (ADR-008 §1), in the schema's own
+    // lexicographic order. `PENDING` is "no live verdict yet", not "unknown
+    // validity", and `DISABLED` is the operator's switch — neither is a statement
+    // about an upstream.
+    expect(response.body.data.__type.enumValues.map((value: { name: string }) => value.name)).toEqual([
+      'DENIED',
+      'DISABLED',
+      'PENDING',
+      'VERIFIED',
+    ]);
   });
 });

@@ -47,6 +47,14 @@ export class ViewerModel {
   @Field(() => String, { nullable: true, description: 'Profile picture from the OAuth provider, when there is one.' })
   avatarUrl!: string | null;
 
+  @Field(() => Boolean, {
+    description:
+      'Whether this address is in `auth.adminEmails` — the one question the browser could not ask before ' +
+      'ADR-008 §7. It gates the admin section’s nav entry; it is not itself a permission, because every ' +
+      'operator-only operation is behind `AdminGuard` whatever a client believes.',
+  })
+  isAdmin!: boolean;
+
   @Field(() => [WorkspaceModel], { description: 'Every workspace the viewer is a member of, oldest first.' })
   workspaces!: WorkspaceModel[];
 }

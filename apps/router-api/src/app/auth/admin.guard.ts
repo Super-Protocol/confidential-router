@@ -1,6 +1,7 @@
 import { type CanActivate, type ExecutionContext, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../config.js';
+import { isAdminEmail } from './admin-emails.js';
 import { requestOf } from './request-of.js';
 
 /**
@@ -21,8 +22,7 @@ export class AdminGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const email = requestOf(context)?.sessionUser?.email;
-    const allowed = this.config.auth.adminEmails.map((entry) => entry.trim().toLowerCase()).filter(Boolean);
-    if (!email || !allowed.includes(email.toLowerCase())) {
+    if (!isAdminEmail(email, this.config.auth.adminEmails)) {
       // 403 and not 404: the caller is authenticated, and telling a signed-in
       // user that a query exists but is not theirs is not a leak worth avoiding.
       throw new ForbiddenException('This operation is restricted to deployment operators.');

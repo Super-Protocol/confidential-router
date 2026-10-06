@@ -8,6 +8,7 @@ import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
 import { ChatResolver } from './chat/chat.resolver.js';
 import { CreditsResolver } from './credits/credits.resolver.js';
+import { ExternalEndpointsResolver } from './external-endpoints/external-endpoints.resolver.js';
 import { FeedbackResolver } from './feedback/feedback.resolver.js';
 import { GatekeeperResolver } from './gatekeeper/gatekeeper.resolver.js';
 import { InvitesResolver } from './invites/invites.resolver.js';
@@ -31,6 +32,7 @@ export const CONSOLE_RESOLVERS = [
   ChatResolver,
   CreditsResolver,
   EvidenceResolver,
+  ExternalEndpointsResolver,
   FeedbackResolver,
   GatekeeperResolver,
   InvitesResolver,
