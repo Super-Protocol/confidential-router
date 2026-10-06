@@ -122,6 +122,10 @@ endpoints:
   - name: llama-33-70b
     listen: 127.0.0.1:8443
     upstream: https://llama-33-70b.tee.swarm.cloud
+    # What this endpoint requires before it admits anything. `evidence-digest`
+    # is the default and what every command writes; `cloud-measurement` is the
+    # weaker alternative below, and it pins no digest at all.
+    trust: evidence-digest
     trustedEvidence:
       # The form every gatekeeper command prints and writes back; the canonical
       # `sha256/<base64url>` spelling still loads.
