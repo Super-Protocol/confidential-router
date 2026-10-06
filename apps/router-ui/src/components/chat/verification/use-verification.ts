@@ -45,6 +45,29 @@ export interface UseVerificationInput {
  * something precisely because it does not depend on anything this page computed,
  * so it is asked in parallel rather than after tier 1 passes. An absent extension
  * resolves as "absent" after a short timeout and never blocks anything.
+ *
+ * ## For an external upstream, tier 2 is not asked at all
+ *
+ * The extension reports on a *hostname the browser connects to*: it fetches that
+ * host's evidence itself and speaks to the channel the user's traffic takes.
+ * Toward an external upstream the browser has no such channel — the traffic goes
+ * to this router, which proxies over a connection its egress sidecar attested and
+ * pinned (ADR-008 §1). Asking the extension about the upstream would produce a
+ * confident second opinion about a connection nobody in this browser is using,
+ * rendered beside a tier-1 result about a relayed document.
+ *
+ * So the outcome is *set* to `absent` rather than left null. Null is `pending`
+ * (`extensionTierState`), and a row that waits forever reads as a handshake that
+ * failed rather than one nobody made.
+ *
+ * **The caveat, because `absent` is being borrowed here.** It properly means "no
+ * extension is installed"; what is meant is "this tier does not apply to this
+ * endpoint". Nothing misleads today — the panel renders extension rows only on a
+ * `verified` outcome, and `badgeTier` treats `unavailable` as never blocking, so
+ * the borrowed value is never drawn. A reader who makes those rows render
+ * unconditionally would be the first person this costs, and at that point the
+ * honest fix is a `not-applicable` variant on `BridgeOutcome` rather than a
+ * second meaning for this one.
  */
 export function useVerification({ hostname, endpointName, kind = 'own' }: UseVerificationInput): VerificationState {
   const [gate, setGate] = React.useState<GateResult | null>(null);
