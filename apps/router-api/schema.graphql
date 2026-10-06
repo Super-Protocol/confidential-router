@@ -7,7 +7,9 @@ type ActivityPoint {
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
-  """0–1. Zero when there were no requests."""
+  """
+  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  """
   evidenceCoverage: Float!
   promptTokens: Int!
   requests: Int!
@@ -26,7 +28,9 @@ type ActivitySummary {
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
-  """0–1. Zero when there were no requests."""
+  """
+  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  """
   evidenceCoverage: Float!
   promptTokens: Int!
   requests: Int!
@@ -572,7 +576,11 @@ type Generation {
   """Cost in micro-USD."""
   costMicros: String!
   createdAt: DateTime!
-  endpointId: ID!
+
+  """
+  The endpoint of this deployment that served the request. Null when it was served through an external endpoint (ADR-008); which one is an admin surface, not this screen.
+  """
+  endpointId: ID
   errorCode: String
   evidenceDigest: String
 
@@ -733,7 +741,9 @@ type KeyUsage {
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
-  """0–1. Zero when there were no requests."""
+  """
+  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  """
   evidenceCoverage: Float!
   name: String!
   prefix: String
@@ -783,7 +793,9 @@ type ModelUsage {
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
-  """0–1. Zero when there were no requests."""
+  """
+  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  """
   evidenceCoverage: Float!
   modelId: ID!
   name: String!

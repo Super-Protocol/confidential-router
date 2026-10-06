@@ -108,6 +108,8 @@ externalEndpoints:
   listenPortRange: 256
   reattestInterval: 10m                         # bounded to [1m, 1h]
   statusPollInterval: 5s
+  connectTimeout: 5s                            # loopback: a refusal means the listener is not up yet
+  readTimeout: 120s                             # patience for an upstream in another cloud
 
 rateLimits:
   requestsPerMinute: 600

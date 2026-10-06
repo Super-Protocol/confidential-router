@@ -49,8 +49,13 @@ export class GenerationModel {
   @Field(() => String)
   modelName!: string;
 
-  @Field(() => ID)
-  endpointId!: string;
+  @Field(() => ID, {
+    nullable: true,
+    description:
+      'The endpoint of this deployment that served the request. Null when it was served through an external ' +
+      'endpoint (ADR-008); which one is an admin surface, not this screen.',
+  })
+  endpointId!: string | null;
 
   @Field(() => ID, { nullable: true })
   apiKeyId!: string | null;

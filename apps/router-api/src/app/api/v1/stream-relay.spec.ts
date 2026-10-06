@@ -1,6 +1,7 @@
 import type { Response as ExpressResponse } from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GatewayContext } from './gateway.types.js';
+import { openAiErrors } from './openai-error.js';
 import { relayStream } from './stream-relay.js';
 
 /**
@@ -52,6 +53,11 @@ class RecordingResponse {
   off(event: string): this {
     this.listeners.delete(event);
     return this;
+  }
+
+  /** What Express does when the client walks away mid-response. */
+  hangUp(): void {
+    this.listeners.get('close')?.();
   }
 
   as(): ExpressResponse {
@@ -161,5 +167,77 @@ describe('read deadline', () => {
     expect(response.writableEnded).toBe(true);
     // Whatever arrived before the deadline is still counted.
     expect(outcome.completionTokens).toBeGreaterThan(0);
+  });
+});
+
+describe('a leg’s own account of a broken stream', () => {
+  it('reports the error and the metered status the mapper decided', async () => {
+    // The external leg's withdrawn-verdict case (ADR-008 §3, Denis's ruling 5):
+    // the connection was closed by policy, so the generation is metered `aborted`
+    // and the terminal frame names the reason class instead of a bare 500.
+    const abort = new AbortController();
+    const source = upstream(abort);
+    const response = new RecordingResponse();
+
+    const relay = relayStream({
+      context: { ...context, startedAt: Date.now() },
+      upstream: source.response,
+      response: response.as(),
+      readTimeoutMs: 30,
+      abort,
+      heartbeatIntervalMs: 10_000,
+      failureMapper: async () => ({
+        status: 'aborted',
+        error: openAiErrors.attestationRevoked('the verdict was withdrawn'),
+      }),
+    });
+    pending = relay;
+
+    source.push(CONTENT);
+    const outcome = await relay;
+
+    expect(outcome.status).toBe('aborted');
+    expect(outcome.errorCode).toBe('attestation_revoked');
+    const errorEvent = response.written.at(-2) as string;
+    expect(JSON.parse(errorEvent.replace('data: ', '')).error).toMatchObject({
+      type: 'gatekeeper_error',
+      code: 'attestation_revoked',
+    });
+    expect(response.written.at(-1)).toBe('data: [DONE]\n\n');
+    // Tokens that reached the client before the drop are still counted.
+    expect(outcome.completionTokens).toBeGreaterThan(0);
+  });
+
+  it('is not consulted when the client is the one who left', async () => {
+    // A client hang-up is already `aborted` and has no error frame to carry: the
+    // socket is gone. Asking the sidecar why would be an HTTP call on a path where
+    // nothing can be reported.
+    const abort = new AbortController();
+    const source = upstream(abort);
+    const response = new RecordingResponse();
+    let consulted = false;
+
+    const relay = relayStream({
+      context: { ...context, startedAt: Date.now() },
+      upstream: source.response,
+      response: response.as(),
+      readTimeoutMs: 5_000,
+      abort,
+      heartbeatIntervalMs: 10_000,
+      failureMapper: async () => {
+        consulted = true;
+        return { status: 'error', error: openAiErrors.internal() };
+      },
+    });
+    pending = relay;
+
+    source.push(CONTENT);
+    await sleep(10);
+    response.hangUp();
+    const outcome = await relay;
+
+    expect(outcome.status).toBe('aborted');
+    expect(outcome.errorCode).toBeNull();
+    expect(consulted).toBe(false);
   });
 });

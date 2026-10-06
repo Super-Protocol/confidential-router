@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiExcludeController } from '@nestjs/swagger';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { CatalogService } from '../../catalog/catalog.service.js';
+import { ExternalEndpoint } from '../../db/entities/external-endpoint.entity.js';
 import { Generation } from '../../db/entities/generation.entity.js';
 import { ApiKeyGuard, type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
 import { openAiErrors } from './openai-error.js';
@@ -36,7 +37,27 @@ export class GenerationsController {
     if (!generation) {
       throw openAiErrors.notFound();
     }
-    return { data: present(generation, this.catalog.endpointById(generation.endpointId)?.name ?? null) };
+    return { data: present(generation, await this.endpointNameOf(generation)) };
+  }
+
+  /**
+   * The endpoint name this generation was billed against, from whichever table
+   * owns it — the same value `usage.endpoint` carried in the original response,
+   * which is the point of this route.
+   *
+   * The external name is read from the row rather than from the catalogue: a
+   * reconciliation query arrives after the fact, and by then the endpoint may have
+   * been denied or disabled and be absent from the routable map. What it was called
+   * when the request was served does not change with its verdict.
+   */
+  private async endpointNameOf(generation: Generation): Promise<string | null> {
+    if (generation.externalEndpointId) {
+      const endpoint = await this.dataSource
+        .getRepository(ExternalEndpoint)
+        .findOne({ where: { id: generation.externalEndpointId }, select: { name: true } });
+      return endpoint?.name ?? null;
+    }
+    return generation.endpointId ? (this.catalog.endpointById(generation.endpointId)?.name ?? null) : null;
   }
 }
 

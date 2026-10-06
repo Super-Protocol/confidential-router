@@ -260,6 +260,22 @@ describe('the CSV export', () => {
     expect(response.text.trim().split('\r\n')).toHaveLength(2);
   });
 
+  it('names both endpoint columns, and every row has as many fields as the header', async () => {
+    // ADR-008's egress leg made `endpointId` nullable, so the export gained the
+    // column that says where an external generation went. The field count is the
+    // assertion that matters: a header and a row that disagree would silently
+    // shift every column after the new one.
+    const response = await csv(`workspaceId=${session.workspaceId}`).expect(200);
+    const lines = response.text.trim().split('\r\n');
+    const header = lines[0].split(',');
+
+    expect(header).toContain('endpointId');
+    expect(header).toContain('externalEndpointId');
+    for (const row of lines.slice(1)) {
+      expect(row.split(',')).toHaveLength(header.length);
+    }
+  });
+
   it('carries no prompt or completion column', async () => {
     const response = await csv(`workspaceId=${session.workspaceId}`).expect(200);
     const header = response.text.split('\r\n')[0];

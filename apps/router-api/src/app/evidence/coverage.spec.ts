@@ -46,6 +46,8 @@ async function generation(options: {
   createdAt: Date;
   covered: boolean;
   endpointId?: string;
+  /** Set instead of `endpointId` for a generation that left the cluster space. */
+  externalEndpointId?: string;
   tokens?: number;
   workspaceId?: string;
 }): Promise<void> {
@@ -54,7 +56,8 @@ async function generation(options: {
     workspaceId: options.workspaceId ?? workspaceId,
     apiKeyId: null,
     modelId: MODEL_ID,
-    endpointId: options.endpointId ?? endpointId,
+    endpointId: options.externalEndpointId ? null : (options.endpointId ?? endpointId),
+    externalEndpointId: options.externalEndpointId ?? null,
     evidenceSnapshotId: options.covered ? randomUUID() : null,
     evidenceDigest: options.covered ? `sha256/${'A'.repeat(43)}` : null,
     promptTokens: options.tokens ?? 0,
@@ -177,5 +180,34 @@ describe('EvidenceCoverageStatsService', () => {
 
   it('reports no tokens for an endpoint nothing was routed through', async () => {
     expect((await stats.tokensByEndpoint(window())).get(endpointId)).toBeUndefined();
+  });
+
+  /**
+   * External generations are outside this ratio rather than counted as uncovered
+   * (ADR-008 §4). An external upstream has no bundle *this* platform published,
+   * so there is nothing here for it to be covered by — and it is the one case
+   * where the router verified the upstream itself, which makes "uncovered"
+   * exactly the wrong word.
+   */
+  it('leaves a generation served through an external endpoint out of the ratio', async () => {
+    await generation({ createdAt: new Date(NOW.getTime() - HOUR), covered: true });
+    await generation({ createdAt: new Date(NOW.getTime() - HOUR), covered: false, externalEndpointId: randomUUID() });
+
+    await expect(stats.summary(window())).resolves.toEqual({ requests: 1, covered: 1, ratio: 1 });
+  });
+
+  it('keeps external traffic out of the per-endpoint token table', async () => {
+    // The table lists `endpoints` rows; an external generation has no id in that
+    // namespace, so grouping it in would make a bucket no row can look up.
+    await generation({
+      createdAt: new Date(NOW.getTime() - HOUR),
+      covered: false,
+      tokens: 99,
+      externalEndpointId: randomUUID(),
+    });
+
+    const tokens = await stats.tokensByEndpoint(window());
+
+    expect([...tokens.keys()]).toEqual([]);
   });
 });

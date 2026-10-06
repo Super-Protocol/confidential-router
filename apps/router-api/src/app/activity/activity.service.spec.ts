@@ -1,7 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type Catalog, createTestDataSource, seedCatalog, seedGeneration } from '../../../test/seed.js';
+import {
+  type Catalog,
+  createTestDataSource,
+  seedCatalog,
+  seedExternalEndpoint,
+  seedGeneration,
+} from '../../../test/seed.js';
 import { Model } from '../db/entities/model.entity.js';
 import { ActivityService } from './activity.service.js';
 
@@ -71,6 +77,28 @@ describe('summary', () => {
 
     expect(summary.coveredRequests).toBe(3);
     expect(summary.evidenceCoverage).toBe(0.75);
+  });
+
+  it('counts an external generation in requests and spend, but not in the coverage ratio', async () => {
+    // ADR-008 §4: an external upstream has no bundle *this* platform published,
+    // so there is nothing for it to be covered by — and it is the one case where
+    // the router verified before sending, which makes counting it as uncovered a
+    // number that reads backwards. The money still counts.
+    const external = await seedExternalEndpoint(dataSource, { status: 'verified', withModel: false });
+    await seedGeneration(dataSource, catalog, { createdAt: new Date('2026-08-28T09:00:00Z'), covered: true });
+    await seedGeneration(dataSource, catalog, {
+      createdAt: new Date('2026-08-28T10:00:00Z'),
+      covered: false,
+      costMicros: 42,
+      externalEndpointId: external.id,
+    });
+
+    const summary = await activity.summary(range);
+
+    expect(summary.requests).toBe(2);
+    expect(summary.spendMicros).toBe(1_042);
+    expect(summary.coveredRequests).toBe(1);
+    expect(summary.evidenceCoverage).toBe(1);
   });
 
   it('averages first-token time over the requests that reported one, not over all of them', async () => {

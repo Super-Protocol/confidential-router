@@ -355,6 +355,35 @@ This service drives it through a file and reads it back over a socket:
   of a failed re-attestation as seen from the admission side. The sidecar refuses
   the same request at the egress; two independent refusals for one rule, because
   the two halves live in different processes.
+- **`ExternalUpstreamClient`** (`src/app/api/v1/`) is the egress leg itself: the
+  same POST `LiteLlmClient` makes, to `http://127.0.0.1:<listenPort>` instead, with
+  the sealed upstream key opened one request at a time into `Authorization`.
+  `GatewayService` picks between the two per request and nothing else in `/v1`
+  knows which it got — rate limits, the generation id, the SSE relay, response
+  shaping and the meter are one code path for both, which is the property the
+  external leg was required not to disturb.
+
+### What a client sees when attestation fails
+
+Both refusals come back as **503 `gatekeeper_error`** on `/v1`, which is the
+gatekeeper's own vocabulary: toward an external upstream this router occupies the
+gatekeeper's position, and a client that already branches on it should not need a
+second name for the same refusal.
+
+| Code | When |
+| --- | --- |
+| `attestation_failed` | nothing was sent — admission found the endpoint `pending`/`denied`, or the sidecar answered its fail-closed 503 one hop later |
+| `attestation_revoked` | the verdict was withdrawn mid-stream, so the sidecar closed the connection under a running generation; the stream's last event carries this and the row is metered `aborted` |
+
+A model whose endpoint holds no verdict is absent from `/v1/models` as well, and
+404s on `/v1/models/{id}`: fail-closed means not offered, not offered-and-broken.
+
+Metering is unchanged in kind. An external generation writes
+`externalEndpointId` instead of `endpointId` (exactly one, always), freezes the
+admin-set prices like any other, carries no `evidenceSnapshotId` — there is no
+snapshot row behind an upstream's bundle — and reports the digest its *admitting
+verdict* observed as `usage.evidence_digest`, which is stronger coverage than a
+built-in's fact about publication.
 
 Nothing here persists trust. On boot every external endpoint is forced back to
 `pending` — out of the catalogue, refusing routing — until the sidecar reports a

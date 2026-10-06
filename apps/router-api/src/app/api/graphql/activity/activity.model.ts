@@ -15,7 +15,14 @@ registerEnumType(BucketEnum, {
  *
  * `evidenceCoverage` is the share of requests served while the endpoint had
  * published evidence — a fact about publication, never a verdict about validity
- * (ADR-002). Money is micro-USD as a string, so no client rounds it.
+ * (ADR-002). Its denominator is the requests served by *this deployment's*
+ * endpoints, not `requests`: a generation routed to an external endpoint has no
+ * published bundle of ours to have been covered by, and counting one as
+ * uncovered would report the single case where this router verified the upstream
+ * itself as the least covered (ADR-008 §4). `requests`, the token counts and
+ * `spendMicros` include every generation, external ones included.
+ *
+ * Money is micro-USD as a string, so no client rounds it.
  */
 @ObjectType({ isAbstract: true })
 abstract class ActivityTotalsModel {
@@ -34,7 +41,11 @@ abstract class ActivityTotalsModel {
   @Field(() => String, { description: 'Spend in micro-USD.' })
   spendMicros!: string;
 
-  @Field(() => Float, { description: '0–1. Zero when there were no requests.' })
+  @Field(() => Float, {
+    description:
+      '0–1, over the requests this deployment’s own endpoints served. Zero when there were none. ' +
+      'Generations routed to an external endpoint are outside this ratio, not counted as uncovered.',
+  })
   evidenceCoverage!: number;
 }
 

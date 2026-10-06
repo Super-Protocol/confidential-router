@@ -194,6 +194,18 @@ const TOTALS_SELECTS = [
     alias: 'coveredRequests',
     expression: 'SUM(CASE WHEN generation.evidenceSnapshotId IS NULL THEN 0 ELSE 1 END) AS "coveredRequests"',
   },
+  {
+    // The denominator of `evidenceCoverage`, which is *not* `requests`: evidence
+    // coverage is a statement about this deployment's own endpoints — "the
+    // platform had published a fresh bundle when I routed here" — and an
+    // external generation has no such bundle to have been covered by. Counting
+    // one as uncovered would read as "unverified" on the Activity screen,
+    // which is backwards: the external leg is the one case where this router
+    // verified the upstream itself before sending a byte (ADR-008 §4). Requests,
+    // tokens and spend stay whole; only the ratio is scoped.
+    alias: 'coverableRequests',
+    expression: 'SUM(CASE WHEN generation.externalEndpointId IS NULL THEN 1 ELSE 0 END) AS "coverableRequests"',
+  },
   { alias: 'promptTokens', expression: 'SUM(generation.promptTokens) AS "promptTokens"' },
   { alias: 'completionTokens', expression: 'SUM(generation.completionTokens) AS "completionTokens"' },
   { alias: 'spendMicros', expression: 'SUM(generation.costMicros) AS "spendMicros"' },
@@ -215,7 +227,7 @@ function totalsOf(row: Record<string, unknown>): ActivityTotals {
     promptTokens: toNumber(row.promptTokens),
     completionTokens: toNumber(row.completionTokens),
     spendMicros: toNumber(row.spendMicros),
-    evidenceCoverage: coverage(row.coveredRequests, row.requests),
+    evidenceCoverage: coverage(row.coveredRequests, row.coverableRequests),
   };
 }
 

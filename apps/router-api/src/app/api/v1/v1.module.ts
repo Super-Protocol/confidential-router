@@ -4,6 +4,7 @@ import { ApiKeysModule } from '../../api-keys/api-keys.module.js';
 import { Generation } from '../../db/entities/generation.entity.js';
 import { MeteringModule } from '../../metering/metering.module.js';
 import { ApiKeyGuard } from './api-key.guard.js';
+import { ExternalUpstreamClient } from './external-upstream.client.js';
 import { GatewayController } from './gateway.controller.js';
 import { GatewayService } from './gateway.service.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
@@ -24,6 +25,11 @@ import { V1FallbackController } from './v1-fallback.controller.js';
  * `RATE_LIMITER` is bound here to the in-process token bucket. A multi-replica
  * deployment swaps in a Redis adapter by changing this one provider — nothing
  * else in the module knows which implementation it got.
+ *
+ * Both upstream legs are providers here and the gateway picks between them per
+ * request (ADR-008 §4). `ExternalUpstreamClient`'s two collaborators —
+ * `SecretEnvelopeService` and the external catalogue — come from the global
+ * `SecretsModule` and `ExternalEndpointsModule`, like `CatalogService` does.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Generation]), ApiKeysModule, MeteringModule],
@@ -31,6 +37,7 @@ import { V1FallbackController } from './v1-fallback.controller.js';
   providers: [
     { provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter },
     ApiKeyGuard,
+    ExternalUpstreamClient,
     GatewayPolicyService,
     GatewayService,
     GenerationRecorder,

@@ -1,7 +1,7 @@
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
-import { Generation } from './generation.entity.js';
+import { Generation, generationEndpointIsExclusive } from './generation.entity.js';
 import { ENTITIES } from './index.js';
 import { Model, modelOriginIsExclusive } from './model.entity.js';
 
@@ -233,6 +233,43 @@ describe('the models catalogue', () => {
     // as if it were two different models.
     expect(modelOriginIsExclusive({ origin: 'config', endpointId: null, externalEndpointId: 'x1' })).toBe(false);
     expect(modelOriginIsExclusive({ origin: 'external', endpointId: 'e1', externalEndpointId: null })).toBe(false);
+  });
+});
+
+/**
+ * The same XOR on `generations`, which ADR-008's egress leg made necessary: a
+ * metered request went either to one of this deployment's endpoints or out
+ * through an external one, never to both and never to neither.
+ */
+describe('a metered request’s endpoint', () => {
+  it('may be an external one instead of ours', () => {
+    const columns = dataSource.getMetadata(Generation).columns;
+
+    expect(columns.find((column) => column.propertyName === 'endpointId')?.isNullable).toBe(true);
+    expect(columns.find((column) => column.propertyName === 'externalEndpointId')?.isNullable).toBe(true);
+  });
+
+  it('is exactly one of the two, and the rule is one testable function', () => {
+    expect(generationEndpointIsExclusive({ endpointId: 'e1', externalEndpointId: null })).toBe(true);
+    expect(generationEndpointIsExclusive({ endpointId: null, externalEndpointId: 'x1' })).toBe(true);
+
+    // Both: counted once in the per-endpoint token totals and once as external
+    // traffic. Neither: counted in no screen at all, which is how a billing row
+    // becomes impossible to find.
+    expect(generationEndpointIsExclusive({ endpointId: 'e1', externalEndpointId: 'x1' })).toBe(false);
+    expect(generationEndpointIsExclusive({ endpointId: null, externalEndpointId: null })).toBe(false);
+  });
+
+  it('still stores no verdict of its own — the digest it keeps is a fact, not a decision', () => {
+    // ADR-008 §1 narrows data-model invariant 2 to `external_endpoints` and its
+    // event timeline. `generations` was not part of that narrowing and must not
+    // drift into it: `evidenceDigest` names *which* bundle covered the request,
+    // and nothing here says whether it verified.
+    const columns = dataSource.getMetadata(Generation).columns.map((column) => column.propertyName.toLowerCase());
+
+    for (const forbidden of ['verified', 'verdict', 'admitted', 'attested', 'trusted', 'measurement']) {
+      expect(columns.filter((column) => column.includes(forbidden))).toEqual([]);
+    }
   });
 });
 
