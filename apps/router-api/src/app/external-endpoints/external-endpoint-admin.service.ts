@@ -26,6 +26,17 @@ import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 /** The sidecar's endpoint key is a Rego key: `schemas/gatekeeper-config.schema.json` `$defs/name`. */
 export const EXTERNAL_ENDPOINT_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
+/**
+ * What an external catalogue row records under `models.tee`.
+ *
+ * Empty, because nobody is in a position to fill it: the admin does not declare
+ * an upstream's hardware (the API has no field for it) and the router cannot
+ * observe it. `/v1/models` omits the key rather than publishing a blank, and
+ * `ExternalEndpoint.measurementSeen` is where the console reads what the verdict
+ * actually saw.
+ */
+export const EXTERNAL_MODEL_TEE = '';
+
 /** One model an admin registers on an external endpoint, with the prices the ledger will freeze. */
 export interface ExternalModelSpec {
   /** The public model id, i.e. the primary key of `models`. */
@@ -37,7 +48,6 @@ export interface ExternalModelSpec {
   capabilities: ModelCapability[];
   promptPer1mMicros: number;
   completionPer1mMicros: number;
-  tee: string;
 }
 
 export interface RegisterExternalEndpointSpec {
@@ -51,7 +61,6 @@ export interface RegisterExternalEndpointSpec {
 
 export interface UpdateExternalEndpointSpec {
   id: string;
-  name?: string;
   baseUrl?: string;
   /** Replaces the registered set. A model dropped here is retired, never deleted. */
   models?: readonly ExternalModelSpec[];
@@ -150,14 +159,36 @@ export class ExternalEndpointAdminService {
     };
   }
 
-  /** The verdict timeline, newest first — history, never an input to admission (§8). */
-  async events(externalEndpointId: string, limit: number): Promise<ExternalEndpointEvent[]> {
-    await this.require(externalEndpointId);
-    return this.dataSource.getRepository(ExternalEndpointEvent).find({
-      where: { externalEndpointId },
-      order: { at: 'DESC', id: 'DESC' },
-      take: limit,
-    });
+  /**
+   * The verdict timelines of several endpoints at once, newest first — history,
+   * never an input to admission (§8).
+   *
+   * One bounded read per endpoint rather than one unbounded read for the page.
+   * The timeline is a field of `ExternalEndpoint` (the contract's
+   * `ExternalEndpoint.events`) and `externalEndpoints` is `SessionGuard`, so any
+   * signed-in user asks for every endpoint's at once — and nothing prunes
+   * `external_endpoint_events`, which the status poller appends to on every flip.
+   * A single `IN` query would therefore hydrate the whole table to throw most of
+   * it away. `LIMIT` per row-group needs a window function, which the two drivers
+   * spell differently; N indexed reads of 50 rows
+   * (`IDX_external_endpoint_events_endpointId_at`) are the portable version, and N
+   * is the registration count.
+   */
+  async eventsFor(
+    externalEndpointIds: readonly string[],
+    limit: number,
+  ): Promise<Map<string, ExternalEndpointEvent[]>> {
+    const repository = this.dataSource.getRepository(ExternalEndpointEvent);
+    const timelines = await Promise.all(
+      externalEndpointIds.map(async (externalEndpointId) =>
+        repository.find({
+          where: { externalEndpointId },
+          order: { at: 'DESC', id: 'DESC' },
+          take: limit,
+        }),
+      ),
+    );
+    return new Map(externalEndpointIds.map((id, index) => [id, timelines[index] ?? []]));
   }
 
   /**
@@ -227,17 +258,18 @@ export class ExternalEndpointAdminService {
    * sidecar would refuse (it discards every cached verdict on reload and
    * re-attests), but the two refusals decision 5 relies on have to agree: the row
    * goes back to `pending` with its verdict columns cleared, the same reset a
-   * restart and a re-enable do. A rename does not move where traffic goes, so it
-   * keeps its verdict.
+   * restart and a re-enable do.
+   *
+   * The name is **not** among the things this changes, and the contract says so
+   * out loud (`UpdateExternalEndpointInput` has no `name`): it is also the
+   * sidecar's key for the upstream and the id the rendered config, the allocated
+   * listener and every timeline entry are written against. Re-keying all of that
+   * to spell a label differently is a registration, not an edit.
    */
   async update(spec: UpdateExternalEndpointSpec): Promise<ExternalEndpointView> {
     const endpoint = await this.require(spec.id);
-    const name = spec.name === undefined ? endpoint.name : this.requireName(spec.name);
     const baseUrl = spec.baseUrl === undefined ? endpoint.baseUrl : canonicalBaseUrl(spec.baseUrl);
 
-    if (name !== endpoint.name && (await this.endpoints().findOne({ where: { name }, select: { id: true } }))) {
-      throw new ConflictException(`An external endpoint named "${name}" is already registered.`);
-    }
     if (spec.models) {
       assertDistinctModelIds(spec.models);
       await this.assertModelIdsFree(spec.models, endpoint.id);
@@ -250,7 +282,6 @@ export class ExternalEndpointAdminService {
         ExternalEndpoint,
         { id: endpoint.id },
         {
-          name,
           baseUrl,
           hostname: new URL(baseUrl).hostname,
           ...(repointed && endpoint.enabled ? PENDING_VERDICT : {}),
@@ -321,6 +352,36 @@ export class ExternalEndpointAdminService {
   /** The admin trust list, in the order the rendered config lists it. */
   async listMeasurements(): Promise<TrustedMeasurement[]> {
     return this.measurements().find({ order: { measurement: 'ASC' } });
+  }
+
+  /**
+   * How many registered endpoints each measurement currently admits — what
+   * removing one would drop (`TrustedMeasurement.admits`).
+   *
+   * Counted from the measurement each endpoint's **last verdict saw**, which
+   * makes this a statement about the last check and not a promise about the next
+   * one. That is the only honest count available: admission happens in the
+   * sidecar against the list as it stands at that moment, so "what this row will
+   * admit" is not knowable here — and a console number that implied otherwise
+   * would be re-introducing the stored trust ADR-008 §8 refuses.
+   *
+   * Only endpoints a verdict currently admits are counted. A denied one keeps the
+   * measurement its last check saw — a refusal at `tls-fingerprint` or `policy`
+   * observed one and refused anyway — and counting it would make the field say
+   * that withdrawing the row would drop an endpoint that is already serving
+   * nothing. `disabled` rows are out for the same reason.
+   */
+  async measurementUsage(): Promise<Map<string, number>> {
+    const rows = await this.endpoints()
+      .createQueryBuilder('endpoint')
+      .select('endpoint.measurementSeen', 'measurement')
+      .addSelect('COUNT(*)', 'admits')
+      .where('endpoint.measurementSeen IS NOT NULL')
+      .andWhere('endpoint.enabled = :enabled', { enabled: true })
+      .andWhere('endpoint.status = :status', { status: 'verified' })
+      .groupBy('endpoint.measurementSeen')
+      .getRawMany<{ measurement: string; admits: string | number }>();
+    return new Map(rows.map((row) => [row.measurement, Number(row.admits)]));
   }
 
   /**
@@ -490,7 +551,13 @@ export class ExternalEndpointAdminService {
         capabilities: model.capabilities,
         promptPer1mMicros: model.promptPer1mMicros,
         completionPer1mMicros: model.completionPer1mMicros,
-        tee: model.tee,
+        // Blank, and deliberately: an external model's hardware is not something
+        // an admin declares (the contract's `ExternalModelInput` has no `tee`) or
+        // this router can know. What it *can* say about the upstream is the
+        // measurement a verdict saw, which is a column on the endpoint. A label
+        // invented here would read as a claim on `/v1/models`, so the field is
+        // omitted there instead (`models.controller.ts`).
+        tee: EXTERNAL_MODEL_TEE,
         enabled: true,
         updatedAt: now,
       });

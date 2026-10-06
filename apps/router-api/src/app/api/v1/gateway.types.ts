@@ -26,7 +26,17 @@ export interface RoutedEndpoint {
   id: string;
   name: string;
   hostname: string;
-  tee: string;
+  /**
+   * The operator-declared TEE label, or null for an external upstream.
+   *
+   * Null rather than a blank or an invented label: the admin API has no field for
+   * an upstream's hardware (`docs/contracts/console-graphql.md`,
+   * `ExternalModelInput`) and this router cannot observe it, so there is nothing
+   * to declare. `GET /v1/models` omits the key in that case, and what this router
+   * *can* say about an upstream — the measurement a verdict saw — is on the
+   * endpoint rather than on the model.
+   */
+  tee: string | null;
 }
 
 /**

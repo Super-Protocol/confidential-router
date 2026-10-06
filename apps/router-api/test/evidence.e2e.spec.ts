@@ -562,10 +562,10 @@ describe('the one architectural rule', () => {
     // validity", and `DISABLED` is the operator's switch — neither is a statement
     // about an upstream.
     expect(response.body.data.__type.enumValues.map((value: { name: string }) => value.name)).toEqual([
-      'DENIED',
+      'DENIED_BY_THIS_ROUTER',
       'DISABLED',
       'PENDING',
-      'VERIFIED',
+      'VERIFIED_BY_THIS_ROUTER',
     ]);
   });
 });

@@ -111,7 +111,16 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // ADR-008's egress leg loosened `generations.endpointId`; the first undo puts
+      // ADR-008 §6's evidence leg loosened `evidence_snapshots.endpointId`; the
+      // first undo puts the NOT NULL back and drops the column it added.
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(false);
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'workloads')).toBe(false);
+      // The column the previous migration loosened is untouched.
+      expect(await isNullable(queryRunner, 'generations', 'endpointId')).toBe(true);
+
+      // ADR-008's egress leg loosened `generations.endpointId`; the next undo puts
       // the NOT NULL back and leaves the previous migration's tables alone.
       expect(await isNullable(queryRunner, 'generations', 'endpointId')).toBe(true);
       await dataSource.undoLastMigration();

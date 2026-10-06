@@ -1,7 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entity.js';
+import { ExternalEndpoint } from '../src/app/db/entities/external-endpoint.entity.js';
+import { ExternalEndpointEvent } from '../src/app/db/entities/external-endpoint-event.entity.js';
 import { createHarness, type Harness } from './app-harness.js';
 import { anonymous, type ConsoleSession, graphql, post, signIn } from './console.js';
 
@@ -32,28 +37,33 @@ const UPSTREAM_KEY = 'sk-upstream-super-secret-value';
 const REGISTER = `
   mutation Register($input: RegisterExternalEndpointInput!) {
     registerExternalEndpoint(input: $input) {
-      id name baseUrl hostname enabled status apiKeyPrefix registeredBy
-      models { id name upstreamModel contextLength capabilities promptPer1mMicros completionPer1mMicros tee enabled }
+      id name baseUrl hostname enabled status apiKeyPrefix
+      models { id name upstreamModel contextLength capabilities pricing { promptPer1m completionPer1m } }
+      events { id kind }
+      latestEvidence { snapshotId }
     }
   }
 `;
 const ENDPOINTS = `
   {
     externalEndpoints {
-      id name baseUrl hostname enabled status measurementSeen evidenceDigestSeen pinnedCertFingerprint
-      apiKeyPrefix registeredBy models { id promptPer1mMicros }
+      id name baseUrl hostname enabled status measurementSeen measurementSource evidenceDigestSeen
+      pinnedCertFingerprint apiKeyPrefix
+      models { id upstreamModel pricing { promptPer1m } }
+      events { id kind at stage reason evidence { snapshotId } }
+      latestEvidence { snapshotId containerImages workloads { kind name } }
     }
   }
 `;
-const MEASUREMENTS = '{ trustedMeasurements { id measurement note addedBy addedAt } }';
+const MEASUREMENTS = '{ trustedMeasurements { id measurement note addedByEmail addedAt admits } }';
 const EVENTS = `
   query Events($id: ID!) {
-    externalEndpointEvents(externalEndpointId: $id) { id kind at stage reason }
+    externalEndpoint(id: $id) { events { id kind at stage reason } }
   }
 `;
 const ADD_MEASUREMENT = `
   mutation Add($input: AddTrustedMeasurementInput!) {
-    addTrustedMeasurement(input: $input) { id measurement note addedBy }
+    addTrustedMeasurement(input: $input) { id measurement note addedByEmail admits }
   }
 `;
 
@@ -75,7 +85,6 @@ function registration(overrides: Record<string, unknown> = {}) {
         capabilities: ['CHAT'],
         promptPer1mMicros: '400000',
         completionPer1mMicros: '800000',
-        tee: 'AMD SEV-SNP',
       },
     ],
     ...overrides,
@@ -140,7 +149,6 @@ describe('registering an upstream', () => {
       // No verdict has been read back, so it serves nothing (ADR-008 §8).
       status: 'PENDING',
       apiKeyPrefix: 'sk-upstr',
-      registeredBy: OPERATOR,
     });
     expect(endpoint.models).toEqual([
       {
@@ -149,12 +157,13 @@ describe('registering an upstream', () => {
         upstreamModel: 'llama-3.3-70b-instruct',
         contextLength: 131072,
         capabilities: ['CHAT'],
-        promptPer1mMicros: '400000',
-        completionPer1mMicros: '800000',
-        tee: 'AMD SEV-SNP',
-        enabled: true,
+        pricing: { promptPer1m: '400000', completionPer1m: '800000' },
       },
     ]);
+    // Nothing has verified it, so there is no pinned leaf to bind a fetched
+    // bundle to and no summary to show (SUP-221 ruling 1 is informational, and
+    // the field is nullable for exactly this state).
+    expect(endpoint.latestEvidence).toBeNull();
   });
 
   it('writes a registered event the timeline can render', async () => {
@@ -163,7 +172,7 @@ describe('registering an upstream', () => {
 
     const body = await graphql(ops, EVENTS, { id: endpoint.id });
 
-    expect(body.data.externalEndpointEvents.map((event: { kind: string }) => event.kind)).toEqual(['REGISTERED']);
+    expect(body.data.externalEndpoint.events.map((event: { kind: string }) => event.kind)).toEqual(['REGISTERED']);
   });
 
   it('renders the sidecar config in the same request, so the edit is live', async () => {
@@ -220,8 +229,8 @@ describe('the upstream API key', () => {
     const listed = await graphql(ops, ENDPOINTS);
     const rotated = await graphql(
       ops,
-      'mutation Rotate($input: RotateExternalEndpointKeyInput!) { rotateExternalEndpointKey(input: $input) { apiKeyPrefix } }',
-      { input: { id: registered.data.registerExternalEndpoint.id, apiKey: 'sk-rotated-value-here' } },
+      'mutation Rotate($id: ID!, $input: RotateExternalEndpointKeyInput!) { rotateExternalEndpointKey(id: $id, input: $input) { apiKeyPrefix } }',
+      { id: registered.data.registerExternalEndpoint.id, input: { apiKey: 'sk-rotated-value-here' } },
     );
 
     const serialised = JSON.stringify([registered, listed, rotated]);
@@ -260,7 +269,10 @@ describe('the trust list', () => {
     expect(added.data.addTrustedMeasurement).toMatchObject({
       measurement: MEASUREMENT,
       note: 'Partner cloud',
-      addedBy: OPERATOR,
+      addedByEmail: OPERATOR,
+      // Nothing has been checked against it yet: `admits` counts what the last
+      // verdict saw, not what the next one will.
+      admits: 0,
     });
   });
 
@@ -287,10 +299,13 @@ describe('the trust list', () => {
     const ops = await operator();
     const added = await graphql(ops, ADD_MEASUREMENT, { input: { measurement: MEASUREMENT } });
 
-    await graphql(ops, 'mutation Remove($id: ID!) { removeTrustedMeasurement(id: $id) { measurement } }', {
+    const removed = await graphql(ops, 'mutation Remove($id: ID!) { removeTrustedMeasurement(id: $id) }', {
       id: added.data.addTrustedMeasurement.id,
     });
 
+    // `Boolean!`, not the row: the row is gone, and a payload describing it is a
+    // description of something that no longer exists.
+    expect(removed.data.removeTrustedMeasurement).toBe(true);
     expect(readFileSync(configFile, 'utf8')).not.toContain(MEASUREMENT);
   });
 });
@@ -313,7 +328,7 @@ describe('transparency scoping (ruling 3)', () => {
       status: 'PENDING',
     });
     expect(measurements.data.trustedMeasurements[0]).toMatchObject({ measurement: MEASUREMENT, note: 'Partner cloud' });
-    expect(events.data.externalEndpointEvents).toHaveLength(1);
+    expect(events.data.externalEndpoint.events).toHaveLength(1);
   });
 
   it('withholds the two operator fields from a non-admin', async () => {
@@ -322,7 +337,10 @@ describe('transparency scoping (ruling 3)', () => {
     const endpoints = await graphql(await member(), ENDPOINTS);
     const measurements = await graphql(await member(), MEASUREMENTS);
 
-    expect(endpoints.data.externalEndpoints[0]).toMatchObject({ apiKeyPrefix: null, registeredBy: null });
+    expect(endpoints.data.externalEndpoints[0]).toMatchObject({ apiKeyPrefix: null });
+    // What another operator's deployment calls the model is theirs, not this
+    // catalogue's — narrowed for the same reason the key prefix is.
+    expect(endpoints.data.externalEndpoints[0].models[0].upstreamModel).toBeNull();
     expect(measurements.data.trustedMeasurements).toEqual([]);
   });
 
@@ -333,23 +351,23 @@ describe('transparency scoping (ruling 3)', () => {
     const mutations: [string, Record<string, unknown>][] = [
       [REGISTER, { input: registration({ name: 'another' }) }],
       [
-        'mutation Update($input: UpdateExternalEndpointInput!) { updateExternalEndpoint(input: $input) { id } }',
-        { input: { id: endpoint.id, name: 'renamed' } },
+        'mutation Update($id: ID!, $input: UpdateExternalEndpointInput!) { updateExternalEndpoint(id: $id, input: $input) { id } }',
+        { id: endpoint.id, input: { baseUrl: 'https://mine-now.example' } },
       ],
       [
-        'mutation Enable($input: SetExternalEndpointEnabledInput!) { setExternalEndpointEnabled(input: $input) { id } }',
-        { input: { id: endpoint.id, enabled: false } },
+        'mutation Enable($id: ID!, $input: SetExternalEndpointEnabledInput!) { setExternalEndpointEnabled(id: $id, input: $input) { id } }',
+        { id: endpoint.id, input: { enabled: false } },
       ],
       [
-        'mutation Rotate($input: RotateExternalEndpointKeyInput!) { rotateExternalEndpointKey(input: $input) { id } }',
-        { input: { id: endpoint.id, apiKey: 'sk-nope' } },
+        'mutation Rotate($id: ID!, $input: RotateExternalEndpointKeyInput!) { rotateExternalEndpointKey(id: $id, input: $input) { id } }',
+        { id: endpoint.id, input: { apiKey: 'sk-nope' } },
       ],
       [ADD_MEASUREMENT, { input: { measurement: MEASUREMENT } }],
       [
         'mutation Note($input: UpdateTrustedMeasurementInput!) { updateTrustedMeasurement(input: $input) { id } }',
         { input: { id: 'whatever', note: 'mine now' } },
       ],
-      ['mutation Remove($id: ID!) { removeTrustedMeasurement(id: $id) { id } }', { id: 'whatever' }],
+      ['mutation Remove($id: ID!) { removeTrustedMeasurement(id: $id) }', { id: 'whatever' }],
     ];
     const refusals = [];
     for (const [document, variables] of mutations) {
@@ -405,14 +423,14 @@ describe('enabling, disabling and re-pricing', () => {
 
     const disabled = await graphql(
       ops,
-      'mutation Enable($input: SetExternalEndpointEnabledInput!) { setExternalEndpointEnabled(input: $input) { status enabled } }',
-      { input: { id: endpoint.id, enabled: false } },
+      'mutation Enable($id: ID!, $input: SetExternalEndpointEnabledInput!) { setExternalEndpointEnabled(id: $id, input: $input) { status enabled } }',
+      { id: endpoint.id, input: { enabled: false } },
     );
 
     expect(disabled.data.setExternalEndpointEnabled).toEqual({ status: 'DISABLED', enabled: false });
     expect(readFileSync(configFile, 'utf8')).not.toContain('name: partner-cloud');
     const events = await graphql(ops, EVENTS, { id: endpoint.id });
-    expect(events.data.externalEndpointEvents.map((event: { kind: string }) => event.kind)).toEqual([
+    expect(events.data.externalEndpoint.events.map((event: { kind: string }) => event.kind)).toEqual([
       'DISABLED',
       'REGISTERED',
     ]);
@@ -424,8 +442,8 @@ describe('enabling, disabling and re-pricing', () => {
 
     const updated = await graphql(
       ops,
-      'mutation Update($input: UpdateExternalEndpointInput!) { updateExternalEndpoint(input: $input) { baseUrl status } }',
-      { input: { id: endpoint.id, baseUrl: 'https://elsewhere.example' } },
+      'mutation Update($id: ID!, $input: UpdateExternalEndpointInput!) { updateExternalEndpoint(id: $id, input: $input) { baseUrl status } }',
+      { id: endpoint.id, input: { baseUrl: 'https://elsewhere.example' } },
     );
 
     // The row must not keep vouching for a host it no longer names; the status
@@ -442,21 +460,136 @@ describe('enabling, disabling and re-pricing', () => {
 
     const updated = await graphql(
       ops,
-      `mutation Update($input: UpdateExternalEndpointInput!) {
-         updateExternalEndpoint(input: $input) { models { id promptPer1mMicros enabled } }
+      `mutation Update($id: ID!, $input: UpdateExternalEndpointInput!) {
+         updateExternalEndpoint(id: $id, input: $input) { models { id pricing { promptPer1m } } }
        }`,
       {
-        input: {
-          id: endpoint.id,
-          models: [{ ...registration().models[0], promptPer1mMicros: '500000' }],
-        },
+        id: endpoint.id,
+        input: { models: [{ ...registration().models[0], promptPer1mMicros: '500000' }] },
       },
     );
 
+    // The dropped model is retired rather than deleted — generations keep their
+    // foreign key — and it is no longer part of what the operator lists, which is
+    // all `models` reports: the contract's type has no `enabled`, so a reader
+    // shown a retired row could not tell it from a model on offer.
     expect(updated.data.updateExternalEndpoint.models).toEqual([
-      // Retired, not deleted: generations keep their foreign key.
-      { id: 'partner/dropped:snp', promptPer1mMicros: '400000', enabled: false },
-      { id: 'partner/llama-3.3-70b:snp', promptPer1mMicros: '500000', enabled: true },
+      { id: 'partner/llama-3.3-70b:snp', pricing: { promptPer1m: '500000' } },
     ]);
+  });
+});
+
+/**
+ * The informational evidence summary, through the API the console reads
+ * (SUP-221 ruling 1).
+ *
+ * The verdict columns and the stored publication are written directly rather
+ * than driven through a sidecar and a mock evidence host: what fetching and
+ * binding a bundle does is `external-evidence.service.spec.ts`, and what is
+ * asserted here is the half that only the real schema can answer — that a
+ * summary reaches `latestEvidence`, that a timeline entry gets the publication
+ * *its own* verdict saw, and that a non-admin sees both.
+ */
+describe('the evidence summary (SUP-221 ruling 1)', () => {
+  const DIGEST_NOW = `sha256/${Buffer.alloc(32, 1).toString('base64url')}`;
+  const DIGEST_BEFORE = `sha256/${Buffer.alloc(32, 2).toString('base64url')}`;
+  const LEAF = `sha256/${Buffer.alloc(32, 3).toString('base64url')}`;
+
+  function snapshot(externalEndpointId: string, evidenceDigest: string, image: string): EvidenceSnapshot {
+    return {
+      id: randomUUID(),
+      endpointId: null,
+      externalEndpointId,
+      fetchedAt: new Date('2026-10-06T12:00:00.000Z'),
+      issuedAt: new Date('2026-10-06T11:50:00.000Z'),
+      evidenceDigest,
+      evidenceDigestHex: 'a'.repeat(64),
+      certFingerprint: LEAF,
+      quoteFormat: 'intel-tdx-quote-v5',
+      containerImages: [image],
+      chainSummary: [],
+      workloads: [{ kind: 'Deployment', name: 'vllm', namespace: 'partner', containers: ['vllm'] }],
+      measurements: { MRTD: 'abc123' },
+      jws: 'a.b.c',
+      bundle: {},
+    } as EvidenceSnapshot;
+  }
+
+  /** An upstream the sidecar has admitted, with a publication filed for each of two digests. */
+  async function verifiedWithEvidence(session: ConsoleSession): Promise<string> {
+    const endpoint = await register(session);
+    const dataSource = harness.app.get(DataSource);
+    await dataSource.getRepository(ExternalEndpoint).update(
+      { id: endpoint.id },
+      {
+        status: 'verified',
+        measurementSeen: MEASUREMENT,
+        measurementSource: 'registry',
+        evidenceDigestSeen: DIGEST_NOW,
+        pinnedCertFingerprint: LEAF,
+        lastCheckedAt: new Date('2026-10-06T12:00:00.000Z'),
+      },
+    );
+    await dataSource
+      .getRepository(EvidenceSnapshot)
+      .save([
+        snapshot(endpoint.id, DIGEST_NOW, 'ghcr.io/example/vllm@sha256:now'),
+        snapshot(endpoint.id, DIGEST_BEFORE, 'ghcr.io/example/vllm@sha256:before'),
+      ]);
+    await dataSource.getRepository(ExternalEndpointEvent).save({
+      id: randomUUID(),
+      externalEndpointId: endpoint.id,
+      at: new Date('2026-10-06T12:00:00.000Z'),
+      kind: 'digest_changed',
+      stage: null,
+      reason: null,
+      measurement: MEASUREMENT,
+      evidenceDigest: DIGEST_BEFORE,
+    });
+    return endpoint.id;
+  }
+
+  it('renders what the current verdict saw, and what each timeline entry saw', async () => {
+    const ops = await operator();
+    await verifiedWithEvidence(ops);
+
+    const [endpoint] = (await graphql(ops, ENDPOINTS)).data.externalEndpoints;
+
+    expect(endpoint.measurementSource).toBe('REGISTRY');
+    expect(endpoint.latestEvidence).toMatchObject({
+      containerImages: ['ghcr.io/example/vllm@sha256:now'],
+      workloads: [{ kind: 'Deployment', name: 'vllm' }],
+    });
+    // The entry gets the publication *its* verdict saw. Showing today's images
+    // beside a DIGEST_CHANGED entry would make the one event cloud-granularity
+    // trust exists to surface unreadable.
+    const changed = endpoint.events.find((event: { kind: string }) => event.kind === 'DIGEST_CHANGED');
+    const registered = endpoint.events.find((event: { kind: string }) => event.kind === 'REGISTERED');
+    expect(changed.evidence.snapshotId).not.toBe(endpoint.latestEvidence.snapshotId);
+    // A registration names no digest, so there is no publication to attach.
+    expect(registered.evidence).toBeNull();
+  });
+
+  it('shows it to a signed-in non-admin too, because transparency is the whole point', async () => {
+    await verifiedWithEvidence(await operator());
+
+    const [endpoint] = (await graphql(await member(), ENDPOINTS)).data.externalEndpoints;
+
+    // Ruling 3 and ruling 1 together: a reader who cannot see what a cloud-level
+    // admission let in cannot check the claim this product sells.
+    expect(endpoint.latestEvidence.containerImages).toEqual(['ghcr.io/example/vllm@sha256:now']);
+    expect(endpoint.apiKeyPrefix).toBeNull();
+  });
+
+  it('counts a trust-list entry as admitting the endpoint whose verdict saw it', async () => {
+    const ops = await operator();
+    await verifiedWithEvidence(ops);
+    await graphql(ops, ADD_MEASUREMENT, { input: { measurement: MEASUREMENT } });
+
+    const [entry] = (await graphql(ops, MEASUREMENTS)).data.trustedMeasurements;
+
+    // What withdrawing this row would drop — read off the last check, which is
+    // the only count that does not imply a promise about the next one.
+    expect(entry.admits).toBe(1);
   });
 });

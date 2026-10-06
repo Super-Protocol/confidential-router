@@ -1,6 +1,6 @@
 import { createHash, X509Certificate } from 'node:crypto';
 import { z } from 'zod';
-import type { CertificateSummary } from '../db/entities/evidence-snapshot.entity.js';
+import type { CertificateSummary, EvidenceWorkloadSummary } from '../db/entities/evidence-snapshot.entity.js';
 import { type EvidenceDigest, EvidenceDigestError, parseEvidenceDigest } from './evidence-digest.js';
 
 /**
@@ -73,6 +73,7 @@ export interface ParsedEvidenceBundle {
   certFingerprint: string;
   quoteFormat: string | null;
   containerImages: string[];
+  workloads: EvidenceWorkloadSummary[];
   chainSummary: CertificateSummary[];
   measurements: Record<string, unknown> | null;
   jws: string;
@@ -139,6 +140,7 @@ export function parseEvidenceBundle(raw: unknown, hostname: string): ParsedEvide
     certFingerprint: payload.certFingerprint,
     quoteFormat: quoteFormatOf(bundle.data.rootCaTeeQuote),
     containerImages: containerImagesOf(payload.evidence),
+    workloads: workloadsOf(payload.evidence),
     chainSummary: summariseChain(bundle.data.certChain),
     measurements: measurementsOf(payload, bundle.data),
     jws: bundle.data.jws,
@@ -236,6 +238,67 @@ function podSpecsOf(resource: unknown): unknown[] {
   return [resource, spec, spec?.template?.spec, spec?.jobTemplate?.spec?.template?.spec].filter(
     (candidate): candidate is object => !!candidate && typeof candidate === 'object',
   );
+}
+
+/**
+ * The Kubernetes workloads the canonical deployment snapshot declares, with the
+ * containers each one runs.
+ *
+ * `containerImagesOf` above answers "what images does this deployment run"; this
+ * answers "what runs them", which is the half a cloud-level admission cannot see
+ * and the half SUP-221 ruling 1 makes the admin section render (threat T13).
+ *
+ * The recognised kinds are the ones that own a pod spec — enumerated rather than
+ * inferred, for the same reason `podSpecsOf` enumerates: a blind walk would start
+ * reporting whatever a future resource happens to nest under a familiar name. A
+ * resource of any other kind, or one with no readable name, is skipped rather
+ * than guessed at; an unrecognised snapshot yields an empty list, because this is
+ * display detail and the digest is the contract.
+ */
+const WORKLOAD_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'CronJob', 'Pod']);
+
+export function workloadsOf(evidence: unknown): EvidenceWorkloadSummary[] {
+  const resources = (evidence as { resources?: unknown } | undefined)?.resources;
+  if (!Array.isArray(resources)) {
+    return [];
+  }
+  const workloads: EvidenceWorkloadSummary[] = [];
+  for (const resource of resources) {
+    if (!resource || typeof resource !== 'object') continue;
+    const kind = (resource as { kind?: unknown }).kind;
+    if (typeof kind !== 'string' || !WORKLOAD_KINDS.has(kind)) continue;
+    const metadata = (resource as { metadata?: unknown }).metadata as
+      | { name?: unknown; namespace?: unknown }
+      | undefined;
+    const name = metadata?.name;
+    if (typeof name !== 'string' || name.length === 0) continue;
+    workloads.push({
+      kind,
+      name,
+      namespace: typeof metadata?.namespace === 'string' && metadata.namespace.length > 0 ? metadata.namespace : null,
+      containers: containerNamesOf(resource),
+    });
+  }
+  return workloads;
+}
+
+/** Container names of one resource, init containers included and in declaration order. */
+function containerNamesOf(resource: unknown): string[] {
+  const names: string[] = [];
+  for (const spec of podSpecsOf(resource)) {
+    for (const key of ['initContainers', 'containers'] as const) {
+      const containers = (spec as Record<string, unknown>)[key];
+      if (!Array.isArray(containers)) continue;
+      for (const container of containers) {
+        if (!container || typeof container !== 'object') continue;
+        const name = (container as { name?: unknown }).name;
+        if (typeof name === 'string' && name.length > 0 && !names.includes(name)) {
+          names.push(name);
+        }
+      }
+    }
+  }
+  return names;
 }
 
 /**

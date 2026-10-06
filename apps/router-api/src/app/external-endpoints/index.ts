@@ -3,6 +3,8 @@ export * from './external-endpoint-admin.service.js';
 export * from './external-endpoint-status.service.js';
 export * from './external-endpoint-status-poller.service.js';
 export * from './external-endpoints.module.js';
+export * from './external-evidence.service.js';
+export * from './external-evidence-poller.service.js';
 export * from './listen-port.js';
 export * from './measurement.js';
 export * from './sidecar-admin.client.js';

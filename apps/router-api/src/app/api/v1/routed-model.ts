@@ -49,8 +49,8 @@ export function routedExternalModel(model: ExternalCatalogModel): RoutedModel {
       // `usage.endpoint` and the response header name, and a client comparing it
       // against the evidence it inspected has to see the host the evidence is for.
       hostname: model.endpoint.hostname,
-      // Denormalised onto the catalogue row at registration — an external
-      // endpoint has no `endpoints` row to carry it.
+      // Null for an external upstream, which has no `endpoints` row to carry a
+      // declared label and no admin field that would have set one.
       tee: model.tee,
     },
     external: {

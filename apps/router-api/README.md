@@ -350,6 +350,20 @@ This service drives it through a file and reads it back over a socket:
 - **`ExternalEndpointStatusPollerService`** reads the sidecar's `/verdicts` every
   `externalEndpoints.statusPollInterval` and projects each one onto its row and
   its event timeline. A transition is an event; a repetition is not.
+- **`ExternalEvidencePollerService`** / **`ExternalEvidenceService`** fetch a
+  verified upstream's own published bundle every
+  `externalEndpoints.evidencePollInterval` and file it in `evidence_snapshots`
+  under `externalEndpointId`, which is what the admin section's evidence summary
+  renders (SUP-221 ruling 1: admission is the measurement check, which admits a
+  *cloud* and cannot see which deployment on it answered). Informational and
+  never gating — it runs *after* a verdict, never towards one. The fetch is an
+  ordinary TLS connection and deliberately does not pin, because holding a
+  verdict about an upstream is the sidecar's job alone; what makes the result
+  renderable is a string comparison instead: a bundle is filed only when the TLS
+  leaf it claims is the leaf the sidecar pinned, and it is only ever surfaced for
+  the digest a verdict actually saw. Endpoints with no verdict are not polled at
+  all — there is no pin to bind a document to — so `latestEvidence` is null while
+  one is `pending`.
 - **`ExternalCatalogService`** holds the routable external models — a model is in
   it **iff** its endpoint is enabled and `verified`, which is the fail-closed drop
   of a failed re-attestation as seen from the admission side. The sidecar refuses

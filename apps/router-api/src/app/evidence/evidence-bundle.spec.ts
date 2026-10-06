@@ -114,6 +114,50 @@ describe('parseEvidenceBundle', () => {
     expect(parseEvidenceBundle(raw, 'router.example.test').containerImages).toEqual([]);
   });
 
+  /**
+   * The other half of what a cloud-level admission let in (SUP-221 ruling 1):
+   * `containerImages` says which images ran, `workloads` says what ran them.
+   */
+  it('names the workloads the snapshot declares, with their containers', () => {
+    const raw = withPayload(bundle('valid-rsa-deployment'), {
+      evidence: {
+        version: 2,
+        resources: [
+          {
+            apiVersion: 'apps/v1',
+            kind: 'Deployment',
+            metadata: { name: 'vllm', namespace: 'qwen3-coder' },
+            spec: {
+              template: {
+                spec: {
+                  initContainers: [{ name: 'init-weights', image: 'ghcr.io/example/init@sha256:bbbb' }],
+                  containers: [{ name: 'vllm', image: 'ghcr.io/example/vllm@sha256:aaaa' }],
+                },
+              },
+            },
+          },
+          { apiVersion: 'v1', kind: 'Pod', metadata: { name: 'probe' }, spec: { containers: [{ name: 'probe' }] } },
+          // A Service is not a workload, and a workload with no readable name is
+          // not reported rather than guessed at.
+          { apiVersion: 'v1', kind: 'Service', metadata: { name: 'vllm' }, spec: { ports: [{ port: 80 }] } },
+          { apiVersion: 'apps/v1', kind: 'StatefulSet', spec: { template: { spec: { containers: [] } } } },
+        ],
+      },
+    });
+
+    expect(parseEvidenceBundle(raw, 'router.example.test').workloads).toEqual([
+      // Init containers first, because that is the order they run in.
+      { kind: 'Deployment', name: 'vllm', namespace: 'qwen3-coder', containers: ['init-weights', 'vllm'] },
+      { kind: 'Pod', name: 'probe', namespace: null, containers: ['probe'] },
+    ]);
+  });
+
+  it('has no workloads when the snapshot holds a shape it does not recognise', () => {
+    const raw = withPayload(bundle('valid-rsa-deployment'), { evidence: { version: 2, resources: [{ nope: true }] } });
+
+    expect(parseEvidenceBundle(raw, 'router.example.test').workloads).toEqual([]);
+  });
+
   it('summarises the chain leaf → root without validating it', () => {
     const parsed = parseEvidenceBundle(bundle('valid-rsa-deployment'), 'router.example.test');
 

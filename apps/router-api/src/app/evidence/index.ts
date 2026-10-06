@@ -1,7 +1,12 @@
 export { type Coverage, type CoverageWindow, coverageOf, EvidenceCoverageStatsService } from './coverage.service.js';
 export { EvidenceModule } from './evidence.module.js';
 export { type DigestChange, EvidenceService, type SnapshotPage, snapshotCursor } from './evidence.service.js';
-export { EvidenceBundleError, type ParsedEvidenceBundle, parseEvidenceBundle } from './evidence-bundle.js';
+export {
+  EvidenceBundleError,
+  type ParsedEvidenceBundle,
+  parseEvidenceBundle,
+  workloadsOf,
+} from './evidence-bundle.js';
 export { type EvidenceDigest, EvidenceDigestError, fingerprintHex, parseEvidenceDigest } from './evidence-digest.js';
 export {
   EVIDENCE_PATH,

@@ -44,7 +44,6 @@ function model(overrides: Partial<ExternalModelSpec> = {}): ExternalModelSpec {
     capabilities: ['chat'],
     promptPer1mMicros: 400_000,
     completionPer1mMicros: 800_000,
-    tee: 'AMD SEV-SNP',
     ...overrides,
   };
 }
@@ -186,12 +185,14 @@ describe('registering an external endpoint', () => {
 });
 
 describe('updating an external endpoint', () => {
-  it('renames, re-points and re-derives the hostname', async () => {
+  it('re-points and re-derives the hostname', async () => {
     const { endpoint } = await register();
 
-    const updated = await service.update({ id: endpoint.id, name: 'renamed', baseUrl: 'https://other.example/v1' });
+    const updated = await service.update({ id: endpoint.id, baseUrl: 'https://other.example/v1' });
 
-    expect(updated.endpoint.name).toBe('renamed');
+    // The name is not among the things an update changes — it is the sidecar's
+    // key for this upstream, and the contract's input has no field for it.
+    expect(updated.endpoint.name).toBe('partner-cloud');
     // The path is dropped: the sidecar binds an authority, and `/v1` would be
     // rendered away anyway.
     expect(updated.endpoint.baseUrl).toBe('https://other.example');
@@ -213,11 +214,11 @@ describe('updating an external endpoint', () => {
     expect(catalog.find('partner/llama-3.3-70b:snp')).toBeUndefined();
   });
 
-  it('renaming keeps the verdict: a name does not move where traffic goes', async () => {
+  it('re-pricing keeps the verdict: a price does not move where traffic goes', async () => {
     const { endpoint } = await register();
     await verify(endpoint.id);
 
-    const updated = await service.update({ id: endpoint.id, name: 'renamed' });
+    const updated = await service.update({ id: endpoint.id, models: [model({ promptPer1mMicros: 500_000 })] });
 
     expect(updated.endpoint.status).toBe('verified');
     expect(updated.endpoint.measurementSeen).toBe(MEASUREMENT);
@@ -244,15 +245,10 @@ describe('updating an external endpoint', () => {
     await expect(service.update({ id: second.endpoint.id, models: [model()] })).rejects.toThrow(ConflictException);
   });
 
-  it('refuses a name another endpoint already holds', async () => {
-    await register();
-    const second = await register({ name: 'second', models: [model({ id: 'partner/second:snp' })] });
-
-    await expect(service.update({ id: second.endpoint.id, name: 'partner-cloud' })).rejects.toThrow(ConflictException);
-  });
-
   it('is a 404 for an endpoint that is not there', async () => {
-    await expect(service.update({ id: 'missing', name: 'whatever' })).rejects.toThrow(NotFoundException);
+    await expect(service.update({ id: 'missing', baseUrl: 'https://whatever.example' })).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });
 
@@ -380,19 +376,40 @@ describe('reads', () => {
     ]);
   });
 
-  it('returns the timeline newest first, bounded by the limit', async () => {
-    const { endpoint } = await register();
-    await service.rotateKey(endpoint.id, 'sk-two');
-    await service.setEnabled(endpoint.id, false);
+  it('returns every endpoint’s timeline newest first, bounded per endpoint', async () => {
+    const first = await register();
+    const second = await register({ name: 'second', models: [model({ id: 'partner/second:snp' })] });
+    await service.rotateKey(first.endpoint.id, 'sk-two');
+    await service.setEnabled(first.endpoint.id, false);
 
-    const events = await service.events(endpoint.id, 2);
+    const timelines = await service.eventsFor([first.endpoint.id, second.endpoint.id], 2);
 
-    expect(events).toHaveLength(2);
-    expect(events[0].kind).toBe('disabled');
+    // One read for the page: the timeline is a field of `ExternalEndpoint`, so
+    // the list screen asks for every endpoint's at once.
+    expect(timelines.get(first.endpoint.id)?.map((event) => event.kind)).toEqual(['disabled', 'key_rotated']);
+    expect(timelines.get(second.endpoint.id)?.map((event) => event.kind)).toEqual(['registered']);
   });
 
-  it('refuses a timeline for an endpoint that is not there', async () => {
-    await expect(service.events('missing', 10)).rejects.toThrow(NotFoundException);
+  it('answers an id with no timeline with an empty one rather than an error', async () => {
+    // An entry per id asked for, so a caller never has to tell "no events" from
+    // "I forgot to ask".
+    expect((await service.eventsFor(['missing'], 10)).get('missing')).toEqual([]);
+    expect((await service.eventsFor([], 10)).size).toBe(0);
+  });
+
+  it('counts what each trusted measurement currently admits', async () => {
+    const { endpoint } = await register();
+    await verify(endpoint.id);
+    const idle = await register({ name: 'idle', models: [model({ id: 'partner/idle:snp' })] });
+
+    const usage = await service.measurementUsage();
+
+    // Counted from the measurement each endpoint's last verdict saw — a
+    // statement about the last check, not a promise about the next one. The
+    // endpoint with no verdict counts towards nothing.
+    expect(usage.get(MEASUREMENT)).toBe(1);
+    expect(usage.size).toBe(1);
+    expect(idle.endpoint.measurementSeen).toBeNull();
   });
 });
 
