@@ -168,6 +168,12 @@ chunks as they arrive from LiteLLM (no buffering); through the gatekeeper this i
 
 Only models within the key's scope are listed.
 
+`endpoint.tee` is the operator-declared TEE label from the router config, and is **absent** for a
+model served by an external upstream (ADR-008): nobody declares an upstream's hardware — the admin
+API has no field for it (`console-graphql.md`, `ExternalModelInput`) — and this router cannot observe
+it, so there is nothing to publish. What it *can* say about an upstream is the measurement a verdict
+saw, which the console reads from `ExternalEndpoint.measurementSeen` rather than from the model.
+
 ### `GET /v1/evidence` and `GET /v1/evidence/{endpoint}`
 
 `{endpoint}` is an endpoint **name** or **hostname** from the router config. Without one, the route
