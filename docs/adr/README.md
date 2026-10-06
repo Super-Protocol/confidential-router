@@ -12,6 +12,7 @@ immutable once `Accepted`; superseding decisions get a new number and link back.
 | [ADR-005](./ADR-005-billing.md) | Billing — prepaid credits ledger + Stripe, no crypto | Accepted |
 | [ADR-006](./ADR-006-analytics.md) | Analytics — Plausible on the landing, PostHog EU behind our own server, no consent banner | Accepted |
 | [ADR-007](./ADR-007-console-chat-verification.md) | Console chat — no second inference path, three verification tiers labelled apart, history in the browser until SUP-179 | Accepted |
+| [ADR-008](./ADR-008-external-model-endpoints.md) | External model endpoints — gatekeeper core as sidecar egress, admin trust list of measurements, pinned-cert upstreams, fail-closed re-attestation | Proposed |
 
 Companion documents:
 
