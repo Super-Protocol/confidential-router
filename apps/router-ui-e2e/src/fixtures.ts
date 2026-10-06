@@ -25,6 +25,15 @@ export const SESSION_DATA = {
   },
 };
 
+/**
+ * `SessionProvider`'s separate `ViewerIsAdmin` query. The default viewer is an
+ * ordinary member: the Administration group is the one part of the shell that
+ * has to be absent unless a test asks for it.
+ */
+export function viewerIsAdmin(isAdmin: boolean): OperationData {
+  return { me: { id: SESSION_DATA.me.id, isAdmin } };
+}
+
 /** The `data` object of a GraphQL response. */
 export type OperationData = Record<string, unknown>;
 
@@ -53,7 +62,12 @@ export type GraphQLFixtures = Record<string, OperationResponder>;
  * visitor who is not signed in gets. {@link signIn} overrides the second.
  */
 export async function mockGraphQL(page: Page, operations: GraphQLFixtures = {}): Promise<void> {
-  const responses: GraphQLFixtures = { Session: SESSION_DATA, SignedIn: UNAUTHENTICATED, ...operations };
+  const responses: GraphQLFixtures = {
+    Session: SESSION_DATA,
+    SignedIn: UNAUTHENTICATED,
+    ViewerIsAdmin: viewerIsAdmin(false),
+    ...operations,
+  };
 
   await page.route('**/graphql', async (route) => {
     const body = route.request().postDataJSON() as {

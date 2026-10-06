@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { findNavItem, isNavItemActive, NAV_GROUPS, NAV_ITEMS } from './navigation';
+import { findNavItem, isNavItemActive, NAV_GROUPS, NAV_ITEMS, visibleNavGroups } from './navigation';
 
 describe('navigation', () => {
-  it('covers the ten console screens', () => {
+  it('covers the twelve console screens', () => {
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       'Overview',
       'Models',
@@ -11,14 +11,22 @@ describe('navigation', () => {
       'Gatekeeper',
       'Activity',
       'Logs',
+      'External endpoints',
+      'Trust list',
       'Credits',
       'Profile',
       'Preferences',
     ]);
   });
 
-  it('groups them as in the prototype', () => {
-    expect(NAV_GROUPS.map((group) => group.label)).toEqual(['Workspace', 'Access', 'Insight', 'Account']);
+  it('groups them as in the prototype, with Administration before Account', () => {
+    expect(NAV_GROUPS.map((group) => group.label)).toEqual([
+      'Workspace',
+      'Access',
+      'Insight',
+      'Administration',
+      'Account',
+    ]);
   });
 
   it('gives every screen a unique route', () => {
@@ -46,5 +54,41 @@ describe('navigation', () => {
     if (!logs) throw new Error('expected a nav item for /logs');
 
     expect(isNavItemActive(logs, '/logs-export')).toBe(false);
+  });
+
+  it('names the admin screens so the breadcrumb does not have to guess', () => {
+    expect(findNavItem('/admin/endpoints')?.label).toBe('External endpoints');
+    expect(findNavItem('/admin/trust')?.label).toBe('Trust list');
+  });
+
+  it('keeps the two admin siblings apart', () => {
+    const endpoints = findNavItem('/admin/endpoints');
+    if (!endpoints) throw new Error('expected a nav item for /admin/endpoints');
+
+    expect(isNavItemActive(endpoints, '/admin/trust')).toBe(false);
+  });
+});
+
+describe('visibleNavGroups', () => {
+  it('gives an administrator every group', () => {
+    expect(visibleNavGroups(true)).toEqual(NAV_GROUPS);
+  });
+
+  /**
+   * The flag is sidebar hygiene, not access control (the API is) — but a member
+   * seeing "Administration" over nothing would be worse than either.
+   */
+  it('drops the admin-only entries and the group that held them for a member', () => {
+    const groups = visibleNavGroups(false);
+
+    expect(groups.map((group) => group.label)).toEqual(['Workspace', 'Access', 'Insight', 'Account']);
+    expect(groups.flatMap((group) => group.items).filter((item) => item.adminOnly)).toEqual([]);
+  });
+
+  it('marks exactly the two admin screens as admin-only', () => {
+    expect(NAV_ITEMS.filter((item) => item.adminOnly).map((item) => item.href)).toEqual([
+      '/admin/endpoints',
+      '/admin/trust',
+    ]);
   });
 });

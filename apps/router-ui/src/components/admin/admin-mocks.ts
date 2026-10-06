@@ -1,0 +1,216 @@
+import type { MockLink } from '@apollo/client/testing';
+import { EXTERNAL_ENDPOINTS_QUERY, TRUSTED_MEASUREMENTS_QUERY } from './operations';
+
+/**
+ * Fixtures for the admin screens.
+ *
+ * `__typename` on every object: Apollo's cache adds it to each selection set, so
+ * a mock without it writes a row the cache then reads back as incomplete and the
+ * screen renders a loading state forever.
+ */
+
+export const MEASUREMENT_TRUSTED = 'a'.repeat(64);
+export const MEASUREMENT_ROGUE = 'b'.repeat(64);
+
+export const EVIDENCE = {
+  __typename: 'ExternalEndpointEvidence' as const,
+  snapshotId: 'snap-1',
+  fetchedAt: '2026-10-06T11:58:00.000Z',
+  issuedAt: '2026-10-06T11:50:00.000Z',
+  evidenceDigest: 'sha256/AAAABBBBCCCCDDDD',
+  evidenceDigestHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
+  certFingerprint: 'sha256/EEEEFFFF00001111',
+  certFingerprintHex: 'ffffeeeeddddccccbbbbaaaa00009999888877776666555544443333222211110',
+  quoteFormat: 'intel-tdx-quote-v5',
+  containerImages: [
+    'ghcr.io/example/vllm@sha256:1111111111111111111111111111111111111111111111111111111111111111',
+    'ghcr.io/example/sidecar@sha256:2222222222222222222222222222222222222222222222222222222222222222',
+  ],
+  workloads: [
+    {
+      __typename: 'EvidenceWorkload' as const,
+      kind: 'Deployment',
+      name: 'vllm',
+      namespace: 'qwen3-coder',
+      containers: ['vllm', 'init-weights'],
+    },
+    {
+      __typename: 'EvidenceWorkload' as const,
+      kind: 'StatefulSet',
+      name: 'cache',
+      namespace: 'qwen3-coder',
+      containers: ['redis'],
+    },
+  ],
+  measurements: [{ __typename: 'Measurement' as const, name: 'MRTD', value: 'abc123' }],
+};
+
+/** A second snapshot, so a `DIGEST_CHANGED` event shows a different image. */
+export const EVIDENCE_AFTER_CHANGE = {
+  ...EVIDENCE,
+  snapshotId: 'snap-2',
+  containerImages: ['ghcr.io/example/vllm@sha256:3333333333333333333333333333333333333333333333333333333333333333'],
+};
+
+export const VERIFIED_ENDPOINT = {
+  __typename: 'ExternalEndpoint' as const,
+  id: 'ext-1',
+  name: 'qwen3-coder',
+  baseUrl: 'https://qwen3-coder.swarm.example',
+  hostname: 'qwen3-coder.swarm.example',
+  enabled: true,
+  status: 'VERIFIED_BY_THIS_ROUTER' as const,
+  lastCheckedAt: '2026-10-06T12:00:00.000Z',
+  lastStage: null,
+  lastReason: null,
+  measurementSeen: MEASUREMENT_TRUSTED,
+  measurementSource: 'REGISTRY' as const,
+  evidenceDigestSeen: 'sha256/AAAABBBBCCCCDDDD',
+  pinnedCertFingerprint: 'ffffeeeeddddccccbbbbaaaa00009999888877776666555544443333222211110',
+  apiKeyPrefix: 'sk-up-9f3a',
+  createdAt: '2026-10-01T09:00:00.000Z',
+  updatedAt: '2026-10-06T12:00:00.000Z',
+  models: [
+    {
+      __typename: 'ExternalEndpointModel' as const,
+      id: 'qwen3-coder-30b:tdx',
+      name: 'Qwen3 Coder 30B',
+      upstreamModel: 'qwen3-coder-30b',
+      contextLength: 131072,
+      capabilities: ['CHAT' as const],
+      pricing: { __typename: 'Pricing' as const, promptPer1m: '600000', completionPer1m: '900000' },
+    },
+  ],
+  latestEvidence: EVIDENCE,
+  events: [
+    {
+      __typename: 'ExternalEndpointEvent' as const,
+      id: 'evt-3',
+      at: '2026-10-06T12:00:00.000Z',
+      kind: 'DIGEST_CHANGED' as const,
+      stage: null,
+      reason: null,
+      measurement: MEASUREMENT_TRUSTED,
+      evidenceDigest: 'sha256/AAAABBBBCCCCDDDD',
+      evidence: EVIDENCE_AFTER_CHANGE,
+    },
+    {
+      __typename: 'ExternalEndpointEvent' as const,
+      id: 'evt-2',
+      at: '2026-10-01T09:05:00.000Z',
+      kind: 'VERIFIED_BY_THIS_ROUTER' as const,
+      stage: null,
+      reason: null,
+      measurement: MEASUREMENT_TRUSTED,
+      evidenceDigest: 'sha256/AAAABBBBCCCCDDDD',
+      evidence: null,
+    },
+    {
+      __typename: 'ExternalEndpointEvent' as const,
+      id: 'evt-1',
+      at: '2026-10-01T09:00:00.000Z',
+      kind: 'REGISTERED' as const,
+      stage: null,
+      reason: null,
+      measurement: null,
+      evidenceDigest: null,
+      evidence: EVIDENCE,
+    },
+  ],
+};
+
+export const DENIED_ENDPOINT = {
+  ...VERIFIED_ENDPOINT,
+  id: 'ext-2',
+  name: 'gemma-2-2b',
+  baseUrl: 'https://gemma.swarm.example',
+  hostname: 'gemma.swarm.example',
+  status: 'DENIED_BY_THIS_ROUTER' as const,
+  lastStage: 'policy',
+  lastReason: 'measurement not on the trust list',
+  measurementSeen: MEASUREMENT_ROGUE,
+  measurementSource: 'OPERATOR_PINNED' as const,
+  pinnedCertFingerprint: null,
+  apiKeyPrefix: 'sk-up-11bb',
+  latestEvidence: EVIDENCE,
+  events: [
+    {
+      __typename: 'ExternalEndpointEvent' as const,
+      id: 'evt-10',
+      at: '2026-10-06T12:01:00.000Z',
+      kind: 'DENIED_BY_THIS_ROUTER' as const,
+      stage: 'policy',
+      reason: 'measurement not on the trust list',
+      measurement: MEASUREMENT_ROGUE,
+      evidenceDigest: null,
+      evidence: null,
+    },
+  ],
+};
+
+export const PENDING_ENDPOINT = {
+  ...VERIFIED_ENDPOINT,
+  id: 'ext-3',
+  name: 'llama-3-2-3b',
+  baseUrl: 'https://llama.swarm.example',
+  hostname: 'llama.swarm.example',
+  status: 'PENDING' as const,
+  lastCheckedAt: null,
+  lastStage: null,
+  lastReason: null,
+  measurementSeen: null,
+  measurementSource: null,
+  evidenceDigestSeen: null,
+  pinnedCertFingerprint: null,
+  latestEvidence: null,
+  events: [],
+};
+
+export const DISABLED_ENDPOINT = {
+  ...VERIFIED_ENDPOINT,
+  id: 'ext-4',
+  name: 'retired-upstream',
+  baseUrl: 'https://retired.swarm.example',
+  hostname: 'retired.swarm.example',
+  enabled: false,
+  status: 'DISABLED' as const,
+  events: [],
+};
+
+export const ALL_ENDPOINTS = [VERIFIED_ENDPOINT, DENIED_ENDPOINT, PENDING_ENDPOINT, DISABLED_ENDPOINT];
+
+export function endpointsMock(endpoints: unknown[] = ALL_ENDPOINTS): MockLink.MockedResponse {
+  return {
+    request: { query: EXTERNAL_ENDPOINTS_QUERY },
+    result: { data: { externalEndpoints: endpoints } },
+    // `cache-and-network` plus the post-mutation refetch ask more than once.
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+export const TRUSTED = {
+  __typename: 'TrustedMeasurement' as const,
+  id: 'tm-1',
+  measurement: MEASUREMENT_TRUSTED,
+  note: 'Super Protocol production cloud',
+  addedByEmail: 'admin@example.com',
+  addedAt: '2026-09-30T08:00:00.000Z',
+  admits: 2,
+};
+
+export const TRUSTED_UNUSED = {
+  ...TRUSTED,
+  id: 'tm-2',
+  measurement: 'c'.repeat(64),
+  note: null,
+  addedByEmail: null,
+  admits: 0,
+};
+
+export function measurementsMock(measurements: unknown[] = [TRUSTED, TRUSTED_UNUSED]): MockLink.MockedResponse {
+  return {
+    request: { query: TRUSTED_MEASUREMENTS_QUERY },
+    result: { data: { trustedMeasurements: measurements } },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}

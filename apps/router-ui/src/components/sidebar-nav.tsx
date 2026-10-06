@@ -3,7 +3,8 @@
 import { cn } from '@confidential-router/ui/lib/utils';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { isNavItemActive, NAV_GROUPS } from './navigation';
+import { isNavItemActive, visibleNavGroups } from './navigation';
+import { useViewerIsAdmin } from './session/use-viewer-is-admin';
 
 export interface SidebarNavProps {
   /** Closes the mobile drawer after a navigation. */
@@ -13,13 +14,20 @@ export interface SidebarNavProps {
 /**
  * The grouped console navigation. Rendered twice — once in the fixed desktop
  * sidebar, once inside the mobile drawer — so it owns no chrome of its own.
+ *
+ * The Administration group is drawn only for an administrator. It is gated on
+ * `me { isAdmin }` rather than on the viewer's email, because the deployment's
+ * `auth.adminEmails` list is configuration the browser is not given — and while
+ * the session is still loading the answer is "no", so the entry appears once
+ * rather than appearing and then being taken away.
  */
 export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const pathname = usePathname();
+  const groups = visibleNavGroups(useViewerIsAdmin());
 
   return (
     <nav aria-label="Console" className="flex flex-col gap-4 px-2 py-3">
-      {NAV_GROUPS.map((group) => (
+      {groups.map((group) => (
         <div key={group.label} className="flex flex-col gap-0.5">
           <h2 className="px-2 pb-1 font-medium text-[0.65rem] text-muted-foreground uppercase tracking-[0.07em]">
             {group.label}
