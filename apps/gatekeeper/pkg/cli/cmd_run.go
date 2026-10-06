@@ -174,6 +174,19 @@ func runHeadless(ctx context.Context, w io.Writer, supervisor status.Supervisor)
 // A reload that fails to load or validate changes nothing: the running
 // configuration is a working one, and replacing it with a broken one because
 // someone saved a file mid-edit would take the proxy down for a typo.
+//
+// Validated as *editable* rather than as runnable, and the difference is the
+// whole of fail-closed under a control loop (ADR-008 §5). The completeness
+// rules — at least one endpoint, and a measurement list for a
+// `trust: cloud-measurement` endpoint — exist to stop a person starting a
+// gatekeeper that silently admits nothing; startup still applies them. At
+// reload they say the opposite of what they mean: a configuration that admits
+// nothing is exactly what an admin withdrawing their last trusted cloud, or
+// unregistering their last external endpoint, asked for. Refusing it would keep
+// the previous configuration — and with it the listeners and the verdicts that
+// admitted traffic the admin has just revoked, which is a fail-open produced by
+// an excess of caution. Malformed values are still refused here, because they
+// are not an instruction.
 func watchHangup(ctx context.Context, g *globals, w io.Writer, supervisor status.Supervisor) {
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
@@ -186,7 +199,7 @@ func watchHangup(ctx context.Context, g *globals, w io.Writer, supervisor status
 		case <-hup:
 		}
 
-		cfg, err := g.load()
+		cfg, err := g.loadEditable()
 		if err != nil {
 			fmt.Fprintf(w, "SIGHUP: keeping the running configuration — %v\n", err)
 			continue

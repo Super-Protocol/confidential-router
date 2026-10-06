@@ -10,18 +10,32 @@
  *   5. the deployment is rotated — the very next call is refused, fail-closed,
  *      with the stage and reason that refused it
  *   6. the new digest is pinned and traffic resumes
+ *   7. an admin registers a model endpoint in *another* cloud and lists that
+ *      cloud's measurement; the router attests it itself and serves it
+ *   8. that cloud redeploys on an image nobody listed — the model drops out of
+ *      the catalogue and the next call is refused, fail-closed again
  *
- * Step 5 is the one worth having. Everything before it is a happy path that a
- * dozen unit tests already cover; a proxy that *stops* when the thing it
- * verified changes underneath it is the property the whole product rests on,
- * and nothing short of a live rotation demonstrates it.
+ * Steps 5 and 8 are the ones worth having, and they are the same property seen
+ * from both sides: a proxy that *stops* when the thing it verified changes
+ * underneath it. Step 5 is the user's gatekeeper refusing to talk to the router;
+ * step 8 is the router refusing to talk to an upstream (ADR-008). Everything
+ * else is a happy path that a dozen unit tests already cover, and nothing short
+ * of a live rotation demonstrates either.
  */
 import { formatEvidenceDigestHex } from '@confidential-router/types';
 import OpenAI from 'openai';
 import { VERDICT_HEADER } from './constants.js';
+import {
+  addTrustedMeasurement,
+  type ExternalStand,
+  registerExternalEndpoint,
+  STAND_MEASUREMENT,
+  startExternalStand,
+  waitForExternalStatus,
+} from './external-stand.js';
 import { createGatekeeper, type Gatekeeper, type RunningGatekeeper } from './gatekeeper.js';
 import { delay } from './router-process.js';
-import { DEMO_MODEL, freePort, type RouterStack, startRouterStack } from './stack.js';
+import { DEMO_MODEL, DEMO_UPSTREAM_MODEL, freePort, type RouterStack } from './stack.js';
 
 /** How long a verdict flip may take to be noticed before we call it a failure. */
 const VERDICT_FLIP_TIMEOUT_MS = 30_000;
@@ -32,6 +46,20 @@ const METERING_TIMEOUT_MS = 10_000;
 /** Short enough that a rotation is noticed while someone is still watching. */
 const DEMO_REATTEST_INTERVAL = '2s';
 const DEMO_VERDICT_CACHE_TTL = '1s';
+
+/** The model the demo's external endpoint publishes, and what the upstream calls it. */
+const EXTERNAL_ENDPOINT = 'partner-cloud';
+const EXTERNAL_MODEL = 'partner/llama-3.3-70b-instruct:snp';
+/** The upstream's own LLM API key — the registration token of ADR-008 decision 3. */
+const EXTERNAL_UPSTREAM_KEY = 'sk-demo-partner-cloud-key';
+/**
+ * A second cloud the operator trusts and the demo never uses.
+ *
+ * The list has to stay non-empty for the rendered configuration to be one the
+ * gatekeeper will run, and an operator with external capacity has more than one
+ * cloud listed anyway.
+ */
+const OTHER_CLOUD_MEASUREMENT = '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0';
 
 export interface StoryOptions {
   /** Called before each step, so a runner can narrate. */
@@ -53,6 +81,14 @@ export interface StoryResult {
   denial: { status: number; stage: string; reason: string; verdictHeader: string };
   /** Generations the router metered, and what they cost. */
   metered: { count: number; costMicros: number };
+  /** The external endpoint act: what the router attested, and what dropped it. */
+  external: {
+    model: string;
+    measurement: string;
+    rotatedMeasurement: string;
+    answer: string;
+    denial: { stage: string; reason: string };
+  };
   /** Wall-clock milliseconds, so the 10-minute budget is observable. */
   durationMs: number;
 }
@@ -69,16 +105,23 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
   const step = (title: string): void => options.onStep?.(title);
   const detail = (text: string): void => options.onDetail?.(text);
 
+  let stand: ExternalStand | undefined;
   let stack: RouterStack | undefined;
   let gatekeeper: Gatekeeper | undefined;
   let running: RunningGatekeeper | undefined;
 
   try {
-    step('Start the router, the model backend and the evidence publisher');
-    stack = await startRouterStack({ echoRouterLog: options.verbose });
+    step('Start the router, the model backend, the evidence publisher and the egress');
+    // One stand for both halves of the story: the same router process is the
+    // thing the user's gatekeeper verifies and the thing that verifies an
+    // external upstream. The sidecar has nothing to supervise until step 7
+    // registers an endpoint, which is the state a deployment ships in.
+    stand = await startExternalStand({ verbose: options.verbose });
+    stack = stand.stack;
     detail(`router-api      ${stack.router.baseUrl}`);
     detail(`mock-litellm    ${stack.backend.url}`);
     detail(`evidence host   ${stack.upstreamUrl} (fronting the router over TLS)`);
+    detail(`other cloud     ${stand.upstream.url} (an upstream in someone else's deployment)`);
     detail(`workspace       ${stack.session.workspaceId}, balance ${usd(stack.balanceMicros)}`);
     detail(`api key         ${stack.credential.secret.slice(0, 12)}… (shown once, by the console)`);
 
@@ -167,25 +210,91 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
 
     const after = await waitForMetering(stack, metered.count + 1);
 
+    step('Register a model endpoint in another cloud, and trust that cloud');
+    const registered = await registerExternalEndpoint(stand.admin, {
+      name: EXTERNAL_ENDPOINT,
+      baseUrl: stand.upstream.url,
+      apiKey: EXTERNAL_UPSTREAM_KEY,
+      models: [
+        { id: EXTERNAL_MODEL, name: 'Llama 3.3 70B Instruct (partner cloud)', upstreamModel: DEMO_UPSTREAM_MODEL },
+      ],
+    });
+    detail(`registered  ${registered.name} → ${stand.upstream.url}, status ${registered.status}`);
+    detail(`key         ${registered.apiKeyPrefix}… (sealed; no read path returns it)`);
+    await addTrustedMeasurement(stand.admin, OTHER_CLOUD_MEASUREMENT, 'another cloud, not this one');
+    await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT, 'the partner cloud');
+    detail(`trusted     measurement ${STAND_MEASUREMENT}`);
+    const verified = await waitForExternalStatus(stand.admin, registered.id, [EXTERNAL_VERIFIED]);
+    detail(`verdict     ${verified.status} — measurement seen ${verified.measurementSeen}`);
+    expect(await listsModel(stack, EXTERNAL_MODEL), 'a verified external endpoint should put its model in /v1/models');
+
+    step('Call the external model — the user verified the router, the router verified the upstream');
+    const externalAnswer = await chat(client, EXTERNAL_MODEL);
+    expect(externalAnswer !== null, 'the external model should have answered');
+    detail(`model    ${EXTERNAL_MODEL}`);
+    detail(`answer   ${(externalAnswer ?? '').slice(0, 96)}…`);
+    const forwarded = stand.upstream.backend.requests.at(-1);
+    expect(forwarded?.body.model === DEMO_UPSTREAM_MODEL, 'the upstream should be asked for its own model name');
+    expect(
+      forwarded?.authorization === `Bearer ${EXTERNAL_UPSTREAM_KEY}`,
+      "router-api should inject the upstream's own credential",
+    );
+    detail('upstream saw its own model name and its own API key, over a pinned TLS channel');
+
+    step('The partner cloud redeploys on an image nobody listed — the model drops out');
+    const before = stand.sidecar.measurement();
+    const rotatedMeasurement = stand.sidecar.rotateMeasurement();
+    detail(`was  ${before}`);
+    detail(`now  ${rotatedMeasurement}`);
+    const externalDenied = await waitForExternalStatus(stand.admin, registered.id, [EXTERNAL_DENIED]);
+    // `lastReason` already opens with the stage that reached it.
+    detail(`verdict     ${externalDenied.status} — ${externalDenied.lastReason}`);
+    expect(
+      !(await listsModel(stack, EXTERNAL_MODEL)),
+      'a denied external endpoint must not leave its model in /v1/models',
+    );
+    expect((await chat(client, EXTERNAL_MODEL)) === null, 'a denied external model must refuse the next call');
+    detail('refused, and gone from the catalogue — fail-closed at admission and at the egress');
+
     return {
       firstDigest: firstShown,
       rotatedDigest: formatEvidenceDigestHex(rotatedDigest),
       denial,
       metered: after,
+      external: {
+        model: EXTERNAL_MODEL,
+        measurement: STAND_MEASUREMENT,
+        rotatedMeasurement,
+        answer: externalAnswer ?? '',
+        denial: { stage: externalDenied.lastStage ?? '', reason: externalDenied.lastReason ?? '' },
+      },
       durationMs: Date.now() - startedAt,
     };
   } finally {
     await running?.stop();
     gatekeeper?.cleanup();
-    await stack?.stop();
+    await stand?.stop();
   }
 }
 
-/** One chat completion, or `null` when the gatekeeper refused it. */
-async function chat(client: OpenAI): Promise<string | null> {
+/** The external vocabulary: every value names the verifying party (ADR-008 §1). */
+const EXTERNAL_VERIFIED = 'VERIFIED_BY_THIS_ROUTER';
+const EXTERNAL_DENIED = 'DENIED_BY_THIS_ROUTER';
+
+/** Whether `GET /v1/models` offers this model right now. */
+async function listsModel(stack: RouterStack, id: string): Promise<boolean> {
+  const response = await fetch(`${stack.router.baseUrl}/v1/models`, {
+    headers: { authorization: `Bearer ${stack.credential.secret}` },
+  });
+  const body = (await response.json()) as { data?: { id: string }[] };
+  return (body.data ?? []).some((model) => model.id === id);
+}
+
+/** One chat completion, or `null` when something in the chain refused it with a 503. */
+async function chat(client: OpenAI, model = DEMO_MODEL): Promise<string | null> {
   try {
     const completion = await client.chat.completions.create({
-      model: DEMO_MODEL,
+      model,
       messages: [{ role: 'user', content: 'Is this endpoint attested?' }],
     });
     return completion.choices[0]?.message?.content ?? '';

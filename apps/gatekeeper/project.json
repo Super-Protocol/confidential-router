@@ -19,6 +19,24 @@
         "cwd": "apps/gatekeeper"
       }
     },
+    "build-teststand": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum"
+      ],
+      "outputs": ["{projectRoot}/bin-teststand"],
+      "options": {
+        "commands": [
+          "go build -tags teststand -o bin-teststand/ ./cmd/gatekeeper-teststand",
+          "go test -tags teststand -count=1 ./cmd/gatekeeper-teststand"
+        ],
+        "cwd": "apps/gatekeeper",
+        "parallel": false
+      }
+    },
     "test": {
       "executor": "nx:run-commands",
       "cache": true,
@@ -36,7 +54,11 @@
     "e2e": {
       "executor": "nx:run-commands",
       "cache": false,
-      "dependsOn": ["build", "@confidential-router/router-api:build"],
+      "dependsOn": [
+        "build",
+        "build-teststand",
+        "@confidential-router/router-api:build"
+      ],
       "options": {
         "command": "tsx tools/demo/src/main.ts",
         "env": {

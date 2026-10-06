@@ -9,7 +9,9 @@
         "executor": "nx:run-commands",
         "cache": false,
         "dependsOn": [
-          "@confidential-router/router-api:build"
+          "@confidential-router/router-api:build",
+          "gatekeeper:build",
+          "gatekeeper:build-teststand"
         ],
         "options": {
           "command": "vitest run --config vitest.e2e.config.mts",

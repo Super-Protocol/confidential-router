@@ -369,7 +369,16 @@ error."* and could not tell a deliberate refusal from an outage.
 download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
 **Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatThreads` / `chatThread` `+ chatCredential` / `createChatThread` / `setChatThreadModel` / `appendChatMessage` / `deleteChatThread`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
-`updatePreferences` / `exportEvidence`.
+`updatePreferences` / `exportEvidence`;
+**Admin — external endpoints** `externalEndpoints` / `externalEndpoint` `+ registerExternalEndpoint` /
+`updateExternalEndpoint` / `setExternalEndpointEnabled` / `rotateExternalEndpointKey`;
+**Admin — trust list** `trustedMeasurements` `+ addTrustedMeasurement` / `updateTrustedMeasurement` /
+`removeTrustedMeasurement`.
+
+The two Admin reads are session-scoped and the mutations are not: every screen in the nav is reachable
+by any signed-in member, and the Admin entry is reachable by one in `auth.adminEmails` — `me { isAdmin }`
+is what the browser gates it on. The reads being wider than the nav entry is deliberate (ruling 3, ADR-008
+§7), and the API is where it is enforced; the nav is sidebar hygiene.
 
 ## As shipped (SUP-180) — the console chat
 

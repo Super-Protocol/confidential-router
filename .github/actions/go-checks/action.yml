@@ -46,6 +46,18 @@ runs:
         CGO_ENABLED: '0'
       run: go build -o bin/ ./cmd/...
 
+    # The e2e stand's gatekeeper (apps/gatekeeper/cmd/gatekeeper-teststand) is
+    # behind the `teststand` build tag, so none of the steps above compile it.
+    # It is still code this repository ships the source of, and the suite that
+    # drives it would break obscurely — "the sidecar exited" — rather than at a
+    # compile error, so it gets its own pass.
+    - name: vet and test the e2e stand binary
+      shell: bash
+      working-directory: apps/gatekeeper
+      run: |
+        go vet -tags teststand ./cmd/gatekeeper-teststand
+        go test -tags teststand -race -count=1 ./cmd/gatekeeper-teststand
+
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v9
       with:

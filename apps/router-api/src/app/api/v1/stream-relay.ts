@@ -64,6 +64,8 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
   let timeToFirstTokenMs: number | null = null;
   let sawDone = false;
   let aborted = false;
+  /** The client hung up *after* `[DONE]`: the generation ended, the socket did not. */
+  let leftAfterDone = false;
 
   writeStreamHeaders(response, context);
 
@@ -85,11 +87,27 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
 
   // `close` also fires on a clean end; only an unfinished response means the
   // client walked away, and then there is no point in paying for more tokens.
+  //
+  // "Unfinished" is about the *generation*, not about the socket. `[DONE]` is
+  // the last event of a completion, and a client that closes once it has read
+  // one has the whole answer — which is precisely what the `openai` SDK does at
+  // the end of `for await (… of stream)`. Calling that an abort made every
+  // streamed generation from the official client, the console chat included,
+  // land in Logs as `aborted`, and left ruling 5's `aborted` unable to mean what
+  // it is for: a generation policy cut short.
   const onClose = (): void => {
-    if (!response.writableEnded) {
-      aborted = true;
-      abort.abort(new Error('Client closed the connection.'));
+    if (response.writableEnded) {
+      return;
     }
+    if (sawDone) {
+      leftAfterDone = true;
+    } else {
+      aborted = true;
+    }
+    // The upstream fetch is cancelled either way: nothing more will be
+    // forwarded, and a backend that holds the connection open past `[DONE]`
+    // must not keep this relay waiting for its read deadline.
+    abort.abort(new Error('Client closed the connection.'));
   };
   response.on('close', onClose);
 
@@ -185,6 +203,12 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
     clearTimeout(idle);
     stopHeartbeat();
     response.off('close', onClose);
+  }
+
+  if (leftAfterDone) {
+    // The cancellation above surfaces as a read error on the upstream body. It
+    // is this relay's own doing, on a generation that already completed.
+    failure = undefined;
   }
 
   let errorCode: string | null = null;
