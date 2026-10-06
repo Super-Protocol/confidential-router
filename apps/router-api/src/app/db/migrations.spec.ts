@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DataSource } from 'typeorm';
+import { DataSource, type QueryRunner } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS } from '../../migrations/index.js';
 import { buildDataSourceOptions } from './data-source.js';
@@ -42,6 +42,22 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
+
+/**
+ * Whether one column admits NULL, read back from the live schema.
+ *
+ * Through TypeORM's own table introspection rather than `PRAGMA` or
+ * `information_schema`, so the assertion reads the same on both dialects — which
+ * is the point of writing the migration against the `Table` API in the first
+ * place.
+ */
+async function isNullable(queryRunner: QueryRunner, table: string, column: string): Promise<boolean> {
+  const found = (await queryRunner.getTable(table))?.findColumnByName(column);
+  if (!found) {
+    throw new Error(`${table}.${column} does not exist, so nothing can be concluded about its nullability.`);
+  }
+  return found.isNullable;
+}
 
 async function sqliteDataSource(): Promise<DataSource> {
   const dataSource = new DataSource(
@@ -94,6 +110,22 @@ describe('SQLite', () => {
     try {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
+
+      // ADR-008 §6's evidence leg loosened `evidence_snapshots.endpointId`; the
+      // first undo puts the NOT NULL back and drops the column it added.
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(false);
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'workloads')).toBe(false);
+      // The column the previous migration loosened is untouched.
+      expect(await isNullable(queryRunner, 'generations', 'endpointId')).toBe(true);
+
+      // ADR-008's egress leg loosened `generations.endpointId`; the next undo puts
+      // the NOT NULL back and leaves the previous migration's tables alone.
+      expect(await isNullable(queryRunner, 'generations', 'endpointId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await isNullable(queryRunner, 'generations', 'endpointId')).toBe(false);
+      expect(await queryRunner.hasTable('external_endpoints')).toBe(true);
 
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasTable('external_endpoints')).toBe(false);

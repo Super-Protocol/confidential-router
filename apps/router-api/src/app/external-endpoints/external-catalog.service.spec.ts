@@ -116,6 +116,20 @@ describe('refresh', () => {
     expect(catalog.list([])).toEqual([]);
   });
 
+  it('carries the sealed key and the upstream hostname the egress leg needs', async () => {
+    // Both are read per request by `ExternalUpstreamClient`: the envelope is
+    // opened to inject `Authorization`, and the hostname is what `usage.endpoint`
+    // and the response header name — never the loopback port the request went to.
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+
+    await catalog.refresh();
+
+    expect(catalog.find(endpoint.modelId)?.endpoint).toMatchObject({
+      hostname: `${endpoint.name}.example`,
+      apiKeyCiphertext: 'v1.placeholder',
+    });
+  });
+
   it('replaces the map rather than merging into it', async () => {
     // A full rebuild, for the reason the gatekeeper's own snapshots are full: a
     // reader that missed an update must not be able to drift.
@@ -126,5 +140,78 @@ describe('refresh', () => {
     await catalog.refresh();
 
     expect(catalog.list()).toEqual([]);
+  });
+});
+
+describe('findUnadmitted', () => {
+  /**
+   * The third answer a lookup needs, and the reason it exists: admission has to
+   * tell "no such model" apart from "this model exists and I will not proxy to
+   * it". A model that merely vanished from the catalogue would make every
+   * fail-closed refusal read to the caller as a typo in `model`.
+   */
+  it('reports a registered model whose endpoint has no verdict yet', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'pending' });
+
+    await catalog.refresh();
+
+    expect(catalog.find(endpoint.modelId)).toBeUndefined();
+    expect(catalog.findUnadmitted(endpoint.modelId)).toEqual({
+      id: endpoint.modelId,
+      endpointName: endpoint.name,
+      status: 'pending',
+      stage: null,
+      reason: null,
+    });
+  });
+
+  it('carries the stage and reason of a denial, so the refusal can name it', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await dataSource
+      .getRepository(ExternalEndpoint)
+      .update(
+        { id: endpoint.id },
+        { status: 'denied', lastStage: 'policy', lastReason: 'measurement is not on the trust list' },
+      );
+
+    await catalog.refresh();
+
+    expect(catalog.findUnadmitted(endpoint.modelId)).toMatchObject({
+      status: 'denied',
+      stage: 'policy',
+      reason: 'measurement is not on the trust list',
+    });
+  });
+
+  it('says nothing about a model on a disabled endpoint — that is not a failed attestation', async () => {
+    // `disabled` is the operator's own switch (the one value the status poll never
+    // writes). Reporting it as an attestation failure would blame an upstream for
+    // an admin's decision; the model is simply out of the catalogue, like a
+    // retired one.
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { enabled: false });
+
+    await catalog.refresh();
+
+    expect(catalog.find(endpoint.modelId)).toBeUndefined();
+    expect(catalog.findUnadmitted(endpoint.modelId)).toBeUndefined();
+  });
+
+  it('forgets a model as soon as a verdict admits it', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'pending' });
+    await catalog.refresh();
+    expect(catalog.findUnadmitted(endpoint.modelId)).toBeDefined();
+
+    await setStatus(endpoint.id, 'verified');
+    await catalog.refresh();
+
+    expect(catalog.findUnadmitted(endpoint.modelId)).toBeUndefined();
+    expect(catalog.find(endpoint.modelId)).toBeDefined();
+  });
+
+  it('knows nothing about a model that was never registered', async () => {
+    await catalog.refresh();
+
+    expect(catalog.findUnadmitted('someone/else:snp')).toBeUndefined();
   });
 });

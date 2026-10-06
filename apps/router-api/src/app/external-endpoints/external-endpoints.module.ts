@@ -1,7 +1,10 @@
 import { Global, Module } from '@nestjs/common';
 import { ExternalCatalogService } from './external-catalog.service.js';
+import { ExternalEndpointAdminService } from './external-endpoint-admin.service.js';
 import { ExternalEndpointStatusService } from './external-endpoint-status.service.js';
 import { ExternalEndpointStatusPollerService } from './external-endpoint-status-poller.service.js';
+import { ExternalEvidenceService } from './external-evidence.service.js';
+import { ExternalEvidencePollerService } from './external-evidence-poller.service.js';
 import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 
 /**
@@ -19,12 +22,18 @@ import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
     ExternalCatalogService,
     ExternalEndpointStatusService,
     ExternalEndpointStatusPollerService,
+    ExternalEvidenceService,
+    ExternalEvidencePollerService,
+    ExternalEndpointAdminService,
   ],
   exports: [
     SidecarConfigWriterService,
     ExternalCatalogService,
     ExternalEndpointStatusService,
     ExternalEndpointStatusPollerService,
+    ExternalEvidenceService,
+    ExternalEvidencePollerService,
+    ExternalEndpointAdminService,
   ],
 })
 export class ExternalEndpointsModule {}

@@ -1,4 +1,5 @@
 export * from './admin.guard.js';
+export * from './admin-emails.js';
 export * from './auth.module.js';
 export * from './auth.options.js';
 export * from './auth.service.js';

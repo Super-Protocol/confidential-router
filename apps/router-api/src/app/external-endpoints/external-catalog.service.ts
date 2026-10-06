@@ -1,16 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
+import { ExternalEndpoint, type ExternalEndpointStatus } from '../db/entities/external-endpoint.entity.js';
 import { Model, type ModelCapability } from '../db/entities/model.entity.js';
 
 /** An external upstream, as the gateway's egress leg needs it. */
 export interface ExternalCatalogEndpoint {
   id: string;
   name: string;
+  /** The upstream's own hostname — what the evidence was fetched from and bound to. */
+  hostname: string;
   baseUrl: string;
   /** The sidecar's loopback listener — where router-api actually sends the request. */
   listenPort: number;
+  /** The upstream's LLM API key, still sealed. Opened per request by the egress leg. */
+  apiKeyCiphertext: string;
   measurementSeen: string | null;
   evidenceDigestSeen: string | null;
 }
@@ -25,9 +29,28 @@ export interface ExternalCatalogModel {
   capabilities: ModelCapability[];
   promptPer1mMicros: number;
   completionPer1mMicros: number;
-  tee: string;
+  /** Null unless a deployment registered one before the field left the API. */
+  tee: string | null;
   endpoint: ExternalCatalogEndpoint;
   updatedAt: Date;
+}
+
+/**
+ * A registered external model whose endpoint holds no verdict admitting it.
+ *
+ * Kept apart from the routable map rather than forgotten, because the two
+ * refusals an admission has to tell apart are "this model does not exist" and
+ * "this model exists and I will not proxy to it" — the second is a 503
+ * `attestation_failed` naming the stage that denied, the first a 404. A model that
+ * simply vanished from the catalogue would make every denial read as a typo.
+ */
+export interface UnadmittedExternalModel {
+  id: string;
+  endpointName: string;
+  status: ExternalEndpointStatus;
+  /** ADR-003 §1 stage of the last denial, when there was one. */
+  stage: string | null;
+  reason: string | null;
 }
 
 /**
@@ -53,6 +76,7 @@ export interface ExternalCatalogModel {
 export class ExternalCatalogService {
   private readonly logger = new Logger(ExternalCatalogService.name);
   private models = new Map<string, ExternalCatalogModel>();
+  private unadmitted = new Map<string, UnadmittedExternalModel>();
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
@@ -67,7 +91,18 @@ export class ExternalCatalogService {
   }
 
   /**
-   * Rebuilds the map from the database.
+   * A registered external model that is *not* routable, so admission can refuse it
+   * as policy rather than as a missing id. Undefined for anything this router has
+   * never heard of — and for a model on a `disabled` endpoint, which an admin took
+   * out of service: that is not a failed attestation and must not be reported as
+   * one.
+   */
+  findUnadmitted(id: string): UnadmittedExternalModel | undefined {
+    return this.unadmitted.get(id);
+  }
+
+  /**
+   * Rebuilds the maps from the database.
    *
    * A full rebuild rather than an incremental patch, for the reason the
    * gatekeeper's own dashboard snapshots are full rather than incremental: a
@@ -80,17 +115,29 @@ export class ExternalCatalogService {
       order: { id: 'ASC' },
     });
     const endpoints = new Map(
-      (
-        await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true, status: 'verified' } })
-      ).map((endpoint) => [endpoint.id, endpoint]),
+      (await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true } })).map((endpoint) => [
+        endpoint.id,
+        endpoint,
+      ]),
     );
 
     const models = new Map<string, ExternalCatalogModel>();
+    const unadmitted = new Map<string, UnadmittedExternalModel>();
     for (const row of rows) {
       const endpoint = row.externalEndpointId ? endpoints.get(row.externalEndpointId) : undefined;
       if (!endpoint) {
-        // Either the endpoint is disabled, or it has no live verdict admitting
-        // it. Both mean the same thing here: not routable.
+        // The endpoint is disabled, or gone. An operator's switch, not a verdict:
+        // the model is simply not in the catalogue, the same as a retired one.
+        continue;
+      }
+      if (endpoint.status !== 'verified') {
+        unadmitted.set(row.id, {
+          id: row.id,
+          endpointName: endpoint.name,
+          status: endpoint.status,
+          stage: endpoint.lastStage,
+          reason: endpoint.lastReason,
+        });
         continue;
       }
       models.set(row.id, {
@@ -101,12 +148,14 @@ export class ExternalCatalogService {
         capabilities: row.capabilities,
         promptPer1mMicros: row.promptPer1mMicros,
         completionPer1mMicros: row.completionPer1mMicros,
-        tee: row.tee,
+        tee: row.tee || null,
         endpoint: {
           id: endpoint.id,
           name: endpoint.name,
+          hostname: endpoint.hostname,
           baseUrl: endpoint.baseUrl,
           listenPort: endpoint.listenPort,
+          apiKeyCiphertext: endpoint.apiKeyCiphertext,
           measurementSeen: endpoint.measurementSeen,
           evidenceDigestSeen: endpoint.evidenceDigestSeen,
         },
@@ -118,6 +167,7 @@ export class ExternalCatalogService {
       this.logger.log(`External catalogue: ${models.size} routable model(s) (was ${this.models.size}).`);
     }
     this.models = models;
+    this.unadmitted = unadmitted;
     return models.size;
   }
 }

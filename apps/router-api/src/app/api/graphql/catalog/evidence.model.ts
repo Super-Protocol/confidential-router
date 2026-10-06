@@ -104,7 +104,7 @@ export class EvidenceSnapshotModel {
   static from(snapshot: EvidenceSnapshot, now: Date = new Date()): EvidenceSnapshotModel {
     return {
       id: snapshot.id,
-      endpointId: snapshot.endpointId,
+      endpointId: ownEndpointIdOf(snapshot),
       fetchedAt: snapshot.fetchedAt,
       issuedAt: snapshot.issuedAt,
       quoteAgeSeconds: Math.round(quoteAgeMs(snapshot, now) / 1000),
@@ -130,6 +130,24 @@ export class EvidenceSnapshotModel {
       bundle: snapshot.bundle,
     };
   }
+}
+
+/**
+ * The publishing endpoint of a snapshot this type is built from.
+ *
+ * `endpointId` is nullable on the row since ADR-008 §6 — an external upstream's
+ * publication has no `endpoints` row — but every query that reaches this model is
+ * scoped to one of *our* endpoints, so a null here is a query that has started
+ * picking up another operator's bundles. That is worth failing on rather than
+ * rendering as a blank id on a screen about this deployment.
+ */
+function ownEndpointIdOf(snapshot: EvidenceSnapshot): string {
+  if (!snapshot.endpointId) {
+    throw new Error(
+      `Evidence snapshot ${snapshot.id} was published by an external upstream and has no endpoint of ours.`,
+    );
+  }
+  return snapshot.endpointId;
 }
 
 @ObjectType('EvidenceSnapshotEdge')

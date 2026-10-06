@@ -528,6 +528,32 @@ const ExternalEndpointsSchema = z
     reattestInterval: durationMs('10m'),
     /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
     statusPollInterval: durationMs('5s'),
+    /**
+     * How often router-api fetches a verified upstream's published bundle, so the
+     * admin section can render what a cloud-level admission let in (SUP-221
+     * ruling 1, ADR-008 §7).
+     *
+     * Livelier than `evidence.pollInterval` because the ruling is "at
+     * registration and on every change", and a digest that changed is a change an
+     * operator is meant to see rather than discover. `0ms` turns the summary off
+     * and leaves the field null, which is how the console renders an upstream it
+     * has no snapshot for anyway.
+     */
+    evidencePollInterval: durationMs('1m'),
+    /**
+     * How long the egress leg waits for the sidecar's loopback listener to accept
+     * a connection. Its own value rather than LiteLLM's: a refusal here means the
+     * sidecar has not started that listener yet, which is a different fault with a
+     * different fix.
+     */
+    connectTimeout: durationMs('5s'),
+    /**
+     * Longest gap between chunks from an external upstream before the stream is
+     * abandoned. Separate from `backends.litellm.readTimeout` because the patience
+     * an external model deserves is a property of that model and of the network
+     * between two clouds, not of this deployment's own workers.
+     */
+    readTimeout: durationMs('120s'),
   })
   .check((ctx) => {
     const { reattestInterval } = ctx.value;

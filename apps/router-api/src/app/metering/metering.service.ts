@@ -22,7 +22,10 @@ export interface MeteringRecord {
   workspaceId: string;
   apiKeyId: string;
   modelId: string;
-  endpointId: string;
+  /** This deployment's endpoint, or null when the request went to an external one. */
+  endpointId: string | null;
+  /** The external endpoint the request went to, or null for a model in this cluster space. */
+  externalEndpointId: string | null;
   evidenceSnapshotId: string | null;
   evidenceDigest: string | null;
   promptTokens: number;

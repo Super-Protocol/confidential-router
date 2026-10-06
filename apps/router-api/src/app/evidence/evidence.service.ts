@@ -138,6 +138,7 @@ export class EvidenceService {
       evidenceDigestHex: parsed.digest.hex,
       quoteFormat: parsed.quoteFormat,
       containerImages: parsed.containerImages,
+      workloads: parsed.workloads,
       chainSummary: parsed.chainSummary,
       measurements: parsed.measurements,
       jws: parsed.jws,
@@ -174,7 +175,11 @@ export class EvidenceService {
       order: { issuedAt: 'ASC', fetchedAt: 'ASC' },
     });
     for (const row of rows) {
-      latest.set(row.endpointId, row);
+      // Narrowing, not filtering: the `where` above names the ids, so a null here
+      // would mean the query had picked up an upstream's publication.
+      if (row.endpointId) {
+        latest.set(row.endpointId, row);
+      }
     }
     return latest;
   }

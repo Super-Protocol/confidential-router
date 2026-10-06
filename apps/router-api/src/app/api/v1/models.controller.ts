@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Req, UseFilters, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeController } from '@nestjs/swagger';
-import type { CatalogModel } from '../../catalog/catalog.service.js';
 import { ApiKeyGuard, type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
+import type { RoutedModel } from './gateway.types.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
 import { openAiErrors } from './openai-error.js';
 import { OpenAiExceptionFilter } from './openai-exception.filter.js';
@@ -13,6 +13,11 @@ import { OpenAiExceptionFilter } from './openai-exception.filter.js';
  *
  * Only models within the key's scope are listed, so a scoped key's model list
  * matches exactly what it is allowed to call.
+ *
+ * External models (ADR-008) appear here in the same shape as any other, naming
+ * their own endpoint — and only while a live verdict admits that endpoint, which
+ * is decision 5's fail-closed drop: an upstream the router cannot currently verify
+ * is absent from the list and from `GET /v1/models/{id}`, not listed-but-broken.
  */
 @ApiExcludeController()
 @ApiBearerAuth()
@@ -44,7 +49,7 @@ export class ModelsController {
   }
 }
 
-function presentModel(model: CatalogModel) {
+function presentModel(model: RoutedModel) {
   return {
     id: model.id,
     object: 'model' as const,
@@ -59,7 +64,10 @@ function presentModel(model: CatalogModel) {
     endpoint: {
       name: model.endpoint.name,
       hostname: model.endpoint.hostname,
-      tee: model.endpoint.tee,
+      // Omitted rather than blank for an external upstream: no one declared a TEE
+      // label for it and this router cannot observe one, so the honest answer is
+      // that the field is not there (`docs/contracts/router-api.md`).
+      ...(model.endpoint.tee ? { tee: model.endpoint.tee } : {}),
     },
     capabilities: model.capabilities,
   };

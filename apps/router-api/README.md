@@ -350,11 +350,54 @@ This service drives it through a file and reads it back over a socket:
 - **`ExternalEndpointStatusPollerService`** reads the sidecar's `/verdicts` every
   `externalEndpoints.statusPollInterval` and projects each one onto its row and
   its event timeline. A transition is an event; a repetition is not.
+- **`ExternalEvidencePollerService`** / **`ExternalEvidenceService`** fetch a
+  verified upstream's own published bundle every
+  `externalEndpoints.evidencePollInterval` and file it in `evidence_snapshots`
+  under `externalEndpointId`, which is what the admin section's evidence summary
+  renders (SUP-221 ruling 1: admission is the measurement check, which admits a
+  *cloud* and cannot see which deployment on it answered). Informational and
+  never gating — it runs *after* a verdict, never towards one. The fetch is an
+  ordinary TLS connection and deliberately does not pin, because holding a
+  verdict about an upstream is the sidecar's job alone; what makes the result
+  renderable is a string comparison instead: a bundle is filed only when the TLS
+  leaf it claims is the leaf the sidecar pinned, and it is only ever surfaced for
+  the digest a verdict actually saw. Endpoints with no verdict are not polled at
+  all — there is no pin to bind a document to — so `latestEvidence` is null while
+  one is `pending`.
 - **`ExternalCatalogService`** holds the routable external models — a model is in
   it **iff** its endpoint is enabled and `verified`, which is the fail-closed drop
   of a failed re-attestation as seen from the admission side. The sidecar refuses
   the same request at the egress; two independent refusals for one rule, because
   the two halves live in different processes.
+- **`ExternalUpstreamClient`** (`src/app/api/v1/`) is the egress leg itself: the
+  same POST `LiteLlmClient` makes, to `http://127.0.0.1:<listenPort>` instead, with
+  the sealed upstream key opened one request at a time into `Authorization`.
+  `GatewayService` picks between the two per request and nothing else in `/v1`
+  knows which it got — rate limits, the generation id, the SSE relay, response
+  shaping and the meter are one code path for both, which is the property the
+  external leg was required not to disturb.
+
+### What a client sees when attestation fails
+
+Both refusals come back as **503 `gatekeeper_error`** on `/v1`, which is the
+gatekeeper's own vocabulary: toward an external upstream this router occupies the
+gatekeeper's position, and a client that already branches on it should not need a
+second name for the same refusal.
+
+| Code | When |
+| --- | --- |
+| `attestation_failed` | nothing was sent — admission found the endpoint `pending`/`denied`, or the sidecar answered its fail-closed 503 one hop later |
+| `attestation_revoked` | the verdict was withdrawn mid-stream, so the sidecar closed the connection under a running generation; the stream's last event carries this and the row is metered `aborted` |
+
+A model whose endpoint holds no verdict is absent from `/v1/models` as well, and
+404s on `/v1/models/{id}`: fail-closed means not offered, not offered-and-broken.
+
+Metering is unchanged in kind. An external generation writes
+`externalEndpointId` instead of `endpointId` (exactly one, always), freezes the
+admin-set prices like any other, carries no `evidenceSnapshotId` — there is no
+snapshot row behind an upstream's bundle — and reports the digest its *admitting
+verdict* observed as `usage.evidence_digest`, which is stronger coverage than a
+built-in's fact about publication.
 
 Nothing here persists trust. On boot every external endpoint is forced back to
 `pending` — out of the catalogue, refusing routing — until the sidecar reports a

@@ -2,14 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import { estimatePromptTokens } from '../../metering/token-estimator.js';
 import { type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
-import type { GatewayContext, GenerationOutcome, RouteKind } from './gateway.types.js';
+import { ExternalUpstreamClient } from './external-upstream.client.js';
+import type { ExternalRoute, GatewayContext, GenerationOutcome, RoutedModel, RouteKind } from './gateway.types.js';
 import { UPSTREAM_PATHS } from './gateway.types.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
 import { GenerationRecorder } from './generation-recorder.service.js';
 import { LiteLlmClient } from './litellm.client.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import { readUsage, shapeResponse } from './response-shaping.js';
-import { extensionFor, relayStream } from './stream-relay.js';
+import { extensionFor, relayStream, type StreamFailure } from './stream-relay.js';
+
+/** A model resolved to the external leg, narrowed so `external` is not optional. */
+type ExternalModel = RoutedModel & { external: ExternalRoute };
 
 /**
  * The `/v1` request path, end to end: admit, forward, shape, meter.
@@ -18,15 +22,24 @@ import { extensionFor, relayStream } from './stream-relay.js';
  * the point at which a generation id is minted, and the guarantee that every
  * forwarded request produces exactly one metering row are the properties this
  * file exists to make obvious.
+ *
+ * There are two forward targets and exactly one seam between them (ADR-008 §4):
+ * LiteLLM, in this cluster space, and the attesting egress sidecar for a model in
+ * someone else's deployment. Everything else here — rate limits, the generation
+ * id, the no-content invariant, the SSE relay, response shaping — runs the same
+ * code for both, which is the property the external leg was required not to
+ * disturb.
  */
 @Injectable()
 export class GatewayService {
   private readonly logger = new Logger(GatewayService.name);
 
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly policy: GatewayPolicyService,
     private readonly recorder: GenerationRecorder,
     private readonly upstream: LiteLlmClient,
+    private readonly external: ExternalUpstreamClient,
   ) {}
 
   async handle(request: ApiKeyRequest, response: ExpressResponse, kind: RouteKind): Promise<void> {
@@ -35,7 +48,7 @@ export class GatewayService {
     const model = this.policy.resolve(kind, body, auth.key);
     const rateLimitHeaders = await this.policy.admit(auth);
 
-    const start = await this.recorder.begin(model.endpoint.id);
+    const start = await this.recorder.begin(model);
     const stream = kind !== 'embeddings' && body.stream === true;
     const clientWantsUsage = usageRequested(body);
 
@@ -48,6 +61,7 @@ export class GatewayService {
       stream,
       suppressUsageChunk: stream && !clientWantsUsage,
       coverage: start.coverage,
+      evidenceDigest: start.evidenceDigest,
       rateLimitHeaders,
       requestId: headerOf(request, 'x-request-id'),
       clientIp: request.ip ?? null,
@@ -61,22 +75,41 @@ export class GatewayService {
       response.setHeader('X-Request-Id', context.requestId);
     }
 
+    const leg = externalOf(model);
     const abort = new AbortController();
     let upstreamResponse: Response;
     try {
-      upstreamResponse = await this.upstream.send({
-        path: UPSTREAM_PATHS[kind],
-        body: upstreamBodyFor(context),
-        generationId: context.generationId,
-        stream,
-        signal: abort.signal,
-      });
+      upstreamResponse = leg
+        ? await this.external.send({
+            model: leg,
+            path: UPSTREAM_PATHS[kind],
+            body: upstreamBodyFor(context),
+            stream,
+            signal: abort.signal,
+          })
+        : await this.upstream.send({
+            path: UPSTREAM_PATHS[kind],
+            body: upstreamBodyFor(context),
+            generationId: context.generationId,
+            stream,
+            signal: abort.signal,
+          });
     } catch (error) {
-      throw await this.fail(context, openAiErrors.backendUnavailable(messageOf(error)));
+      // A leg that already decided what this is keeps its own answer; only a raw
+      // transport failure becomes `backend_unavailable`. Wrapping an
+      // `OpenAiApiError` here would turn the egress leg's "this router is
+      // misconfigured" into "the backend is down", and put the reason in the body.
+      throw await this.fail(
+        context,
+        error instanceof OpenAiApiError ? error : openAiErrors.backendUnavailable(messageOf(error)),
+      );
     }
 
     if (!upstreamResponse.ok) {
-      throw await this.fail(context, await this.mapUpstreamFailure(upstreamResponse));
+      const error = leg
+        ? await this.external.mapFailure(leg, upstreamResponse)
+        : await this.mapUpstreamFailure(upstreamResponse);
+      throw await this.fail(context, error);
     }
 
     const outcome = stream
@@ -84,8 +117,11 @@ export class GatewayService {
           context,
           upstream: upstreamResponse,
           response,
-          readTimeoutMs: this.upstream.readTimeoutMs,
+          readTimeoutMs: leg ? this.external.readTimeoutMs : this.upstream.readTimeoutMs,
           abort,
+          failureMapper: leg
+            ? (failure): Promise<StreamFailure> => this.external.classifyStreamFailure(leg, failure)
+            : undefined,
         })
       : await this.completeOnce(context, upstreamResponse, response);
 
@@ -176,6 +212,11 @@ export class GatewayService {
   }
 }
 
+/** Narrows a resolved model to the external leg, or null for the LiteLLM one. */
+function externalOf(model: RoutedModel): ExternalModel | null {
+  return model.external ? ({ ...model, external: model.external } as ExternalModel) : null;
+}
+
 function bodyOf(request: ApiKeyRequest): Record<string, unknown> {
   const body = request.body;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -196,13 +237,14 @@ function usageRequested(body: Record<string, unknown>): boolean {
 }
 
 /**
- * The body LiteLLM receives: the client's, with `model` rewritten to the
- * upstream's name and — when the client streams without asking for usage — a
- * usage chunk requested on the router's behalf so the meter is exact rather
- * than estimated. The relay drops that chunk again before the client sees it.
+ * The body the upstream receives — LiteLLM's or an external endpoint's, the rule
+ * is the same: the client's, with `model` rewritten to the name *that* upstream
+ * knows, and — when the client streams without asking for usage — a usage chunk
+ * requested on the router's behalf so the meter is exact rather than estimated.
+ * The relay drops that chunk again before the client sees it.
  */
 function upstreamBodyFor(context: GatewayContext): Record<string, unknown> {
-  const body: Record<string, unknown> = { ...context.body, model: context.model.litellmModel };
+  const body: Record<string, unknown> = { ...context.body, model: context.model.upstreamModel };
   if (context.suppressUsageChunk) {
     const existing = (body.stream_options ?? {}) as Record<string, unknown>;
     body.stream_options = { ...existing, include_usage: true };

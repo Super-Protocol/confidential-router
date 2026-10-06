@@ -7,11 +7,14 @@ import { EvidenceCoverageService } from '../../metering/evidence-coverage.servic
 import { MeteringService } from '../../metering/metering.service.js';
 import { computeCostMicros, tokensPerSecond } from '../../metering/pricing.js';
 import { generationId } from '../../metering/ulid.js';
-import type { GatewayContext, GenerationOutcome } from './gateway.types.js';
+import type { GatewayContext, GenerationOutcome, RoutedModel } from './gateway.types.js';
 
 export interface GenerationStart {
   id: string;
+  /** The published snapshot behind a config endpoint; always null for an external one. */
   coverage: EvidenceCoverage | null;
+  /** What `usage.evidence_digest` and the metering row report. */
+  evidenceDigest: string | null;
 }
 
 /**
@@ -29,8 +32,23 @@ export class GenerationRecorder {
     private readonly metering: MeteringService,
   ) {}
 
-  async begin(endpointId: string): Promise<GenerationStart> {
-    return { id: generationId(), coverage: await this.evidence.currentFor(endpointId) };
+  /**
+   * What covers this request, resolved before it is forwarded.
+   *
+   * The two origins answer "which evidence covered this generation?" with
+   * different kinds of fact, and ADR-008 §4 is explicit that the external answer
+   * is the stronger one. A config endpoint gets *coverage*: the platform had
+   * published a fresh bundle, which is all ADR-002 lets this router record about
+   * itself. An external endpoint gets the digest a **verdict** observed — the
+   * router verified that bundle itself — and no `evidence_snapshots` row, because
+   * there is none to point at until the external evidence poll lands.
+   */
+  async begin(model: RoutedModel): Promise<GenerationStart> {
+    if (model.external) {
+      return { id: generationId(), coverage: null, evidenceDigest: model.external.evidenceDigestSeen };
+    }
+    const coverage = await this.evidence.currentFor(model.endpoint.id);
+    return { id: generationId(), coverage, evidenceDigest: coverage?.evidenceDigest ?? null };
   }
 
   async finish(context: GatewayContext, outcome: GenerationOutcome): Promise<void> {
@@ -41,9 +59,14 @@ export class GenerationRecorder {
       workspaceId: context.auth.workspace.id,
       apiKeyId: context.auth.key.id,
       modelId: context.model.id,
-      endpointId: context.model.endpoint.id,
+      // Exactly one of the two, the same exclusivity `models` carries: an external
+      // generation has no `endpoints` row to point at, and pointing it at one
+      // would put another operator's traffic into this deployment's own endpoint
+      // totals (ADR-008 §6).
+      endpointId: context.model.external ? null : context.model.endpoint.id,
+      externalEndpointId: context.model.external ? context.model.endpoint.id : null,
       evidenceSnapshotId: context.coverage?.snapshotId ?? null,
-      evidenceDigest: context.coverage?.evidenceDigest ?? null,
+      evidenceDigest: context.evidenceDigest,
       promptTokens: outcome.promptTokens,
       completionTokens: outcome.completionTokens,
       costMicros: computeCostMicros(outcome, context.model),

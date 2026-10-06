@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
+import { testConfig } from '../../../../../test/seed.js';
 import type {
   AuthenticatedRequest,
   SessionUser,
@@ -28,6 +29,7 @@ function build(
     workspaces?: Partial<WorkspaceScopeService>;
     preferences?: Partial<PreferencesService>;
     profiles?: Partial<UserProfileService>;
+    adminEmails?: string;
   } = {},
 ) {
   return new ViewerResolver(
@@ -37,6 +39,7 @@ function build(
     } as unknown as WorkspaceScopeService,
     { get: vi.fn(), ...overrides.preferences } as unknown as PreferencesService,
     { require: vi.fn(), rename: vi.fn(), ...overrides.profiles } as unknown as UserProfileService,
+    testConfig(overrides.adminEmails === undefined ? {} : { CR_API_AUTH__ADMIN_EMAILS: overrides.adminEmails }),
   );
 }
 
@@ -49,6 +52,23 @@ describe('ViewerResolver.me', () => {
       { id: 'ws-1', name: 'Default', slug: 'default', role: 'owner', balanceMicros: '170650000' },
       { id: 'ws-2', name: 'Evaluation', slug: 'evaluation', role: 'member', balanceMicros: '0' },
     ]);
+  });
+
+  it('is not an admin on a deployment that named no operators', async () => {
+    // The default is the safe direction: an empty `auth.adminEmails` admits
+    // nobody, so the console renders no admin section rather than one whose
+    // every mutation is refused.
+    expect((await build().me(USER)).isAdmin).toBe(false);
+  });
+
+  it('is an admin when the deployment named this address, whatever the casing', async () => {
+    const resolver = build({ adminEmails: 'DEV@example.test, other@example.test' });
+
+    expect((await resolver.me(USER)).isAdmin).toBe(true);
+  });
+
+  it('is not an admin when the deployment named someone else', async () => {
+    expect((await build({ adminEmails: 'ops@example.test' }).me(USER)).isAdmin).toBe(false);
   });
 
   it('carries the balance as a string, so no client rounds a micro away', async () => {
