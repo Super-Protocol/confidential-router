@@ -212,3 +212,104 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// TestDocumentTrustedMeasurementCreatesTheSection is the case every real file
+// hits: `attestedRoots` is absent, because its defaults are all implicit, so
+// pinning the first measurement has to grow the section rather than fail on it.
+func TestDocumentTrustedMeasurementCreatesTheSection(t *testing.T) {
+	const measurement = "bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab"
+	doc, path := openDocument(t, commentedConfig)
+
+	added, err := doc.AddTrustedMeasurement(measurement)
+	if err != nil {
+		t.Fatalf("AddTrustedMeasurement: %v", err)
+	}
+	if !added {
+		t.Fatal("AddTrustedMeasurement reported no change, want the pin to be added")
+	}
+	if err := doc.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	saved := readFile(t, path)
+	if !strings.Contains(saved, "attestedRoots:") {
+		t.Errorf("the attestedRoots section was not created:\n%s", saved)
+	}
+	if !strings.Contains(saved, "trustedMeasurements:") || !strings.Contains(saved, measurement) {
+		t.Errorf("the measurement did not reach the file:\n%s", saved)
+	}
+	// Everything the user wrote by hand has to survive the edit; that is the
+	// whole reason edits go through the node API.
+	for _, want := range []string{"# Trusted Clouds.", "# The production llama endpoint.", "# current release"} {
+		if !strings.Contains(saved, want) {
+			t.Errorf("comment %q was lost:\n%s", want, saved)
+		}
+	}
+
+	cfg, err := doc.Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	if got := cfg.AttestedRootsTrustedMeasurements(); len(got) != 1 || got[0] != measurement {
+		t.Errorf("measurements = %v, want just %s", got, measurement)
+	}
+}
+
+// TestDocumentTrustedMeasurementRoundTrip covers the rest of the lifecycle
+// against a file that already has an `attestedRoots` section.
+func TestDocumentTrustedMeasurementRoundTrip(t *testing.T) {
+	const measurement = "bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab"
+	doc, _ := openDocument(t, commentedConfig+"\nattestedRoots:\n  requireNetworkType: any\n")
+
+	if _, err := doc.AddTrustedMeasurement(measurement); err != nil {
+		t.Fatalf("AddTrustedMeasurement: %v", err)
+	}
+	added, err := doc.AddTrustedMeasurement(measurement)
+	if err != nil {
+		t.Fatalf("AddTrustedMeasurement: %v", err)
+	}
+	if added {
+		t.Error("the same measurement was added twice")
+	}
+
+	removed, err := doc.RemoveTrustedMeasurement([]string{measurement})
+	if err != nil {
+		t.Fatalf("RemoveTrustedMeasurement: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d, want 1", removed)
+	}
+	cfg, err := doc.Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	if got := cfg.AttestedRootsTrustedMeasurements(); len(got) != 0 {
+		t.Errorf("measurements = %v, want none left", got)
+	}
+	// The sibling setting must not have been disturbed by growing and shrinking
+	// the list next to it.
+	if got, want := cfg.AttestedRootsRequireNetworkType(), config.NetworkTypeAny; got != want {
+		t.Errorf("requireNetworkType = %q, want %q", got, want)
+	}
+}
+
+// TestDocumentRemoveTrustedMeasurementWithoutASection is the no-op path: a file
+// that never pinned anything has nothing to remove and must not be rewritten
+// into having an empty section.
+func TestDocumentRemoveTrustedMeasurementWithoutASection(t *testing.T) {
+	doc, _ := openDocument(t, commentedConfig)
+	removed, err := doc.RemoveTrustedMeasurement([]string{"bb6962eb"})
+	if err != nil {
+		t.Fatalf("RemoveTrustedMeasurement: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0", removed)
+	}
+	body, err := doc.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "attestedRoots") {
+		t.Errorf("a removal created the section it was looking in:\n%s", body)
+	}
+}
