@@ -134,7 +134,11 @@ export class CatalogService implements OnApplicationBootstrap {
           id: model.id,
           name: model.name,
           litellmModel: model.litellmModel,
+          // Stated rather than defaulted: this row is a config projection, which
+          // is what makes it immune to the admin API and subject to `retire`.
+          origin: 'config',
           endpointId: endpoint.id,
+          externalEndpointId: null,
           contextLength: model.contextLength,
           capabilities: model.capabilities,
           promptPer1mMicros: model.pricing.promptPer1mMicros,
@@ -158,10 +162,9 @@ export class CatalogService implements OnApplicationBootstrap {
 
       // Anything the config no longer lists is retired rather than deleted:
       // generations keep their foreign keys, the console stops offering it.
-      await this.retire(manager, Model, [...models.keys()]);
-      await this.retire(
+      await this.retireModels(manager, [...models.keys()]);
+      await this.retireEndpoints(
         manager,
-        Endpoint,
         [...endpoints.values()].map((endpoint) => endpoint.id),
       );
     });
@@ -171,14 +174,29 @@ export class CatalogService implements OnApplicationBootstrap {
     this.logger.log(`Catalogue: ${models.size} model(s) across ${endpoints.size} endpoint(s)`);
   }
 
-  private async retire(
-    manager: DataSource['manager'],
-    entity: typeof Model | typeof Endpoint,
-    keptIds: string[],
-  ): Promise<void> {
+  /**
+   * Retires the config models the config no longer lists.
+   *
+   * `origin: 'config'` is the whole of the difference ADR-008 §6 makes to this
+   * method, and it is not cosmetic: external models share this table, are
+   * registered by an admin at runtime, and appear in no config — so without the
+   * filter every boot would disable all of them. Data-model invariant 4 now says
+   * this in words; this clause is what makes it true.
+   */
+  private async retireModels(manager: DataSource['manager'], keptIds: string[]): Promise<void> {
+    await manager.update(Model, this.retireWhere(keptIds, { origin: 'config' }), {
+      enabled: false,
+      updatedAt: new Date(),
+    });
+  }
+
+  private async retireEndpoints(manager: DataSource['manager'], keptIds: string[]): Promise<void> {
+    await manager.update(Endpoint, this.retireWhere(keptIds), { enabled: false, updatedAt: new Date() });
+  }
+
+  private retireWhere(keptIds: string[], extra: Record<string, unknown> = {}): Record<string, unknown> {
     // `Not(In([]))` is not a valid predicate on either driver, so an empty
     // config — which is the default in development — retires everything.
-    const where = keptIds.length > 0 ? { id: Not(In(keptIds)), enabled: true } : { enabled: true };
-    await manager.update(entity, where, { enabled: false, updatedAt: new Date() });
+    return keptIds.length > 0 ? { ...extra, id: Not(In(keptIds)), enabled: true } : { ...extra, enabled: true };
   }
 }
