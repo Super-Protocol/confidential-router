@@ -14,8 +14,13 @@ field is therefore named `…Micros`. A nullable money input sent as `null` mean
 and anything that is not a whole non-negative amount is a `400`, not a server error. IDs are UUIDs;
 times are ISO-8601 `DateTime`.
 
-Vocabulary rule (ADR-002): evidence fields say *published / fresh / stale* — there is no `verified`
-field anywhere in this schema.
+Vocabulary rule (ADR-002): evidence fields about **this deployment's own endpoints** say
+*published / fresh / stale* — there is no bare `verified` anywhere in this schema. External model
+endpoints (ADR-008 §1) are the one place a verdict exists, because there the router is the verifying
+party: `ExternalEndpointStatus` renders as *verified by this router* / *denied by this router*, always
+naming who verified. The two vocabularies are separate and never share a component — an `Endpoint`'s
+`evidenceState` is a fact about publication, an `ExternalEndpoint`'s `status` is a verdict this router
+reached, and blending them would be claiming the first is the second.
 
 ```graphql
 scalar DateTime
@@ -475,3 +480,108 @@ Rotation is narrowed to `(workspaceId, createdByUserId)`. A workspace has member
 open until their cached secret expired. Clients should still treat a `401` of code `api_key_revoked`,
 `api_key_expired` or `invalid_api_key` as "mint again and retry once" — that is what the console does,
 and it is the only reason a caller needs to read those codes.
+
+## As shipped (SUP-225) — the external-endpoint admin API
+
+ADR-008 §7's control plane: external endpoints and the trust list, plus the one field the browser was
+missing. The egress leg that uses these rows is SUP-224; the console that renders them is SUP-226.
+
+```graphql
+enum ExternalEndpointStatus { PENDING VERIFIED DENIED DISABLED }
+enum ExternalEndpointEventKind {
+  REGISTERED VERIFIED DENIED DIGEST_CHANGED MEASUREMENT_CHANGED DISABLED KEY_ROTATED
+}
+
+type ExternalModel {
+  id: ID!, name: String!, upstreamModel: String!, contextLength: Int!, capabilities: [ModelCapability!]!
+  promptPer1mMicros: String!, completionPer1mMicros: String!, tee: String!, enabled: Boolean!
+}
+
+type ExternalEndpoint {
+  id: ID!, name: String!, baseUrl: String!, hostname: String!, enabled: Boolean!
+  status: ExternalEndpointStatus!
+  lastCheckedAt: DateTime, lastStage: String, lastReason: String
+  measurementSeen: String, measurementSource: String, evidenceDigestSeen: String, pinnedCertFingerprint: String
+  apiKeyPrefix: String        # operator only; null for everyone else
+  registeredBy: String        # operator only; null for everyone else
+  models: [ExternalModel!]!
+  createdAt: DateTime!, updatedAt: DateTime!
+}
+
+type ExternalEndpointEvent {
+  id: ID!, at: DateTime!, kind: ExternalEndpointEventKind!
+  stage: String, reason: String, measurement: String, evidenceDigest: String
+}
+
+type TrustedMeasurement { id: ID!, measurement: String!, note: String, addedBy: String, addedAt: DateTime! }
+
+extend type Query {
+  "Session, not admin — see transparency below."
+  externalEndpoints: [ExternalEndpoint!]!
+  externalEndpoint(id: ID!): ExternalEndpoint
+  externalEndpointEvents(externalEndpointId: ID!, limit: Int = 50): [ExternalEndpointEvent!]!
+  trustedMeasurements: [TrustedMeasurement!]!
+}
+
+extend type Mutation {   # every one of these: session + auth.adminEmails
+  registerExternalEndpoint(input: RegisterExternalEndpointInput!): ExternalEndpoint!
+  updateExternalEndpoint(input: UpdateExternalEndpointInput!): ExternalEndpoint!
+  setExternalEndpointEnabled(input: SetExternalEndpointEnabledInput!): ExternalEndpoint!
+  rotateExternalEndpointKey(input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
+  addTrustedMeasurement(input: AddTrustedMeasurementInput!): TrustedMeasurement!
+  updateTrustedMeasurement(input: UpdateTrustedMeasurementInput!): TrustedMeasurement!
+  removeTrustedMeasurement(id: ID!): TrustedMeasurement!
+}
+
+extend type User { isAdmin: Boolean! }
+```
+
+**`me { isAdmin }`** is new and is the reason the admin section can exist: before it, nothing in the
+browser could ask whether this address is in `auth.adminEmails`, so the nav entry would have had to be
+rendered for everyone and 403 on arrival. It gates a nav entry and nothing else — it is not a
+permission, because every operator-only operation is behind `AdminGuard` whatever a client believes.
+
+**Transparency (ruling 3 on SUP-221).** The reads are `SessionGuard`; only the writes are
+`SessionGuard + AdminGuard`, applied per method rather than per class. Any signed-in user sees the
+endpoint list with its base URL, status, the measurement and digest each verdict saw, the pinned
+certificate, the registered models with their prices, and the full verdict timeline. An operator
+curating external capacity in secret is the configuration this product must not be able to sell as
+confidential. Two fields are narrowed rather than the operation: `apiKeyPrefix` and `registeredBy` on
+`ExternalEndpoint`, and `addedBy` on `TrustedMeasurement`, are about the *operator* rather than the
+upstream and come back `null` to everyone else — and for a non-admin the address lookup is not run at
+all, so there is no path by which one could leak. Anonymous callers get none of this: `models` and
+`model` stay the only public operations and carry no endpoint URL, no trust list and no verdict detail.
+
+**The upstream API key is not a field.** There is no `apiKey` on `ExternalEndpoint` — asking for one is
+a `GRAPHQL_VALIDATION_FAILED`, not a null. It is write-only on the way in (`RegisterExternalEndpointInput.apiKey`,
+`RotateExternalEndpointKeyInput.apiKey`), sealed under the row's id before it reaches a column
+(ADR-008 §6, threat T15), and `apiKeyPrefix` is the only part that ever comes back. Rotation is a new
+write; there is nothing to compare against. On a deployment with no `CR_API_SECRETS_KEY`, registering
+and rotating answer `SERVICE_UNAVAILABLE` with the sentence naming the variable — the second mapped
+`503`, for the same reason as the first (SUP-171): a missing-configuration refusal a console can quote
+beats an `INTERNAL_SERVER_ERROR` an operator cannot act on.
+
+**What a mutation does besides writing a row.** Each one re-renders the sidecar config in the same
+request, which is what makes a trust-list edit live on the *next* check rather than after the
+re-attest interval (ADR-008 §5). Registering starts the endpoint at `PENDING` — a row is never born
+verified, and switching one back on returns it to `PENDING` too, because the verdict it held before it
+went off is not a statement about the upstream now (§8). A model an operator stops listing is retired
+(`enabled: false`), never deleted, so past generations keep their foreign key — the same trade the
+config projection makes. Rotating the key does **not** re-render: the rendered file holds no secrets.
+Measurements are normalised on input (a `sha256:` / `0x` prefix and upper case are all accepted and
+folded), so one cloud is one row and a repeat is a `CONFLICT` rather than a second entry an operator
+would have to remove twice. Every mutation writes a WARN naming the operator — on a published cluster
+the container log is the only audit trail there is.
+
+**Not in this change:** external models do not yet appear in `models`. The `Model` type's
+`endpoint: Endpoint!` is the router's own endpoint — hostname, `declaredImages`, `evidenceState` — and
+an external upstream has none of that, so listing one means changing `Model`'s shape. That lands with
+the Models page and the chat picker (SUP-227), which own the rule that the two vocabularies above are
+never blended in one component.
+
+### Screen → operations, as shipped (SUP-225 additions)
+
+**Admin → External endpoints** `externalEndpoints` / `externalEndpoint` / `externalEndpointEvents` +
+`registerExternalEndpoint` / `updateExternalEndpoint` / `setExternalEndpointEnabled` /
+`rotateExternalEndpointKey`; **Admin → Trust list** `trustedMeasurements` + `addTrustedMeasurement` /
+`updateTrustedMeasurement` / `removeTrustedMeasurement`; **nav** `me { isAdmin }`.
