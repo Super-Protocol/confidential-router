@@ -528,6 +528,20 @@ const ExternalEndpointsSchema = z
     reattestInterval: durationMs('10m'),
     /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
     statusPollInterval: durationMs('5s'),
+    /**
+     * How long the egress leg waits for the sidecar's loopback listener to accept
+     * a connection. Its own value rather than LiteLLM's: a refusal here means the
+     * sidecar has not started that listener yet, which is a different fault with a
+     * different fix.
+     */
+    connectTimeout: durationMs('5s'),
+    /**
+     * Longest gap between chunks from an external upstream before the stream is
+     * abandoned. Separate from `backends.litellm.readTimeout` because the patience
+     * an external model deserves is a property of that model and of the network
+     * between two clouds, not of this deployment's own workers.
+     */
+    readTimeout: durationMs('120s'),
   })
   .check((ctx) => {
     const { reattestInterval } = ctx.value;

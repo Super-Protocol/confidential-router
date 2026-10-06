@@ -32,18 +32,25 @@ export class Generation {
   @Column({ type: 'varchar', length: 255 })
   modelId!: string;
 
-  @Column(idColumn())
-  endpointId!: string;
+  /**
+   * One of this deployment's own endpoints, or null when the request left the
+   * cluster space through the egress leg.
+   *
+   * Nullable since ADR-008 §6's egress leg landed, and deliberately *not*
+   * backfilled with the external endpoint's id: `endpoints` and
+   * `external_endpoints` are separate namespaces on purpose, and the endpoint
+   * totals the console computes from this column are about hosts this router
+   * publishes evidence for.
+   */
+  @Column(idColumn({ nullable: true }))
+  endpointId!: string | null;
 
   /**
    * The external endpoint the request was forwarded to, or null for a model inside
    * this cluster space (ADR-008 §6) — what `usage.endpoint` names for an external
    * generation.
    *
-   * Additive only. The egress leg that writes it is stage 3's, and whether
-   * `endpointId` should then become nullable is stage 3's question too: it owns
-   * the `/v1` surface this column is reported on, and loosening a column the
-   * console reads as non-null from here would be a schema change with no writer.
+   * Exactly one of the two is set, which is {@link generationEndpointIsExclusive}.
    */
   @Column(idColumn({ nullable: true }))
   externalEndpointId!: string | null;
@@ -125,4 +132,23 @@ export class Generation {
   @ManyToOne(() => EvidenceSnapshot, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'evidenceSnapshotId' })
   evidenceSnapshot?: Relation<EvidenceSnapshot> | null;
+}
+
+/**
+ * Whether a metered request names exactly one endpoint, of exactly one kind.
+ *
+ * The same rule as `modelOriginIsExclusive`, for the same reason and enforced the
+ * same way — in `invariants.spec.ts` rather than by a database CHECK, which
+ * TypeORM's schema comparison does not track identically on PostgreSQL and SQLite.
+ *
+ * A row that broke it would not fail loudly. It would be counted twice: once in
+ * the per-endpoint token totals the console computes from `endpointId`, and once
+ * as external traffic — or, with both null, in neither, which is how a generation
+ * becomes invisible to the only screen that could have found it.
+ */
+export function generationEndpointIsExclusive(row: {
+  endpointId: string | null;
+  externalEndpointId: string | null;
+}): boolean {
+  return (row.endpointId === null) !== (row.externalEndpointId === null);
 }

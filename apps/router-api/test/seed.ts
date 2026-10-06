@@ -130,6 +130,12 @@ export interface GenerationSeed {
   covered?: boolean;
   apiKeyId?: string | null;
   modelId?: string;
+  /**
+   * Records the generation against an external endpoint instead of the catalogue's
+   * own one (ADR-008 §6). Exactly one of the two is ever set, so this nulls
+   * `endpointId` rather than sitting beside it.
+   */
+  externalEndpointId?: string;
 }
 
 export async function seedGeneration(
@@ -143,7 +149,8 @@ export async function seedGeneration(
     workspaceId: catalog.workspaceId,
     apiKeyId: seed.apiKeyId === undefined ? catalog.apiKeyId : seed.apiKeyId,
     modelId: seed.modelId ?? catalog.modelId,
-    endpointId: catalog.endpointId,
+    endpointId: seed.externalEndpointId ? null : catalog.endpointId,
+    externalEndpointId: seed.externalEndpointId ?? null,
     evidenceSnapshotId: covered ? catalog.snapshotId : null,
     evidenceDigest: covered ? catalog.evidenceDigest : null,
     promptTokens: seed.promptTokens ?? 100,

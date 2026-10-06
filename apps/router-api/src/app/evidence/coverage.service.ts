@@ -41,7 +41,15 @@ export class EvidenceCoverageStatsService {
       .addSelect('COUNT(generation.evidenceSnapshotId)', 'covered')
       .where('generation.workspaceId = :workspaceId', { workspaceId: window.workspaceId })
       .andWhere('generation.createdAt >= :from', { from: window.from.getTime() })
-      .andWhere('generation.createdAt < :to', { to: window.to.getTime() });
+      .andWhere('generation.createdAt < :to', { to: window.to.getTime() })
+      // Scoped to this deployment's own endpoints, which is the only thing the
+      // question means: an external generation has no published snapshot to have
+      // been covered by, and counting it as uncovered would report the one case
+      // where this router *did* verify the upstream as the weakest one
+      // (ADR-008 §4). External endpoints get their own, differently worded
+      // transparency surface — "verified by this router" (§1) — not a share of
+      // this ratio.
+      .andWhere('generation.externalEndpointId IS NULL');
     if (window.endpointId) {
       query.andWhere('generation.endpointId = :endpointId', { endpointId: window.endpointId });
     }
@@ -49,7 +57,15 @@ export class EvidenceCoverageStatsService {
     return coverageOf(Number(row?.covered ?? 0), Number(row?.requests ?? 0));
   }
 
-  /** Tokens routed through an endpoint in a window, for the endpoint table. */
+  /**
+   * Tokens routed through an endpoint in a window, for the endpoint table.
+   *
+   * This deployment's endpoints only, like {@link summary} and for a plainer
+   * reason: the table it fills lists `endpoints` rows, and an external
+   * generation's `endpointId` is null — grouping it in would produce a bucket
+   * under a key no row has, typed `string` and holding another operator's
+   * traffic.
+   */
   async tokensByEndpoint(window: CoverageWindow): Promise<Map<string, number>> {
     const rows = await this.dataSource
       .getRepository(Generation)
@@ -59,6 +75,7 @@ export class EvidenceCoverageStatsService {
       .where('generation.workspaceId = :workspaceId', { workspaceId: window.workspaceId })
       .andWhere('generation.createdAt >= :from', { from: window.from.getTime() })
       .andWhere('generation.createdAt < :to', { to: window.to.getTime() })
+      .andWhere('generation.endpointId IS NOT NULL')
       .groupBy('generation.endpointId')
       .getRawMany<{ endpointId: string; tokens: string | number }>();
 

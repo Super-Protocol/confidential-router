@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../../config.js';
+import { postToUpstream } from './upstream-fetch.js';
 
 export interface UpstreamRequest {
   /** OpenAI path, forwarded verbatim: `/v1/chat/completions` and friends. */
@@ -13,42 +14,19 @@ export interface UpstreamRequest {
   signal: AbortSignal;
 }
 
-/** The upstream could not be reached at all — as opposed to answering badly. */
-export class UpstreamUnavailableError extends Error {
-  constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause));
-    this.name = 'UpstreamUnavailableError';
-    this.cause = cause;
-  }
-}
+export { UpstreamUnavailableError } from './upstream-fetch.js';
 
 /**
- * One connection attempt is retried, and only when the first never established.
- *
- * Retrying anything else would re-run a generation the model may already have
- * started — expensive, non-idempotent and, for a streaming request, impossible
- * once a byte has left.
- */
-const MAX_ATTEMPTS = 2;
-
-const CONNECTION_ERROR_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'UND_ERR_CONNECT_TIMEOUT',
-  'UND_ERR_SOCKET',
-]);
-
-/**
- * The router's only outbound dependency: LiteLLM, in the same confidential
- * cluster, over plain HTTP (ADR-002 §4).
+ * The router's only outbound dependency *inside* the cluster: LiteLLM, over
+ * plain HTTP (ADR-002 §4).
  *
  * Bodies are passed through untouched apart from `model`, which the caller has
  * already rewritten to the upstream's name. The router does not inspect
  * `messages` — not here, not anywhere.
+ *
+ * Models in *another* deployment do not come this way: they go out through
+ * `ExternalUpstreamClient`, which is the same POST over a verifying sidecar
+ * rather than a trusted cluster hop (ADR-008 §4).
  */
 @Injectable()
 export class LiteLlmClient {
@@ -74,47 +52,14 @@ export class LiteLlmClient {
       headers.authorization = `Bearer ${apiKey}`;
     }
 
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-      // A fresh controller per attempt: the connect deadline belongs to the
-      // attempt, the caller's signal to the whole request.
-      const connect = new AbortController();
-      const timer = setTimeout(
-        () => connect.abort(new Error('Upstream did not accept the connection in time.')),
-        connectTimeout,
-      );
-      try {
-        return await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(request.body),
-          signal: AbortSignal.any([request.signal, connect.signal]),
-        });
-      } catch (error) {
-        lastError = request.signal.aborted ? error : new UpstreamUnavailableError(error);
-        if (request.signal.aborted || !isConnectionError(error) || attempt === MAX_ATTEMPTS) {
-          break;
-        }
-        this.logger.warn(`LiteLLM ${url} unreachable (attempt ${attempt}/${MAX_ATTEMPTS}); retrying.`);
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-    throw lastError;
+    return postToUpstream({
+      url,
+      headers,
+      body: request.body,
+      connectTimeoutMs: connectTimeout,
+      signal: request.signal,
+      onRetry: (attempt, attempts) =>
+        this.logger.warn(`LiteLLM ${url} unreachable (attempt ${attempt}/${attempts}); retrying.`),
+    });
   }
-}
-
-/**
- * Whether the failure happened before the upstream took the request.
- *
- * `fetch` reports every transport failure as a `TypeError` and hides the
- * detail in `cause`; an abort from our own connect deadline arrives as an
- * `AbortError` and counts too, because nothing was sent either way.
- */
-function isConnectionError(error: unknown): boolean {
-  if (error instanceof Error && error.name === 'AbortError') {
-    return true;
-  }
-  const code = (error as { cause?: { code?: string } })?.cause?.code;
-  return typeof code === 'string' && CONNECTION_ERROR_CODES.has(code);
 }
