@@ -42,6 +42,22 @@ func TestValidateReportsEveryProblemWithItsPath(t *testing.T) {
 			want: []string{`attestedRoots.requireNetworkType: must be "any" or "trusted"`},
 		},
 		{
+			name: "a measurement that is not a 32-byte hex string",
+			yaml: "version: 1\n" + roots +
+				"attestedRoots:\n  trustedMeasurements:\n    - deadbeef\n" + oneEndpoint,
+			want: []string{"attestedRoots.trustedMeasurements[0]: measurement \"deadbeef\" is 4 bytes"},
+		},
+		{
+			// A duplicate is harmless to the verifier and a sign the operator
+			// lost track of what they accepted, which is the thing this list
+			// exists to keep legible.
+			name: "the same measurement pinned twice in different spellings",
+			yaml: "version: 1\n" + roots + "attestedRoots:\n  trustedMeasurements:\n" +
+				"    - bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab\n" +
+				"    - sha256:BB6962EB20D616EB0F19479CF7FBCCDA50EE5682EAB75B2104915D305A826AAB\n" + oneEndpoint,
+			want: []string{"attestedRoots.trustedMeasurements[1]: duplicate measurement"},
+		},
+		{
 			name: "a registry mirror that is not a URL",
 			yaml: "version: 1\n" + roots + "attestedRoots:\n  registryBaseUrl: \"mirror.local/signatures\"\n" + oneEndpoint,
 			want: []string{"attestedRoots.registryBaseUrl: must be an http:// or https:// base URL"},
