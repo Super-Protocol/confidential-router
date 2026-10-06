@@ -5,8 +5,10 @@ import { buildDataSourceOptions } from '../src/app/db/data-source.js';
 import { ApiKey } from '../src/app/db/entities/api-key.entity.js';
 import { Endpoint } from '../src/app/db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entity.js';
+import { ExternalEndpoint, type ExternalEndpointStatus } from '../src/app/db/entities/external-endpoint.entity.js';
 import { Generation, type GenerationStatus } from '../src/app/db/entities/generation.entity.js';
 import { Model } from '../src/app/db/entities/model.entity.js';
+import { TrustedMeasurement } from '../src/app/db/entities/trusted-measurement.entity.js';
 import { Workspace } from '../src/app/db/entities/workspace.entity.js';
 
 /**
@@ -162,4 +164,85 @@ export async function seedGeneration(
   };
   await dataSource.getRepository(Generation).insert(values);
   return dataSource.getRepository(Generation).create(values);
+}
+
+export interface SeededExternalEndpoint {
+  id: string;
+  name: string;
+  listenPort: number;
+  modelId: string;
+}
+
+/** External endpoints and their models are unique per call, like `seedCatalog`'s. */
+let externalEndpoints = 0;
+
+/**
+ * One external endpoint and, optionally, one model on it (ADR-008 §6).
+ *
+ * The ciphertext is a placeholder rather than a real envelope: nothing under test
+ * here opens it, and a test that sealed one would be testing
+ * `secret-envelope.spec.ts` again.
+ */
+export async function seedExternalEndpoint(
+  dataSource: DataSource,
+  options: { status?: ExternalEndpointStatus; enabled?: boolean; withModel?: boolean } = {},
+): Promise<SeededExternalEndpoint> {
+  externalEndpoints += 1;
+  const nth = externalEndpoints;
+  const id = randomUUID();
+  const name = `upstream-${nth}`;
+  const modelId = `partner/llama-3.3-70b-${nth}:snp`;
+  const listenPort = 19_000 + nth;
+  const now = new Date();
+
+  await dataSource.getRepository(ExternalEndpoint).save({
+    id,
+    name,
+    baseUrl: `https://${name}.example`,
+    hostname: `${name}.example`,
+    listenPort,
+    enabled: options.enabled ?? true,
+    status: options.status ?? 'pending',
+    lastCheckedAt: null,
+    lastStage: null,
+    lastReason: null,
+    measurementSeen: null,
+    measurementSource: null,
+    evidenceDigestSeen: null,
+    pinnedCertFingerprint: null,
+    apiKeyCiphertext: 'v1.placeholder',
+    apiKeyPrefix: 'sk-up',
+    createdByUserId: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  if (options.withModel ?? true) {
+    await dataSource.getRepository(Model).save({
+      id: modelId,
+      name: `Partner Llama ${nth}`,
+      litellmModel: 'llama-3.3-70b-instruct',
+      origin: 'external',
+      endpointId: null,
+      externalEndpointId: id,
+      contextLength: 131_072,
+      capabilities: ['chat', 'completions'],
+      promptPer1mMicros: 400_000,
+      completionPer1mMicros: 800_000,
+      tee: 'snp',
+      enabled: true,
+      updatedAt: now,
+    });
+  }
+
+  return { id, name, listenPort, modelId };
+}
+
+/** One entry of the admin trust list. */
+export async function seedTrustedMeasurement(dataSource: DataSource, measurement: string): Promise<string> {
+  const id = randomUUID();
+  await dataSource
+    .getRepository(TrustedMeasurement)
+    .save({ id, measurement, note: null, addedByUserId: null, addedAt: new Date() });
+  return id;
 }
