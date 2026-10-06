@@ -21,7 +21,6 @@ function evidenceStub(overrides: Partial<ExternalEvidenceService> = {}): Externa
     refreshAll: async () => QUIET,
     refresh: async () => undefined,
     summariesFor: async () => new Map(),
-    forget: () => undefined,
     ...overrides,
   } as unknown as ExternalEvidenceService;
 }

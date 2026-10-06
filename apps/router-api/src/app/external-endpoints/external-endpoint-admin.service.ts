@@ -163,34 +163,32 @@ export class ExternalEndpointAdminService {
    * The verdict timelines of several endpoints at once, newest first — history,
    * never an input to admission (§8).
    *
-   * Bulk because the timeline is a field of `ExternalEndpoint` rather than a
-   * query of its own (the contract's `ExternalEndpoint.events`), so the list
-   * screen asks for every endpoint's at once and a per-endpoint read would be one
-   * query per row. `limit` is applied per endpoint after the fact rather than in
-   * SQL: a window function would be the only way to do it in one statement and
-   * the two drivers spell that differently, while the table holds tens of rows
-   * per endpoint and not thousands.
+   * One bounded read per endpoint rather than one unbounded read for the page.
+   * The timeline is a field of `ExternalEndpoint` (the contract's
+   * `ExternalEndpoint.events`) and `externalEndpoints` is `SessionGuard`, so any
+   * signed-in user asks for every endpoint's at once — and nothing prunes
+   * `external_endpoint_events`, which the status poller appends to on every flip.
+   * A single `IN` query would therefore hydrate the whole table to throw most of
+   * it away. `LIMIT` per row-group needs a window function, which the two drivers
+   * spell differently; N indexed reads of 50 rows
+   * (`IDX_external_endpoint_events_endpointId_at`) are the portable version, and N
+   * is the registration count.
    */
   async eventsFor(
     externalEndpointIds: readonly string[],
     limit: number,
   ): Promise<Map<string, ExternalEndpointEvent[]>> {
-    const byEndpoint = new Map<string, ExternalEndpointEvent[]>();
-    if (externalEndpointIds.length === 0) {
-      return byEndpoint;
-    }
-    const rows = await this.dataSource.getRepository(ExternalEndpointEvent).find({
-      where: { externalEndpointId: In([...externalEndpointIds]) },
-      order: { at: 'DESC', id: 'DESC' },
-    });
-    for (const row of rows) {
-      const timeline = byEndpoint.get(row.externalEndpointId) ?? [];
-      if (timeline.length < limit) {
-        timeline.push(row);
-      }
-      byEndpoint.set(row.externalEndpointId, timeline);
-    }
-    return byEndpoint;
+    const repository = this.dataSource.getRepository(ExternalEndpointEvent);
+    const timelines = await Promise.all(
+      externalEndpointIds.map(async (externalEndpointId) =>
+        repository.find({
+          where: { externalEndpointId },
+          order: { at: 'DESC', id: 'DESC' },
+          take: limit,
+        }),
+      ),
+    );
+    return new Map(externalEndpointIds.map((id, index) => [id, timelines[index] ?? []]));
   }
 
   /**
@@ -367,8 +365,11 @@ export class ExternalEndpointAdminService {
    * admit" is not knowable here — and a console number that implied otherwise
    * would be re-introducing the stored trust ADR-008 §8 refuses.
    *
-   * `disabled` rows are excluded: an endpoint the operator switched off is not
-   * being admitted by anything.
+   * Only endpoints a verdict currently admits are counted. A denied one keeps the
+   * measurement its last check saw — a refusal at `tls-fingerprint` or `policy`
+   * observed one and refused anyway — and counting it would make the field say
+   * that withdrawing the row would drop an endpoint that is already serving
+   * nothing. `disabled` rows are out for the same reason.
    */
   async measurementUsage(): Promise<Map<string, number>> {
     const rows = await this.endpoints()
@@ -377,6 +378,7 @@ export class ExternalEndpointAdminService {
       .addSelect('COUNT(*)', 'admits')
       .where('endpoint.measurementSeen IS NOT NULL')
       .andWhere('endpoint.enabled = :enabled', { enabled: true })
+      .andWhere('endpoint.status = :status', { status: 'verified' })
       .groupBy('endpoint.measurementSeen')
       .getRawMany<{ measurement: string; admits: string | number }>();
     return new Map(rows.map((row) => [row.measurement, Number(row.admits)]));

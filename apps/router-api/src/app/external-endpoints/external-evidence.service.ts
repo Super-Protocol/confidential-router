@@ -4,7 +4,13 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In } from 'typeorm';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
-import { fetchEvidenceBundle, type ParsedEvidenceBundle, parseEvidenceBundle } from '../evidence/index.js';
+import {
+  EVIDENCE_PATH,
+  EvidenceFetchError,
+  fetchEvidenceBundle,
+  type ParsedEvidenceBundle,
+  parseEvidenceBundle,
+} from '../evidence/index.js';
 
 /**
  * Same budget as the own-endpoint poller: evidence is served by the platform's
@@ -54,17 +60,21 @@ export class ExternalEvidenceService {
   private readonly logger = new Logger(ExternalEvidenceService.name);
 
   /**
-   * The one publication per endpoint that was tried and found wanting, so a pass
-   * does not re-fetch a bundle that just refused to parse every minute for ever.
+   * Per endpoint, the `evidenceDigestSeen` this process has already finished a
+   * pass for — so a poll every minute does not keep asking the same question.
    *
-   * One entry per endpoint rather than a set of every failure, which is both the
-   * behaviour wanted and what bounds the map: the question is only ever "is this
-   * the publication that already failed?", and an upstream that keeps publishing
-   * fresh broken bundles should keep being asked — each new digest is a new
-   * publication. Dropped on success, because whatever was wrong is no longer the
-   * upstream's current state.
+   * It settles on three outcomes, and it is worth naming which: the publication
+   * was filed; the upstream served something that cannot be bound to this
+   * verdict's pin; or the upstream has already moved on and a fetch returns a
+   * *different* digest, which is the case that would otherwise re-fetch every
+   * minute until the sidecar's next re-attestation caught up. It does **not**
+   * settle on a transport failure — an upstream mid-restart is unreachable, not
+   * wrong, and one 503 must not suppress its summary until it next redeploys.
+   *
+   * One entry per endpoint, so the map is bounded by the registration count, and
+   * a new verdict digest is a different value and therefore a new question.
    */
-  private readonly refused = new Map<string, string>();
+  private readonly settled = new Map<string, string>();
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
@@ -85,20 +95,27 @@ export class ExternalEvidenceService {
 
     for (const endpoint of endpoints) {
       const digest = endpoint.evidenceDigestSeen;
-      const pin = endpoint.pinnedCertFingerprint;
-      if (!digest || !pin || this.refused.get(endpoint.id) === digest) {
+      if (!digest || !endpoint.pinnedCertFingerprint || this.settled.get(endpoint.id) === digest) {
         continue;
       }
       if (await this.has(endpoint.id, digest)) {
+        this.settled.set(endpoint.id, digest);
         continue;
       }
       report.polled += 1;
       try {
         await this.refresh(endpoint, now);
         report.stored += 1;
+        // Settled whatever digest came back. When it is not the one this verdict
+        // names, the upstream republished between the sidecar's check and this
+        // fetch — the publication the verdict named is gone and asking again
+        // cannot produce it; the next verdict will name the new one.
+        this.settled.set(endpoint.id, digest);
       } catch (error) {
         report.failed += 1;
-        this.refused.set(endpoint.id, digest);
+        if (!(error instanceof EvidenceFetchError)) {
+          this.settled.set(endpoint.id, digest);
+        }
         this.logger.warn(
           `No evidence summary for external endpoint "${endpoint.name}": ${
             error instanceof Error ? error.message : String(error)
@@ -119,7 +136,16 @@ export class ExternalEvidenceService {
    * nowhere, whatever else is true of it.
    */
   async refresh(endpoint: ExternalEndpoint, now: Date = new Date()): Promise<EvidenceSnapshot> {
-    const raw = await fetchEvidenceBundle({ hostname: endpoint.hostname }, { timeoutMs: FETCH_TIMEOUT_MS });
+    // The upstream's own authority, port included: `baseUrl` is canonical
+    // `https://host[:port]` and an upstream published on 8443 serves its bundle
+    // there too — defaulting to 443 would make a non-default port an endpoint
+    // this router could never summarise. The bundle still has to *name*
+    // `hostname`, which is what keeps the override from filing one upstream's
+    // evidence under another.
+    const raw = await fetchEvidenceBundle(
+      { hostname: endpoint.hostname, evidenceUrl: `${endpoint.baseUrl}${EVIDENCE_PATH}` },
+      { timeoutMs: FETCH_TIMEOUT_MS },
+    );
     const parsed = parseEvidenceBundle(raw, endpoint.hostname);
     if (parsed.certFingerprint !== endpoint.pinnedCertFingerprint) {
       throw new Error(
@@ -127,11 +153,7 @@ export class ExternalEvidenceService {
           `${endpoint.pinnedCertFingerprint}, so it is not a document about the channel this verdict covers`,
       );
     }
-    const stored = await this.record(endpoint.id, parsed, now);
-    // Whatever was wrong with an earlier publication of this upstream is no
-    // longer its current state.
-    this.forget(endpoint.id);
-    return stored;
+    return this.record(endpoint.id, parsed, now);
   }
 
   /**
@@ -169,11 +191,6 @@ export class ExternalEvidenceService {
       byEndpoint.set(row.externalEndpointId, digests);
     }
     return byEndpoint;
-  }
-
-  /** Drops the negative cache for one endpoint, so its next publication is asked for again. */
-  forget(externalEndpointId: string): void {
-    this.refused.delete(externalEndpointId);
   }
 
   private async has(externalEndpointId: string, evidenceDigest: string): Promise<boolean> {

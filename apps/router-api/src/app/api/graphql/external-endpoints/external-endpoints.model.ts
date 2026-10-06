@@ -377,7 +377,11 @@ export class TrustedMeasurementModel {
   description: 'A model on an external endpoint, and what this router charges for it.',
 })
 export class ExternalModelInputModel {
-  @Field(() => ID, { description: 'The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx.' })
+  @Field(() => String, {
+    description:
+      'The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx. A `String`, not an `ID`: ' +
+      'it is a name the operator chooses here rather than a handle to something that already exists.',
+  })
   @IsString()
   @Length(1, 255)
   id!: string;

@@ -46,8 +46,11 @@ let fetcher: ReturnType<typeof vi.fn>;
  * fail for a reason that has nothing to do with the code under test.
  */
 function serving(body: unknown, status = 200) {
+  // The `url` parameter is declared though the stub ignores it, so a test can
+  // assert on what was asked for.
   return vi.fn(
-    async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
+    async (_url: string) =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
   );
 }
 
@@ -179,7 +182,7 @@ describe('which upstreams are polled at all', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('does not re-fetch a publication that just refused, until the digest moves', async () => {
+  it('does not re-ask an upstream that served something unbindable, until the verdict moves', async () => {
     vi.stubGlobal('fetch', serving({ not: 'a bundle' }));
     const row = await endpoint();
 
@@ -188,12 +191,54 @@ describe('which upstreams are polled at all', () => {
     // poll would otherwise retry a broken publication for ever.
     expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
 
-    // A new digest is a new publication, so it is worth asking again.
+    // A new verdict digest is a new question, so it is worth asking again.
     vi.stubGlobal('fetch', serving(bundle()));
     await dataSource
       .getRepository(ExternalEndpoint)
       .update({ id: row.id }, { evidenceDigestSeen: 'sha256/something-else-entirely' });
     expect(await service.refreshAll()).toMatchObject({ polled: 1 });
+  });
+
+  it('keeps asking an upstream that was merely unreachable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Promise.reject(new Error('connect ECONNREFUSED'))),
+    );
+    await endpoint();
+
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1 });
+    // An upstream mid-restart is unreachable, not wrong: one 503 must not
+    // suppress its summary until it next redeploys under a new digest.
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1 });
+
+    vi.stubGlobal('fetch', serving(bundle()));
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0 });
+  });
+
+  it('stops asking once the upstream has moved past the publication the verdict names', async () => {
+    const fetcher = serving(bundle());
+    vi.stubGlobal('fetch', fetcher);
+    // The sidecar's last check saw one digest; the upstream has since republished,
+    // so a fetch can only ever return the newer one.
+    await endpoint({ evidenceDigestSeen: 'sha256/what-the-last-verdict-saw' });
+
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0 });
+    // Asking again cannot produce the publication the verdict named; the next
+    // verdict will name the one that is actually being served.
+    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('asks the upstream’s own authority, port included', async () => {
+    const fetcher = serving(bundle());
+    vi.stubGlobal('fetch', fetcher);
+    await endpoint({ baseUrl: `https://${HOSTNAME}:8443` });
+
+    await service.refreshAll();
+
+    // Defaulting to 443 would make an upstream published on another port one this
+    // router could never summarise, while the sidecar pins it happily.
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://${HOSTNAME}:8443/.well-known/swarm-evidence`);
   });
 
   it('lets one unreachable upstream not stop the others', async () => {

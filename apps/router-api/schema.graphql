@@ -677,9 +677,9 @@ input ExternalModelInput {
   contextLength: Int!
 
   """
-  The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx.
+  The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx. A `String`, not an `ID`: it is a name the operator chooses here rather than a handle to something that already exists.
   """
-  id: ID!
+  id: String!
   name: String!
 
   """Micro-USD per 1M prompt tokens."""

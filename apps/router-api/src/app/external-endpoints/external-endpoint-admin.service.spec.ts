@@ -390,8 +390,10 @@ describe('reads', () => {
     expect(timelines.get(second.endpoint.id)?.map((event) => event.kind)).toEqual(['registered']);
   });
 
-  it('answers an id with no timeline with no entry rather than an error', async () => {
-    expect((await service.eventsFor(['missing'], 10)).size).toBe(0);
+  it('answers an id with no timeline with an empty one rather than an error', async () => {
+    // An entry per id asked for, so a caller never has to tell "no events" from
+    // "I forgot to ask".
+    expect((await service.eventsFor(['missing'], 10)).get('missing')).toEqual([]);
     expect((await service.eventsFor([], 10)).size).toBe(0);
   });
 
