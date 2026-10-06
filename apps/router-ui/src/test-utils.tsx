@@ -4,6 +4,7 @@ import { type RenderOptions, type RenderResult, render } from '@testing-library/
 import type * as React from 'react';
 import { feedbackOfferMock } from './components/feedback/feedback-mocks';
 import { SESSION_QUERY, SessionProvider } from './components/session/session-provider';
+import { VIEWER_IS_ADMIN_QUERY } from './components/session/use-viewer-is-admin';
 
 export const TEST_WORKSPACES = [
   { id: 'ws-1', name: 'Default Workspace', slug: 'default', role: 'OWNER', balanceMicros: '170650000' },
@@ -33,6 +34,19 @@ export function sessionMock(overrides: Record<string, unknown> = {}): MockLink.M
   };
 }
 
+/**
+ * The answer to `ViewerIsAdmin`, the small separate operation the sidebar and the
+ * admin screens ask (see `use-viewer-is-admin.ts`). Pass `isAdminMock(true)` to
+ * put a suite in front of the Administration group and the admin controls.
+ */
+export function isAdminMock(isAdmin: boolean): MockLink.MockedResponse {
+  return {
+    request: { query: VIEWER_IS_ADMIN_QUERY },
+    result: { data: { me: { id: TEST_VIEWER.id, isAdmin } } },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
 export interface RenderWithSessionOptions extends Omit<RenderOptions, 'wrapper'> {
   mocks?: MockLink.MockedResponse[];
 }
@@ -56,18 +70,20 @@ export function renderWithApollo(
 /**
  * Renders inside the shell's providers.
  *
- * `feedbackOfferMock()` is appended to whatever the caller passed, rather than
- * left to each suite: `AppShell` asks for the offer on every screen, and a test
- * that forgot to stub it would fill its output with Apollo's "no more mocked
- * responses" warnings for a query it is not about. A caller that cares passes
- * its own — the first matching mock wins.
+ * `feedbackOfferMock()` and `isAdminMock(false)` are appended to whatever the
+ * caller passed, rather than left to each suite: `AppShell` asks for the offer
+ * on every screen and `SessionProvider` asks for admin membership on every page,
+ * and a test that forgot to stub either would fill its output with Apollo's "no
+ * more mocked responses" warnings for queries it is not about. A caller that
+ * cares passes its own — the first matching mock wins, so `isAdminMock(true)` in
+ * `mocks` takes precedence over the default here.
  */
 export function renderWithSession(ui: React.ReactElement, options: RenderWithSessionOptions = {}): RenderResult {
   const { mocks = [sessionMock()], ...rest } = options;
 
   return render(ui, {
     wrapper: ({ children }) => (
-      <MockedProvider mocks={[...mocks, feedbackOfferMock()]}>
+      <MockedProvider mocks={[...mocks, feedbackOfferMock(), isAdminMock(false)]}>
         <SessionProvider>{children}</SessionProvider>
       </MockedProvider>
     ),
