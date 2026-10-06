@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
 import { Generation } from './generation.entity.js';
 import { ENTITIES } from './index.js';
+import { Model, modelOriginIsExclusive } from './model.entity.js';
 
 /**
  * Executable versions of the invariants in `docs/contracts/data-model.md`.
@@ -77,6 +78,11 @@ describe('EvidenceSnapshot', () => {
   it('records no verdict about the evidence it stores', () => {
     // The router publishes evidence and never judges it; verification happens in
     // the user's gatekeeper (ADR-002). A boolean here would be that judgement.
+    //
+    // ADR-008 narrows invariant 2 but not this clause: toward an external upstream
+    // the router *does* hold a verdict, and it lives on `external_endpoints`,
+    // re-derived live. What this table stores is still only what was published —
+    // for the router's own endpoints and for an external upstream alike.
     const metadata = dataSource.getMetadata(EvidenceSnapshot);
     const verdictish = metadata.columns
       .map((column) => column.propertyName)
@@ -95,6 +101,138 @@ describe('EvidenceSnapshot', () => {
       'certFingerprint',
       'issuedAt',
     ]);
+  });
+});
+
+/**
+ * Invariant 2, as ADR-008 §1 narrows it.
+ *
+ * "No table stores a verification verdict" becomes "no table stores a
+ * verification verdict **about this deployment's own endpoints**". The narrowing
+ * is one sentence and it buys a whole feature, so the checks that keep it from
+ * becoming a general licence are worth more than the ones it replaced:
+ *
+ *  - the exception is named, and only these two tables are in it;
+ *  - the verdict columns describe *someone else* — there is no column here about
+ *    this router's own attestation state, which is the half ADR-002 still owns;
+ *  - the timeline is append-only, because a verdict history that could be edited
+ *    is not a history;
+ *  - the status column is re-derivable: nothing in the schema marks a verdict as
+ *    durable, cached-until, or otherwise still good after a restart.
+ */
+describe('the external-endpoint verdict exception', () => {
+  /** Tables allowed to hold verdict state, and about whom. */
+  const VERDICT_EXCEPTIONS = ['external_endpoints', 'external_endpoint_events'];
+
+  it('is the only part of the schema holding verdict state', () => {
+    const offenders = dataSource.entityMetadatas
+      .filter((metadata) => !VERDICT_EXCEPTIONS.includes(metadata.tableName))
+      .flatMap((metadata) =>
+        metadata.columns
+          .map((column) => column.propertyName)
+          // `verified`/`denied` as a *value* of `status` is fine; a column named
+          // after a verdict is what invariant 2 is about.
+          .filter((name) => /^(isValid|valid|verified|trusted|verdict|allowed|attested)/i.test(name))
+          .map((name) => `${metadata.tableName}.${name}`),
+      );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('holds a verdict about an upstream and none about this deployment', () => {
+    // The columns below are all "what we observed about them". The absence of an
+    // `ownStatus`, `selfVerified` or `attestedAt` beside them is ADR-002's rule
+    // still standing: the router does not learn a verdict about itself.
+    const columns = dataSource.getMetadata('external_endpoints').columns.map((column) => column.propertyName);
+
+    expect(columns).toContain('status');
+    expect(columns).toContain('measurementSeen');
+    expect(columns).toContain('evidenceDigestSeen');
+    expect(columns).toContain('pinnedCertFingerprint');
+    expect(columns.filter((name) => /^(self|own)/i.test(name))).toEqual([]);
+  });
+
+  it('keeps the timeline append-only', () => {
+    const columns = dataSource.getMetadata('external_endpoint_events').columns.map((column) => column.propertyName);
+
+    expect(columns).not.toContain('updatedAt');
+  });
+
+  it('claims no durability for a verdict, so a restart can only re-derive it', () => {
+    // On boot every endpoint is forced back to `pending` and the sidecar attests
+    // from nothing (ADR-008 §8). A column promising otherwise — `verifiedUntil`,
+    // `trustExpiresAt`, `cachedVerdict` — would be the persisted trust the design
+    // refuses, and it would be refused here before it ever had a reader.
+    const columns = dataSource
+      .getMetadata('external_endpoints')
+      .columns.map((column) => column.propertyName)
+      .filter((name) => /until|expires|cached|persist|durable/i.test(name));
+
+    expect(columns).toEqual([]);
+  });
+});
+
+/**
+ * The upstream API key is reversible, and that is the point — the router has to
+ * send it. So the structure has to carry the promise the design makes about it
+ * (ADR-008 §6, threat T15): the ciphertext and a display prefix, and nothing that
+ * could hold or hash the plaintext.
+ */
+describe('the stored upstream API key', () => {
+  it('is stored as a ciphertext and a prefix, and nothing else', () => {
+    const keyish = dataSource
+      .getMetadata('external_endpoints')
+      .columns.map((column) => column.propertyName)
+      .filter((name) => /key|secret|token|credential/i.test(name))
+      .sort();
+
+    expect(keyish).toEqual(['apiKeyCiphertext', 'apiKeyPrefix']);
+  });
+
+  it('bounds the ciphertext, so the column cannot become somewhere to put a blob', () => {
+    const ciphertext = dataSource
+      .getMetadata('external_endpoints')
+      .columns.find((column) => column.propertyName === 'apiKeyCiphertext');
+
+    expect(String(ciphertext?.type)).toBe('varchar');
+    expect(Number(ciphertext?.length)).toBeLessThanOrEqual(1024);
+  });
+});
+
+/**
+ * Invariant 4, as ADR-008 §6 narrows it: one catalogue table, two origins, and a
+ * row belongs to exactly one of them.
+ *
+ * The XOR is a database shape rather than a convention because every downstream
+ * query — `/v1/models`, key scopes, metering, Activity, Logs — reads this table
+ * without knowing which kind of row it has. A row with both set would resolve to
+ * two endpoints; a row with neither would resolve to none and still be listed.
+ */
+describe('the models catalogue', () => {
+  it('can point at an external endpoint instead of one of ours', () => {
+    const columns = dataSource.getMetadata(Model).columns;
+    const endpointId = columns.find((column) => column.propertyName === 'endpointId');
+    const externalEndpointId = columns.find((column) => column.propertyName === 'externalEndpointId');
+
+    expect(columns.map((column) => column.propertyName)).toContain('origin');
+    expect(endpointId?.isNullable).toBe(true);
+    expect(externalEndpointId?.isNullable).toBe(true);
+  });
+
+  it('calls a row exclusive only when exactly one kind of endpoint is named', () => {
+    // The exclusivity is applied by the writer rather than by a CHECK constraint
+    // (see the migration on why), so the rule itself has to be one testable
+    // function instead of a condition each writer remembers.
+    expect(modelOriginIsExclusive({ origin: 'config', endpointId: 'e1', externalEndpointId: null })).toBe(true);
+    expect(modelOriginIsExclusive({ origin: 'external', endpointId: null, externalEndpointId: 'x1' })).toBe(true);
+
+    expect(modelOriginIsExclusive({ origin: 'config', endpointId: 'e1', externalEndpointId: 'x1' })).toBe(false);
+    expect(modelOriginIsExclusive({ origin: 'external', endpointId: null, externalEndpointId: null })).toBe(false);
+    // The origin has to agree with the column that is set: a config row pointing
+    // at an external endpoint would be listed by one query and metered by another
+    // as if it were two different models.
+    expect(modelOriginIsExclusive({ origin: 'config', endpointId: null, externalEndpointId: 'x1' })).toBe(false);
+    expect(modelOriginIsExclusive({ origin: 'external', endpointId: 'e1', externalEndpointId: null })).toBe(false);
   });
 });
 

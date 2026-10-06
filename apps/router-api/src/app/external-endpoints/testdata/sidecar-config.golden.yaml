@@ -1,0 +1,26 @@
+# Rendered by router-api from external_endpoints and trusted_measurements.
+# Do not edit: every admin mutation overwrites this file (ADR-008 §5).
+version: 1
+attestedRoots:
+  enabled: true
+  trustedMeasurements:
+    - aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    - bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+defaults:
+  failMode: closed
+  reattestInterval: 10m
+  verdictCacheTtl: 60s
+  maxBundleAge: 24h
+admin:
+  listen: 127.0.0.1:9465
+endpoints:
+  - name: acme-mistral
+    listen: 127.0.0.1:19000
+    upstream: https://mistral.acme.example:8443
+    trust: cloud-measurement
+    failMode: closed
+  - name: partner-llama
+    listen: 127.0.0.1:19001
+    upstream: https://llama.partner.example
+    trust: cloud-measurement
+    failMode: closed

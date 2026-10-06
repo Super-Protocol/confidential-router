@@ -1,6 +1,7 @@
 import type { ConfigType } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { seedExternalEndpoint } from '../../../test/seed.js';
 import type { routerConfig } from '../config.js';
 import { buildDataSourceOptions } from '../db/data-source.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
@@ -136,6 +137,40 @@ describe('projection', () => {
 
     expect(service.list()).toEqual([]);
   });
+});
+
+it('marks a projected row as config-origin, which is what makes it retirable', async () => {
+  await catalogue([ENDPOINT], [MODEL]);
+
+  const model = await dataSource.getRepository(Model).findOneByOrFail({ id: 'vendor/model:tdx' });
+  expect(model.origin).toBe('config');
+  expect(model.externalEndpointId).toBeNull();
+});
+
+it('leaves an external model alone, however empty the config is', async () => {
+  // External rows share the `models` table (ADR-008 §6) and appear in no
+  // config, so an unfiltered `retire` would disable every one of them at every
+  // boot — including on the development default of an empty config. Invariant 4
+  // now says config rows are re-projected and external rows are not; this is
+  // the clause that makes it true.
+  const external = await seedExternalEndpoint(dataSource, { status: 'verified' });
+
+  await catalogue([], []);
+
+  const model = await dataSource.getRepository(Model).findOneByOrFail({ id: external.modelId });
+  expect(model).toMatchObject({ origin: 'external', enabled: true, externalEndpointId: external.id });
+});
+
+it('does not offer an external model from the config catalogue', async () => {
+  // Two maps, one table: `CatalogService` answers for config rows and
+  // `ExternalCatalogService` for external ones. A row answered for twice would
+  // be metered once and listed twice.
+  const external = await seedExternalEndpoint(dataSource, { status: 'verified' });
+
+  const service = await catalogue([ENDPOINT], [MODEL]);
+
+  expect(service.find(external.modelId)).toBeUndefined();
+  expect(service.list().map((model) => model.id)).toEqual(['vendor/model:tdx']);
 });
 
 describe('lookup', () => {
