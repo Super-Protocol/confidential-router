@@ -483,6 +483,19 @@ enum EvidenceState {
   STALE
 }
 
+"""One Kubernetes workload of the upstream’s canonical snapshot."""
+type EvidenceWorkload {
+  """Container names, init containers included."""
+  containers: [String!]!
+
+  """Deployment, StatefulSet, Pod… — as the snapshot spells it."""
+  kind: String!
+  name: String!
+
+  """Absent on a cluster-scoped resource."""
+  namespace: String
+}
+
 """A model endpoint in another deployment, attested by this router."""
 type ExternalEndpoint {
   """
@@ -498,6 +511,9 @@ type ExternalEndpoint {
   The operator’s switch. A disabled endpoint is not rendered to the sidecar.
   """
   enabled: Boolean!
+
+  """The verdict and status timeline, most recent first."""
+  events: [ExternalEndpointEvent!]!
 
   """Canonical digest of the upstream deployment snapshot."""
   evidenceDigestSeen: String
@@ -515,27 +531,33 @@ type ExternalEndpoint {
   """
   lastStage: String
 
+  """
+  What the upstream publishes right now, as the last verdict saw it. Null until a verdict has admitted the endpoint and this router has retrieved the publication that verdict names.
+  """
+  latestEvidence: ExternalEndpointEvidence
+
   """The upstream cloud’s root measurement, as the verdict saw it."""
   measurementSeen: String
 
   """
   Which anchor vouched for the measurement — registry or operator-pinned. Advisory only: for an external endpoint the admin trust list is the sole authority, and a registry signature admits nothing on its own.
   """
-  measurementSource: String
+  measurementSource: MeasurementSource
 
-  """The registered catalogue, by model id."""
-  models: [ExternalModel!]!
+  """
+  The models the operator currently lists, by model id. A retired one is no longer registered.
+  """
+  models: [ExternalEndpointModel!]!
 
-  """Also the sidecar’s key for this upstream, so it is kebab-case."""
+  """
+  Immutable after registration: it is also the sidecar’s key for this upstream, so it is kebab-case.
+  """
   name: String!
 
   """
   The TLS leaf the egress pinned. Upstream connections verify against this and no CA bundle.
   """
   pinnedCertFingerprint: String
-
-  """Email of the operator who registered it. Null for a non-operator."""
-  registeredBy: String
   status: ExternalEndpointStatus!
   updatedAt: DateTime!
 }
@@ -545,11 +567,20 @@ One entry in an endpoint’s verdict timeline. History, never an input to admiss
 """
 type ExternalEndpointEvent {
   at: DateTime!
+
+  """
+  The evidence summary in force at this event, so ruling 1’s “at registration and on every change” is what the timeline renders rather than a convention. Null when no snapshot was stored for it — an entry that names no digest, or one whose publication this router never managed to retrieve.
+  """
+  evidence: ExternalEndpointEvidence
   evidenceDigest: String
   id: ID!
   kind: ExternalEndpointEventKind!
   measurement: String
   reason: String
+
+  """
+  ADR-003 §1 pipeline stage of a refusal: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy.
+  """
   stage: String
 }
 
@@ -557,73 +588,102 @@ type ExternalEndpointEvent {
 DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone.
 """
 enum ExternalEndpointEventKind {
-  DENIED
+  DENIED_BY_THIS_ROUTER
   DIGEST_CHANGED
   DISABLED
   KEY_ROTATED
   MEASUREMENT_CHANGED
   REGISTERED
-  VERIFIED
+  VERIFIED_BY_THIS_ROUTER
+}
+
+"""
+The upstream’s published bundle, summarised. Informational, never gating — admission is the measurement check in ADR-008 §3 and nothing in here.
+"""
+type ExternalEndpointEvidence {
+  """sha256/<base64url> of the TLS leaf the bundle asserts."""
+  certFingerprint: String!
+
+  """The same fingerprint in hex."""
+  certFingerprintHex: String!
+
+  """Enclave image digests from the upstream’s canonical snapshot."""
+  containerImages: [String!]!
+
+  """sha256/<base64url> of the upstream’s canonical deployment snapshot."""
+  evidenceDigest: String!
+
+  """The same digest in hex, which is what the console renders."""
+  evidenceDigestHex: String!
+
+  """When this router last retrieved this publication."""
+  fetchedAt: DateTime!
+
+  """When the upstream’s platform signed it."""
+  issuedAt: DateTime!
+
+  """Empty when the producer published none."""
+  measurements: [Measurement!]!
+
+  """rootCaTeeQuote.format, e.g. intel-tdx-quote-v5."""
+  quoteFormat: String
+
+  """The `evidence_snapshots` row this summary is of."""
+  snapshotId: ID!
+
+  """Empty when the snapshot declares none this router can read."""
+  workloads: [EvidenceWorkload!]!
+}
+
+"""
+A model an operator registered on an external endpoint, with the prices every generation freezes.
+"""
+type ExternalEndpointModel {
+  capabilities: [ModelCapability!]!
+  contextLength: Int!
+
+  """The public model id, as /v1/models reports it."""
+  id: ID!
+  name: String!
+
+  """What this router charges for it, in micro-USD per 1M tokens."""
+  pricing: Pricing!
+
+  """
+  The name the upstream knows it by; the egress leg rewrites `model` to this. Operator only — null for everyone else, because it is a fact about another operator’s deployment rather than about this catalogue.
+  """
+  upstreamModel: String
 }
 
 """
 What this router currently says about an upstream. Rendered as “verified by this router” / “denied by this router” — never a bare “verified”, which is reserved for nothing in this schema (ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing.
 """
 enum ExternalEndpointStatus {
-  DENIED
+  DENIED_BY_THIS_ROUTER
   DISABLED
   PENDING
-  VERIFIED
-}
-
-"""
-A model an operator registered on an external endpoint, with the prices every generation freezes.
-"""
-type ExternalModel {
-  capabilities: [ModelCapability!]!
-
-  """Micro-USD per 1M completion tokens."""
-  completionPer1mMicros: String!
-  contextLength: Int!
-
-  """
-  False once an operator stopped listing it. The row stays so past generations still resolve.
-  """
-  enabled: Boolean!
-
-  """The public model id, as /v1/models reports it."""
-  id: ID!
-  name: String!
-
-  """Micro-USD per 1M prompt tokens."""
-  promptPer1mMicros: String!
-
-  """The operator-declared TEE label for this upstream model."""
-  tee: String!
-
-  """What the upstream calls it; the egress leg rewrites `model` to this."""
-  upstreamModel: String!
+  VERIFIED_BY_THIS_ROUTER
 }
 
 """A model on an external endpoint, and what this router charges for it."""
 input ExternalModelInput {
-  capabilities: [ModelCapability!]!
+  """
+  Defaults to CHAT — the one capability every OpenAI-compatible upstream serves.
+  """
+  capabilities: [ModelCapability!]
 
   """Micro-USD per 1M completion tokens."""
   completionPer1mMicros: String!
   contextLength: Int!
 
   """
-  The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx.
+  The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx. A `String`, not an `ID`: it is a name the operator chooses here rather than a handle to something that already exists.
   """
-  id: ID!
+  id: String!
   name: String!
 
   """Micro-USD per 1M prompt tokens."""
   promptPer1mMicros: String!
-
-  """The TEE label to show for this upstream model."""
-  tee: String!
 
   """The name the upstream knows it by."""
   upstreamModel: String!
@@ -916,6 +976,12 @@ type Measurement {
   value: String!
 }
 
+"""Which anchor vouched for the measurement the verdict saw (SUP-139)."""
+enum MeasurementSource {
+  OPERATOR_PINNED
+  REGISTRY
+}
+
 """A model the router can route to, as declared in the router config."""
 type Model {
   capabilities: [ModelCapability!]!
@@ -1013,7 +1079,7 @@ type Mutation {
   """
   Withdraws a cloud. Live and fail-closed: every endpoint admitted only by this measurement is denied on the next forced check, which drops its models from /v1/models. Restricted to auth.adminEmails.
   """
-  removeTrustedMeasurement(id: ID!): TrustedMeasurement!
+  removeTrustedMeasurement(id: ID!): Boolean!
 
   """
   Puts withdrawn invitation codes back into circulation. Restricted to auth.adminEmails.
@@ -1026,7 +1092,7 @@ type Mutation {
   """
   Replaces the stored upstream API key. There is no read path for the old one. Restricted to auth.adminEmails.
   """
-  rotateExternalEndpointKey(input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
+  rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 
   """Turns automatic top-up on or off."""
   setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
@@ -1037,13 +1103,13 @@ type Mutation {
   """
   Switches an endpoint off, or back on. Off removes it from the sidecar config entirely; on returns it to PENDING so it re-attests before it serves. Restricted to auth.adminEmails.
   """
-  setExternalEndpointEnabled(input: SetExternalEndpointEnabledInput!): ExternalEndpoint!
+  setExternalEndpointEnabled(id: ID!, input: SetExternalEndpointEnabledInput!): ExternalEndpoint!
   updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
 
   """
-  Renames, re-points or re-prices an endpoint. Restricted to auth.adminEmails.
+  Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. Restricted to auth.adminEmails.
   """
-  updateExternalEndpoint(input: UpdateExternalEndpointInput!): ExternalEndpoint!
+  updateExternalEndpoint(id: ID!, input: UpdateExternalEndpointInput!): ExternalEndpoint!
 
   """Updates the settings named; leaves the rest alone."""
   updatePreferences(input: UpdatePreferencesInput!): UserPreferences!
@@ -1145,9 +1211,6 @@ type Query {
 
   """One external endpoint, by id."""
   externalEndpoint(id: ID!): ExternalEndpoint
-
-  """One endpoint’s verdict and status timeline, newest first."""
-  externalEndpointEvents(externalEndpointId: ID!, limit: Int = 50): [ExternalEndpointEvent!]!
 
   """
   Every registered external endpoint with what this router currently says about it. Read-only for any signed-in user; operator fields are null for everyone else.
@@ -1262,7 +1325,6 @@ input RotateExternalEndpointKeyInput {
   The replacement upstream key. Rotation is a write; there is nothing to read.
   """
   apiKey: String!
-  id: ID!
 }
 
 input SetAutoTopUpInput {
@@ -1275,7 +1337,6 @@ input SetExternalEndpointEnabledInput {
   Switching it back on returns it to PENDING: it re-attests from nothing.
   """
   enabled: Boolean!
-  id: ID!
 }
 
 """Which sign-in paths this deployment offers."""
@@ -1322,7 +1383,12 @@ type TrustedMeasurement {
   addedAt: DateTime!
 
   """Email of the operator who added it. Null for a non-operator."""
-  addedBy: String
+  addedByEmail: String
+
+  """
+  Registered endpoints this row currently admits — what removing it would drop. Computed from the measurement each endpoint’s last verdict saw, so it is a statement about the last check and not a promise about the next one.
+  """
+  admits: Int!
   id: ID!
 
   """64 lower-case hex characters, normalised on input."""
@@ -1345,13 +1411,11 @@ input UpdateApiKeyInput {
 
 input UpdateExternalEndpointInput {
   baseUrl: String
-  id: ID!
 
   """
   Replaces the registered set. A model left out is retired, never deleted.
   """
   models: [ExternalModelInput!]
-  name: String
 }
 
 input UpdatePreferencesInput {

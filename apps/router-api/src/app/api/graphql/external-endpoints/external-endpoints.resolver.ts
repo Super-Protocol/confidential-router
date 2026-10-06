@@ -1,6 +1,6 @@
 import { Inject, Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import { Args, ID, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import {
   AdminGuard,
   CurrentUser,
@@ -10,20 +10,25 @@ import {
   UserProfileService,
 } from '../../../auth/index.js';
 import { routerConfig } from '../../../config.js';
+import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { ExternalEndpointEvent } from '../../../db/entities/external-endpoint-event.entity.js';
 import type { Model } from '../../../db/entities/model.entity.js';
 import type { TrustedMeasurement } from '../../../db/entities/trusted-measurement.entity.js';
+import { fingerprintHex } from '../../../evidence/index.js';
 import {
   ExternalEndpointAdminService,
   type ExternalEndpointView,
+  ExternalEvidenceService,
   type ExternalModelSpec,
 } from '../../../external-endpoints/index.js';
 import {
   AddTrustedMeasurementInputModel,
   ExternalEndpointEventModel,
+  ExternalEndpointEvidenceModel,
   ExternalEndpointModel,
   type ExternalModelInputModel,
   ExternalModelModel,
+  measurementSourceOf,
   RegisterExternalEndpointInputModel,
   RotateExternalEndpointKeyInputModel,
   SetExternalEndpointEnabledInputModel,
@@ -32,9 +37,18 @@ import {
   UpdateTrustedMeasurementInputModel,
 } from './external-endpoints.model.js';
 
-/** Default and ceiling for one timeline page. The table holds tens of rows per endpoint, not thousands. */
-const DEFAULT_EVENT_LIMIT = 50;
-const MAX_EVENT_LIMIT = 200;
+/**
+ * How much of one endpoint's timeline `ExternalEndpoint.events` carries.
+ *
+ * A field rather than a paged query (the contract's `ExternalEndpoint.events`),
+ * so the cap is the server's to choose: the table holds tens of rows per endpoint
+ * and the drawer renders the recent history, not an audit export. The container
+ * log is the audit trail (ADR-008 §7).
+ */
+const EVENT_LIMIT = 50;
+
+/** Every OpenAI-compatible upstream serves chat; the rest an operator states. */
+const DEFAULT_CAPABILITIES = ['chat'] as const;
 
 /**
  * External model endpoints and the trust list that admits them (ADR-008 §7).
@@ -43,16 +57,17 @@ const MAX_EVENT_LIMIT = 200;
  * implementation detail (ruling 3 on SUP-221):
  *
  *  - **Any signed-in user reads.** The endpoint list with its status, the
- *    measurement and digest each verdict saw, and the trust list itself. An
- *    operator who could curate external capacity in secret is the configuration
- *    this product must not be able to sell as confidential — so transparency is
- *    `SessionGuard`, not `AdminGuard`.
+ *    measurement and digest each verdict saw, the evidence summary behind it, the
+ *    verdict timeline, and the trust list itself. An operator who could curate
+ *    external capacity in secret is the configuration this product must not be
+ *    able to sell as confidential — so transparency is `SessionGuard`, not
+ *    `AdminGuard`.
  *  - **Only `auth.adminEmails` writes**, and `AdminGuard` is applied per method
  *    rather than per class precisely because the queries above are not admin-only.
- *    Two of the read fields — the stored key's prefix and who registered the
- *    endpoint — are the operator's own business and come back `null` to everyone
- *    else; `isAdminEmail` is the same judgement the guard makes, so a screen
- *    cannot be offered a field whose mutation would be refused.
+ *    Two read fields are narrowed instead of the operation: the stored key's
+ *    prefix and the name the upstream knows each model by. `isAdminEmail` is the
+ *    same judgement the guard makes, so a screen cannot be offered a field whose
+ *    mutation would be refused.
  *
  * The anonymous surface is untouched: `models` exposes no endpoint URL, no trust
  * list and no verdict detail, because nothing here is reachable without a session.
@@ -66,8 +81,10 @@ const MAX_EVENT_LIMIT = 200;
 export class ExternalEndpointsResolver {
   private readonly logger = new Logger(ExternalEndpointsResolver.name);
 
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly admin: ExternalEndpointAdminService,
+    private readonly evidence: ExternalEvidenceService,
     private readonly profiles: UserProfileService,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
@@ -97,27 +114,6 @@ export class ExternalEndpointsResolver {
     return view ? (await this.present([view], user))[0] : null;
   }
 
-  /**
-   * The verdict and status timeline, newest first.
-   *
-   * Visible to any signed-in user for the same reason the status is: a verdict
-   * history nobody but the operator can read is a transparency claim that cannot
-   * be checked. These rows are history and never trust — on boot the endpoint is
-   * re-attested from nothing, whatever the last entry says (§8).
-   */
-  @Query(() => [ExternalEndpointEventModel], {
-    name: 'externalEndpointEvents',
-    description: 'One endpoint’s verdict and status timeline, newest first.',
-  })
-  @UseGuards(SessionGuard)
-  async externalEndpointEvents(
-    @Args('externalEndpointId', { type: () => ID }) externalEndpointId: string,
-    @Args('limit', { type: () => Int, nullable: true, defaultValue: DEFAULT_EVENT_LIMIT }) limit?: number,
-  ): Promise<ExternalEndpointEventModel[]> {
-    const events = await this.admin.events(externalEndpointId, clampLimit(limit));
-    return events.map(eventModel);
-  }
-
   @Query(() => [TrustedMeasurementModel], {
     name: 'trustedMeasurements',
     description:
@@ -127,11 +123,14 @@ export class ExternalEndpointsResolver {
   @UseGuards(SessionGuard)
   async trustedMeasurements(@CurrentUser() user: SessionUser): Promise<TrustedMeasurementModel[]> {
     const rows = await this.admin.listMeasurements();
-    const emails = await this.emailsOf(
-      rows.map((row) => row.addedByUserId),
-      user,
-    );
-    return rows.map((row) => measurementModel(row, emails));
+    const [emails, usage] = await Promise.all([
+      this.emailsOf(
+        rows.map((row) => row.addedByUserId),
+        user,
+      ),
+      this.admin.measurementUsage(),
+    ]);
+    return rows.map((row) => measurementModel(row, emails, usage));
   }
 
   @Mutation(() => ExternalEndpointModel, {
@@ -161,16 +160,18 @@ export class ExternalEndpointsResolver {
   }
 
   @Mutation(() => ExternalEndpointModel, {
-    description: 'Renames, re-points or re-prices an endpoint. Restricted to auth.adminEmails.',
+    description:
+      'Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. ' +
+      'Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
   async updateExternalEndpoint(
     @CurrentUser() user: SessionUser,
+    @Args('id', { type: () => ID }) id: string,
     @Args('input') input: UpdateExternalEndpointInputModel,
   ): Promise<ExternalEndpointModel> {
     const view = await this.admin.update({
-      id: input.id,
-      name: input.name,
+      id,
       baseUrl: input.baseUrl,
       models: input.models?.map(modelSpec),
     });
@@ -189,9 +190,10 @@ export class ExternalEndpointsResolver {
   @UseGuards(SessionGuard, AdminGuard)
   async setExternalEndpointEnabled(
     @CurrentUser() user: SessionUser,
+    @Args('id', { type: () => ID }) id: string,
     @Args('input') input: SetExternalEndpointEnabledInputModel,
   ): Promise<ExternalEndpointModel> {
-    const view = await this.admin.setEnabled(input.id, input.enabled);
+    const view = await this.admin.setEnabled(id, input.enabled);
     this.logger.warn(
       `External endpoint "${view.endpoint.name}" ${input.enabled ? 'enabled' : 'disabled'} by ${user.email}.`,
     );
@@ -205,9 +207,10 @@ export class ExternalEndpointsResolver {
   @UseGuards(SessionGuard, AdminGuard)
   async rotateExternalEndpointKey(
     @CurrentUser() user: SessionUser,
+    @Args('id', { type: () => ID }) id: string,
     @Args('input') input: RotateExternalEndpointKeyInputModel,
   ): Promise<ExternalEndpointModel> {
-    const view = await this.admin.rotateKey(input.id, input.apiKey);
+    const view = await this.admin.rotateKey(id, input.apiKey);
     this.logger.warn(
       `External endpoint "${view.endpoint.name}" key rotated by ${user.email} — now ${view.endpoint.apiKeyPrefix}….`,
     );
@@ -226,7 +229,9 @@ export class ExternalEndpointsResolver {
   ): Promise<TrustedMeasurementModel> {
     const row = await this.admin.addMeasurement(input.measurement, input.note ?? null, user.id);
     this.logger.warn(`Trusted measurement ${row.measurement} added by ${user.email}.`);
-    return measurementModel(row, new Map([[user.id, user.email]]));
+    // A row this request created admits nothing yet: admission is re-derived by
+    // the next check, and `admits` counts what the last one saw.
+    return measurementModel(row, new Map([[user.id, user.email]]), await this.admin.measurementUsage());
   }
 
   @Mutation(() => TrustedMeasurementModel, {
@@ -240,10 +245,18 @@ export class ExternalEndpointsResolver {
   ): Promise<TrustedMeasurementModel> {
     const row = await this.admin.updateMeasurementNote(input.id, input.note ?? null);
     this.logger.warn(`Trusted measurement ${row.measurement} annotated by ${user.email}.`);
-    return measurementModel(row, await this.emailsOf([row.addedByUserId], user));
+    return measurementModel(row, await this.emailsOf([row.addedByUserId], user), await this.admin.measurementUsage());
   }
 
-  @Mutation(() => TrustedMeasurementModel, {
+  /**
+   * Withdraws a cloud.
+   *
+   * Answers `true` rather than the row it deleted, which is the contract's shape
+   * and the honest one: the row is gone, so a payload describing it would be a
+   * description of something that no longer exists, and a console that wrote it
+   * back into its cache would re-add the entry it had just removed.
+   */
+  @Mutation(() => Boolean, {
     description:
       'Withdraws a cloud. Live and fail-closed: every endpoint admitted only by this measurement is denied on ' +
       'the next forced check, which drops its models from /v1/models. Restricted to auth.adminEmails.',
@@ -252,10 +265,10 @@ export class ExternalEndpointsResolver {
   async removeTrustedMeasurement(
     @CurrentUser() user: SessionUser,
     @Args('id', { type: () => ID }) id: string,
-  ): Promise<TrustedMeasurementModel> {
+  ): Promise<boolean> {
     const row = await this.admin.removeMeasurement(id);
     this.logger.warn(`Trusted measurement ${row.measurement} withdrawn by ${user.email} — dependent upstreams deny.`);
-    return measurementModel(row, await this.emailsOf([row.addedByUserId], user));
+    return true;
   }
 
   private async presentOne(view: ExternalEndpointView, user: SessionUser): Promise<ExternalEndpointModel> {
@@ -271,42 +284,58 @@ export class ExternalEndpointsResolver {
    *
    * The admin check happens here rather than in a guard because this query is not
    * admin-only — the narrowing is per *field*, not per operation, and a non-admin
-   * gets the whole endpoint minus the two fields that are about the operator
-   * rather than about the upstream.
+   * gets the whole endpoint minus what is about this deployment's own
+   * configuration rather than about the upstream.
+   *
+   * Timelines and evidence summaries are loaded for the whole page in two
+   * queries, eagerly, the way `CatalogViewService` loads an endpoint's latest
+   * snapshot: they are fields of a type the console always asks for in full, and
+   * a field resolver would turn one screen into one query per row.
    */
   private async present(views: ExternalEndpointView[], user: SessionUser): Promise<ExternalEndpointModel[]> {
-    const emails = await this.emailsOf(
-      views.map((view) => view.endpoint.createdByUserId),
-      user,
-    );
     const admin = this.isAdmin(user);
-    return views.map(({ endpoint, models }) => ({
-      id: endpoint.id,
-      name: endpoint.name,
-      baseUrl: endpoint.baseUrl,
-      hostname: endpoint.hostname,
-      enabled: endpoint.enabled,
-      status: endpoint.status,
-      lastCheckedAt: endpoint.lastCheckedAt,
-      lastStage: endpoint.lastStage,
-      lastReason: endpoint.lastReason,
-      measurementSeen: endpoint.measurementSeen,
-      measurementSource: endpoint.measurementSource,
-      evidenceDigestSeen: endpoint.evidenceDigestSeen,
-      pinnedCertFingerprint: endpoint.pinnedCertFingerprint,
-      apiKeyPrefix: admin ? endpoint.apiKeyPrefix : null,
-      registeredBy: (endpoint.createdByUserId && emails.get(endpoint.createdByUserId)) || null,
-      models: models.map(externalModel),
-      createdAt: endpoint.createdAt,
-      updatedAt: endpoint.updatedAt,
-    }));
+    const timelines = await this.admin.eventsFor(
+      views.map((view) => view.endpoint.id),
+      EVENT_LIMIT,
+    );
+    const summaries = await this.evidence.summariesFor(wantedDigests(views, timelines));
+
+    return views.map(({ endpoint, models }) => {
+      const forEndpoint = summaries.get(endpoint.id);
+      const events = timelines.get(endpoint.id) ?? [];
+      return {
+        id: endpoint.id,
+        name: endpoint.name,
+        baseUrl: endpoint.baseUrl,
+        hostname: endpoint.hostname,
+        enabled: endpoint.enabled,
+        status: endpoint.status,
+        lastCheckedAt: endpoint.lastCheckedAt,
+        lastStage: endpoint.lastStage,
+        lastReason: endpoint.lastReason,
+        measurementSeen: endpoint.measurementSeen,
+        measurementSource: measurementSourceOf(endpoint.measurementSource),
+        evidenceDigestSeen: endpoint.evidenceDigestSeen,
+        pinnedCertFingerprint: endpoint.pinnedCertFingerprint,
+        apiKeyPrefix: admin ? endpoint.apiKeyPrefix : null,
+        // Retired rows stay in the catalogue so past generations keep their
+        // foreign key, but they are not part of what the operator lists — and
+        // with no `enabled` field on the contract's type, a reader could not tell
+        // them apart from what is on offer.
+        models: models.filter((model) => model.enabled).map((model) => externalModel(model, admin)),
+        events: events.map((event) => eventModel(event, evidenceOf(forEndpoint, event.evidenceDigest))),
+        latestEvidence: evidenceOf(forEndpoint, endpoint.evidenceDigestSeen),
+        createdAt: endpoint.createdAt,
+        updatedAt: endpoint.updatedAt,
+      };
+    });
   }
 
   /**
    * Addresses for the operator fields, in one query — and only for an operator.
    *
    * A non-admin gets an empty map, so the lookup is not run at all: the account
-   * that registered an upstream is not part of the transparency ruling, and
+   * that added a measurement is not part of the transparency ruling, and
    * answering it to every signed-in user would publish the operators' addresses.
    */
   private async emailsOf(userIds: readonly (string | null)[], user: SessionUser): Promise<Map<string, string>> {
@@ -321,8 +350,65 @@ export class ExternalEndpointsResolver {
   }
 }
 
-function clampLimit(limit: number | undefined): number {
-  return Math.min(Math.max(limit ?? DEFAULT_EVENT_LIMIT, 1), MAX_EVENT_LIMIT);
+/**
+ * Every (endpoint, digest) pair the page will render: each endpoint's current
+ * digest, plus the digest on every timeline entry.
+ *
+ * Asked for by digest rather than "the latest snapshot per endpoint" because a
+ * timeline entry has to show the evidence *that* verdict saw, which is a
+ * different publication from the current one as soon as a digest changes — and
+ * showing today's images beside a `DIGEST_CHANGED` entry from last week would
+ * make the one event cloud-granularity trust exists to surface unreadable.
+ */
+function wantedDigests(
+  views: readonly ExternalEndpointView[],
+  timelines: ReadonlyMap<string, ExternalEndpointEvent[]>,
+): { externalEndpointId: string; evidenceDigest: string }[] {
+  const wanted: { externalEndpointId: string; evidenceDigest: string }[] = [];
+  for (const { endpoint } of views) {
+    if (endpoint.evidenceDigestSeen) {
+      wanted.push({ externalEndpointId: endpoint.id, evidenceDigest: endpoint.evidenceDigestSeen });
+    }
+    for (const event of timelines.get(endpoint.id) ?? []) {
+      if (event.evidenceDigest) {
+        wanted.push({ externalEndpointId: endpoint.id, evidenceDigest: event.evidenceDigest });
+      }
+    }
+  }
+  return wanted;
+}
+
+function evidenceOf(
+  byDigest: ReadonlyMap<string, EvidenceSnapshot> | undefined,
+  evidenceDigest: string | null,
+): ExternalEndpointEvidenceModel | null {
+  const snapshot = evidenceDigest ? byDigest?.get(evidenceDigest) : undefined;
+  return snapshot ? evidenceModel(snapshot) : null;
+}
+
+function evidenceModel(snapshot: EvidenceSnapshot): ExternalEndpointEvidenceModel {
+  return {
+    snapshotId: snapshot.id,
+    fetchedAt: snapshot.fetchedAt,
+    issuedAt: snapshot.issuedAt,
+    evidenceDigest: snapshot.evidenceDigest,
+    evidenceDigestHex: snapshot.evidenceDigestHex,
+    certFingerprint: snapshot.certFingerprint,
+    // Derived rather than stored, as on `EvidenceSnapshot`: a second spelling of
+    // a column the row already has, and the one every fingerprint screen asks
+    // for (SUP-115).
+    certFingerprintHex: fingerprintHex(snapshot.certFingerprint),
+    quoteFormat: snapshot.quoteFormat,
+    containerImages: snapshot.containerImages,
+    // Null is "filed before the column existed", which is not something to
+    // render as a difference — an operator reading it sees the same empty list a
+    // producer that declares no workloads produces.
+    workloads: snapshot.workloads ?? [],
+    measurements: Object.entries(snapshot.measurements ?? {}).map(([name, value]) => ({
+      name,
+      value: typeof value === 'string' ? value : JSON.stringify(value),
+    })),
+  };
 }
 
 function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {
@@ -331,28 +417,32 @@ function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {
     name: input.name,
     upstreamModel: input.upstreamModel,
     contextLength: input.contextLength,
-    capabilities: input.capabilities,
+    capabilities: input.capabilities ?? [...DEFAULT_CAPABILITIES],
     promptPer1mMicros: Number(input.promptPer1mMicros),
     completionPer1mMicros: Number(input.completionPer1mMicros),
-    tee: input.tee,
   };
 }
 
-function externalModel(row: Model): ExternalModelModel {
+function externalModel(row: Model, admin: boolean): ExternalModelModel {
   return {
     id: row.id,
     name: row.name,
-    upstreamModel: row.litellmModel,
+    // What *another* operator's deployment calls this model: their business, and
+    // narrowed for the same reason `apiKeyPrefix` is.
+    upstreamModel: admin ? row.litellmModel : null,
     contextLength: row.contextLength,
+    pricing: {
+      promptPer1m: String(row.promptPer1mMicros),
+      completionPer1m: String(row.completionPer1mMicros),
+    },
     capabilities: row.capabilities,
-    promptPer1mMicros: String(row.promptPer1mMicros),
-    completionPer1mMicros: String(row.completionPer1mMicros),
-    tee: row.tee,
-    enabled: row.enabled,
   };
 }
 
-function eventModel(row: ExternalEndpointEvent): ExternalEndpointEventModel {
+function eventModel(
+  row: ExternalEndpointEvent,
+  evidence: ExternalEndpointEvidenceModel | null,
+): ExternalEndpointEventModel {
   return {
     id: row.id,
     at: row.at,
@@ -361,15 +451,21 @@ function eventModel(row: ExternalEndpointEvent): ExternalEndpointEventModel {
     reason: row.reason,
     measurement: row.measurement,
     evidenceDigest: row.evidenceDigest,
+    evidence,
   };
 }
 
-function measurementModel(row: TrustedMeasurement, emails: Map<string, string>): TrustedMeasurementModel {
+function measurementModel(
+  row: TrustedMeasurement,
+  emails: Map<string, string>,
+  usage: ReadonlyMap<string, number>,
+): TrustedMeasurementModel {
   return {
     id: row.id,
     measurement: row.measurement,
     note: row.note,
-    addedBy: (row.addedByUserId && emails.get(row.addedByUserId)) || null,
+    addedByEmail: (row.addedByUserId && emails.get(row.addedByUserId)) || null,
     addedAt: row.addedAt,
+    admits: usage.get(row.measurement) ?? 0,
   };
 }

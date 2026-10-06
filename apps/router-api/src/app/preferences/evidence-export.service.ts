@@ -107,9 +107,13 @@ export class EvidenceExportService {
           .find({ where: { id: In(references.map((reference) => reference.snapshotId)) } })
       : [];
     const endpoints = snapshots.length
-      ? await this.dataSource
-          .getRepository(Endpoint)
-          .find({ where: { id: In([...new Set(snapshots.map((snapshot) => snapshot.endpointId))]) } })
+      ? await this.dataSource.getRepository(Endpoint).find({
+          where: {
+            id: In([
+              ...new Set(snapshots.map((snapshot) => snapshot.endpointId).filter((id): id is string => id !== null)),
+            ]),
+          },
+        })
       : [];
     const endpointNames = new Map(endpoints.map((endpoint) => [endpoint.id, endpoint.name]));
     const counts = new Map(references.map((reference) => [reference.snapshotId, Number(reference.generations)]));
@@ -127,7 +131,11 @@ export class EvidenceExportService {
         'platform published for the endpoints that served these generations; verify it with the gatekeeper.',
       snapshots: snapshots.map((snapshot) => ({
         id: snapshot.id,
-        endpoint: endpointNames.get(snapshot.endpointId) ?? snapshot.endpointId,
+        // Every snapshot reachable from here was published by one of this
+        // deployment's own endpoints: an external generation records no
+        // `evidenceSnapshotId` at all, because what covers it is a verdict rather
+        // than a publication (`generation-recorder.service.ts`, ADR-008 §6).
+        endpoint: (snapshot.endpointId && endpointNames.get(snapshot.endpointId)) || snapshot.endpointId || 'unknown',
         evidenceDigest: snapshot.evidenceDigest,
         evidenceDigestHex: snapshot.evidenceDigestHex,
         certFingerprint: snapshot.certFingerprint,

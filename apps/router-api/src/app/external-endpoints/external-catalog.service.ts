@@ -29,7 +29,8 @@ export interface ExternalCatalogModel {
   capabilities: ModelCapability[];
   promptPer1mMicros: number;
   completionPer1mMicros: number;
-  tee: string;
+  /** Null unless a deployment registered one before the field left the API. */
+  tee: string | null;
   endpoint: ExternalCatalogEndpoint;
   updatedAt: Date;
 }
@@ -147,7 +148,7 @@ export class ExternalCatalogService {
         capabilities: row.capabilities,
         promptPer1mMicros: row.promptPer1mMicros,
         completionPer1mMicros: row.completionPer1mMicros,
-        tee: row.tee,
+        tee: row.tee || null,
         endpoint: {
           id: endpoint.id,
           name: endpoint.name,

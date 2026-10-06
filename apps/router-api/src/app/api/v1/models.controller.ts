@@ -64,7 +64,10 @@ function presentModel(model: RoutedModel) {
     endpoint: {
       name: model.endpoint.name,
       hostname: model.endpoint.hostname,
-      tee: model.endpoint.tee,
+      // Omitted rather than blank for an external upstream: no one declared a TEE
+      // label for it and this router cannot observe one, so the honest answer is
+      // that the field is not there (`docs/contracts/router-api.md`).
+      ...(model.endpoint.tee ? { tee: model.endpoint.tee } : {}),
     },
     capabilities: model.capabilities,
   };

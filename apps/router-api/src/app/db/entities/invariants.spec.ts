@@ -1,6 +1,6 @@
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
+import { EvidenceSnapshot, evidenceSnapshotEndpointIsExclusive } from './evidence-snapshot.entity.js';
 import { Generation, generationEndpointIsExclusive } from './generation.entity.js';
 import { ENTITIES } from './index.js';
 import { Model, modelOriginIsExclusive } from './model.entity.js';
@@ -91,16 +91,35 @@ describe('EvidenceSnapshot', () => {
     expect(verdictish).toEqual([]);
   });
 
-  it('is unique per (endpoint, digest, certificate, issuedAt) so polling is idempotent', () => {
+  it('is unique per (publisher, digest, certificate, issuedAt) so polling is idempotent', () => {
     const metadata = dataSource.getMetadata(EvidenceSnapshot);
-    const unique = metadata.indices.find((index) => index.isUnique);
+    const unique = metadata.indices
+      .filter((index) => index.isUnique)
+      .map((index) => index.columns.map((column) => column.propertyName).join(','))
+      .sort();
 
-    expect(unique?.columns.map((column) => column.propertyName)).toEqual([
-      'endpointId',
-      'evidenceDigest',
-      'certFingerprint',
-      'issuedAt',
+    // One identity key per publisher kind, and both are needed: a unique index
+    // treats NULLs as distinct on either driver, so the own-endpoint key would
+    // never collide for an upstream's rows and every poll would append a
+    // duplicate (ADR-008 §6).
+    expect(unique).toEqual([
+      'endpointId,evidenceDigest,certFingerprint,issuedAt',
+      'externalEndpointId,evidenceDigest,certFingerprint,issuedAt',
     ]);
+  });
+
+  it('is published by an external upstream or by one of ours, never both and never neither', () => {
+    const columns = dataSource.getMetadata(EvidenceSnapshot).columns;
+
+    expect(columns.find((column) => column.propertyName === 'endpointId')?.isNullable).toBe(true);
+    expect(columns.find((column) => column.propertyName === 'externalEndpointId')?.isNullable).toBe(true);
+
+    expect(evidenceSnapshotEndpointIsExclusive({ endpointId: 'e1', externalEndpointId: null })).toBe(true);
+    expect(evidenceSnapshotEndpointIsExclusive({ endpointId: null, externalEndpointId: 'x1' })).toBe(true);
+    // Both: an upstream's publications would show up in our own endpoint's digest
+    // history. Neither: the row belongs to nobody and no screen can reach it.
+    expect(evidenceSnapshotEndpointIsExclusive({ endpointId: 'e1', externalEndpointId: 'x1' })).toBe(false);
+    expect(evidenceSnapshotEndpointIsExclusive({ endpointId: null, externalEndpointId: null })).toBe(false);
   });
 });
 
