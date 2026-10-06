@@ -5,7 +5,9 @@ type Exact<T extends { [key: string]: unknown }> = { [K in keyof T]: T[K] };
 export type Incremental<T> = T | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never };
 import type { TypedDocumentNode as DocumentNode } from '@graphql-typed-document-node/core';
 export type AddTrustedMeasurementInput = {
+  /** 64 hex characters, with or without a `sha256:` / `0x` prefix and in either case — it is normalised. */
   measurement: string;
+  /** Why this cloud is trusted. Shown beside the entry. */
   note?: string | null | undefined;
 };
 
@@ -80,12 +82,7 @@ export type EvidenceState =
   | 'PUBLISHED'
   | 'STALE';
 
-/**
- * The timeline's events. `VERIFIED_BY_THIS_ROUTER` / `DENIED_BY_THIS_ROUTER` rather
- * than a bare `VERIFIED` / `DENIED` for the same reason as `ExternalEndpointStatus`:
- * the vocabulary rule is absolute, and a timeline entry is exactly where a reader
- * would otherwise lose track of who reached the verdict.
- */
+/** DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone. */
 export type ExternalEndpointEventKind =
   | 'DENIED_BY_THIS_ROUTER'
   | 'DIGEST_CHANGED'
@@ -95,29 +92,26 @@ export type ExternalEndpointEventKind =
   | 'REGISTERED'
   | 'VERIFIED_BY_THIS_ROUTER';
 
-/**
- * Where an external upstream stands with the verification *this router* performed.
- *
- * Deliberately not the own-endpoint vocabulary (`EvidenceState`: published / stale
- * / not published). That one is a statement about publication because the router
- * never verifies itself (ADR-002); here there *is* a verifying party, so every
- * value names it (ADR-008 §1).
- */
+/** What this router currently says about an upstream. Rendered as “verified by this router” / “denied by this router” — never a bare “verified”, which is reserved for nothing in this schema (ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing. */
 export type ExternalEndpointStatus =
   | 'DENIED_BY_THIS_ROUTER'
-  /** The operator's own switch — not a verdict. */
   | 'DISABLED'
-  /** Registered, no verdict read back yet. Serves nothing (ADR-008 §8). */
   | 'PENDING'
   | 'VERIFIED_BY_THIS_ROUTER';
 
+/** A model on an external endpoint, and what this router charges for it. */
 export type ExternalModelInput = {
+  /** Defaults to CHAT — the one capability every OpenAI-compatible upstream serves. */
   capabilities?: Array<ModelCapability> | null | undefined;
+  /** Micro-USD per 1M completion tokens. */
   completionPer1mMicros: string;
   contextLength: number;
+  /** The public model id this router will publish, e.g. partner/llama-3.3-70b:tdx. A `String`, not an `ID`: it is a name the operator chooses here rather than a handle to something that already exists. */
   id: string;
   name: string;
+  /** Micro-USD per 1M prompt tokens. */
   promptPer1mMicros: string;
+  /** The name the upstream knows it by. */
   upstreamModel: string;
 };
 
@@ -181,14 +175,18 @@ export type ModelCapability =
   | 'EMBEDDINGS';
 
 export type RegisterExternalEndpointInput = {
-  /** The upstream's ordinary LLM API key (decision 3). Write-only: no read path returns it. */
+  /** The upstream’s own LLM API key. Write-only: it is sealed before it reaches a column and no query returns it — only `apiKeyPrefix` comes back. */
   apiKey: string;
+  /** https://host[:port]. Plain HTTP is refused — there is no channel to pin. */
   baseUrl: string;
+  /** The models to publish, with this router’s prices. */
   models: Array<ExternalModelInput>;
+  /** Lower-case letters, digits and hyphens; also the sidecar’s key. */
   name: string;
 };
 
 export type RotateExternalEndpointKeyInput = {
+  /** The replacement upstream key. Rotation is a write; there is nothing to read. */
   apiKey: string;
 };
 
@@ -198,6 +196,7 @@ export type SetAutoTopUpInput = {
 };
 
 export type SetExternalEndpointEnabledInput = {
+  /** Switching it back on returns it to PENDING: it re-attests from nothing. */
   enabled: boolean;
 };
 
