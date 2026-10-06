@@ -34,6 +34,8 @@ type endpointView struct {
 	Listen   string `json:"listen"`
 	Upstream string `json:"upstream"`
 	FailMode string `json:"failMode"`
+	// Trust is the endpoint's trust mode (`evidence-digest` by default).
+	Trust string `json:"trust"`
 	// Pins are the pinned evidenceDigest values as the CLI spells them,
 	// `sha256:<hex>`; PinsCanonical is the same list in the wire form.
 	Pins          []string `json:"trustedEvidence"`
@@ -64,7 +66,7 @@ func newEndpointListCommand(g *globals) *cobra.Command {
 			}
 			views = append(views, endpointView{
 				Name: ep.Name, Listen: ep.Listen, Upstream: ep.Upstream,
-				FailMode: ep.FailMode, Pins: pins, PinsCanonical: canonical,
+				FailMode: ep.FailMode, Trust: ep.Trust, Pins: pins, PinsCanonical: canonical,
 			})
 		}
 
@@ -77,7 +79,13 @@ func newEndpointListCommand(g *globals) *cobra.Command {
 			rows := make([][]string, 0, len(views))
 			for _, v := range views {
 				pins := strconv.Itoa(len(v.Pins))
-				if len(v.Pins) == 0 {
+				switch {
+				case v.Trust == config.TrustCloudMeasurement:
+					// Not "0 (never admits)": this endpoint admits on the
+					// measurement list instead, and an empty pin list is what
+					// the mode requires.
+					pins = "— (trusts its cloud by measurement)"
+				case len(v.Pins) == 0:
 					pins = "0 (never admits)"
 				}
 				rows = append(rows, []string{v.Name, v.Listen, v.Upstream, v.FailMode, pins})

@@ -15,7 +15,7 @@
       ],
       "outputs": ["{projectRoot}/bin"],
       "options": {
-        "command": "go build -o bin/gatekeeper ./cmd/gatekeeper",
+        "command": "go build -o bin/ ./cmd/...",
         "cwd": "apps/gatekeeper"
       }
     },

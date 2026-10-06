@@ -28,6 +28,7 @@ import (
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/policy"
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 )
 
@@ -42,6 +43,13 @@ type Verified struct {
 	ObservedTLSFingerprint trust.Digest
 	VerifiedAt             time.Time
 	QuoteFormat            string
+	// RootAttested marks a root accepted on its own TEE evidence rather than
+	// from the user's list, and AttestedRoot is what that check found. Both are
+	// zero for a root the user listed — and for any verifier that cannot run
+	// the check at all, which is every one this package ships: see the
+	// `trust: cloud-measurement` warning in [Evaluate].
+	RootAttested bool
+	AttestedRoot *status.AttestedRoot
 	// Payload is the verified JWS payload.
 	Payload map[string]any
 	// Warnings names every guarantee this verification had to settle for — an
@@ -165,10 +173,25 @@ func Evaluate(ctx context.Context, bundleJSON []byte, cfg *config.Config, opts O
 		ObservedTLSFingerprint: verified.ObservedTLSFingerprint,
 		VerifiedAt:             verified.VerifiedAt,
 		QuoteFormat:            verified.QuoteFormat,
+		RootAttested:           verified.RootAttested,
+		AttestedRoot:           verified.AttestedRoot,
 		Payload:                verified.Payload,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// The attested-root check needs a hardware report verified to a CPU vendor
+	// and a measurement rebuilt from published firmware — neither of which this
+	// package's verifiers do. For a `trust: cloud-measurement` endpoint that is
+	// not a shortcut but the whole question, so the denial it produces says
+	// nothing about the measurement list and must not be read as if it did.
+	if endpoint.ByMeasurement() && verified.AttestedRoot == nil {
+		warnings = append(warnings, fmt.Sprintf(
+			"endpoint %q has trust: %s, and this run did not evaluate the attested-root check — "+
+				"input.attestation.rootAttestation is absent, so the built-in policy denies here whatever "+
+				"attestedRoots.trustedMeasurements says; `gatekeeper verify %s` is what answers for this endpoint",
+			endpoint.Name, config.TrustCloudMeasurement, endpoint.Name))
 	}
 
 	modules, err := policy.LoadModules(cfg)

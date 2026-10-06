@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 )
@@ -126,6 +127,15 @@ func newEndpointTrustAddCommand(g *globals) *cobra.Command {
 		ep, ok := store.Endpoint(name)
 		if !ok {
 			return failf(ExitUsage, "no endpoint named %q", name)
+		}
+		// Refused before the network round trip and the confirmation prompt,
+		// not after: Store.AddPin refuses this too, but by then the operator
+		// has reviewed a report and answered a question for nothing.
+		if ep.ByMeasurement() {
+			return failf(ExitUsage,
+				"%q trusts its cloud by measurement (trust: %s), so it holds no evidenceDigest pins — "+
+					"set trust: %s on it first if you want to pin a deployment",
+				name, config.TrustCloudMeasurement, config.TrustEvidenceDigest)
 		}
 
 		var digest trust.Digest
@@ -260,7 +270,20 @@ func newEndpointDiscoverCommand(g *globals) *cobra.Command {
 		}
 		return g.printer(cmd, *asJSON).emit(documentOf(report), func(w io.Writer) {
 			printReport(w, report, g.env.now())
-			if report.Verified && report.EvidenceDigest != "" && !report.Pinned {
+			if !report.Verified || report.EvidenceDigest == "" {
+				return
+			}
+			// A cloud-measurement endpoint has no pin to offer: what it admits
+			// is decided by the measurement list, and `endpoint trust add`
+			// refuses it outright.
+			if report.ByMeasurement() {
+				if !report.MeasurementTrusted && report.AttestedRoot != nil && report.AttestedRoot.Measurement != "" {
+					fmt.Fprintf(w, "\nTo accept this cloud — and every deployment on it:\n"+
+						"  gatekeeper trust measurements add %s\n", report.AttestedRoot.Measurement)
+				}
+				return
+			}
+			if !report.Pinned {
 				fmt.Fprintf(w, "\nTo accept this deployment:\n  gatekeeper endpoint trust add %s %s\n",
 					report.Endpoint, hexDigest(report.EvidenceDigest))
 			}
