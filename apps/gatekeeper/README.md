@@ -430,8 +430,10 @@ configuration is rendered by a control loop rather than edited by a person. Its
 entrypoint is [`cmd/gatekeeper-sidecar`](./cmd/gatekeeper-sidecar) — see
 [`pkg/sidecar`](./pkg/sidecar) — which waits for the configuration to be
 rendered, runs `gatekeeper run --headless`, and SIGHUPs it when the file's
-contents change. `docs/gatekeeper.md` §"In a cluster" is the operator-facing
-version; the PR gate builds the image and runs that whole loop.
+contents change — never for identical bytes, and never for a render that does
+not parse as a configuration, which is what a truncate-then-write renderer is
+briefly observable as. `docs/gatekeeper.md` §"In a cluster" is the
+operator-facing version; the PR gate builds the image and runs that whole loop.
 
 ```sh
 docker build -f gatekeeper.dockerfile -t gatekeeper .

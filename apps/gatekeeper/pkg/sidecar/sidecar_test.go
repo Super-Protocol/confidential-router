@@ -113,6 +113,20 @@ func writeConfig(t *testing.T, path, body string) {
 	}
 }
 
+// writeConfigAtomic is the renderer shape the design recommends: a temporary
+// file and a rename, so the configuration is never observable half-written and
+// exactly one version of it exists at a time.
+func writeConfigAtomic(t *testing.T, path, body string) {
+	t.Helper()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("renaming %s: %v", tmp, err)
+	}
+}
+
 // The behaviour the image exists for: a rendered configuration changes and the
 // running gatekeeper is reloaded in place — no restart, no second container
 // reaching into this one's PID namespace.
@@ -183,13 +197,16 @@ func TestRewritingIdenticalContentDoesNotReload(t *testing.T) {
 	}()
 	eventually(t, log, "gatekeeper: up", 1)
 
-	// Same bytes, new mtime — several times over, to give a mtime-only watcher
-	// every chance to fire.
+	// Same bytes, new mtime — several times over, including through a
+	// truncate-then-write that is briefly observable as an empty file, to give
+	// a watcher that compares anything but the settled contents every chance to
+	// fire.
 	for range 3 {
 		time.Sleep(30 * time.Millisecond)
 		writeConfig(t, path, body)
 	}
-	time.Sleep(200 * time.Millisecond)
+	writeTruncated(t, path, body, 80*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	if strings.Contains(log.String(), "sending SIGHUP") {
 		t.Errorf("an identical re-render was treated as a change:\n%s", log.String())
@@ -305,4 +322,98 @@ func TestRunRequiresAConfigPath(t *testing.T) {
 	if _, err := sidecar.Run(context.Background(), sidecar.Options{}); err == nil {
 		t.Fatal("Run accepted an empty configuration path")
 	}
+}
+
+// writeTruncated reproduces what `os.WriteFile` and every naive renderer do:
+// truncate, then write. Between the two the file is observably empty, and a
+// watcher that acted on the first sighting would SIGHUP the gatekeeper with a
+// configuration that cannot parse and then SIGHUP it again with the real one.
+func writeTruncated(t *testing.T, path, body string, gap time.Duration) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("truncating %s: %v", path, err)
+	}
+	time.Sleep(gap)
+	if _, err := f.WriteString(body); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing %s: %v", path, err)
+	}
+}
+
+// One reload for one edit, even when the edit is visible in two steps.
+func TestAHalfWrittenFileIsNotReloadedTwice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, "version: 1\nendpoints: []\n")
+
+	log := &syncWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if _, err := sidecar.Run(ctx, sidecar.Options{
+			Config:   path,
+			Command:  helperCommand(t, "gatekeeper"),
+			Interval: 20 * time.Millisecond,
+			Stdout:   log, Stderr: log,
+		}); err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	}()
+	eventually(t, log, "gatekeeper: up", 1)
+
+	// The empty window is several ticks wide, so the watcher certainly observes
+	// it; it still must not act on it.
+	writeTruncated(t, path, "version: 1\nendpoints: []\nlog:\n  level: debug\n", 120*time.Millisecond)
+	eventually(t, log, "gatekeeper: reloaded", 1)
+
+	// Give any second reload time to show up, then insist there was none.
+	time.Sleep(300 * time.Millisecond)
+	if got := strings.Count(log.String(), "gatekeeper: reloaded"); got != 1 {
+		t.Errorf("one edit produced %d reloads; log was:\n%s", got, log.String())
+	}
+}
+
+// A render that is not a configuration is reported and not forwarded: the
+// gatekeeper would refuse it anyway, so signalling would only put an error in
+// its log for something that is not an operator's problem. Reported once, not
+// on every tick.
+func TestAnUnloadableRenderIsReportedAndNotForwarded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, "version: 1\nendpoints: []\n")
+
+	log := &syncWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if _, err := sidecar.Run(ctx, sidecar.Options{
+			Config:   path,
+			Command:  helperCommand(t, "gatekeeper"),
+			Interval: 20 * time.Millisecond,
+			Stdout:   log, Stderr: log,
+		}); err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	}()
+	eventually(t, log, "gatekeeper: up", 1)
+
+	// Rendered atomically, so there is exactly one broken version to report —
+	// a truncating writer would legitimately produce two (an empty file, then
+	// the malformed one), each reported once.
+	writeConfigAtomic(t, path, "version: 1\nendpoints: [this is not: a list of endpoints\n")
+	eventually(t, log, "is not a configuration yet", 1)
+	time.Sleep(200 * time.Millisecond)
+	if strings.Contains(log.String(), "sending SIGHUP") {
+		t.Errorf("a render that does not load was forwarded to the gatekeeper:\n%s", log.String())
+	}
+	if got := strings.Count(log.String(), "is not a configuration yet"); got != 1 {
+		t.Errorf("one broken render was reported %d times, want once:\n%s", got, log.String())
+	}
+
+	// Fixing it still works: the watcher did not get stuck on the bad version.
+	writeConfigAtomic(t, path, "version: 1\nendpoints: []\nlog:\n  level: debug\n")
+	eventually(t, log, "gatekeeper: reloaded", 1)
 }

@@ -636,11 +636,22 @@ shape the configuration is **rendered** rather than edited: it waits for
 `$GATEKEEPER_CONFIG` (default `/etc/gatekeeper/config.yaml`) to appear, runs
 `gatekeeper run --headless`, and sends SIGHUP whenever the file's contents
 change — so an edit by whoever renders it is applied in place, without
-`shareProcessNamespace` and without restarting endpoints that did not change. A
-re-render of identical bytes is not a change and costs nothing.
+`shareProcessNamespace` and without restarting endpoints that did not change.
 `$GATEKEEPER_WATCH_INTERVAL` (default `2s`) tunes the poll. SIGTERM is passed
 through, so the gatekeeper drains its own listeners and the container exits with
 the gatekeeper's status.
+
+Two things it will not forward, both of them normal for a rendered file:
+
+- **identical bytes.** A control loop that rewrites the file on every unrelated
+  mutation is the expected caller, and a reload would re-attest every endpoint
+  for nothing.
+- **a render that is not a configuration.** A writer that truncates before it
+  writes — which the obvious implementation does — is briefly observable as an
+  empty file. The gatekeeper would refuse that reload and keep running, but the
+  signal and the error in its log are noise, so the bytes are parsed first and
+  the rejection is logged by the sidecar instead. Render to a temporary file and
+  rename, and the window does not exist at all.
 
 One-shot commands skip the supervisor:
 `--entrypoint /usr/local/bin/gatekeeper`.
