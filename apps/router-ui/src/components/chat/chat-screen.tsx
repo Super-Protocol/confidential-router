@@ -463,13 +463,23 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
               teeLabel={endpoint.tee ?? null}
               declaredImages={endpoint.declaredImages ?? null}
             />
-            {/*
-              And for an external model, the second check — the upstream's own
-              evidence, relayed and verified in this page. A separate button
-              because it is a separate claim about a separate channel; folding it
-              into the badge above would be the blend ADR-008 §1 forbids.
-            */}
-            {upstream ? <ExternalInspectButton upstream={upstream} /> : null}
+          </div>
+        ) : null}
+
+        {/*
+          And for an external model, the second check — the upstream's own
+          evidence, relayed and verified in this page. A separate button because
+          it is a separate claim about a separate channel; folding it into the
+          badge above would be the blend ADR-008 §1 forbids.
+
+          Outside the block above on purpose: it needs the upstream and nothing
+          else. A deployment this router cannot name its own endpoint on has no
+          badge to show and a locked composer — and is exactly where being able to
+          inspect the upstream yourself is worth most.
+        */}
+        {upstream ? (
+          <div className="flex items-start">
+            <ExternalInspectButton upstream={upstream} />
           </div>
         ) : null}
       </div>

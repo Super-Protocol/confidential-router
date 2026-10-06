@@ -54,15 +54,27 @@ export function useVerification({ hostname, endpointName, kind = 'own' }: UseVer
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is how "check again" re-runs both tiers; the body never reads it.
   React.useEffect(() => {
+    /*
+     * Cleared first, and before the early return, because the early return is a
+     * state the composer must not inherit a verdict into.
+     *
+     * Until ADR-008 "no endpoint" meant the catalogue was empty, so there was no
+     * model to send to and nothing could have run before. Now `Model.endpoint` is
+     * nullable, and a reader can switch from a model whose endpoint tier 1 passed
+     * on to one the screen has no endpoint for at all (`routerEndpoint` null on a
+     * multi-endpoint deployment). Returning early with the old `gate` still in
+     * state would leave `unlocked` true — an open composer, no badge row, and a
+     * verdict about a different endpoint.
+     */
+    setGate(null);
+    setCheckedAt(null);
+    setExtension(null);
     if (!hostname || !endpointName) return;
 
     // Guards against a stale answer landing after the user has switched models:
     // the endpoint that is current when the promise resolves is the only one
     // whose verdict may be shown.
     let current = true;
-    setGate(null);
-    setCheckedAt(null);
-    setExtension(null);
 
     void runEvidenceGate({ hostname, endpointName, kind, apiOrigin: publicConfig().apiOrigin }).then((result) => {
       if (!current) return;

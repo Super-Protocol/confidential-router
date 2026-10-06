@@ -829,4 +829,50 @@ describe('a model in another deployment', () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Message')).toBeDisabled();
   });
+
+  /*
+   * The regression this pair exists for: `Model.endpoint` is nullable now, so a
+   * reader can move from a model whose gate passed to one the screen has no
+   * endpoint for at all. Before, "no endpoint" meant "no models", so no verdict
+   * could ever have been reached first.
+   */
+  it('drops the previous model’s verdict when there is nothing left to check', async () => {
+    const user = userEvent.setup();
+    render([
+      screenMock({
+        chatSettings: settings({ chatModelIds: [MODEL_ID, EXTERNAL_MODEL_ID] }),
+        routerEndpoint: null,
+        models: [model(), externalChatModel()],
+      }),
+      threadsMock([]),
+      threadMock([]),
+    ]);
+
+    // The built-in model carries its own endpoint, so tier 1 runs and unlocks.
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled());
+
+    await user.click(screen.getByRole('combobox', { name: 'Model' }));
+    await user.click(await screen.findByRole('option', { name: /Llama 3\.3 70B \(partner\)/ }));
+
+    // An open composer here would be a verdict about a different endpoint
+    // holding the gate for a model nobody checked.
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeDisabled());
+  });
+
+  it('still offers the upstream panel when the router cannot name its own endpoint', async () => {
+    render([
+      screenMock({
+        chatSettings: settings({ chatModelIds: [EXTERNAL_MODEL_ID] }),
+        routerEndpoint: null,
+        models: [externalChatModel()],
+      }),
+      threadsMock([]),
+      threadMock([]),
+    ]);
+
+    // It needs the upstream and nothing else — and this is where checking the
+    // other end yourself is worth most, because there is no badge to read.
+    expect(await screen.findByRole('button', { name: 'Inspect upstream attestation' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Inspect attestation' })).not.toBeInTheDocument();
+  });
 });

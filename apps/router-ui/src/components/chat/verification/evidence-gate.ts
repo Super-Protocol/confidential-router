@@ -453,22 +453,6 @@ async function fetchBundle(options: GateOptions): Promise<FetchOutcome> {
 }
 
 /**
- * Whether this page is served by the very host whose evidence it is fetching —
- * the one arrangement in which a direct read of `/.well-known/swarm-evidence`
- * needs no CORS header to succeed.
- *
- * Deliberately exact rather than a registrable-suffix match: CORS is enforced on
- * the full origin, so `console.example.test` reading `api.example.test` is a
- * cross-origin read however related the two names are. An absent `location` —
- * a non-browser caller of this module — counts as not same-origin, which only
- * decides which request is tried first.
- *
- * Note it compares against the URL that is actually fetched, which carries no
- * port. A console on `https://host:8443` therefore reads as cross-origin from
- * `https://host/.well-known/…` — which is correct rather than merely tolerable,
- * because those two *are* different origins to the browser enforcing this.
- */
-/**
  * The `bundle` row's sentence, which is also the panel's provenance line in
  * miniature.
  *
@@ -490,6 +474,25 @@ function bundleRetrievedDetail(kind: EndpointKind, source: BundleSource, hostnam
     : `This router handed back the last bundle it retrieved for ${hostname}.`;
 }
 
+/**
+ * Whether this page is served by the very host whose evidence it is fetching —
+ * the one arrangement in which a direct read of `/.well-known/swarm-evidence`
+ * needs no CORS header to succeed.
+ *
+ * Deliberately exact rather than a registrable-suffix match: CORS is enforced on
+ * the full origin, so `console.example.test` reading `api.example.test` is a
+ * cross-origin read however related the two names are. An absent `location` —
+ * a non-browser caller of this module — counts as not same-origin, which only
+ * decides which request is tried first.
+ *
+ * Note it compares against the URL that is actually fetched, which carries no
+ * port. A console on `https://host:8443` therefore reads as cross-origin from
+ * `https://host/.well-known/…` — which is correct rather than merely tolerable,
+ * because those two *are* different origins to the browser enforcing this.
+ *
+ * Never consulted for an external upstream: there the relay is the only source
+ * whatever the page's origin is ({@link EndpointKind}).
+ */
 function servesThisPage(options: GateOptions): boolean {
   const origin = options.pageOrigin ?? globalThis.location?.origin;
   return origin === `https://${options.hostname}`;
