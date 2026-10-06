@@ -3,7 +3,11 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EVIDENCE_PRESENTATION } from '../evidence/evidence-state';
-import { EXTERNAL_STATUS_PRESENTATION, MODEL_ORIGIN_PRESENTATION } from './external-vocabulary';
+import {
+  EXTERNAL_STATUS_PRESENTATION,
+  EXTERNAL_VERDICT_LABELS,
+  MODEL_ORIGIN_PRESENTATION,
+} from './external-vocabulary';
 
 /**
  * The two vocabularies, held apart.
@@ -130,5 +134,48 @@ describe('the module graph', () => {
 
     expect(sources.some((source) => source.includes('externalStatusPresentation('))).toBe(true);
     expect(sources.some((source) => source.includes('evidencePresentation('))).toBe(true);
+  });
+});
+
+/**
+ * One spelling of the claim, across every surface that makes it.
+ *
+ * The admin section and the public catalogue describe the same verdict to
+ * different audiences and legitimately differ in tone — `success` for an
+ * operator who caused it, `warning` for a visitor being told it is a self-report
+ * by the party they are already trusting. What they must not differ in is the
+ * sentence itself. This repository has already paid once for two files that were
+ * each supposed to be the single source of one thing (SUP-235), and the tripwire
+ * then caught it after the merge rather than before.
+ */
+describe('the verdict labels', () => {
+  it('are spelled in exactly one module', () => {
+    const offenders = sourceFiles(COMPONENTS)
+      .filter((file) => {
+        if (file.endsWith(join('external', 'external-vocabulary.ts'))) return false;
+        const source = readFileSync(file, 'utf8');
+        return Object.values(EXTERNAL_VERDICT_LABELS).some((label) => source.includes(`'${label}'`));
+      })
+      .map((file) => relative(COMPONENTS, file));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('are what the admin section\u2019s chips and timeline actually render', async () => {
+    const { eventPresentation, statusPresentation } = await import('../admin/endpoint-status');
+
+    expect(statusPresentation('VERIFIED_BY_THIS_ROUTER').label).toBe(EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER);
+    expect(statusPresentation('DENIED_BY_THIS_ROUTER').label).toBe(EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER);
+    expect(eventPresentation('VERIFIED_BY_THIS_ROUTER').label).toBe(EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER);
+    expect(eventPresentation('DENIED_BY_THIS_ROUTER').label).toBe(EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER);
+  });
+
+  it('are what the public catalogue\u2019s badge renders', () => {
+    expect(EXTERNAL_STATUS_PRESENTATION.VERIFIED_BY_THIS_ROUTER.label).toBe(
+      EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
+    );
+    expect(EXTERNAL_STATUS_PRESENTATION.DENIED_BY_THIS_ROUTER.label).toBe(
+      EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER,
+    );
   });
 });

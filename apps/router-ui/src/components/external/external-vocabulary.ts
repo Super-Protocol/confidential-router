@@ -31,6 +31,28 @@ import type { ExternalEndpointStatus, ModelOrigin } from '../../generated/graphq
  * it.
  */
 
+/**
+ * The two strings ADR-008 §1 makes a contract, and the one place they are spelled.
+ *
+ * Every other label in this product is copy. These two are the claim: *who*
+ * verified, and *who* denied. A screen that dropped the qualifier would be saying
+ * the one sentence only the viewer's own gatekeeper may say, and a screen that
+ * reworded it would be making a second claim that reads like the first.
+ *
+ * Shared across surfaces rather than duplicated per screen, because this
+ * repository has already paid once for two files that were each supposed to be
+ * the single source of one thing (SUP-235). The admin section's chips, its
+ * verdict timeline and the public catalogue's badge all read from here; what each
+ * surface keeps to itself is tone and supporting copy, which legitimately differ
+ * — an operator who curated the trust list and a visitor comparing prices are not
+ * owed the same emphasis. `external-vocabulary.spec.ts` asserts no other module
+ * spells either string.
+ */
+export const EXTERNAL_VERDICT_LABELS = {
+  VERIFIED_BY_THIS_ROUTER: 'Verified by this router',
+  DENIED_BY_THIS_ROUTER: 'Denied by this router',
+} as const;
+
 export interface ExternalStatusPresentation {
   /** Badge text in a table row. Always names this router. */
   label: string;
@@ -44,7 +66,7 @@ export interface ExternalStatusPresentation {
 
 export const EXTERNAL_STATUS_PRESENTATION: Record<ExternalEndpointStatus, ExternalStatusPresentation> = {
   VERIFIED_BY_THIS_ROUTER: {
-    label: 'Verified by this router',
+    label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
     /*
      * Warning rather than success, and the asymmetry is the point: this is the
      * strongest thing the screen can say about an upstream and it is still a
@@ -58,7 +80,7 @@ export const EXTERNAL_STATUS_PRESENTATION: Record<ExternalEndpointStatus, Extern
     note: 'This router fetched the upstream’s signed evidence, checked it, found the measurement on its trust list and pinned the TLS certificate the evidence names. That is a verdict reached by this deployment, not by you — and a measurement admits a cloud rather than a deployment, so it says which hardware answered and not which software. Inspect the relayed evidence to see what it actually let in.',
   },
   DENIED_BY_THIS_ROUTER: {
-    label: 'Denied by this router',
+    label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER,
     variant: 'destructive',
     headline: 'This router refuses this upstream',
     note: 'The last check failed, so nothing is proxied here: the model is listed and unavailable. Fail-closed is the rule rather than a retry policy — a request would be refused at two independent places, the catalogue and the egress.',
