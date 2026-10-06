@@ -177,3 +177,9 @@ docker build -f router-ui.dockerfile -t router-ui .
 The build context is the repository root for both — the Nx graph needs the whole
 workspace — and both run as a non-root user with no compiler and no package
 manager in the final stage.
+
+A third image lives next to them and is not part of this stack:
+`../gatekeeper.dockerfile` packages the Go gatekeeper for a pod that runs it as
+an attested egress (ADR-008 §2). It takes no part in the compose profiles — the
+gatekeeper here is a binary a user runs on their own machine — and is documented
+in [`apps/gatekeeper/README.md`](../apps/gatekeeper/README.md).

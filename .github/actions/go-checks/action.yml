@@ -36,13 +36,15 @@ runs:
       run: go test -race -count=1 ./...
 
     # The gatekeeper ships as a single static binary, so the build must not
-    # acquire a libc dependency through cgo.
+    # acquire a libc dependency through cgo. Every command is covered, not just
+    # the CLI: the container image's entrypoint (cmd/gatekeeper-sidecar) has the
+    # same requirement and is built the same way.
     - name: go build (CGO_ENABLED=0)
       shell: bash
       working-directory: apps/gatekeeper
       env:
         CGO_ENABLED: '0'
-      run: go build -o bin/gatekeeper ./cmd/gatekeeper
+      run: go build -o bin/ ./cmd/...
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v9

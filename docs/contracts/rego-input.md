@@ -99,9 +99,11 @@ allow if {
 
 ```jsonc
 {
-  "roots":     { "<root name>": { "fingerprint": "sha256/…" } },
-  "endpoints": { "<endpoint name>": {
+  "roots":        { "<root name>": { "fingerprint": "sha256/…" } },
+  "measurements": {"<mrEnclave hex>", …},           // attestedRoots.trustedMeasurements, a Rego set
+  "endpoints":    { "<endpoint name>": {
       "hostname": "…",
+      "trust": "evidence-digest" | "cloud-measurement",
       "evidence_digests": {"sha256/…", …},          // a Rego set, canonical form
       "evidence_digests_hex": {"…", …},
       "fail_mode": "closed" | "open"
@@ -109,19 +111,46 @@ allow if {
 }
 ```
 
+`measurements` and `endpoints[…].trust` are what the second clause of the built-in policy below
+reads. `trust` is always one of the two literals — an endpoint that sets nothing in the config is
+generated as `evidence-digest` — so a user policy can switch on it without a default.
+
 ## Built-in default policy (always loaded, cannot be disabled)
+
+One clause per trust mode. Each endpoint is in exactly one mode; the config refuses a file that
+declares both or neither.
 
 ```rego
 package gatekeeper.default
 
 default allow := false
 
+# trust: evidence-digest (the default) — a digest identifies one deployment.
 allow if {
   input.attestation.verified == true
-  some digest in data.gatekeeper.trust.endpoints[input.endpoint].evidence_digests
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "evidence-digest"
+  some digest in endpoint.evidence_digests
   digest == input.evidence.evidenceDigest
 }
+
+# trust: cloud-measurement (ADR-008 §3) — a measurement admits a cloud, never a
+# deployment. The configured list is the sole authority: a measurement the Super
+# Protocol registry signed but this operator did not list is not admitted, and
+# `measurementSource` is reported for display and for user policies only.
+allow if {
+  input.attestation.verified == true
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "cloud-measurement"
+  input.attestation.rootAttestation.attested == true
+  some measurement in data.gatekeeper.trust.measurements
+  measurement == input.attestation.rootAttestation.measurement
+}
 ```
+
+A `cloud-measurement` endpoint requires `rootAttestation` — the anchor that derives a measurement.
+A root taken from `trustedRoots` carries none (see `input` above), so such an endpoint denies until
+its cloud's root CA is admitted by the attested-root path.
 
 ## User policy example (`policies[]`)
 

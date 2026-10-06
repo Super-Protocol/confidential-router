@@ -128,8 +128,18 @@ func printReport(w io.Writer, r *status.Report, now time.Time) {
 	pairs = append(pairs,
 		[2]string{"", ""},
 		[2]string{"evidenceDigest", orDash(hexDigest(r.EvidenceDigest))},
-		[2]string{"Pinned for this endpoint", yesNo(r.Pinned)},
 	)
+	// A cloud-measurement endpoint pins no digest, so "pinned" is not the
+	// question its admission turns on — saying "no" there would read as a
+	// problem when it is the configured mode (ADR-008 §3).
+	if r.ByMeasurement() {
+		pairs = append(pairs,
+			[2]string{"Endpoint trust mode", "cloud-measurement (a measurement admits a cloud, never a deployment)"},
+			[2]string{"Cloud measurement trusted", yesNo(r.MeasurementTrusted)},
+		)
+	} else {
+		pairs = append(pairs, [2]string{"Pinned for this endpoint", yesNo(r.Pinned)})
+	}
 	fields(w, pairs)
 
 	printAttestedRoot(w, r.AttestedRoot)

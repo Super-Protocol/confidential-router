@@ -17,10 +17,12 @@ func TestGenerateTrustModuleContent(t *testing.T) {
 		Roots: []trust.RootSnapshot{
 			{Name: "swarm-cloud-prod", Fingerprint: "sha256/CN9TvdttScO-k83aqy-07JEBs_SkKPWJjITtr6_ssAw"},
 		},
+		Measurements: []string{strings.Repeat("ab", 32)},
 		Endpoints: []trust.EndpointSnapshot{{
 			Name:       "llama-33-70b",
 			Hostname:   "llama-33-70b.tee.swarm.cloud",
 			FailMode:   "closed",
+			Trust:      config.TrustEvidenceDigest,
 			Digests:    []string{"sha256/aaa", "sha256/bbb"},
 			DigestsHex: []string{"0a", "0b"},
 		}},
@@ -33,10 +35,13 @@ roots := {
 	"swarm-cloud-prod": {"fingerprint": "sha256/CN9TvdttScO-k83aqy-07JEBs_SkKPWJjITtr6_ssAw"},
 }
 
+measurements := {"abababababababababababababababababababababababababababababababab"}
+
 endpoints := {
 	"llama-33-70b": {
 		"hostname": "llama-33-70b.tee.swarm.cloud",
 		"fail_mode": "closed",
+		"trust": "evidence-digest",
 		"evidence_digests": {"sha256/aaa", "sha256/bbb"},
 		"evidence_digests_hex": {"0a", "0b"},
 	},
@@ -58,6 +63,9 @@ func TestGenerateTrustModuleUsesSetForEmptyCollections(t *testing.T) {
 	}
 	if !strings.Contains(got, "roots := {}") {
 		t.Errorf("empty roots map is not rendered:\n%s", got)
+	}
+	if !strings.Contains(got, "measurements := set()") {
+		t.Errorf("empty measurement list is not rendered as set():\n%s", got)
 	}
 }
 

@@ -3,11 +3,14 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/config"
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/trust"
 )
 
 func newTrustMeasurementsCommand(g *globals) *cobra.Command {
@@ -267,7 +270,40 @@ func newTrustMeasurementsRemoveCommand(g *globals) *cobra.Command {
 			return failf(ExitError, "%s is not pinned", measurement)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Unpinned measurement %s from %s\n", measurement, store.Path())
+		// Emptying the list is a configuration a `cloud-measurement` endpoint
+		// cannot run on at all — `config validate` refuses it, a SIGHUP reload
+		// keeps the old configuration, and a restart would not come up. Said
+		// here, where it is still a warning, rather than discovered at the next
+		// restart. `endpoint trust rm` warns the same way about its last pin.
+		if len(store.Measurements()) == 0 {
+			if named := endpointsTrustingClouds(store); len(named) > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: no measurements are pinned, and %s trust their cloud by measurement — "+
+						"they can no longer admit traffic, and this configuration will not start\n",
+					strings.Join(quoteAll(named), ", "))
+			}
+		}
 		return nil
 	}
 	return cmd
+}
+
+// endpointsTrustingClouds names the endpoints whose admission depends on the
+// measurement list.
+func endpointsTrustingClouds(store *trust.Store) []string {
+	var names []string
+	for _, ep := range store.Endpoints() {
+		if ep.ByMeasurement() {
+			names = append(names, ep.Name)
+		}
+	}
+	return names
+}
+
+func quoteAll(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, strconv.Quote(v))
+	}
+	return out
 }

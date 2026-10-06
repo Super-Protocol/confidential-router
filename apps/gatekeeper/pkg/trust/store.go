@@ -61,8 +61,15 @@ type Endpoint struct {
 	Hostname string
 	Port     int
 	FailMode string
-	Pins     []Pin
+	// Trust is the resolved trust mode — config.TrustEvidenceDigest or
+	// config.TrustCloudMeasurement — never empty.
+	Trust string
+	Pins  []Pin
 }
+
+// ByMeasurement reports whether this endpoint trusts a cloud by measurement
+// rather than pinning a deployment's evidenceDigest.
+func (e Endpoint) ByMeasurement() bool { return e.Trust == config.TrustCloudMeasurement }
 
 // IsPinned reports whether the endpoint accepts the given evidence digest.
 func (e Endpoint) IsPinned(d Digest) bool {
@@ -174,6 +181,7 @@ func buildState(cfg *config.Config) (*state, error) {
 			Hostname: host,
 			Port:     port,
 			FailMode: cfg.Tuning(ep).FailMode,
+			Trust:    ep.TrustMode(),
 			Pins:     pins,
 		})
 	}
@@ -313,6 +321,16 @@ func (s *Store) AddPin(endpoint string, d Digest) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("no endpoint named %q", endpoint)
 	}
+	// Refused here rather than left to validation on save: a pin on a
+	// cloud-measurement endpoint is not enforced by anything, and the config
+	// layer rejects the combination, so writing one would produce a file the
+	// next `run` refuses for a reason that has nothing to do with the pin.
+	if ep.ByMeasurement() {
+		return false, fmt.Errorf(
+			"endpoint %q trusts its cloud by measurement (trust: %s), so it holds no evidenceDigest pins — "+
+				"set trust: %s on it first if you want to pin a deployment",
+			endpoint, config.TrustCloudMeasurement, config.TrustEvidenceDigest)
+	}
 	if ep.IsPinned(d) {
 		return false, nil
 	}
@@ -367,6 +385,26 @@ func (s *Store) Measurements() []Measurement {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]Measurement(nil), s.state.measurements...)
+}
+
+// IsTrustedMeasurement reports whether the operator listed this measurement in
+// `attestedRoots.trustedMeasurements`. The argument is a normalised mrEnclave
+// hex string, which is the form [status.AttestedRoot] and the Rego input carry.
+//
+// It answers the display question — "is this cloud on the list?" — and never
+// the admission one: that is the policy engine's, over the same generated set.
+func (s *Store) IsTrustedMeasurement(mrEnclaveHex string) bool {
+	if mrEnclaveHex == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, m := range s.state.measurements {
+		if m.Hex == mrEnclaveHex {
+			return true
+		}
+	}
+	return false
 }
 
 // AddMeasurement pins a VM measurement the operator accepts alongside the
@@ -516,9 +554,12 @@ type RootSnapshot struct {
 
 // EndpointSnapshot is one endpoint in the generated module.
 type EndpointSnapshot struct {
-	Name       string   `json:"name"`
-	Hostname   string   `json:"hostname"`
-	FailMode   string   `json:"fail_mode"`
+	Name     string `json:"name"`
+	Hostname string `json:"hostname"`
+	FailMode string `json:"fail_mode"`
+	// Trust is the endpoint's trust mode, which is what decides *which* clause
+	// of the built-in policy can admit it.
+	Trust      string   `json:"trust"`
 	Digests    []string `json:"evidence_digests"`
 	DigestsHex []string `json:"evidence_digests_hex"`
 }
@@ -563,6 +604,7 @@ func (s *Store) Snapshot() Snapshot {
 			Name:       ep.Name,
 			Hostname:   ep.Hostname,
 			FailMode:   ep.FailMode,
+			Trust:      ep.Trust,
 			Digests:    digests,
 			DigestsHex: hexes,
 		})

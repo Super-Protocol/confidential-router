@@ -130,7 +130,9 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 		Port:      port,
 		CheckedAt: v.clock(),
 	}
-	if !configured {
+	if configured {
+		report.TrustMode = endpoint.Trust
+	} else {
 		report.Endpoint = hostname
 		report.Warnings = append(report.Warnings,
 			hostname+" is not a configured endpoint: it has no pinned evidenceDigest, "+
@@ -236,7 +238,10 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 		return nil, fmt.Errorf("verify: evidenceDigest: %w", err)
 	}
 	report.EvidenceDigest = digest.String()
-	report.Pinned = configured && endpoint.IsPinned(digest)
+	report.Pinned = configured && !endpoint.ByMeasurement() && endpoint.IsPinned(digest)
+	if configured && endpoint.ByMeasurement() && report.AttestedRoot != nil {
+		report.MeasurementTrusted = v.store.IsTrustedMeasurement(report.AttestedRoot.Measurement)
+	}
 
 	input, err := policy.BuildInput(policy.InputSource{
 		Endpoint:               report.Endpoint,
@@ -265,9 +270,53 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	report.Admitted = decision.Allow
 	if !decision.Allow {
 		report.Reason = decision.Reason
+		if detail := measurementDenialDetail(decision, report); detail != "" {
+			report.Reason += " (" + detail + ")"
+		}
 		report.Stage = "policy"
 	}
 	return report, nil
+}
+
+// measurementDenialDetail explains a built-in denial of a `cloud-measurement`
+// endpoint, which the generic "the built-in pin policy denied" cannot: there is
+// no pin to look at, and the two ways the clause fails — no attested root at
+// all, or a measurement nobody listed — call for different fixes.
+//
+// Digest-pinned endpoints are left exactly as they were: their denial wording
+// is what SUP-139 tuned, and the attested-root reason is already appended
+// upstream where it applies.
+func measurementDenialDetail(decision policy.Decision, report *status.Report) string {
+	if !report.ByMeasurement() {
+		return ""
+	}
+	// Only the built-in clause is explained here. A user policy that denied is
+	// the operator's own rule and already names itself, and an evaluation error
+	// is not a trust answer at all.
+	if !builtinDeniedCleanly(decision) {
+		return ""
+	}
+
+	switch {
+	case report.AttestedRoot == nil || !report.RootAttested:
+		return fmt.Sprintf(
+			"endpoint %q trusts its cloud by measurement, which requires the attested-root check to "+
+				"have admitted this root; it did not, so there is no measurement to compare", report.Endpoint)
+	case report.AttestedRoot.Measurement == "":
+		return "the attested-root check derived no launch measurement, so nothing can be compared with " +
+			"attestedRoots.trustedMeasurements"
+	case !report.MeasurementTrusted:
+		listed := "not listed in attestedRoots.trustedMeasurements"
+		if report.AttestedRoot.InRegistry {
+			// The one case an operator is most likely to misread: Super
+			// Protocol signed this image, and that still does not admit it.
+			listed += " — the Super Protocol registry does sign it, but in this mode the list is the " +
+				"sole authority and a registry signature admits nothing on its own"
+		}
+		return fmt.Sprintf("measurement %s is %s", report.AttestedRoot.Measurement, listed)
+	default:
+		return ""
+	}
 }
 
 // resolve picks the endpoint a request is about: the one it names, the one
@@ -398,4 +447,15 @@ func imagesOf(input map[string]any) []string {
 		return nil
 	}
 	return images
+}
+
+// builtinDeniedCleanly reports whether the built-in policy itself produced the
+// denial, as a verdict rather than as an evaluation failure.
+func builtinDeniedCleanly(decision policy.Decision) bool {
+	for _, pkg := range decision.Packages {
+		if pkg.Package == policy.DefaultPackage {
+			return !pkg.Allow && pkg.Error == ""
+		}
+	}
+	return false
 }

@@ -415,11 +415,36 @@ The installers are tested on every PR against a fixture release
 (`pnpm nx run installer:test`), and against a real one on Ubuntu, Alpine,
 Fedora, macOS arm64 and Windows by the release workflow's `verify-install` jobs.
 
+### The container image
+
+The same workflow also publishes
+`ghcr.io/super-protocol/confidential-router/gatekeeper` from
+[`gatekeeper.dockerfile`](../../gatekeeper.dockerfile) — on a `gatekeeper-v` tag
+with the matching semver tags, and on every push to `main` as `:main` and
+`:main-<sha>`. The digest is in the job summary, because the digest is what a
+chart pins (ADR-008 §2: the sidecar is inside the snapshot a user verifies).
+
+The image is the *cluster* packaging, not a replacement for the binaries: it
+exists for a pod running the gatekeeper as an attested egress, where the
+configuration is rendered by a control loop rather than edited by a person. Its
+entrypoint is [`cmd/gatekeeper-sidecar`](./cmd/gatekeeper-sidecar) — see
+[`pkg/sidecar`](./pkg/sidecar) — which waits for the configuration to be
+rendered, runs `gatekeeper run --headless`, and SIGHUPs it when the file's
+contents change — never for identical bytes, and never for a render that does
+not parse as a configuration, which is what a truncate-then-write renderer is
+briefly observable as. `docs/gatekeeper.md` §"In a cluster" is the
+operator-facing version; the PR gate builds the image and runs that whole loop.
+
+```sh
+docker build -f gatekeeper.dockerfile -t gatekeeper .
+```
+
 ## Layout
 
 | Path                     | Purpose                                                                 |
 | ------------------------ | ----------------------------------------------------------------------- |
 | `cmd/gatekeeper/`        | Process entry point. Four lines: it maps the CLI's exit status onto the process's. |
+| `cmd/gatekeeper-sidecar/`| Entry point of the container image. Flags and signals onto `pkg/sidecar`; never part of a Release. |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
 | `pkg/cli/`               | Every command, its output and its exit code. Driven end to end in tests through `cli.Run`. |
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
@@ -429,6 +454,7 @@ Fedora, macOS arm64 and Windows by the release workflow's `verify-install` jobs.
 | `pkg/policy/`            | Embedded OPA: the generated trust module, the built-in pin policy, user policies. |
 | `pkg/proxy/`             | The data plane: listeners, admission, re-attestation, the connection pools, metrics, the audit log and the admin socket. |
 | `pkg/policy/testing/`    | Offline evaluation of a saved bundle — what `gatekeeper policy test` runs; `NewVerifier` wires the real `pkg/attestation` pipeline in. |
+| `pkg/sidecar/`           | The container entrypoint's logic: wait for a rendered configuration, supervise `run --headless`, SIGHUP it on a real change. |
 | `pkg/version/`           | Build identity, stamped by GoReleaser via `-ldflags`.                    |
 
 Keeping the verification pipeline, trust store and proxy in `pkg/` (never in
@@ -459,7 +485,11 @@ silent no-op — a typo in a deployment unit must not leave the old value in pla
 Validation reports every problem at once, each addressed by its path
 (`endpoints[1].trustedEvidence[0]: is not an evidenceDigest …`). Unknown keys
 are rejected: a mistyped `trustedEvidance` would otherwise mean an endpoint
-running with the wrong pins.
+running with the wrong pins. Cross-field rules live here too, notably the one
+trust mode per endpoint: `trustedEvidence` and `trust: cloud-measurement` are
+mutually exclusive, and an endpoint with neither is refused — a file that
+listed a pin next to a cloud-wide rule would read as though the pin were still
+enforced.
 
 Edits (`gatekeeper trust roots add …`, `gatekeeper endpoint add …`) go through `config.Document`, which rewrites
 the file through the yaml.v3 node API — comments, key order and block scalars
@@ -502,8 +532,22 @@ Embedded OPA (Rego v1) over three kinds of module:
 - `gatekeeper.default` — the built-in pin policy, always loaded;
 - the user's `policies[]`.
 
+`gatekeeper.default` has one clause per endpoint trust mode, and an endpoint is
+in exactly one of them. `trust: evidence-digest` is the default and the only
+mode the CLI ever writes: admitted for an `evidenceDigest` its owner pinned —
+one deployment. `trust: cloud-measurement` (ADR-008 §3) is strictly weaker:
+admitted when the upstream's root CA passed the attested-root check and the
+measurement that check derived is in `attestedRoots.trustedMeasurements`. *A
+measurement admits a cloud, never a deployment* — any workload in that cloud
+satisfies it — and in this mode the operator's list is the **sole** authority: a
+measurement the Super Protocol registry signed but the operator did not list is
+denied, with `measurementSource` still reported for display and for user
+policies. It exists for a caller that registers upstreams at runtime and cannot
+approve each one by digest, and nothing else should use it.
+
 A request is admitted only if **every** loaded package's `allow` is true, so a
-user policy can narrow trust but never widen it. Compile problems — a syntax
+user policy can narrow trust but never widen it — including back to the closed
+chain on a `cloud-measurement` endpoint. Compile problems — a syntax
 error, a package without `allow`, a policy trying to redeclare
 `gatekeeper.default` — are fatal at load. At request time an evaluation error
 or an undefined result is a deny.
@@ -522,6 +566,12 @@ own `tlsLeaf` is rejected too — the gatekeeper admits an observed binding only
 `VerifierOptions.ObservedTLSFingerprint` from a real handshake. What the run
 merely settled for, such as an unenforced `maxBundleAge`, comes back in
 `Result.Warnings` rather than passing silently.
+
+Neither path runs the attested-root check: there is no hardware report in a
+saved bundle. For a `trust: cloud-measurement` endpoint that leg *is* the
+question, so `Evaluate` adds a warning naming it and the denial it reports says
+nothing about `attestedRoots.trustedMeasurements`. `Verified.AttestedRoot` is
+the seam for a caller that does hold such a verdict.
 
 `gatekeeper policy test` itself stays policy-only by design (see
 `cli.verifyFuncFor`); the adapter is for callers that already hold an observed

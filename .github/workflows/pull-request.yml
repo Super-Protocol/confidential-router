@@ -302,6 +302,72 @@ jobs:
           push: false
           cache-from: type=gha,scope=router-api
 
+      # The gatekeeper's cluster packaging (ADR-008 §2): loaded into the daemon
+      # because the step below runs it, which is what proves the entrypoint and
+      # the non-root read-only rootfs work, not merely that Go compiled.
+      - name: Build the gatekeeper image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: gatekeeper.dockerfile
+          push: false
+          load: true
+          tags: confidential-router/gatekeeper:local
+          cache-from: type=gha,scope=gatekeeper
+
+      - name: The gatekeeper image runs non-root on a read-only rootfs
+        run: |
+          set -euo pipefail
+          # The CLI, as a one-shot: proves the binary runs with no writable
+          # filesystem and as uid 65532.
+          docker run --rm --read-only --user 65532:65532 \
+            --entrypoint /usr/local/bin/gatekeeper \
+            confidential-router/gatekeeper:local version
+          test "$(docker run --rm --read-only \
+            --entrypoint /usr/bin/id confidential-router/gatekeeper:local -u)" = 65532
+
+          # And the entrypoint's whole reason for existing: it waits for a
+          # rendered configuration, runs the gatekeeper headless, and reloads it
+          # in place when the file changes (ADR-008 §5 step 2).
+          rendered="$(mktemp -d)"
+          chmod 0755 "$rendered"
+          docker run -d --name gatekeeper-smoke --read-only --user 65532:65532 \
+            -v "$rendered:/etc/gatekeeper:ro" -e GATEKEEPER_WATCH_INTERVAL=300ms \
+            confidential-router/gatekeeper:local
+          cat > "$rendered/config.yaml" <<'YAML'
+          version: 1
+          trustedRoots: []
+          attestedRoots:
+            trustedMeasurements:
+              - 842c5f2e1d0b4a9c7e6f3d8b5a2c9e0f1b4d7a6c3e8f5b2d9a0c7e4f1b6d3a8c
+          endpoints:
+            - name: external
+              listen: 127.0.0.1:8443
+              upstream: https://llama.other-cloud.example
+              trust: cloud-measurement
+          log:
+            level: info
+            format: text
+          YAML
+          await() {
+            for _ in $(seq 1 60); do
+              if docker logs gatekeeper-smoke 2>&1 | grep -qF "$1"; then return 0; fi
+              sleep 1
+            done
+            echo "::error::never saw '$1' in the container log"
+            docker logs gatekeeper-smoke
+            return 1
+          }
+          await 'sidecar: started gatekeeper'
+          sed -i 's/level: info/level: debug/' "$rendered/config.yaml"
+          await 'configuration reloaded'
+          # SIGTERM has to reach the gatekeeper, or a rolling update would kill
+          # listeners mid-request.
+          docker stop -t 20 gatekeeper-smoke
+          await 'gatekeeper stopped'
+          test "$(docker inspect -f '{{.State.ExitCode}}' gatekeeper-smoke)" = 0
+          docker rm -f gatekeeper-smoke
+
       # Loaded into the daemon rather than discarded: the origins suite below
       # runs this image.
       - name: Build router-ui

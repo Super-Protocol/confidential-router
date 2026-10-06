@@ -218,6 +218,15 @@ type Report struct {
 	// Pinned reports whether EvidenceDigest is in the endpoint's
 	// trustedEvidence list.
 	Pinned bool `json:"pinned"`
+	// TrustMode is the endpoint's configured trust mode — `evidence-digest` or
+	// `cloud-measurement` (ADR-008 §3) — and is empty for a host that is not a
+	// configured endpoint.
+	TrustMode string `json:"trustMode,omitempty"`
+	// MeasurementTrusted is the `cloud-measurement` counterpart of Pinned:
+	// whether the attested root's measurement is on the operator's
+	// `attestedRoots.trustedMeasurements` list. Like Pinned it is display
+	// state — the admission decision is always the policy engine's.
+	MeasurementTrusted bool `json:"measurementTrusted,omitempty"`
 	// Images are the container images named anywhere in the snapshot.
 	Images []string `json:"images,omitempty"`
 	// QuoteFormat is rootCaTeeQuote.format when the bundle carried a quote. The
@@ -255,6 +264,13 @@ func (r *Report) RootAnchor() string {
 	default:
 		return "attested"
 	}
+}
+
+// ByMeasurement reports whether this endpoint trusts its cloud by measurement
+// rather than pinning one deployment's evidenceDigest. It is what tells a
+// surface that "pinned" is not the question being asked here.
+func (r *Report) ByMeasurement() bool {
+	return r != nil && r.TrustMode == config.TrustCloudMeasurement
 }
 
 // Denied returns the one-line reason a report is not admitted, or "" when it is.

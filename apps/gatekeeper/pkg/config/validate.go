@@ -225,6 +225,9 @@ func (c *Config) validateEndpoints(p *problems) {
 	}
 	names := map[string]int{}
 	listens := map[string]int{}
+	// The measurement list is global, so the one problem it can have is
+	// reported after the loop rather than once per endpoint that needs it.
+	var needsMeasurements string
 	for i, ep := range c.Endpoints {
 		path := fmt.Sprintf("endpoints[%d]", i)
 		validateName(p, path+".name", ep.Name)
@@ -248,8 +251,8 @@ func (c *Config) validateEndpoints(p *problems) {
 			p.addf(path+".upstream", "must be an https:// base URL without path, query or fragment, got %q", ep.Upstream)
 		}
 
-		if len(ep.TrustedEvidence) == 0 {
-			p.addIncompletef(path+".trustedEvidence", "at least one pinned evidenceDigest is required — there is no trust-on-first-use")
+		if c.validateEndpointTrust(p, path, ep) && needsMeasurements == "" {
+			needsMeasurements = ep.Name
 		}
 		pinned := map[string]int{}
 		for j, digest := range ep.TrustedEvidence {
@@ -272,6 +275,53 @@ func (c *Config) validateEndpoints(p *problems) {
 
 		validateTuning(p, yamlField(path), ep.Tuning)
 	}
+
+	if needsMeasurements != "" && (c.AttestedRoots == nil || len(c.AttestedRoots.TrustedMeasurements) == 0) {
+		p.addIncompletef("attestedRoots.trustedMeasurements",
+			"at least one measurement is required by endpoint %q (trust: %s) — there is no trust-on-first-use",
+			needsMeasurements, TrustCloudMeasurement)
+	}
+}
+
+// validateEndpointTrust enforces the one-mode rule: an endpoint declares what
+// it trusts either by pinning evidence digests or by `trust:
+// cloud-measurement`, never both and never neither.
+//
+// "Both" is a hard error rather than a precedence rule. The two modes ask
+// different questions, and a file that answers both leaves a reader unable to
+// say which one is enforced — a pin that looks authoritative while a cloud-wide
+// rule actually admits the traffic is exactly the misreading this refuses.
+//
+// It reports whether this endpoint needs `attestedRoots.trustedMeasurements` to
+// be non-empty, which the caller checks once for the whole file.
+func (c *Config) validateEndpointTrust(p *problems, path string, ep Endpoint) bool {
+	if ep.Trust != "" && !slices.Contains(trustModes, ep.Trust) {
+		p.addf(path+".trust", "must be one of %s, got %q", strings.Join(trustModes, ", "), ep.Trust)
+		return false
+	}
+
+	if ep.TrustMode() != TrustCloudMeasurement {
+		if len(ep.TrustedEvidence) == 0 {
+			p.addIncompletef(path+".trustedEvidence",
+				"at least one pinned evidenceDigest is required — there is no trust-on-first-use")
+		}
+		return false
+	}
+
+	if len(ep.TrustedEvidence) > 0 {
+		p.addf(path+".trustedEvidence",
+			"must be empty when trust is %s: that mode admits any deployment on a trusted cloud, "+
+				"so a pin listed here would not be enforced — pick one mode", TrustCloudMeasurement)
+	}
+	// The mode *is* the attested-root check plus a measurement list, so a file
+	// that disables the anchor can never admit this endpoint. Reported here,
+	// where the contradiction is, rather than as a silent deny at request time.
+	if !c.AttestedRootsEnabled() {
+		p.addf(path+".trust",
+			"%s requires the attested-root anchor, but attestedRoots.enabled is false — "+
+				"this endpoint could never admit traffic", TrustCloudMeasurement)
+	}
+	return true
 }
 
 func (c *Config) validateObservability(p *problems) {

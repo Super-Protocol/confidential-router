@@ -477,6 +477,15 @@ func pinnedSuffix(s styles, r *status.Report) string {
 	if r.EvidenceDigest == "" {
 		return ""
 	}
+	// A cloud-measurement endpoint has no pin to report on: what admits it is
+	// the cloud's measurement, and the digest row is there to be read, not to
+	// be matched.
+	if r.ByMeasurement() {
+		if r.MeasurementTrusted {
+			return s.warn.Render("  cloud-trusted (not deployment-pinned)")
+		}
+		return s.warn.Render("  cloud not trusted")
+	}
 	if r.Pinned {
 		return s.good.Render("  pinned")
 	}
