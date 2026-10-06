@@ -557,23 +557,23 @@ type ExternalEndpointEvent {
 DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone.
 """
 enum ExternalEndpointEventKind {
-  DENIED
+  DENIED_BY_THIS_ROUTER
   DIGEST_CHANGED
   DISABLED
   KEY_ROTATED
   MEASUREMENT_CHANGED
   REGISTERED
-  VERIFIED
+  VERIFIED_BY_THIS_ROUTER
 }
 
 """
 What this router currently says about an upstream. Rendered as “verified by this router” / “denied by this router” — never a bare “verified”, which is reserved for nothing in this schema (ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing.
 """
 enum ExternalEndpointStatus {
-  DENIED
+  DENIED_BY_THIS_ROUTER
   DISABLED
   PENDING
-  VERIFIED
+  VERIFIED_BY_THIS_ROUTER
 }
 
 """

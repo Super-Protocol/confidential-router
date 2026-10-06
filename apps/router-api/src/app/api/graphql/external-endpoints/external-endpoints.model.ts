@@ -38,8 +38,8 @@ const MICROS = /^\d{1,15}$/;
  */
 export const ExternalEndpointStatusEnum = {
   PENDING: 'pending',
-  VERIFIED: 'verified',
-  DENIED: 'denied',
+  VERIFIED_BY_THIS_ROUTER: 'verified',
+  DENIED_BY_THIS_ROUTER: 'denied',
   DISABLED: 'disabled',
 } as const satisfies Record<string, ExternalEndpointStatus>;
 
@@ -53,8 +53,8 @@ registerEnumType(ExternalEndpointStatusEnum, {
 
 export const ExternalEndpointEventKindEnum = {
   REGISTERED: 'registered',
-  VERIFIED: 'verified',
-  DENIED: 'denied',
+  VERIFIED_BY_THIS_ROUTER: 'verified',
+  DENIED_BY_THIS_ROUTER: 'denied',
   DIGEST_CHANGED: 'digest_changed',
   MEASUREMENT_CHANGED: 'measurement_changed',
   DISABLED: 'disabled',
