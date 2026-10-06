@@ -372,3 +372,74 @@ func TestTheDashboardArmsOneStreamReaderAtATime(t *testing.T) {
 		t.Error("a published snapshot did not re-arm the reader")
 	}
 }
+
+// attestedEndpoint is a cloud admitted through the second anchor rather than
+// through `trustedRoots`, with the source of its measurement as given.
+func attestedEndpoint(name string, source string, inRegistry bool) status.Endpoint {
+	ep := confidentialEndpoint(name)
+	ep.Report.Root = "attested:842c5f2eb016c04fa61e0ac3d0ff48bae16b4c08c61d80cdfdaf332a9b3625c2"
+	ep.Report.RootAttested = true
+	ep.Report.AttestedRoot = &status.AttestedRoot{
+		Attested:          true,
+		EvidenceType:      "AMD SEV-SNP (QEMU)",
+		NetworkType:       "untrusted",
+		ReportIntegrity:   true,
+		KeyBinding:        true,
+		Measurement:       "842c5f2eb016c04fa61e0ac3d0ff48bae16b4c08c61d80cdfdaf332a9b3625c2",
+		InRegistry:        inRegistry,
+		MeasurementSource: source,
+		SnpFirmwareTCB:    27,
+		ReportVersion:     5,
+	}
+	return ep
+}
+
+// TestTheDashboardNamesTheAnchorThatAdmittedTheRoot is the dashboard's share of
+// SUP-139: a cloud this operator vouched for and one Super Protocol signed must
+// not read the same on a screen somebody is watching all day.
+func TestTheDashboardNamesTheAnchorThatAdmittedTheRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		source     string
+		inRegistry bool
+		want       []string
+		absent     string
+	}{
+		{
+			name: "registry-signed", source: "registry", inRegistry: true,
+			want:   []string{"root TEE evidence  attested (registry)", "in trusted registry"},
+			absent: "operator-pinned",
+		},
+		{
+			name: "operator-pinned", source: "operator-pinned", inRegistry: false,
+			want: []string{
+				"root TEE evidence  attested (operator-pinned)",
+				"operator-pinned, not in trusted registry",
+			},
+			absent: "in trusted registry\n",
+		},
+		{
+			// A verdict recorded by a build that did not name its anchor. Without
+			// a fallback the verdict renders empty, which reads as a broken
+			// dashboard rather than as the missing field it is.
+			name: "no source recorded", source: "", inRegistry: true,
+			want: []string{"root TEE evidence  attested ", "in trusted registry"},
+			// Exactly "attested", with no anchor invented for it.
+			absent: "attested (",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(t, newFakeSupervisor(attestedEndpoint("llama-33-70b", tc.source, tc.inRegistry)))
+			view := m.View()
+
+			for _, want := range tc.want {
+				if !strings.Contains(view, want) {
+					t.Errorf("view does not contain %q:\n%s", want, view)
+				}
+			}
+			if strings.Contains(view, tc.absent) {
+				t.Errorf("view contains %q, which belongs to the other anchor:\n%s", tc.absent, view)
+			}
+		})
+	}
+}

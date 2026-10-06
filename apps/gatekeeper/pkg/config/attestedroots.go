@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
+)
 
 // Network-type policies for an attested root (ADR-003 §2a).
 const (
@@ -43,6 +47,17 @@ type AttestedRoots struct {
 	// CheckRevocations additionally consults the CPU vendor's CRLs. It costs a
 	// network round trip per root and is reported separately, so it is opt-in.
 	CheckRevocations bool `yaml:"checkRevocations,omitempty"`
+	// TrustedMeasurements are VM measurements this operator accepts *in
+	// addition to* the registry-signed ones, as 64-character hex strings.
+	//
+	// It is the escape hatch for a Swarm cloud built outside the flow that
+	// publishes signatures to `sp-vm/signatures`: without it, the only way to
+	// use such a stand is `trust roots add` with a certificate fetched out of
+	// band, which is trust-on-first-use. A pin replaces exactly one leg of the
+	// attested path — "Super Protocol signed this image" — and leaves the
+	// hardware report, the vendor chain, the reportData↔key binding, the
+	// measurement rebuild and requireNetworkType all in force.
+	TrustedMeasurements []string `yaml:"trustedMeasurements,omitempty"`
 }
 
 // AttestedRootsEnabled reports whether the attested-root anchor is active.
@@ -81,4 +96,24 @@ func (c *Config) AttestedRootsRequireNetworkType() string {
 // AttestedRootsCheckRevocations reports whether vendor CRLs are consulted.
 func (c *Config) AttestedRootsCheckRevocations() bool {
 	return c.AttestedRoots != nil && c.AttestedRoots.CheckRevocations
+}
+
+// AttestedRootsTrustedMeasurements resolves the operator's own measurement
+// pins, normalised to the lower-case hex the registry names a measurement by.
+// Entries that do not parse are dropped here rather than silently matching
+// nothing: [Config.Validate] reports them, and a pin that cannot be compared
+// must never look like one that was.
+func (c *Config) AttestedRootsTrustedMeasurements() []string {
+	if c.AttestedRoots == nil {
+		return nil
+	}
+	out := make([]string, 0, len(c.AttestedRoots.TrustedMeasurements))
+	for _, raw := range c.AttestedRoots.TrustedMeasurements {
+		normalized, err := attestedroot.ParseMeasurement(raw)
+		if err != nil {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	return out
 }

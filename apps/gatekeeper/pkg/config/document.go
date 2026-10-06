@@ -174,7 +174,79 @@ func (d *Document) RemoveTrustedEvidence(endpoint string, raws []string) (int, e
 	return removed, nil
 }
 
+// AddTrustedMeasurement pins a VM measurement under `attestedRoots`, creating
+// the section when the file does not have one yet — which is the normal case,
+// since the anchor's defaults are all implicit. It reports false when the exact
+// value is already pinned.
+func (d *Document) AddTrustedMeasurement(measurement string) (bool, error) {
+	list := sectionOf(d.mappingSection("attestedRoots"), "trustedMeasurements")
+	for _, item := range list.Content {
+		if item.Value == measurement {
+			return false, nil
+		}
+	}
+	list.Content = append(list.Content, scalar(measurement))
+	return true, nil
+}
+
+// RemoveTrustedMeasurement unpins every listed raw spelling and returns how
+// many entries went away. The caller passes the literal strings as they appear
+// in the file, so a measurement written with a `sha256:` prefix or in upper
+// case can be removed by its normalised name.
+func (d *Document) RemoveTrustedMeasurement(raws []string) (int, error) {
+	attested, ok := mapGet(d.root(), "attestedRoots")
+	if !ok {
+		return 0, nil
+	}
+	list, ok := mapGet(attested, "trustedMeasurements")
+	if !ok || list.Kind != yaml.SequenceNode {
+		return 0, nil
+	}
+	drop := make(map[string]struct{}, len(raws))
+	for _, r := range raws {
+		drop[r] = struct{}{}
+	}
+	kept := list.Content[:0]
+	removed := 0
+	for _, item := range list.Content {
+		if _, found := drop[item.Value]; found {
+			removed++
+			continue
+		}
+		kept = append(kept, item)
+	}
+	list.Content = kept
+	return removed, nil
+}
+
 func (d *Document) root() *yaml.Node { return d.doc.Content[0] }
+
+// mappingSection returns a top-level mapping, creating it when absent or null.
+// `attestedRoots` is a mapping rather than a sequence, and a config that says
+// nothing about it — the common one — has no node to edit at all.
+func (d *Document) mappingSection(key string) *yaml.Node {
+	if node, ok := mapGet(d.root(), key); ok {
+		switch {
+		case node.Kind == yaml.MappingNode:
+			// An empty `attestedRoots: {}` becomes a block mapping as soon as
+			// something is added; a pin rendered inside `{...}` would be a
+			// surprise in a hand-edited file.
+			if len(node.Content) == 0 {
+				node.Style = 0
+			}
+			return node
+		case node.Kind == yaml.ScalarNode && node.Tag == "!!null":
+			node.Kind = yaml.MappingNode
+			node.Tag = "!!map"
+			node.Value = ""
+			node.Style = 0
+			return node
+		}
+	}
+	m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	d.root().Content = append(d.root().Content, scalar(key), m)
+	return m
+}
 
 // lookup returns an existing top-level sequence.
 func (d *Document) lookup(key string) (*yaml.Node, bool) {

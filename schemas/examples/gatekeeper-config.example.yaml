@@ -22,6 +22,14 @@ attestedRoots:
   requireNetworkType: any
   cacheTtl: 10m
   checkRevocations: false
+  # Measurements you accept yourself, for a Swarm cloud whose image predates — or
+  # never went through — the flow that publishes signatures to sp-vm/signatures.
+  # Added in addition to the signed ones, never instead of them: everything else
+  # in the attested path still has to pass, and a root admitted this way is
+  # reported as `attested (operator-pinned)`.
+  # Manage with `gatekeeper trust measurements add|rm|list`.
+  trustedMeasurements:
+    - bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab
 
 # Optional user policies (Rego v1). ANDed with the built-in evidenceDigest pin policy.
 policies:

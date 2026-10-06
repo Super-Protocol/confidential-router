@@ -400,6 +400,7 @@ func (e *endpoint) applyVerdict(previous, current *verdict) {
 		EvidenceDigest:         attestation.FormatDigestHex(current.Report.EvidenceDigest),
 		ObservedTLSFingerprint: attestation.FormatDigestHex(current.Leaf),
 		Root:                   current.Report.Root,
+		RootAnchor:             current.Report.RootAnchor(),
 		FailMode:               e.tuning.FailMode,
 	})
 	e.sup.publishSnapshot()

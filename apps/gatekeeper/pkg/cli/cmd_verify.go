@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/status"
 )
 
@@ -225,20 +226,27 @@ func printAttestedRoot(w io.Writer, a *status.AttestedRoot) {
 }
 
 func attestedVerdict(a *status.AttestedRoot) string {
-	if a.Attested {
-		return "attested — this is a Super Swarm root"
+	switch {
+	case a.Attested && a.MeasurementSource == string(attestedroot.SourceOperatorPinned):
+		return attestedLabel(a) + " — you pinned this measurement; Super Protocol has not signed it"
+	case a.Attested:
+		return attestedLabel(a) + " — this is a Super Swarm root"
+	default:
+		return "NOT attested"
 	}
-	return "NOT attested"
 }
 
 func measurementLine(a *status.AttestedRoot) string {
-	if a.Measurement == "" {
+	switch {
+	case a.Measurement == "":
 		return "—"
-	}
-	if a.InRegistry {
+	case a.InRegistry:
 		return a.Measurement + " (in trusted registry)"
+	case a.MeasurementSource == string(attestedroot.SourceOperatorPinned):
+		return a.Measurement + " (NOT in trusted registry; pinned in attestedRoots.trustedMeasurements)"
+	default:
+		return a.Measurement + " (NOT in trusted registry)"
 	}
-	return a.Measurement + " (NOT in trusted registry)"
 }
 
 func keyBindingLine(a *status.AttestedRoot) string {
@@ -283,7 +291,8 @@ func verdictLine(r *status.Report) string {
 func rootLine(r *status.Report) string {
 	switch {
 	case r.Root != "" && r.RootAttested:
-		return fmt.Sprintf("%s (%s) — attested, not from trustedRoots", r.Root, hexDigest(r.RootFingerprint))
+		return fmt.Sprintf("%s (%s) — %s, not from trustedRoots",
+			r.Root, hexDigest(r.RootFingerprint), attestedLabel(r.AttestedRoot))
 	case r.Root != "":
 		return fmt.Sprintf("%s (%s)", r.Root, hexDigest(r.RootFingerprint))
 	case r.RootFingerprint != "":
@@ -291,6 +300,15 @@ func rootLine(r *status.Report) string {
 	default:
 		return "—"
 	}
+}
+
+// attestedLabel names the anchor behind an attested root, falling back to the
+// bare word for a report from a build that did not record one.
+func attestedLabel(a *status.AttestedRoot) string {
+	if label := a.SourceLabel(); label != "" {
+		return label
+	}
+	return "attested"
 }
 
 func upstreamOf(r *status.Report) string {

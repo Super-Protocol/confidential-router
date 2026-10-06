@@ -18,6 +18,13 @@ const pinnedDigest = "sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490"
 // to the given digests.
 func configWith(t *testing.T, ca *testCA, pins []string, policies string) *config.Config {
 	t.Helper()
+	return configWithIn(t, t.TempDir(), ca, pins, policies)
+}
+
+// configWithIn is [configWith] anchored at a directory, for the cases that also
+// write a policy file the config has to resolve next to itself.
+func configWithIn(t *testing.T, dir string, ca *testCA, pins []string, policies string) *config.Config {
+	t.Helper()
 	var b strings.Builder
 	b.WriteString("version: 1\ntrustedRoots:\n  - name: swarm-cloud-test\n    pem: |\n")
 	for _, line := range strings.Split(strings.TrimRight(ca.rootPEM, "\n"), "\n") {
@@ -33,7 +40,7 @@ func configWith(t *testing.T, ca *testCA, pins []string, policies string) *confi
 		b.WriteString("      []\n")
 	}
 
-	cfg, err := config.Parse(strings.NewReader(b.String()), t.TempDir()+"/config.yaml")
+	cfg, err := config.Parse(strings.NewReader(b.String()), dir+"/config.yaml")
 	if err != nil {
 		t.Fatalf("parsing the config: %v", err)
 	}

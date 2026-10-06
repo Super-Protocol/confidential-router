@@ -91,6 +91,12 @@ func TestAuditLogRecordsVerdictsAndNeverBodies(t *testing.T) {
 			if entry.ObservedTLSFingerprint == "" {
 				t.Error("the verdict entry does not record the channel it was bound to")
 			}
+			// Which anchor admitted the root, not just its name: an
+			// operator-pinned cloud and a registry-signed one have to be
+			// distinguishable in the durable record (SUP-139).
+			if got, want := entry.RootAnchor, "trustedRoots"; got != want {
+				t.Errorf("rootAnchor = %q, want %q for a root the operator listed", got, want)
+			}
 		case proxy.AuditBlocked:
 			blocks++
 			if entry.Method != http.MethodPost || entry.Path != "/v1/chat/completions" {

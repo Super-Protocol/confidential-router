@@ -83,3 +83,50 @@ func TestReportDeniedExplainsWhy(t *testing.T) {
 		})
 	}
 }
+
+// TestRootAnchorNamesWhatAdmittedTheRoot is the one line an audit review reads:
+// after SUP-139 "attested" covers two different claims, and the record has to
+// keep them apart.
+func TestRootAnchorNamesWhatAdmittedTheRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		report *status.Report
+		want   string
+	}{
+		{name: "no verdict yet", report: &status.Report{}, want: ""},
+		{
+			name:   "a root the operator listed",
+			report: &status.Report{Root: "swarm-cloud-prod"},
+			want:   "trustedRoots",
+		},
+		{
+			name: "signed by Super Protocol",
+			report: &status.Report{
+				Root: "attested:842c", RootAttested: true,
+				AttestedRoot: &status.AttestedRoot{Attested: true, MeasurementSource: "registry"},
+			},
+			want: "attested (registry)",
+		},
+		{
+			name: "pinned by this operator",
+			report: &status.Report{
+				Root: "attested:bb69", RootAttested: true,
+				AttestedRoot: &status.AttestedRoot{Attested: true, MeasurementSource: "operator-pinned"},
+			},
+			want: "attested (operator-pinned)",
+		},
+		{
+			// A verdict recorded by an older build carries no source; saying
+			// "attested" is honest, inventing an anchor would not be.
+			name:   "an attested root from a build that recorded no source",
+			report: &status.Report{Root: "attested:842c", RootAttested: true},
+			want:   "attested",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.report.RootAnchor(); got != tc.want {
+				t.Errorf("RootAnchor() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

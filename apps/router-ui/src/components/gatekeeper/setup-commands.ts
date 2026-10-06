@@ -129,3 +129,22 @@ export function setupScript(input: SetupInput): string {
     .map((step) => step.command)
     .join('\n');
 }
+
+/**
+ * The command for a stand whose image the Super Protocol registry has never
+ * signed.
+ *
+ * It is a footnote rather than a seventh step on purpose: the six steps are the
+ * path, and a Swarm cloud's certificate authority is normally accepted on its
+ * own TEE evidence with nothing to paste. This is what to reach for when step 5
+ * denies with "not in the Super Protocol trusted registry" — which happens on a
+ * stand built outside the flow that publishes those signatures.
+ */
+export const UNSIGNED_MEASUREMENT_COMMAND = `gatekeeper trust measurements add --from-upstream ${ENDPOINT_NAME}`;
+
+export const UNSIGNED_MEASUREMENT_NOTE =
+  'If the gatekeeper denies with \u201cnot in the Super Protocol trusted registry\u201d, this cloud\u2019s ' +
+  'image was built outside the flow that publishes those signatures. You can accept its measurement ' +
+  'yourself \u2014 the command prints the full hardware report and asks first. Everything else still has ' +
+  'to pass, and a root admitted this way is reported as \u201cattested (operator-pinned)\u201d, never as ' +
+  'registry-signed.';

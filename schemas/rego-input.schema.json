@@ -87,6 +87,11 @@
               "type": "boolean",
               "description": "Whether Super Protocol has signed that measurement."
             },
+            "measurementSource": {
+              "type": "string",
+              "enum": ["registry", "operator-pinned", ""],
+              "description": "Which anchor admitted the measurement: \"registry\" when Super Protocol signed it, \"operator-pinned\" when the operator listed it in attestedRoots.trustedMeasurements because the registry does not. Empty when nothing vouched for it, which is a denial. A measurement the registry does sign is always reported as \"registry\", whether or not it is also pinned, so a rule keyed on this cannot be relaxed by adding a redundant pin."
+            },
             "reportIntegrity": {
               "type": "boolean",
               "description": "Whether the hardware report's signature and its chain to the CPU vendor's root verified."

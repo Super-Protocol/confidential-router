@@ -58,3 +58,39 @@ endpoints: []
 		t.Error("checkRevocations: true did not reach the resolver")
 	}
 }
+
+// TestAttestedRootsTrustedMeasurements is the SUP-139 knob: the operator's own
+// pins reach the resolver normalised, whatever spelling the file uses, so the
+// verifier compares one form and one form only.
+func TestAttestedRootsTrustedMeasurements(t *testing.T) {
+	const measurement = "bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab"
+	cfg := mustParse(t, `version: 1
+trustedRoots: []
+attestedRoots:
+  trustedMeasurements:
+    - `+measurement+`
+    - sha256:BB6962EB20D616EB0F19479CF7FBCCDA50EE5682EAB75B2104915D305A826AAC
+endpoints: []
+`)
+
+	got := cfg.AttestedRootsTrustedMeasurements()
+	want := []string{measurement, measurement[:len(measurement)-1] + "c"}
+	if len(got) != len(want) {
+		t.Fatalf("measurements = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("measurement %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestAttestedRootsWithNoMeasurementsResolvesEmpty keeps the default closed: a
+// config that says nothing pins nothing, and must not resolve to a list the
+// verifier could match an empty measurement against.
+func TestAttestedRootsWithNoMeasurementsResolvesEmpty(t *testing.T) {
+	cfg := mustParse(t, "version: 1\ntrustedRoots: []\nendpoints: []\n")
+	if got := cfg.AttestedRootsTrustedMeasurements(); len(got) != 0 {
+		t.Errorf("measurements = %v, want none", got)
+	}
+}

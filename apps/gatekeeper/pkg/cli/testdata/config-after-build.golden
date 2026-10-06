@@ -35,12 +35,19 @@ trustedRoots:
 # has to be one Super Protocol signed. The signing key is pinned in the binary,
 # and the check fails closed when the registry cannot be reached.
 #
+# A stand whose image was built outside that flow has no signature to find. For
+# that case you can accept a measurement yourself — in addition to the signed
+# ones, never instead of them, and with every other check still in force:
+#
+#   gatekeeper trust measurements add --from-upstream <endpoint>
+#
 # attestedRoots:
 #   enabled: true                 # the default
 #   requireNetworkType: any       # or "trusted"; today's Swarm root says "untrusted"
 #   cacheTtl: 10m
 #   checkRevocations: false       # consult the CPU vendor's CRLs too
 #   registryBaseUrl: https://raw.githubusercontent.com/Super-Protocol/sp-vm/main/signatures
+#   trustedMeasurements: []       # written by `gatekeeper trust measurements add`
 
 # Optional user policies (Rego v1). Every one of them is ANDed with the built-in
 # evidenceDigest pin policy, so a policy can narrow trust but never widen it.
