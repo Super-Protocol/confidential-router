@@ -109,13 +109,22 @@ describe('postToUpstream', () => {
     expect(retries).toEqual([]);
   });
 
-  it('abandons a connection that is never accepted, inside the connect deadline', async () => {
+  it('gives up on a never-answered socket without retrying: bytes may already have landed', async () => {
+    // The deadline aborts with a reason, and `fetch` re-throws that reason as-is,
+    // so the failure is a plain `Error` rather than an `AbortError` — which is
+    // exactly why `isConnectionError` refuses it. Retrying here could re-run a
+    // generation the upstream had already started.
+    const retries: number[] = [];
     const url = await serving((request) => {
       // Accepted at the TCP level and then ignored for ever, which is the hang the
       // deadline exists for.
       request.resume();
     });
 
-    await expect(call(url, { connectTimeoutMs: 40 })).rejects.toBeInstanceOf(UpstreamUnavailableError);
+    await expect(
+      call(url, { connectTimeoutMs: 40, onRetry: (attempt) => retries.push(attempt) }),
+    ).rejects.toBeInstanceOf(UpstreamUnavailableError);
+
+    expect(retries).toEqual([]);
   });
 });

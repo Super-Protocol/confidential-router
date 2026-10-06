@@ -81,11 +81,20 @@ export async function postToUpstream(call: UpstreamCall): Promise<Response> {
 }
 
 /**
- * Whether the failure happened before the upstream took the request.
+ * Whether the failure proves the upstream never took the request.
  *
- * `fetch` reports every transport failure as a `TypeError` and hides the
- * detail in `cause`; an abort from our own connect deadline arrives as an
- * `AbortError` and counts too, because nothing was sent either way.
+ * `fetch` reports a transport failure as a `TypeError` and hides the detail in
+ * `cause`, so the codes above are what "the connection never came up" looks
+ * like. An `AbortError` — an abort raised with no reason — counts for the same
+ * reason: nothing was sent.
+ *
+ * **A connect-deadline abort is deliberately not in either set.** `postToUpstream`
+ * aborts its deadline with a reason, and `fetch` re-throws that reason verbatim,
+ * so the failure arrives as a plain `Error` and this returns false — the deadline
+ * path does not retry. That is the conservative answer and the one we want: the
+ * socket was accepted and the request bytes may already be on it, so the upstream
+ * may have started generating. `MAX_ATTEMPTS` only ever covers an attempt that
+ * provably never established. `upstream-fetch.spec.ts` pins this.
  */
 export function isConnectionError(error: unknown): boolean {
   if (error instanceof Error && error.name === 'AbortError') {
