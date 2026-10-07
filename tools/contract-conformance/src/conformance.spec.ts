@@ -159,8 +159,10 @@ describe('checkConformance', () => {
 });
 
 describe('the committed schema', () => {
-  // The CI step runs `main.ts`; this is the same assertion inside the test target,
-  // so `nx affected` catches a contract edit locally too.
+  // The same assertion as `main.ts`, inside the test target. An edit to the
+  // contract or the schema does not make this project affected, so the
+  // unconditional CI job is the guarantee; this is a convenience when running
+  // the project's tests directly.
   const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   it('satisfies docs/contracts/console-graphql.md', () => {
     const blocks = extractContractBlocks(readFileSync(join(root, 'docs/contracts/console-graphql.md'), 'utf8'));

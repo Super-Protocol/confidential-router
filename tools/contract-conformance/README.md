@@ -21,4 +21,5 @@ contradicting itself.
 
 Each violation names the divergent signature and the contract line, and under GitHub Actions is also
 an error annotation on that line. The pull-request workflow runs it as its own unconditional job;
-the project's `test` target runs the same assertion, so `nx affected` catches it locally as well.
+the project's `test` target runs the same assertion. Editing the contract or the schema does not
+make this project affected, so `nx affected` will not run it — that is why the CI job is unconditional.
