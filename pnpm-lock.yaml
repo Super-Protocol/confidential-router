@@ -471,6 +471,12 @@ importers:
         specifier: ^1.4.0
         version: 1.4.0
 
+  tools/contract-conformance:
+    dependencies:
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
+
   tools/demo:
     dependencies:
       '@confidential-router/mock-evidence-host':

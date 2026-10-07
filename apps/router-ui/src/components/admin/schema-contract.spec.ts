@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
  * The admin section was built contract-first against an overlay while SUP-225
  * was in flight; the overlay and its identity check are gone now that the
  * resolvers emit the vocabulary into the committed SDL (the full
- * contract-document ↔ shipped-schema conformance check is SUP-237). What stays
+ * contract-document ↔ shipped-schema conformance check is
+ * `tools/contract-conformance`, SUP-237). What stays
  * are the two guards that are about the schema itself, not about the overlay:
  * the external vocabulary never collapses into the own-endpoint one (ADR-008
  * §1 / ADR-002), and nothing readable can carry the upstream key (threat T15).

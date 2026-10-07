@@ -7,7 +7,10 @@ emitted from the resolvers, committed, and checked on every CI run against both 
 the schema the running application serves; `apps/router-ui` generates its Apollo client from that file
 (never edit generated client code by hand). The SDL below is the *design target* this document has carried
 since SUP-66 — where the two differ, the committed file wins and the difference is listed under "As
-shipped" at the end. Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
+shipped" at the end. Every SDL block under an "As shipped" heading is the opposite: a contract the
+committed schema must satisfy verbatim — every type, field, argument, enum value and nullability it names
+— and `tools/contract-conformance` fails the pull request that breaks it (SUP-237).
+Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
 carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
 string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
 field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
@@ -485,7 +488,8 @@ emitted from the resolvers — so the same SDL also lives at
 [`apps/router-ui/schema.contract-pending.graphql`](../../apps/router-ui/schema.contract-pending.graphql),
 which router-ui's codegen reads as an overlay. `apps/router-ui/src/components/admin/schema-contract.spec.ts`
 asserts the two are byte-identical and fails with a delete-the-overlay instruction the moment the real
-schema defines `externalEndpoints`. A contract change lands **here first**, and both sides follow.
+schema defines `externalEndpoints`. A contract change lands **here first**, and both sides follow. Since SUP-237 that is enforced, not
+asked: CI fails any pull request whose `schema.graphql` does not satisfy this block.
 
 Three decisions in this block are worth reading before the SDL:
 
