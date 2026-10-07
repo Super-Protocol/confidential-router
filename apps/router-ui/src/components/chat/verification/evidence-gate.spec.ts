@@ -45,6 +45,8 @@ function detailOf(result: { checks: { id: CheckId; detail: string }[] }, id: Che
 async function run(options: {
   fetcher: typeof fetch;
   now?: Date;
+  /** Whose endpoint this is; `external` narrows the sources to the relay alone. */
+  kind?: Parameters<typeof runEvidenceGate>[0]['kind'];
   /** Where the console is served from; decides which source the gate asks first. */
   pageOrigin?: string;
   registryLookup?: Parameters<typeof runEvidenceGate>[0]['registryLookup'];
@@ -54,6 +56,7 @@ async function run(options: {
     hostname: HOSTNAME,
     endpointName: ENDPOINT,
     apiOrigin: API_ORIGIN,
+    kind: options.kind,
     now: options.now ?? REFERENCE_NOW,
     // The deployment topology every case but the ordering ones is about: a
     // console on its own host, which is every real deployment.
@@ -713,5 +716,105 @@ describe('a root whose certificate carries the quote', () => {
     });
 
     expect(statusOf(result.checks, 'root')).toBe('pass');
+  });
+});
+
+/**
+ * An external upstream's bundle (SUP-227, ADR-008 §7).
+ *
+ * The verifier is the same verifier — that is what "renders it the same way"
+ * means — so what these cases are about is the *source*: only the relay is
+ * asked, and the row the reader sees says so and names the upstream. The reason
+ * outlives CORS: the relay serves the publication this router's verdict named,
+ * while the upstream's own host serves whatever it publishes now, which may be a
+ * deployment nobody here has admitted.
+ */
+describe('an external upstream', () => {
+  const RELAY_URL = `${API_ORIGIN}/v1/evidence/${ENDPOINT}`;
+  const WELL_KNOWN_URL = `https://${HOSTNAME}/.well-known/swarm-evidence`;
+
+  it('verifies the relayed bundle with the same checks, and asks the host nothing', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === RELAY_URL) {
+        return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const result = await run({ fetcher: fetcher as unknown as typeof fetch, kind: 'external' });
+
+    expect(result.unlocked).toBe(true);
+    expect(result.evidence?.source).toBe('router');
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([RELAY_URL]);
+  });
+
+  it('does not fall through to the upstream’s own host when the relay has nothing yet', async () => {
+    // The fall-through is right for our own endpoints — the host's live document
+    // is the better one. For an upstream it would substitute a publication no
+    // verdict covers, under a panel that says this router verified one.
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === RELAY_URL) {
+        return new Response(JSON.stringify({ statusCode: 503, reason: 'evidence_not_fetched' }), { status: 503 });
+      }
+      return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
+    });
+
+    const result = await run({ fetcher: fetcher as unknown as typeof fetch, kind: 'external' });
+
+    expect(result.unlocked).toBe(false);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([RELAY_URL]);
+    // The typed reason, not the bare status: "waiting on the first poll" must
+    // not read as this router denying the upstream.
+    expect(detailOf(result, 'bundle')).toContain('evidence_not_fetched');
+  });
+
+  it('ignores the page’s own origin: a console served by an upstream is still relayed', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === RELAY_URL) {
+        return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const result = await run({
+      fetcher: fetcher as unknown as typeof fetch,
+      kind: 'external',
+      // Nonsense topology on a real deployment, and exactly the condition that
+      // would flip the own-endpoint ordering — so it is worth pinning that the
+      // external path does not consult it at all.
+      pageOrigin: SAME_ORIGIN,
+    });
+
+    expect(result.evidence?.source).toBe('router');
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([RELAY_URL]);
+    expect(fetcher.mock.calls.map(([url]) => url)).not.toContain(WELL_KNOWN_URL);
+  });
+
+  it('says in the retrieved row that the bytes came through the relay, and whose they are', async () => {
+    const result = await run({
+      fetcher: (async () =>
+        new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 })) as typeof fetch,
+      kind: 'external',
+    });
+
+    const detail = detailOf(result, 'bundle');
+    expect(detail).toContain('relayed');
+    expect(detail).toContain(HOSTNAME);
+    expect(detail).toContain('its own verdict named');
+  });
+
+  it('refuses a relayed bundle that fails a check, exactly as it would our own', async () => {
+    const result = await run({
+      fetcher: (async () =>
+        new Response(JSON.stringify(loadBundle('jws-bad-signature')), { status: 200 })) as typeof fetch,
+      kind: 'external',
+    });
+
+    // The whole claim of "renders it the same way": the relay is a transport, so
+    // a document that does not verify does not verify here either, and nothing
+    // is drawn from its bytes.
+    expect(result.unlocked).toBe(false);
+    expect(statusOf(result.checks, 'signature')).toBe('fail');
+    expect(result.evidence).toBeNull();
   });
 });

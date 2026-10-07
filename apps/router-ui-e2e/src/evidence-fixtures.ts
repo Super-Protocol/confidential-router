@@ -136,6 +136,16 @@ export const OVERVIEW_DATA = {
   endpoints: ENDPOINTS,
 };
 
+/**
+ * The Models page's catalogue, as the API returns it.
+ *
+ * Every row carries `origin` / `available` / `externalUpstream` even though all
+ * three are config models: a stub that leaves a field out does not fail, it
+ * returns `undefined`, and a component that branches on it then renders the
+ * wrong half silently (SUP-227 — an omitted `available` cost the invite-signup
+ * card its snippet). `external-models.spec.ts` is where an EXTERNAL row is
+ * exercised.
+ */
 export const CATALOGUE_DATA = {
   models: [
     {
@@ -145,8 +155,11 @@ export const CATALOGUE_DATA = {
       name: 'Llama 3.3 70B Instruct',
       contextLength: 128_000,
       tee: 'Intel TDX + H100 CC',
+      origin: 'CONFIG',
+      available: true,
       pricing: { __typename: 'Pricing', promptPer1m: '280000', completionPer1m: '420000' },
       endpoint: ENDPOINTS[0],
+      externalUpstream: null,
     },
     {
       __typename: 'Model',
@@ -155,8 +168,11 @@ export const CATALOGUE_DATA = {
       name: 'DeepSeek-V3',
       contextLength: 64_000,
       tee: 'Intel TDX + H100 CC',
+      origin: 'CONFIG',
+      available: true,
       pricing: { __typename: 'Pricing', promptPer1m: '310000', completionPer1m: '620000' },
       endpoint: ENDPOINTS[1],
+      externalUpstream: null,
     },
     {
       __typename: 'Model',
@@ -165,8 +181,50 @@ export const CATALOGUE_DATA = {
       name: 'Qwen2.5 72B Instruct',
       contextLength: 128_000,
       tee: 'AMD SEV-SNP',
+      origin: 'CONFIG',
+      available: true,
       pricing: { __typename: 'Pricing', promptPer1m: '240000', completionPer1m: '360000' },
       endpoint: ENDPOINTS[2],
+      externalUpstream: null,
+    },
+  ],
+};
+
+/** An upstream in someone else's deployment, verified by this router (ADR-008). */
+export const UPSTREAM_HOST = 'llama-33-70b.partner.example';
+
+/**
+ * The catalogue with an external row in it, for the one property a component
+ * test cannot show as convincingly: both vocabularies rendered into the same
+ * table by a real browser, each in its own cell.
+ */
+export const MIXED_CATALOGUE_DATA = {
+  models: [
+    ...CATALOGUE_DATA.models,
+    {
+      __typename: 'Model',
+      id: 'partner/llama-3.3-70b:snp',
+      slug: 'partner/llama-3.3-70b:snp',
+      name: 'Llama 3.3 70B (partner)',
+      contextLength: 128_000,
+      // Null, not a borrowed label: nobody declares a TEE for another
+      // deployment's hardware, and a measurement admits a cloud rather than
+      // naming its silicon.
+      tee: null,
+      origin: 'EXTERNAL',
+      available: true,
+      pricing: { __typename: 'Pricing', promptPer1m: '400000', completionPer1m: '800000' },
+      endpoint: null,
+      externalUpstream: {
+        __typename: 'ExternalUpstream',
+        id: 'ext-1',
+        name: 'partner-cloud',
+        hostname: UPSTREAM_HOST,
+        status: 'VERIFIED_BY_THIS_ROUTER',
+        lastCheckedAt: '2026-10-06T11:58:00.000Z',
+        measurementSeen: 'a'.repeat(64),
+        evidenceDigestSeen: 'sha256/Qd4sB7nR1wYvT9xQmL2aZc3Ef5JhUpGi7NrXoVeSbAo',
+      },
     },
   ],
 };

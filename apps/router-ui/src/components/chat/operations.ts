@@ -7,6 +7,14 @@ import { graphql } from '../../generated';
  * chat verifies in the page is the evidence the rest of the console shows.
  * `capabilities` is asked for here and nowhere else: the picker offers chat-capable
  * models only, and a model that cannot chat would fail at LiteLLM.
+ *
+ * `routerEndpoint` is asked for separately from `models[].endpoint`, and the
+ * distinction is the whole of the chat's attestation story since ADR-008. The
+ * endpoint tier 1 must check is the one the **browser** is connected to — always
+ * this router. For a built-in model that is also the endpoint serving it, and the
+ * two were the same field; for an external model they come apart, `endpoint` is
+ * null, and `routerEndpoint` is what the gate runs on. The upstream's own
+ * evidence is a second, separate check, offered beside it rather than folded in.
  */
 export const CHAT_SCREEN_QUERY = graphql(`
   query ChatScreen {
@@ -18,18 +26,25 @@ export const CHAT_SCREEN_QUERY = graphql(`
       historyStorage
       chatModelIds
     }
+    routerEndpoint {
+      ...EndpointEvidenceFields
+    }
     models {
       id
       name
       contextLength
       capabilities
       tee
+      origin
       pricing {
         promptPer1m
         completionPer1m
       }
       endpoint {
         ...EndpointEvidenceFields
+      }
+      externalUpstream {
+        ...ExternalUpstreamFields
       }
     }
   }

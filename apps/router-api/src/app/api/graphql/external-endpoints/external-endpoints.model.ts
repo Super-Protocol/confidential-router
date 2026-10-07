@@ -21,36 +21,15 @@ import type { ExternalEndpointEventKind } from '../../../db/entities/external-en
 import type { ModelCapability } from '../../../db/entities/model.entity.js';
 import { MeasurementModel } from '../catalog/evidence.model.js';
 import { ModelCapabilityEnum, PricingModel } from '../catalog/model.model.js';
+import { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
+
+export { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
 
 /** Most models one upstream will ever expose; a list longer than this is a mistake, not a catalogue. */
 const MAX_MODELS_PER_ENDPOINT = 50;
 
 /** Micro-USD per 1M tokens, as a decimal string — the `…Micros` rule in `console-graphql.md`. */
 const MICROS = /^\d{1,15}$/;
-
-/**
- * The external vocabulary, and it is deliberately not the evidence one.
- *
- * ADR-002's rule — *published / fresh / stale*, never "verified" — is about the
- * router's **own** endpoints, where the router holds no verdict. Toward an external
- * upstream there is a verifying party and it is this router, so these values name
- * it: the console renders them as *verified by this router* / *denied by this
- * router* (ADR-008 §1). The two vocabularies never share a component.
- */
-export const ExternalEndpointStatusEnum = {
-  PENDING: 'pending',
-  VERIFIED_BY_THIS_ROUTER: 'verified',
-  DENIED_BY_THIS_ROUTER: 'denied',
-  DISABLED: 'disabled',
-} as const satisfies Record<string, ExternalEndpointStatus>;
-
-registerEnumType(ExternalEndpointStatusEnum, {
-  name: 'ExternalEndpointStatus',
-  description:
-    'What this router currently says about an upstream. Rendered as “verified by this router” / ' +
-    '“denied by this router” — never a bare “verified”, which is reserved for nothing in this schema ' +
-    '(ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing.',
-});
 
 export const ExternalEndpointEventKindEnum = {
   REGISTERED: 'registered',

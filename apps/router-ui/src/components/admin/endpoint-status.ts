@@ -1,4 +1,5 @@
 import type { ExternalEndpointEventKind, ExternalEndpointStatus, MeasurementSource } from '../../generated/graphql';
+import { EXTERNAL_VERDICT_LABELS } from '../external/external-vocabulary';
 
 /** The `Badge` tones this module uses, named rather than inferred — `class-variance-authority` is the UI library's own dependency, not router-ui's. */
 type BadgeVariant = 'success' | 'warning' | 'destructive' | 'secondary' | 'outline';
@@ -27,12 +28,12 @@ const STATUS_PRESENTATION: Record<ExternalEndpointStatus, StatusPresentation> = 
     detail: 'Registered, no verdict yet. It serves nothing until one arrives.',
   },
   VERIFIED_BY_THIS_ROUTER: {
-    label: 'Verified by this router',
+    label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
     variant: 'success',
     detail: 'Evidence verified, measurement on the trust list, certificate pinned. Its models are routable.',
   },
   DENIED_BY_THIS_ROUTER: {
-    label: 'Denied by this router',
+    label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER,
     variant: 'destructive',
     detail: 'The last check refused it. Its models are out of /v1/models and routing is refused.',
   },
@@ -68,8 +69,8 @@ export interface EventPresentation {
  */
 const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> = {
   REGISTERED: { label: 'Registered', variant: 'secondary' },
-  VERIFIED_BY_THIS_ROUTER: { label: 'Verified by this router', variant: 'success' },
-  DENIED_BY_THIS_ROUTER: { label: 'Denied by this router', variant: 'destructive' },
+  VERIFIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER, variant: 'success' },
+  DENIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER, variant: 'destructive' },
   DIGEST_CHANGED: { label: 'Image digest changed', variant: 'warning' },
   MEASUREMENT_CHANGED: { label: 'Measurement changed', variant: 'warning' },
   DISABLED: { label: 'Disabled', variant: 'outline' },

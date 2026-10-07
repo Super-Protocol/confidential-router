@@ -1,9 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { loadCaseBody, loadConformanceManifest } from '@confidential-router/attestation-fixtures';
 import request from 'supertest';
+import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entity.js';
+import { ExternalEndpoint, type ExternalEndpointStatus } from '../src/app/db/entities/external-endpoint.entity.js';
 import { EvidencePollerService } from '../src/app/evidence/index.js';
 import { createHarness, type Harness, pathOf } from './app-harness.js';
 
@@ -22,6 +25,10 @@ const PUBLISHING = 'router.example.test';
 const CONSOLE_ORIGIN = 'https://console.example.test';
 const SILENT = 'silent.example.test';
 const PLATFORM = 'platform.example.test';
+/** Two upstreams in other people's deployments: one admitted, one still pending. */
+const UPSTREAM = 'partner.example.test';
+const UPSTREAM_PENDING = 'newcomer.example.test';
+const UPSTREAM_DIGEST = 'sha256/upstream-snapshot';
 const DIGEST = 'sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs';
 const PLATFORM_IMAGE = 'ghcr.io/super-protocol/confidential-router/router-api@sha256:21de82b6';
 
@@ -185,6 +192,78 @@ afterAll(async () => {
   await harness?.close();
   await new Promise<void>((resolve) => publisher?.close(() => resolve()));
 });
+
+/**
+ * An external upstream row, as the admin section would have registered it.
+ *
+ * Written directly rather than through the GraphQL mutation because this suite
+ * runs no egress sidecar, so there is no verdict to be had — and the relay's
+ * subject is what it does with a *stored* publication, not how one came to be
+ * stored. `external-endpoints.e2e.spec.ts` owns registration;
+ * `evidence.controller.spec.ts` owns the filing rule that binds a bundle to the
+ * leaf a verdict pinned.
+ */
+async function registerUpstream(input: {
+  name: string;
+  hostname: string;
+  status: ExternalEndpointStatus;
+  evidenceDigestSeen: string | null;
+}): Promise<string> {
+  const id = randomUUID();
+  const now = new Date();
+  await harness.app
+    .get(DataSource)
+    .getRepository(ExternalEndpoint)
+    .save({
+      id,
+      name: input.name,
+      baseUrl: `https://${input.hostname}`,
+      hostname: input.hostname,
+      listenPort: 19_000 + Math.floor(Math.random() * 100),
+      enabled: true,
+      status: input.status,
+      lastCheckedAt: input.status === 'pending' ? null : now,
+      lastStage: null,
+      lastReason: null,
+      measurementSeen: null,
+      measurementSource: null,
+      evidenceDigestSeen: input.evidenceDigestSeen,
+      pinnedCertFingerprint: bundle.certFingerprint as string,
+      apiKeyCiphertext: 'v1.sealed',
+      apiKeyPrefix: 'sk-upstr',
+      createdByUserId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+  return id;
+}
+
+/** The upstream's publication, filed under the external endpoint and under no endpoint of ours. */
+async function fileUpstreamBundle(externalEndpointId: string, evidenceDigest: string): Promise<void> {
+  const now = new Date();
+  await harness.app
+    .get(DataSource)
+    .getRepository(EvidenceSnapshot)
+    .save({
+      id: randomUUID(),
+      // Stated, not defaulted: the XOR with `externalEndpointId` is what keeps an
+      // upstream's publications out of our own endpoints' digest history.
+      endpointId: null,
+      externalEndpointId,
+      fetchedAt: now,
+      issuedAt: now,
+      evidenceDigest,
+      evidenceDigestHex: 'beef',
+      certFingerprint: bundle.certFingerprint as string,
+      quoteFormat: 'intel-tdx-quote-v5',
+      containerImages: [],
+      workloads: null,
+      chainSummary: [],
+      measurements: null,
+      jws: bundle.jws as string,
+      bundle,
+    });
+}
 
 describe('the evidence poller', () => {
   it('files what the publisher serves and lets the silent endpoint be silent', async () => {
@@ -567,5 +646,76 @@ describe('the one architectural rule', () => {
       'PENDING',
       'VERIFIED_BY_THIS_ROUTER',
     ]);
+  });
+});
+
+/**
+ * The same route, for an upstream in somebody else's deployment (SUP-227,
+ * ADR-008 §7).
+ *
+ * This is what lets the inspect panel verify an external endpoint's evidence in
+ * the browser: the upstream's platform sends no `Access-Control-Allow-Origin`
+ * either, so a console on `console.…` cannot read `partner.…`'s well-known path
+ * at all. Relaying is a transport fix and not a trust decision — the document is
+ * a JWS over its own bytes, and the page checks it here.
+ */
+describe('GET /v1/evidence/:endpoint for an external upstream', () => {
+  it('serves the upstream’s stored bundle byte for byte, without a key', async () => {
+    const id = await registerUpstream({
+      name: 'partner-cloud',
+      hostname: UPSTREAM,
+      status: 'verified',
+      evidenceDigestSeen: UPSTREAM_DIGEST,
+    });
+    await fileUpstreamBundle(id, UPSTREAM_DIGEST);
+
+    const response = await request(server()).get('/v1/evidence/partner-cloud').expect(200);
+
+    expect(createHash('sha256').update(response.text, 'utf8').digest('hex')).toBe(
+      createHash('sha256').update(JSON.stringify(bundle), 'utf8').digest('hex'),
+    );
+    expect(response.body).toEqual(bundle);
+  });
+
+  it('carries the same CORS and cache headers, or a browser could not use it', async () => {
+    const id = await registerUpstream({
+      name: 'partner-cors',
+      hostname: `cors.${UPSTREAM}`,
+      status: 'verified',
+      evidenceDigestSeen: UPSTREAM_DIGEST,
+    });
+    await fileUpstreamBundle(id, UPSTREAM_DIGEST);
+
+    const response = await request(server()).get('/v1/evidence/partner-cors').set('Origin', CONSOLE_ORIGIN).expect(200);
+
+    expect(response.headers['access-control-allow-origin']).toBe(CONSOLE_ORIGIN);
+    expect(response.headers['cache-control']).toBe('no-store');
+  });
+
+  it('says "not fetched yet" before the first poll, rather than denying the upstream', async () => {
+    await registerUpstream({
+      name: 'newcomer-cloud',
+      hostname: UPSTREAM_PENDING,
+      status: 'pending',
+      evidenceDigestSeen: null,
+    });
+
+    const response = await request(server())
+      .get('/v1/evidence/newcomer-cloud')
+      .set('Origin', CONSOLE_ORIGIN)
+      .expect(503);
+
+    // The same typed reason the own-endpoint case uses, so the gate's "waiting"
+    // branch covers both without learning a second vocabulary.
+    expect(response.body).toMatchObject({ reason: 'evidence_not_fetched' });
+    expect(response.body.message).toContain(UPSTREAM_PENDING);
+    expect(response.body.version).toBeUndefined();
+    expect(response.headers['access-control-allow-origin']).toBe(CONSOLE_ORIGIN);
+  });
+
+  it('404s for an upstream nobody registered', async () => {
+    const response = await request(server()).get('/v1/evidence/not-a-partner').expect(404);
+
+    expect(response.body).toMatchObject({ statusCode: 404 });
   });
 });

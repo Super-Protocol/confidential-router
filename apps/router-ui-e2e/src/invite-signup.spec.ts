@@ -100,7 +100,11 @@ function creditsFixtures(grantMicros: string, extra: GraphQLFixtures = {}): Grap
     },
     // The card's snippet names the catalogue's first model, so the fixture has to
     // carry one (SUP-153).
-    NextStep: { apiKeys: [], models: [{ __typename: 'Model', id: SAMPLE_MODEL }] },
+    // `available` is not decoration: the card names the first *routable* model,
+    // because an external model whose upstream holds no admitting verdict is
+    // listed and answers 503 (ADR-008 decision 5, SUP-227). A stub that omits it
+    // renders a card with no snippet at all.
+    NextStep: { apiKeys: [], models: [{ __typename: 'Model', id: SAMPLE_MODEL, available: true }] },
     ...extra,
   };
 }

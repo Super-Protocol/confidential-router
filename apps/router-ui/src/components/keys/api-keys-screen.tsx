@@ -43,8 +43,13 @@ export function APIKeysScreen() {
 
   const keys = data?.apiKeys ?? [];
   const models = data?.models ?? [];
-  // The snippet has to be runnable as pasted, so it names a real model.
-  const sampleModel = models[0]?.id;
+  // The snippet has to be runnable as pasted, so it names a model this router
+  // will actually route to. Since ADR-008 that is not the same as "a model in
+  // the catalogue": an external model whose upstream holds no admitting verdict
+  // is listed and answers 503. The scope picker below still offers every model —
+  // scoping a key to one that is currently unavailable is a reasonable thing to
+  // do, and the key outlives the verdict.
+  const sampleModel = models.find((model) => model.available)?.id;
   const newestActive = keys.find((apiKey) => apiKey.revokedAt === null);
 
   const header = (

@@ -10,6 +10,7 @@ import {
   PASSING_GATE_CHECKS,
   SIGNED_SNAPSHOT,
   verificationState,
+  verifiedUpstream,
 } from '../../../test-fixtures';
 
 /**
@@ -30,6 +31,31 @@ import {
  */
 export function AttestationReviewPanel() {
   const verification = React.useMemo(() => verificationState(), []);
+  /**
+   * The same panel over an external upstream's relayed bundle (SUP-227).
+   *
+   * Audited here for the reason the rest of this route exists, with one more on
+   * top: the external path cannot be reached in a browser suite at all until a
+   * stand has a verdict source for an upstream (ADR-008 §5; SUP-229 owns that).
+   * `source: 'router'` is what the relay-only fetch produces, and it is what
+   * drives the provenance copy under test.
+   */
+  const relayed = React.useMemo(
+    () =>
+      verificationState({
+        gate: {
+          unlocked: true,
+          checks: PASSING_GATE_CHECKS,
+          registry: null,
+          evidence: gateEvidence({ hostname: verifiedUpstream().hostname, source: 'router' }),
+        },
+        // No extension is asked about an upstream: the browser has no channel to
+        // it (`use-verification.ts`).
+        extension: { status: 'absent' },
+        extensionState: 'unavailable',
+      }),
+    [],
+  );
   /** The doctored case, so the loud-red path is reviewed as well as the clean one. */
   const undeclared = React.useMemo(() => {
     const snapshot = structuredClone(SIGNED_SNAPSHOT) as { resources: { kind: string }[] };
@@ -76,6 +102,17 @@ export function AttestationReviewPanel() {
           verification={verification}
           hostname={INSPECTED_HOSTNAME}
           teeLabel="Intel TDX + H100 CC"
+          declaredImages={null}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-medium text-sm">An external upstream, relayed</h2>
+        <InspectAttestationButton
+          verification={relayed}
+          hostname={verifiedUpstream().hostname}
+          endpointKind="external"
+          teeLabel={null}
           declaredImages={null}
         />
       </section>

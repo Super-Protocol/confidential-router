@@ -3,6 +3,7 @@
 import { Button } from '@confidential-router/ui/components/button';
 import { ScanSearch } from 'lucide-react';
 import * as React from 'react';
+import type { EndpointKind } from '../verification/evidence-gate';
 import type { VerificationState } from '../verification/use-verification';
 import type { DeclaredImage } from './graph-model';
 
@@ -25,6 +26,13 @@ export interface InspectAttestationButtonProps {
   hostname: string;
   teeLabel: string | null;
   declaredImages: readonly DeclaredImage[] | null;
+  /**
+   * Whose endpoint the panel is about. `external` changes the button's label and
+   * the panel's provenance, and nothing about how the bundle is verified — the
+   * same tier-1 run over the same verifier, which is the point of rendering an
+   * upstream's evidence "the same way" (ADR-008 §7).
+   */
+  endpointKind?: EndpointKind;
 }
 
 export function InspectAttestationButton({
@@ -32,6 +40,7 @@ export function InspectAttestationButton({
   hostname,
   teeLabel,
   declaredImages,
+  endpointKind = 'own',
 }: InspectAttestationButtonProps) {
   const [open, setOpen] = React.useState(false);
   /*
@@ -53,7 +62,7 @@ export function InspectAttestationButton({
         }}
       >
         <ScanSearch aria-hidden="true" />
-        Inspect attestation
+        {endpointKind === 'external' ? 'Inspect upstream attestation' : 'Inspect attestation'}
       </Button>
       {requested ? (
         <React.Suspense fallback={null}>
@@ -64,6 +73,7 @@ export function InspectAttestationButton({
             hostname={hostname}
             teeLabel={teeLabel}
             declaredImages={declaredImages}
+            endpointKind={endpointKind}
           />
         </React.Suspense>
       ) : null}

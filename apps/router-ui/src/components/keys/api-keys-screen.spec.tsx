@@ -52,8 +52,8 @@ const REVOKED_KEY: MockedApiKey = {
 };
 
 const MODELS = [
-  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct' },
-  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B' },
+  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct', available: true },
+  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true },
 ];
 
 function keysMock(keys: MockedApiKey[] = [LIVE_KEY, REVOKED_KEY]): MockLink.MockedResponse {

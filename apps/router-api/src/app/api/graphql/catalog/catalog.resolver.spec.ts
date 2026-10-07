@@ -23,7 +23,7 @@ describe('CatalogResolver.models', () => {
 
     await resolver.models(undefined);
 
-    expect(modelViews).toHaveBeenCalledWith(null, undefined);
+    expect(modelViews).toHaveBeenCalledWith({ workspaceId: null, signedIn: false, tee: undefined });
     expect(workspaces.defaultForUser).not.toHaveBeenCalled();
   });
 
@@ -32,15 +32,18 @@ describe('CatalogResolver.models', () => {
 
     await resolver.models(USER, 'Intel TDX');
 
-    expect(modelViews).toHaveBeenCalledWith('ws-1', 'Intel TDX');
+    expect(modelViews).toHaveBeenCalledWith({ workspaceId: 'ws-1', signedIn: true, tee: 'Intel TDX' });
   });
 
-  it('falls back to no workspace for a user who owns none', async () => {
+  it('falls back to no workspace for a user who owns none, and is still signed in', async () => {
     const { resolver, modelViews } = build({ defaultForUser: vi.fn().mockResolvedValue(null) });
 
     await resolver.models(USER);
 
-    expect(modelViews).toHaveBeenCalledWith(null, undefined);
+    // The two are independent: usage attribution needs a workspace, and
+    // `Model.externalUpstream` needs only a session (SUP-221 ruling 3). A member
+    // of no workspace still gets the upstream.
+    expect(modelViews).toHaveBeenCalledWith({ workspaceId: null, signedIn: true, tee: undefined });
   });
 
   it('answers null for an unknown model id instead of an error', async () => {

@@ -54,6 +54,53 @@ export interface UnadmittedExternalModel {
 }
 
 /**
+ * The upstream behind an external model, as a *catalogue* reader may see it.
+ *
+ * Deliberately smaller than `ExternalEndpoint`: no base URL, no key prefix, no
+ * listen port. The Models page and the chat picker need to name the upstream and
+ * say where this router's verdict stands, and nothing more — and ruling 3 on
+ * SUP-221 draws the line in the same place for the anonymous caller, who gets
+ * none of it.
+ */
+export interface ExternalCatalogueUpstream {
+  id: string;
+  /** Also the key of this router's evidence relay, `GET /v1/evidence/:endpoint`. */
+  name: string;
+  hostname: string;
+  status: ExternalEndpointStatus;
+  lastCheckedAt: Date | null;
+  measurementSeen: string | null;
+  evidenceDigestSeen: string | null;
+}
+
+/**
+ * One external model as the public catalogue lists it, routable or not.
+ *
+ * The third projection of the same rows, beside {@link ExternalCatalogModel}
+ * (what the egress leg needs) and {@link UnadmittedExternalModel} (what a refusal
+ * needs), and it exists because the user-facing surfaces have the one requirement
+ * neither of those has: they must be able to render *"denied by this router"*.
+ * A catalogue that dropped a denied model would leave that vocabulary with
+ * nothing to say it about, and the operator's own switch would look identical to
+ * a failed attestation.
+ *
+ * A model whose endpoint an operator has **disabled** is absent even here — that
+ * is a row taken out of service rather than a verdict, and the refresh below
+ * never sees it.
+ */
+export interface ExternalCatalogueEntry {
+  id: string;
+  name: string;
+  contextLength: number;
+  capabilities: ModelCapability[];
+  promptPer1mMicros: number;
+  completionPer1mMicros: number;
+  /** Whether this router will route to it right now — the endpoint holds a live admitting verdict. */
+  available: boolean;
+  upstream: ExternalCatalogueUpstream;
+}
+
+/**
  * The second in-memory catalogue: external models, beside the config one
  * (ADR-008 §6).
  *
@@ -77,6 +124,7 @@ export class ExternalCatalogService {
   private readonly logger = new Logger(ExternalCatalogService.name);
   private models = new Map<string, ExternalCatalogModel>();
   private unadmitted = new Map<string, UnadmittedExternalModel>();
+  private catalogue: ExternalCatalogueEntry[] = [];
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
@@ -88,6 +136,18 @@ export class ExternalCatalogService {
 
   find(id: string): ExternalCatalogModel | undefined {
     return this.models.get(id);
+  }
+
+  /**
+   * Every external model on an enabled endpoint, routable or not, in model-id
+   * order — what the Models page and the chat picker are built from.
+   *
+   * Chat capability is not filtered here: the picker narrows on it (as it already
+   * does for built-ins) and the Models page must list an embeddings-only upstream
+   * like any other.
+   */
+  listCatalogue(): ExternalCatalogueEntry[] {
+    return this.catalogue;
   }
 
   /**
@@ -123,6 +183,7 @@ export class ExternalCatalogService {
 
     const models = new Map<string, ExternalCatalogModel>();
     const unadmitted = new Map<string, UnadmittedExternalModel>();
+    const catalogue: ExternalCatalogueEntry[] = [];
     for (const row of rows) {
       const endpoint = row.externalEndpointId ? endpoints.get(row.externalEndpointId) : undefined;
       if (!endpoint) {
@@ -130,6 +191,7 @@ export class ExternalCatalogService {
         // the model is simply not in the catalogue, the same as a retired one.
         continue;
       }
+      catalogue.push(catalogueEntryOf(row, endpoint));
       if (endpoint.status !== 'verified') {
         unadmitted.set(row.id, {
           id: row.id,
@@ -168,6 +230,43 @@ export class ExternalCatalogService {
     }
     this.models = models;
     this.unadmitted = unadmitted;
+    this.catalogue = catalogue;
     return models.size;
   }
+}
+
+/**
+ * One catalogue row, with `available` derived from the endpoint rather than
+ * stored.
+ *
+ * No TEE label: `models.tee` survives on these rows only from before the field
+ * left the registration API (ADR-008 §6), and relaying a vestigial value as
+ * though this deployment declared it would be the one fabrication the user
+ * surfaces must not make. A measurement admits a cloud and does not name its
+ * silicon, which is what `Model.tee: null` says for an external model.
+ *
+ * Derived on purpose: availability *is* the live verdict plus the operator's
+ * switch, and a second column holding it would be a copy of two values that can
+ * both move — which is the shape a fail-closed rule must not be written in
+ * (decision 5).
+ */
+function catalogueEntryOf(row: Model, endpoint: ExternalEndpoint): ExternalCatalogueEntry {
+  return {
+    id: row.id,
+    name: row.name,
+    contextLength: row.contextLength,
+    capabilities: row.capabilities,
+    promptPer1mMicros: row.promptPer1mMicros,
+    completionPer1mMicros: row.completionPer1mMicros,
+    available: endpoint.status === 'verified',
+    upstream: {
+      id: endpoint.id,
+      name: endpoint.name,
+      hostname: endpoint.hostname,
+      status: endpoint.status,
+      lastCheckedAt: endpoint.lastCheckedAt,
+      measurementSeen: endpoint.measurementSeen,
+      evidenceDigestSeen: endpoint.evidenceDigestSeen,
+    },
+  };
 }

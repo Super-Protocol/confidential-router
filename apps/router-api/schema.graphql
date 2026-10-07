@@ -689,6 +689,36 @@ input ExternalModelInput {
   upstreamModel: String!
 }
 
+"""
+The deployment behind an external model, and where this router’s verification of it stands. Readable by any signed-in user; absent entirely for an anonymous caller (SUP-221 ruling 3).
+"""
+type ExternalUpstream {
+  """
+  Canonical digest of the upstream deployment snapshot the verdict admitted.
+  """
+  evidenceDigestSeen: String
+
+  """The upstream’s own hostname — what its evidence is bound to."""
+  hostname: String!
+  id: ID!
+
+  """When the last verdict was read back."""
+  lastCheckedAt: DateTime
+
+  """The upstream cloud’s root measurement, as the verdict saw it."""
+  measurementSeen: String
+
+  """
+  The endpoint name. Also the key of this router’s raw-bundle relay, `GET /v1/evidence/{endpoint}`, which is how a browser reads the upstream’s published evidence and verifies it itself.
+  """
+  name: String!
+
+  """
+  Rendered as “verified by this router” / “denied by this router”, never a bare “verified”.
+  """
+  status: ExternalEndpointStatus!
+}
+
 """The second grant an account earned by giving feedback."""
 type FeedbackGrant {
   appliedAt: DateTime!
@@ -982,30 +1012,56 @@ enum MeasurementSource {
   REGISTRY
 }
 
-"""A model the router can route to, as declared in the router config."""
+"""
+A model the router can route to: declared in the router config, or registered on an external endpoint and attested by this router (ADR-008). `origin` says which, and decides which of `endpoint` / `externalUpstream` is populated.
+"""
 type Model {
+  """
+  Whether this router will route to it right now. Always true for a CONFIG model; for an EXTERNAL one it is false unless the endpoint holds a live verdict admitting it.
+  """
+  available: Boolean!
   capabilities: [ModelCapability!]!
   contextLength: Int!
 
-  """The endpoint that serves it — what the user attests."""
-  endpoint: Endpoint!
+  """
+  The endpoint that serves it — what the user attests. Null for an EXTERNAL model: this router publishes no evidence for another deployment’s hostname. Read `externalUpstream` instead.
+  """
+  endpoint: Endpoint
+
+  """
+  The upstream behind an EXTERNAL model. Null for a CONFIG model, and null for an anonymous caller whatever the origin (SUP-221 ruling 3).
+  """
+  externalUpstream: ExternalUpstream
 
   """The public model id, e.g. meta/llama-3.3-70b-instruct:tdx."""
   id: ID!
   name: String!
+
+  """Whether this model runs in this deployment or in another one."""
+  origin: ModelOrigin!
   pricing: Pricing!
 
   """Same value as `id`; the console calls it the slug."""
   slug: String!
 
-  """Denormalised from the endpoint so a model list needs no join."""
-  tee: String!
+  """
+  Denormalised from the endpoint so a model list needs no join. Null for an EXTERNAL model: the operator declares no TEE label for another deployment’s hardware, and a measurement admits a cloud rather than naming its silicon.
+  """
+  tee: String
 }
 
 enum ModelCapability {
   CHAT
   COMPLETIONS
   EMBEDDINGS
+}
+
+"""
+CONFIG is a model inside this deployment’s own cluster space, declared in the router config and therefore covered by the canonical snapshot a user pins. EXTERNAL is a model in another deployment, reached through this router’s attesting egress — the pin covers the verifier, not the upstream (ADR-008 §1).
+"""
+enum ModelOrigin {
+  CONFIG
+  EXTERNAL
 }
 
 """What one model was used for in a period, most expensive first."""
@@ -1255,6 +1311,11 @@ type Query {
     """Narrow to one TEE label."""
     tee: String
   ): [Model!]!
+
+  """
+  The endpoint this deployment publishes evidence for — the one a browser’s connection terminates at, and therefore the one a page can verify. Null when this router cannot tell which of its endpoints is its own.
+  """
+  routerEndpoint: Endpoint
 
   """The sign-in paths this deployment offers. Public."""
   signInOptions: SignInOptions!

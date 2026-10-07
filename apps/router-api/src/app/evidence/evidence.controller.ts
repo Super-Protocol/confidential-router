@@ -8,6 +8,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Endpoint } from '../db/entities/endpoint.entity.js';
+import type { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
+import { ExternalEvidenceService } from '../external-endpoints/external-evidence.service.js';
 import { EvidenceService } from './evidence.service.js';
 
 /**
@@ -36,11 +38,34 @@ import { EvidenceService } from './evidence.service.js';
  * one way this surface could hand back something the deployment is no longer
  * publishing. Today the responses carry an `ETag` and no freshness at all, which
  * leaves the decision to a shared cache's heuristics.
+ *
+ * ## It also relays an external upstream's bundle (SUP-227, ADR-008 §7)
+ *
+ * `/v1/evidence/{endpoint}` takes the name of a registered external endpoint and
+ * hands back the publication that endpoint's last verdict named, under the same
+ * rules: verbatim, no verdict, `no-store`, and the same 404/503 split. That is
+ * what lets the inspect panel run **the browser's own** tier-1 verification on
+ * another deployment's evidence and draw its measurements and deployment graph —
+ * the per-user mitigation for the one thing pinning this router cannot cover
+ * (ADR-008 §1: the trust list is database state, not part of the canonical
+ * snapshot).
+ *
+ * Unauthenticated, like the own-endpoint route, and the reasoning is the same
+ * document-shaped one rather than an oversight. What is relayed is a JWS the
+ * *upstream* publishes at its own public `/.well-known/swarm-evidence`; this
+ * router adds nothing to it and asserts nothing about it. Ruling 3 on SUP-221
+ * keeps endpoint URLs and verdict detail out of the anonymous **catalogue**, and
+ * that holds — `Model.externalUpstream` is null without a session. A caller here
+ * must already know the endpoint name, and what it learns is a document its
+ * publisher serves to the world.
  */
 @ApiTags('evidence')
 @Controller('v1/evidence')
 export class EvidenceController {
-  constructor(private readonly evidence: EvidenceService) {}
+  constructor(
+    private readonly evidence: EvidenceService,
+    private readonly externalEvidence: ExternalEvidenceService,
+  ) {}
 
   /**
    * This deployment's own evidence, without the caller having to learn an
@@ -73,24 +98,39 @@ export class EvidenceController {
     return this.bundleOf(endpoint);
   }
 
+  /**
+   * One endpoint's bundle, ours or an upstream's.
+   *
+   * Our own endpoints are resolved first, and the precedence is not arbitrary:
+   * the two name spaces are separate tables on purpose
+   * (`external_endpoints.name`, "a name collision between a host we publish
+   * evidence for and a host we verify would be a trust confusion"), so a value
+   * that matches both is a misconfiguration — and the safe reading of it is the
+   * one where this deployment answers for itself.
+   */
   @Get(':endpoint')
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
-    summary: 'Latest evidence bundle the platform published for a router endpoint',
+    summary: 'Latest evidence bundle published for a router endpoint or an external upstream',
     description:
-      'Returns the most recently issued bundle this router has fetched, exactly as published. ' +
-      'Verification is the caller’s job: this router never validates the signature.',
+      'Returns the most recently issued bundle this router has fetched, exactly as published. For an external ' +
+      'endpoint it is the publication that endpoint’s last verdict named. Verification is the caller’s job: ' +
+      'this router never validates the signature, and this response carries no verdict.',
   })
-  @ApiParam({ name: 'endpoint', description: 'Endpoint name or hostname.' })
+  @ApiParam({ name: 'endpoint', description: 'Router endpoint name or hostname, or external endpoint name.' })
   @ApiOkResponse({ description: 'The published bundle.', schema: { type: 'object', additionalProperties: true } })
   @ApiNotFoundResponse({ description: 'No such endpoint.' })
   @ApiServiceUnavailableResponse({ description: 'Nothing has been retrieved for this endpoint yet.' })
   async latest(@Param('endpoint') endpointRef: string): Promise<Record<string, unknown>> {
     const endpoint = await this.evidence.endpointByNameOrHostname(endpointRef);
-    if (!endpoint) {
-      throw new NotFoundException(`Unknown endpoint "${endpointRef}".`);
+    if (endpoint) {
+      return this.bundleOf(endpoint);
     }
-    return this.bundleOf(endpoint);
+    const external = await this.externalEvidence.endpointByNameOrHostname(endpointRef);
+    if (external) {
+      return this.externalBundleOf(external);
+    }
+    throw new NotFoundException(`Unknown endpoint "${endpointRef}".`);
   }
 
   /**
@@ -117,6 +157,31 @@ export class EvidenceController {
         message:
           `This router has not yet retrieved evidence for endpoint "${endpoint.name}". ` +
           `The platform publishes it at https://${endpoint.hostname}/.well-known/swarm-evidence.`,
+      });
+    }
+    return snapshot.bundle;
+  }
+
+  /**
+   * An upstream's stored publication, verbatim, or the same typed 503.
+   *
+   * Deliberately indifferent to the endpoint's current status. A `denied` or
+   * `disabled` upstream still had a publication the router once admitted, and
+   * handing it back is not a claim that the router would route there now — this
+   * surface has never carried a verdict in either direction (ADR-002), and the
+   * screens that *do* carry one say *denied by this router* in so many words
+   * (ADR-008 §1). Refusing here instead would make the relay the third place a
+   * verdict is expressed, and the least legible of the three.
+   */
+  private async externalBundleOf(endpoint: ExternalEndpoint): Promise<Record<string, unknown>> {
+    const snapshot = await this.externalEvidence.latestAdmitted(endpoint);
+    if (!snapshot) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        reason: 'evidence_not_fetched',
+        message:
+          `This router has not yet retrieved evidence for external endpoint "${endpoint.name}". ` +
+          `Its platform publishes it at https://${endpoint.hostname}/.well-known/swarm-evidence.`,
       });
     }
     return snapshot.bundle;

@@ -1,7 +1,7 @@
 'use client';
 
 import { Badge } from '@confidential-router/ui/components/badge';
-import type { GateEvidence, GateResult } from '../verification/evidence-gate';
+import type { EndpointKind, GateEvidence, GateResult } from '../verification/evidence-gate';
 import type { BridgeOutcome } from '../verification/extension-bridge';
 import { Field, FieldGroup } from './field';
 import type { DeploymentGraph } from './graph-model';
@@ -10,6 +10,8 @@ import { IMAGE_VERDICTS, ImageVerdictBadge } from './image-verdict';
 
 export interface MeasurementsProps {
   hostname: string;
+  /** Whose endpoint this is. Decides the first group's heading and the provenance row. */
+  endpointKind?: EndpointKind;
   /** The operator's TEE label from the catalogue. Informational, never a claim. */
   teeLabel: string | null;
   gate: GateResult;
@@ -41,7 +43,17 @@ export interface MeasurementsProps {
  * is routinely misread as a verdict — the root's own TEE quote, the report
  * measurement, the operator's TEE label — the row says in words why it is not.
  */
-export function Measurements({ hostname, teeLabel, gate, evidence, extension, checkedAt, graph }: MeasurementsProps) {
+export function Measurements({
+  hostname,
+  endpointKind = 'own',
+  teeLabel,
+  gate,
+  evidence,
+  extension,
+  checkedAt,
+  graph,
+}: MeasurementsProps) {
+  const external = endpointKind === 'external';
   const registry = gate.registry;
   const binding = gate.checks.find((check) => check.id === 'binding');
   const root = gate.checks.find((check) => check.id === 'root');
@@ -50,15 +62,27 @@ export function Measurements({ hostname, teeLabel, gate, evidence, extension, ch
   return (
     <div className="space-y-6">
       <FieldGroup
-        title="This endpoint"
-        description="What the deployment is, and which document the rest of this panel is reading."
+        title={external ? 'This upstream' : 'This endpoint'}
+        description={
+          external
+            ? 'Whose deployment this is, and which document the rest of this panel is reading.'
+            : 'What the deployment is, and which document the rest of this panel is reading.'
+        }
       >
         <Field label="Hostname" value={hostname} mono />
-        <Field
-          label="TEE, as the operator declares it"
-          value={teeLabel}
-          note="A label from the router's configuration. It is what the operator says the hardware is, and nothing on this page checks it — the rows below are what the hardware itself signed."
-        />
+        {external ? (
+          <Field
+            label="TEE, as the operator declares it"
+            value={null}
+            note="Nobody declares one for another deployment's hardware, and this router does not invent one: an admitted measurement says which cloud answered, not which silicon or which software. The rows below are what that cloud itself signed."
+          />
+        ) : (
+          <Field
+            label="TEE, as the operator declares it"
+            value={teeLabel}
+            note="A label from the router's configuration. It is what the operator says the hardware is, and nothing on this page checks it — the rows below are what the hardware itself signed."
+          />
+        )}
         <Field
           label="Evidence kind"
           value={evidence.kind}
@@ -76,13 +100,29 @@ export function Measurements({ hostname, teeLabel, gate, evidence, extension, ch
           note="When tier 1 ran, by this browser's clock. A tab left open overnight shows an old time here beside a bundle that was fresh when it was fetched."
           copyValue={checkedAt?.toISOString() ?? undefined}
         />
+        {/*
+          The provenance row, and for an external upstream it is the one row in
+          this panel that must be read before any other: it names the relay and
+          it names whose publication came through it. A reader who took this graph
+          for a document fetched from the host itself would be crediting this page
+          with a reach it does not have, and crediting the bundle with a freshness
+          the relay does not promise (ADR-008 §7).
+        */}
         <Field
           label="Bundle came from"
-          value={evidence.source === 'endpoint' ? 'the endpoint itself' : 'this router’s passthrough'}
+          value={
+            external
+              ? `this router’s relay of ${hostname}`
+              : evidence.source === 'endpoint'
+                ? 'the endpoint itself'
+                : 'this router’s passthrough'
+          }
           note={
-            evidence.source === 'endpoint'
-              ? 'A direct fetch of the host’s own /.well-known/swarm-evidence — the same document Gatekeeper reads.'
-              : 'The host would not serve this page a cross-origin request, so the bundle came from this router. Its signature was still checked here, but it may be older than what the host serves now.'
+            external
+              ? `This router fetched ${hostname}’s /.well-known/swarm-evidence and stored it; what you see is those bytes, relayed unchanged — the publication this router’s own verdict named, which may be older than what ${hostname} serves now. The upstream’s platform sends no cross-origin header, so the relay is the only way this page could read the document at all. Its signature was checked here, by this page.`
+              : evidence.source === 'endpoint'
+                ? 'A direct fetch of the host’s own /.well-known/swarm-evidence — the same document Gatekeeper reads.'
+                : 'The host would not serve this page a cross-origin request, so the bundle came from this router. Its signature was still checked here, but it may be older than what the host serves now.'
           }
         />
       </FieldGroup>
@@ -184,8 +224,12 @@ export function Measurements({ hostname, teeLabel, gate, evidence, extension, ch
       </FieldGroup>
 
       <FieldGroup
-        title="The TLS certificate this page is bound to"
-        description="Whether the signed evidence is about the connection you are actually using."
+        title={external ? 'The TLS certificate this router pinned' : 'The TLS certificate this page is bound to'}
+        description={
+          external
+            ? 'Which channel the signed evidence is about — the one this router’s egress opens to the upstream, not the one your browser opened to this router.'
+            : 'Whether the signed evidence is about the connection you are actually using.'
+        }
       >
         <Field
           label="Certificate fingerprint"

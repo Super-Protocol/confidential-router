@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../src/app/db/entities/external-endpoint.entity.js';
 import { ExternalEndpointEvent } from '../src/app/db/entities/external-endpoint-event.entity.js';
+import { ExternalCatalogService } from '../src/app/external-endpoints/index.js';
 import { createHarness, type Harness } from './app-harness.js';
 import { anonymous, type ConsoleSession, graphql, post, signIn } from './console.js';
 
@@ -395,24 +396,74 @@ describe('transparency scoping (ruling 3)', () => {
     expect(measurements.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
   });
 
-  it('tells an anonymous caller nothing about an external upstream through the public catalogue', async () => {
+  it('lists an external model to an anonymous caller — name, price and availability, nothing else', async () => {
     await register(await operator());
 
     const models = await graphql(
       anonymous(harness),
-      '{ models { id name pricing { promptPer1m } endpoint { hostname } } }',
+      `{ models { id name origin available tee pricing { promptPer1m }
+                  endpoint { hostname } externalUpstream { hostname status } } }`,
     );
 
-    // The public surface carries no endpoint URL, no trust list and no verdict
-    // detail — and today no external model either, because an unverified upstream
-    // is not routable. Listing them belongs to SUP-227, which owns the Models
-    // page and the `Model` shape; this is the standing check that the anonymous
-    // caller gains nothing in the meantime.
+    // Ruling 3's own words: the anonymous `models` query lists external models
+    // like any other — name, price, availability — and exposes no endpoint URLs,
+    // no trust list and no verdict detail. Hiding them would make the public
+    // price list misstate where inference happens.
     expect(models.errors).toBeUndefined();
+    expect(models.data?.models).toEqual([
+      {
+        id: 'partner/llama-3.3-70b:snp',
+        name: 'Llama 3.3 70B (partner)',
+        origin: 'EXTERNAL',
+        // Registered a moment ago, so no verdict admits it: listed, not routable.
+        available: false,
+        tee: null,
+        pricing: { promptPer1m: '400000' },
+        endpoint: null,
+        externalUpstream: null,
+      },
+    ]);
     const serialised = JSON.stringify(models.data);
     expect(serialised).not.toContain('partner.example');
-    expect(serialised).not.toContain('partner/llama-3.3-70b:snp');
     expect(serialised).not.toContain(MEASUREMENT);
+  });
+
+  it('gives a signed-in non-admin the upstream behind an external model', async () => {
+    const endpoint = await register(await operator());
+    const dataSource = harness.app.get(DataSource);
+    await dataSource.getRepository(ExternalEndpoint).update(
+      { id: endpoint.id },
+      {
+        status: 'verified',
+        measurementSeen: MEASUREMENT,
+        evidenceDigestSeen: 'sha256/upstream-now',
+        lastCheckedAt: new Date('2026-10-06T12:00:00.000Z'),
+      },
+    );
+    // The catalogue is an in-memory map a mutation or the status poll rebuilds;
+    // this suite wrote the verdict straight to the row, so it refreshes by hand.
+    await harness.app.get(ExternalCatalogService).refresh();
+
+    const models = await graphql(
+      await signIn(harness, MEMBER),
+      '{ models { id origin available externalUpstream { name hostname status evidenceDigestSeen } } }',
+    );
+
+    expect(models.data?.models).toEqual([
+      {
+        id: 'partner/llama-3.3-70b:snp',
+        origin: 'EXTERNAL',
+        available: true,
+        externalUpstream: {
+          name: 'partner-cloud',
+          hostname: 'partner.example',
+          // The qualifier lives in the enum value, not in a description: it is
+          // what a third-party consumer branches on (ADR-008 §1).
+          status: 'VERIFIED_BY_THIS_ROUTER',
+          evidenceDigestSeen: 'sha256/upstream-now',
+        },
+      },
+    ]);
   });
 });
 

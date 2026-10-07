@@ -21,6 +21,12 @@ import { LlmModel } from './model.model.js';
  * `models` and `model` are the only public operations in this schema. A router
  * that meters LLM traffic has to be able to say what it routes to, and at what
  * price, before anyone signs up; everything else is behind `SessionGuard`.
+ *
+ * Since ADR-008 the catalogue also lists external models — models in another
+ * deployment, reached through the attesting egress. They are listed to everyone,
+ * because a catalogue that hid them would be a price list that misstates where
+ * inference happens; what a *session* buys is `Model.externalUpstream`, the
+ * upstream's hostname and this router's verdict about it (SUP-221 ruling 3).
  */
 @Resolver(() => LlmModel)
 export class CatalogResolver {
@@ -35,7 +41,11 @@ export class CatalogResolver {
     @CurrentUser() user: SessionUser | undefined,
     @Args('tee', { nullable: true, description: 'Narrow to one TEE label.' }) tee?: string,
   ): Promise<LlmModel[]> {
-    return this.view.modelViews(await this.defaultWorkspaceId(user), tee);
+    return this.view.modelViews({
+      workspaceId: await this.defaultWorkspaceId(user),
+      signedIn: user !== undefined,
+      tee,
+    });
   }
 
   @Query(() => LlmModel, { name: 'model', nullable: true, description: 'One routable model, by id. Public.' })
@@ -44,8 +54,36 @@ export class CatalogResolver {
     @CurrentUser() user: SessionUser | undefined,
     @Args('id', { type: () => ID }) id: string,
   ): Promise<LlmModel | null> {
-    const models = await this.view.modelViews(await this.defaultWorkspaceId(user));
+    const models = await this.view.modelViews({
+      workspaceId: await this.defaultWorkspaceId(user),
+      signedIn: user !== undefined,
+    });
     return models.find((model) => model.id === id) ?? null;
+  }
+
+  /**
+   * The endpoint a page can actually verify.
+   *
+   * Public for the same reason `models` is, and with a narrower one on top: the
+   * chat's tier-1 gate needs it before the composer will open, and `/v1/evidence`
+   * already serves this deployment's own bundle to anybody who asks (SUP-191).
+   * A session adds nothing here but the viewer's own `tokensRouted30d`.
+   *
+   * Null when the router cannot tell which of its endpoints is its own — the
+   * multi-endpoint configuration `EvidenceService.ownEndpoint` refuses to guess
+   * between. A screen that needs one says so rather than verifying an arbitrary
+   * endpoint and calling it the channel.
+   */
+  @Query(() => EndpointModel, {
+    name: 'routerEndpoint',
+    nullable: true,
+    description:
+      'The endpoint this deployment publishes evidence for — the one a browser’s connection terminates at, and ' +
+      'therefore the one a page can verify. Null when this router cannot tell which of its endpoints is its own.',
+  })
+  @UseGuards(OptionalSessionGuard)
+  async routerEndpoint(@CurrentUser() user: SessionUser | undefined): Promise<EndpointModel | null> {
+    return this.view.ownEndpointView(await this.defaultWorkspaceId(user));
   }
 
   @Query(() => [EndpointModel], {

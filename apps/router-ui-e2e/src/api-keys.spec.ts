@@ -21,8 +21,9 @@ const LIVE_KEY = {
 };
 
 const MODELS = [
-  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct' },
-  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B' },
+  // `available` decides which model the key snippet names — see SUP-227.
+  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct', available: true },
+  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true },
 ];
 
 /** The API is answered from fixtures; `createApiKey` echoes back the name it was given. */

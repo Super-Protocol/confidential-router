@@ -755,3 +755,112 @@ extend type Mutation {
   removeTrustedMeasurement(id: ID!): Boolean!
 }
 ```
+
+## As shipped (SUP-227) — external models on the public catalogue
+
+The user-facing half of ADR-008 §7. The admin section above is where an external endpoint is
+*managed*; this is where its models are *offered*, and the surface it changes is the one operation
+in this schema that needs no session at all.
+
+Three decisions, and the first two are schema changes to a type that was already public.
+
+1. **One `models` list, with `origin` as the discriminator.** An external model is listed like any
+   other — a catalogue that hid them would be a price list that misstates where inference happens.
+   What must never be blended is the *attestation* a row carries, so that is enforced by
+   nullability rather than by convention: a `CONFIG` row has `endpoint` and no `externalUpstream`,
+   an `EXTERNAL` row the reverse. There is no value of `evidenceState` to read off an external row,
+   so the console cannot mix the two vocabularies even by accident (ADR-008 §1).
+2. **`Model.endpoint` and `Model.tee` are nullable now.** Both were non-null before ADR-008 and
+   both are facts about *this* deployment: there is no `endpoints` row for someone else's
+   deployment, this router publishes no evidence for its hostname, and nobody declares a TEE label
+   for its hardware. A synthetic endpoint row would have carried an `evidenceState` about a hostname
+   this deployment does not publish, which is exactly the blend decision 1 forbids; a relayed TEE
+   label would have been this router asserting a fact it has no source for. A measurement admits a
+   *cloud* and does not name its silicon.
+3. **`Model.externalUpstream` is session-scoped, the whole field** (SUP-221 ruling 3). An anonymous
+   caller gets name, price and `available` — no endpoint URLs and no verdict detail — and `null`
+   rather than a populated object with nulls in it: "there is an upstream and here is nothing about
+   it" is not a statement worth making, and `origin` already says the model is external.
+   `available` exists so that the one fact ruling 3 does allow is a field of its own rather than
+   something a reader derives from a `status` they cannot see.
+
+`routerEndpoint` is the fourth change and the one that keeps the chat honest. The endpoint the
+browser's TLS connection terminates at is always this router; for a built-in model that is also the
+endpoint serving it, which is why the chat read it off the model until now. For an external model the
+two come apart, so the gate reads `routerEndpoint` and the upstream's own evidence becomes a second,
+separately labelled check (`ExternalInspectButton`). Verifying the upstream and unlocking the
+composer on the result would gate a message on a document describing a connection the browser never
+opens.
+
+```graphql
+"""
+Where a listed model runs, and therefore which attestation applies to it.
+
+CONFIG is declared in the router config and covered by the canonical snapshot a
+user pins. EXTERNAL runs in another deployment, reached through this router's
+attesting egress — the pin covers the verifier, not the upstream (ADR-008 §1).
+"""
+enum ModelOrigin {
+  CONFIG
+  EXTERNAL
+}
+
+"""
+The deployment behind an external model, and where this router's verification of
+it stands.
+
+Deliberately smaller than `ExternalEndpoint`: no base URL, no key prefix, no
+listen port. `name` is here because it is the key of the raw-bundle relay
+(`GET /v1/evidence/{endpoint}`), which is how a browser reads the upstream's
+published evidence and verifies it itself.
+"""
+type ExternalUpstream {
+  id: ID!
+  name: String!
+  hostname: String!
+  status: ExternalEndpointStatus!
+  lastCheckedAt: DateTime
+  measurementSeen: String
+  evidenceDigestSeen: String
+}
+
+extend type Model {
+  origin: ModelOrigin!
+  """
+  Whether this router will route to it right now. Always true for CONFIG; for
+  EXTERNAL it is false unless the endpoint holds a live verdict admitting it
+  (ADR-008 decision 5) — a denied upstream's models stay listed and unavailable,
+  because a catalogue that dropped them would leave the external vocabulary with
+  nothing to say "denied by this router" about.
+  """
+  available: Boolean!
+  """Null for an EXTERNAL model. Read `externalUpstream` instead."""
+  endpoint: Endpoint
+  """Null for a CONFIG model, and null for an anonymous caller (ruling 3)."""
+  externalUpstream: ExternalUpstream
+  """Null for an EXTERNAL model: nobody declares one for another deployment."""
+  tee: String
+}
+
+extend type Query {
+  """
+  The endpoint this deployment publishes evidence for — the one a browser's
+  connection terminates at, and therefore the one a page can verify. Public, like
+  `models`: the chat's tier-1 gate needs it before the composer will open, and
+  `GET /v1/evidence` already serves this deployment's own bundle unauthenticated.
+  Null when this router cannot tell which of its endpoints is its own
+  (`EvidenceService.ownEndpoint` refuses to guess between two).
+  """
+  routerEndpoint: Endpoint
+}
+```
+
+A `tee:` argument on `models` excludes every external model, which is the filter being honest rather
+than losing rows: it narrows on an operator's declaration about this deployment's own hardware.
+
+### Screen → operations, SUP-227
+
+| Screen | Operations | Notes |
+| --- | --- | --- |
+| Models | `models` | One table. The origin badge comes from `origin`; the attestation column renders `EvidenceBadge` for a row with an `endpoint`, `ExternalAttestationBadge` for one with an `externalUpstream`, and `available` alone for an anonymous reader. The two badges share no component and no label. |
+| Chat | `chatSettings`, `routerEndpoint`, `models` | `chatModelIds` contains an external model only while its endpoint holds a live admitting verdict, and is also the scope every chat credential is minted with — so the picker and the key cannot disagree. The gate runs on `routerEndpoint`; `externalUpstream` drives the second inspect panel. |

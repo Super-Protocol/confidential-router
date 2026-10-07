@@ -215,3 +215,110 @@ describe('findUnadmitted', () => {
     expect(catalog.findUnadmitted('someone/else:snp')).toBeUndefined();
   });
 });
+
+/**
+ * The third projection: what the Models page and the chat picker read.
+ *
+ * Its one behavioural difference from `list()` is the whole reason it exists —
+ * a denied upstream's models stay in it, with `available: false`. The external
+ * vocabulary has to have something to say *denied by this router* about, and a
+ * catalogue that dropped the row would make an operator's switch and a failed
+ * attestation look identical from the outside (ADR-008 §1).
+ */
+describe('listCatalogue', () => {
+  it('is empty before anything is registered', async () => {
+    await catalog.refresh();
+
+    expect(catalog.listCatalogue()).toEqual([]);
+  });
+
+  it('lists a verified endpoint’s model as available', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+
+    await catalog.refresh();
+
+    expect(catalog.listCatalogue()).toMatchObject([
+      { id: endpoint.modelId, available: true, upstream: { name: endpoint.name, status: 'verified' } },
+    ]);
+  });
+
+  it('keeps a pending endpoint’s model, unavailable, so the catalogue can say so', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'pending' });
+
+    await catalog.refresh();
+
+    expect(catalog.list()).toEqual([]);
+    expect(catalog.listCatalogue()).toMatchObject([
+      { id: endpoint.modelId, available: false, upstream: { status: 'pending' } },
+    ]);
+  });
+
+  it('keeps a denied endpoint’s model, unavailable', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await catalog.refresh();
+
+    await setStatus(endpoint.id, 'denied');
+    await catalog.refresh();
+
+    expect(catalog.listCatalogue()).toMatchObject([
+      { id: endpoint.modelId, available: false, upstream: { status: 'denied' } },
+    ]);
+  });
+
+  it('drops a model whose endpoint the operator disabled — a switch, not a verdict', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { enabled: false });
+
+    await catalog.refresh();
+
+    // Taken out of service, so it is absent from the price list entirely rather
+    // than listed as something this router refuses.
+    expect(catalog.listCatalogue()).toEqual([]);
+  });
+
+  it('carries the prices, context and capabilities a catalogue row needs', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+
+    await catalog.refresh();
+
+    expect(catalog.listCatalogue()[0]).toMatchObject({
+      id: endpoint.modelId,
+      contextLength: 131_072,
+      capabilities: ['chat', 'completions'],
+      promptPer1mMicros: 400_000,
+      completionPer1mMicros: 800_000,
+    });
+  });
+
+  it('carries the upstream’s hostname and what the last verdict saw, and no credential', async () => {
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await dataSource
+      .getRepository(ExternalEndpoint)
+      .update({ id: endpoint.id }, { measurementSeen: 'b'.repeat(64), evidenceDigestSeen: 'sha256/upstream' });
+
+    await catalog.refresh();
+
+    const [entry] = catalog.listCatalogue();
+    expect(entry?.upstream).toMatchObject({
+      hostname: `${endpoint.name}.example`,
+      measurementSeen: 'b'.repeat(64),
+      evidenceDigestSeen: 'sha256/upstream',
+    });
+    // Smaller than `ExternalCatalogEndpoint` on purpose: the catalogue has no
+    // use for a base URL, a listen port or a sealed key, and the surfaces it
+    // feeds are readable without a session.
+    expect(JSON.stringify(entry)).not.toContain('v1.placeholder');
+    expect(entry?.upstream).not.toHaveProperty('baseUrl');
+    expect(entry?.upstream).not.toHaveProperty('listenPort');
+  });
+
+  it('replaces the list rather than merging into it', async () => {
+    await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await catalog.refresh();
+    await dataSource.getRepository(Model).delete({ origin: 'external' });
+
+    await catalog.refresh();
+
+    expect(catalog.listCatalogue()).toEqual([]);
+  });
+});

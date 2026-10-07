@@ -36,6 +36,37 @@ function open(state: VerificationState = verification(), declaredImages = DECLAR
   );
 }
 
+/**
+ * The same panel over an external upstream's relayed bundle, with the props the
+ * chat passes for one: no TEE label and no allow-list, because nobody declared
+ * either for another deployment (ADR-008 §7).
+ */
+const UPSTREAM_HOSTNAME = 'llama-33-70b.partner.example';
+
+function openExternal(state: VerificationState = verification({ gate: relayedGate() })) {
+  return render(
+    <AttestationInspector
+      open
+      onOpenChange={vi.fn()}
+      verification={state}
+      hostname={UPSTREAM_HOSTNAME}
+      teeLabel={null}
+      declaredImages={null}
+      endpointKind="external"
+    />,
+  );
+}
+
+/** The gate result the external path produces: same checks, `source: 'router'`. */
+function relayedGate() {
+  return {
+    unlocked: true,
+    checks: PASSING_CHECKS,
+    registry: null,
+    evidence: evidence({ hostname: UPSTREAM_HOSTNAME, source: 'router' as const }),
+  };
+}
+
 /** The `<dd>` beside a field's label, whatever the panel put in it. */
 function fieldValue(label: string): HTMLElement {
   const term = screen.getByText(label, { selector: 'dt' });
@@ -239,5 +270,101 @@ describe('when the evidence did not check out', () => {
     open(verification({ gate: null, checkedAt: null, pageState: 'pending', unlocked: false }));
 
     expect(screen.getByRole('status')).toHaveTextContent(/checking it here in your browser/);
+  });
+});
+
+/**
+ * The panel, pointed at an external upstream (SUP-227, ADR-008 §7).
+ *
+ * It renders the same measurements and the same graph from the same verifier —
+ * that is the requirement. What has to change is the provenance: a reader must
+ * not be able to come away thinking this page fetched the document from the host
+ * itself, nor that the channel it describes is the one their browser opened.
+ */
+describe('an external upstream’s evidence', () => {
+  it('names the relay and the upstream in the provenance row', () => {
+    openExternal();
+
+    const provenance = fieldValue('Bundle came from');
+    expect(provenance).toHaveTextContent('this router’s relay of llama-33-70b.partner.example');
+  });
+
+  it('says the bytes may be older than what the upstream serves now', () => {
+    openExternal();
+
+    // The relay serves the publication this router's verdict named, not the
+    // live document — the one thing a reader comparing digests with the
+    // upstream's own host has to know.
+    expect(fieldValue('Bundle came from')).toHaveTextContent(/may be older than what/);
+  });
+
+  it('says this page checked the signature, because it did', () => {
+    openExternal();
+
+    expect(fieldValue('Bundle came from')).toHaveTextContent(/signature was checked here/);
+  });
+
+  it('declares no TEE label rather than borrowing one', () => {
+    openExternal();
+
+    const tee = fieldValue('TEE, as the operator declares it');
+    expect(tee).toHaveTextContent(/Nobody declares one for another deployment/);
+    expect(tee).not.toHaveTextContent('Intel TDX');
+  });
+
+  it('says whose channel the pinned certificate is about', () => {
+    openExternal();
+
+    expect(screen.getByText('The TLS certificate this router pinned')).toBeInTheDocument();
+    expect(screen.queryByText('The TLS certificate this page is bound to')).not.toBeInTheDocument();
+  });
+
+  it('titles itself an external upstream and says the prompt does not go there directly', () => {
+    openExternal();
+
+    expect(screen.getByRole('heading', { name: 'Attestation for this external upstream' })).toBeInTheDocument();
+    expect(screen.getByText(/Your connection terminates at this router/)).toBeInTheDocument();
+  });
+
+  it('reports nothing compared, because nobody declared what the upstream runs', () => {
+    openExternal();
+
+    // `declaredImages: null` is already "nothing was declared" to the graph's
+    // five-verdict logic — so the signed images are listed and no mismatch is
+    // reported against an allow-list that does not exist.
+    expect(fieldValue('router-api')).toHaveTextContent('declares no image allow-list');
+  });
+
+  it('draws the graph from the relayed snapshot', async () => {
+    const user = userEvent.setup();
+    openExternal();
+
+    await user.click(screen.getByRole('tab', { name: 'Deployment graph' }));
+
+    expect((await screen.findAllByRole('button', { name: /router-api/ })).length).toBeGreaterThan(0);
+  });
+
+  it('refuses to draw anything when the relayed bundle did not check out', () => {
+    openExternal(
+      verification({
+        gate: {
+          unlocked: false,
+          checks: [{ id: 'signature', status: 'fail', detail: 'The signature did not verify.' }],
+          registry: null,
+          evidence: null,
+        },
+        pageState: 'fail',
+        unlocked: false,
+      }),
+    );
+
+    expect(screen.getByText(/Nothing below is drawn from this endpoint’s evidence/)).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Deployment graph' })).not.toBeInTheDocument();
+  });
+
+  it('says it is relaying while tier 1 is outstanding', () => {
+    openExternal(verification({ gate: null, pageState: 'pending', unlocked: false }));
+
+    expect(screen.getByRole('status')).toHaveTextContent(/through this router’s relay/);
   });
 });

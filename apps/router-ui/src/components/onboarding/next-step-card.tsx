@@ -30,6 +30,7 @@ export const NEXT_STEP_QUERY = graphql(`
     }
     models {
       id
+      available
     }
   }
 `);
@@ -67,10 +68,13 @@ export function NextStepCard(): React.ReactElement | null {
     return null;
   }
 
-  // The catalogue's first model, which is what the Keys screen names too. Absent
-  // only on a deployment that serves nothing — and then there is no snippet worth
-  // offering, so the card keeps the step and drops the paste.
-  const sampleModel = data.models[0]?.id;
+  // The catalogue's first *routable* model, which is what the Keys screen names
+  // too. `available` matters since ADR-008: an external model whose upstream
+  // holds no admitting verdict is listed and would answer this snippet with a
+  // 503, and a snippet that is meant to be runnable as pasted must not name one.
+  // Absent only on a deployment that serves nothing routable — and then there is
+  // no snippet worth offering, so the card keeps the step and drops the paste.
+  const sampleModel = data.models.find((model) => model.available)?.id;
 
   return (
     <Card className="border-brand-border" data-testid="next-step-card">

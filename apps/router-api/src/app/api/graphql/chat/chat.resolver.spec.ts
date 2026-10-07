@@ -7,6 +7,7 @@ import type { CatalogModel, CatalogService } from '../../../catalog/catalog.serv
 import type { ChatService } from '../../../chat/index.js';
 import type { routerConfig } from '../../../config.js';
 import type { ApiKey } from '../../../db/entities/api-key.entity.js';
+import type { ExternalCatalogModel, ExternalCatalogService } from '../../../external-endpoints/index.js';
 import { CHAT_KEY_NAME, ChatResolver } from './chat.resolver.js';
 
 type RouterConfig = ConfigType<typeof routerConfig>;
@@ -35,6 +36,38 @@ function model(id: string, capabilities: CatalogModel['capabilities']): CatalogM
   };
 }
 
+/**
+ * A routable external model, as `ExternalCatalogService.list()` hands them out.
+ *
+ * Membership of that list *is* the admission rule (ADR-008 decision 5): a model
+ * is in it only while its endpoint holds a live verdict. So a fixture that puts
+ * one here is a fixture about a verified upstream, and there is deliberately no
+ * knob for "external but denied" — a denied one is simply absent.
+ */
+function externalModel(id: string, capabilities: ExternalCatalogModel['capabilities']): ExternalCatalogModel {
+  return {
+    id,
+    name: id,
+    upstreamModel: id,
+    contextLength: 8_192,
+    capabilities,
+    promptPer1mMicros: 1,
+    completionPer1mMicros: 1,
+    tee: null,
+    endpoint: {
+      id: 'ext-1',
+      name: 'partner-cloud',
+      hostname: 'partner.example.test',
+      baseUrl: 'https://partner.example.test',
+      listenPort: 19_000,
+      apiKeyCiphertext: 'sealed',
+      measurementSeen: 'a'.repeat(64),
+      evidenceDigestSeen: 'sha256/upstream',
+    },
+    updatedAt: new Date('2026-10-01T00:00:00.000Z'),
+  };
+}
+
 interface Harness {
   resolver: ChatResolver;
   create: ReturnType<typeof vi.fn>;
@@ -44,7 +77,12 @@ interface Harness {
 }
 
 function build(
-  options: { chat?: Partial<typeof CHAT_DEFAULTS>; models?: CatalogModel[]; live?: ApiKey[] } = {},
+  options: {
+    chat?: Partial<typeof CHAT_DEFAULTS>;
+    models?: CatalogModel[];
+    externalModels?: ExternalCatalogModel[];
+    live?: ApiKey[];
+  } = {},
 ): Harness {
   const live = options.live ?? [];
   const create = vi.fn(async (input: { expiresAt?: Date | null }) => ({
@@ -66,6 +104,7 @@ function build(
     {
       list: () => options.models ?? [model('meta/llama-3.2-3b', ['chat', 'completions'])],
     } as unknown as CatalogService,
+    { list: () => options.externalModels ?? [] } as unknown as ExternalCatalogService,
     // The transcript store. `chatSettings` and `chatCredential` never touch it;
     // the operations that do are tested in `app/chat/chat.service.spec.ts`.
     {} as unknown as ChatService,
@@ -98,6 +137,36 @@ describe('chatSettings', () => {
         model('vendor/legacy', ['completions']),
       ],
     }).resolver.chatSettings();
+
+    expect(settings.chatModelIds).toEqual(['vendor/chatty']);
+  });
+
+  it('offers a verified external model beside the built-ins', () => {
+    const settings = build({
+      models: [model('vendor/chatty', ['chat'])],
+      externalModels: [externalModel('partner/llama-3.3-70b:tdx', ['chat'])],
+    }).resolver.chatSettings();
+
+    expect(settings.chatModelIds).toEqual(['vendor/chatty', 'partner/llama-3.3-70b:tdx']);
+  });
+
+  it('applies the capability filter to external models too', () => {
+    const settings = build({
+      models: [],
+      externalModels: [externalModel('partner/embed', ['embeddings']), externalModel('partner/chatty', ['chat'])],
+    }).resolver.chatSettings();
+
+    expect(settings.chatModelIds).toEqual(['partner/chatty']);
+  });
+
+  /*
+   * The fail-closed half of decision 5, expressed where it actually lives: an
+   * endpoint that lost its verdict is dropped from `ExternalCatalogService.list()`
+   * on the refresh the status poll triggers, so the picker and the next chat
+   * credential both lose the model without either knowing why.
+   */
+  it('offers no external model when no upstream is admitted', () => {
+    const settings = build({ models: [model('vendor/chatty', ['chat'])], externalModels: [] }).resolver.chatSettings();
 
     expect(settings.chatModelIds).toEqual(['vendor/chatty']);
   });

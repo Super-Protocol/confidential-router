@@ -12,19 +12,25 @@ vi.mock('next/navigation', () => ({
 
 const WORKSPACE_ID = TEST_WORKSPACES[0].id;
 
-/** The first id is what the snippet has to name (SUP-153). */
+/** The first routable id is what the snippet has to name (SUP-153). */
 const TEST_MODELS = ['google/gemma-2-2b-it:tee', 'meta/llama-3.2-3b-instruct:tee'];
+
+type MockedCatalogueModel = string | { id: string; available: boolean };
 
 function keysMock(
   keys: Array<{ id: string; revokedAt: string | null }>,
-  models: string[] = TEST_MODELS,
+  models: MockedCatalogueModel[] = TEST_MODELS,
 ): MockLink.MockedResponse {
   return {
     request: { query: NEXT_STEP_QUERY, variables: { workspaceId: WORKSPACE_ID } },
     result: {
       data: {
         apiKeys: keys.map((key) => ({ __typename: 'ApiKey', ...key })),
-        models: models.map((id) => ({ __typename: 'Model', id })),
+        models: models.map((model) =>
+          typeof model === 'string'
+            ? { __typename: 'Model', id: model, available: true }
+            : { __typename: 'Model', ...model },
+        ),
       },
     },
     maxUsageCount: Number.POSITIVE_INFINITY,
@@ -61,6 +67,32 @@ describe('NextStepCard', () => {
     // the deployment does not serve, as the first thing an invited account copies.
     expect(card).toHaveTextContent(TEST_MODELS[0]);
     expect(card).not.toHaveTextContent(PLACEHOLDER_MODEL);
+  });
+
+  it('skips a listed model this router will not route to', async () => {
+    renderWithSession(<NextStepCard />, {
+      mocks: [
+        withBalance('100000000'),
+        // An external model whose upstream holds no admitting verdict (ADR-008
+        // decision 5): listed in the catalogue, and a 503 to the snippet that
+        // names it. The whole promise of this card is one runnable paste.
+        keysMock([], [{ id: 'partner/llama-3.3-70b:snp', available: false }, TEST_MODELS[0] as string]),
+      ],
+    });
+
+    const card = await screen.findByTestId('next-step-card');
+    expect(card).toHaveTextContent(TEST_MODELS[0]);
+    expect(card).not.toHaveTextContent('partner/llama-3.3-70b:snp');
+  });
+
+  it('drops the snippet when nothing in the catalogue is routable', async () => {
+    renderWithSession(<NextStepCard />, {
+      mocks: [withBalance('100000000'), keysMock([], [{ id: 'partner/llama-3.3-70b:snp', available: false }])],
+    });
+
+    const card = await screen.findByTestId('next-step-card');
+    expect(card).toHaveTextContent('One step to go.');
+    expect(card).not.toHaveTextContent('from openai import OpenAI');
   });
 
   it('keeps the step but drops the snippet when the catalogue is empty', async () => {
