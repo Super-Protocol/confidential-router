@@ -2,7 +2,7 @@ import type { MockLink } from '@apollo/client/testing';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { publishedEndpoint } from '../../test-fixtures';
+import { publishedEndpoint, verifiedUpstream } from '../../test-fixtures';
 import { renderWithSession, TEST_WORKSPACES } from '../../test-utils';
 import { typedSessionMock } from '../typed-session';
 import { ChatScreen } from './chat-screen';
@@ -15,6 +15,7 @@ import {
   CREATE_CHAT_THREAD,
   DELETE_CHAT_THREAD,
 } from './operations';
+import { runEvidenceGate } from './verification/evidence-gate';
 
 /**
  * The two browser-side verification tiers are unit-tested against the
@@ -44,6 +45,7 @@ vi.mock('./verification/extension-bridge', async (importOriginal) => ({
 
 const WORKSPACE_ID = TEST_WORKSPACES[0].id;
 const MODEL_ID = 'meta/llama-3.3-70b-instruct:tdx';
+const EXTERNAL_MODEL_ID = 'partner/llama-3.3-70b:snp';
 
 const PASSING_GATE = {
   unlocked: true,
@@ -126,16 +128,42 @@ function model(overrides: Record<string, unknown> = {}) {
     contextLength: 131_072,
     capabilities: ['CHAT' as const, 'COMPLETIONS' as const],
     tee: 'Intel TDX + H100 CC',
+    origin: 'CONFIG' as const,
     pricing: { __typename: 'Pricing' as const, promptPer1m: '350000', completionPer1m: '900000' },
     endpoint: publishedEndpoint(),
+    externalUpstream: null,
     ...overrides,
   };
+}
+
+/**
+ * A model in another deployment: no `endpoint`, an `externalUpstream`. The gate
+ * then has to fall back to `routerEndpoint` — the channel this browser is
+ * actually on (ADR-008 §1).
+ */
+function externalChatModel(overrides: Record<string, unknown> = {}) {
+  return model({
+    id: EXTERNAL_MODEL_ID,
+    name: 'Llama 3.3 70B (partner)',
+    tee: null,
+    origin: 'EXTERNAL' as const,
+    endpoint: null,
+    externalUpstream: verifiedUpstream(),
+    ...overrides,
+  });
 }
 
 function screenMock(overrides: Record<string, unknown> = {}): MockLink.MockedResponse {
   return {
     request: { query: CHAT_SCREEN_QUERY },
-    result: { data: { chatSettings: settings(), models: [model()], ...overrides } },
+    result: {
+      data: {
+        chatSettings: settings(),
+        routerEndpoint: publishedEndpoint(),
+        models: [model()],
+        ...overrides,
+      },
+    },
     maxUsageCount: Number.POSITIVE_INFINITY,
   };
 }
@@ -695,5 +723,156 @@ describe('a deployment without the chat', () => {
     render([screenMock({ chatSettings: settings({ chatModelIds: [] }) })]);
 
     expect(await screen.findByText(/No chat-capable model is served/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * An external model in the chat (SUP-227, ADR-008 §7).
+ *
+ * The one thing that must not slip here is *which* endpoint gates the composer.
+ * The browser's channel terminates at this router whichever model is picked, so
+ * tier 1 runs on `routerEndpoint` — and the upstream's own evidence is a second,
+ * separately labelled check that unlocks nothing.
+ */
+describe('a model in another deployment', () => {
+  beforeEach(() => {
+    gate.result = PASSING_GATE;
+    bridge.outcome = { status: 'absent' };
+  });
+
+  function externalMocks() {
+    return [
+      screenMock({
+        chatSettings: settings({ chatModelIds: [EXTERNAL_MODEL_ID] }),
+        models: [externalChatModel()],
+      }),
+      threadsMock([]),
+      threadMock([]),
+    ];
+  }
+
+  it('gates the composer on this router’s endpoint, not on the upstream', async () => {
+    render(externalMocks());
+
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled());
+    // Tier 1 asked about the endpoint the browser is connected to. Had it asked
+    // about the upstream, the composer would be gated on a document describing a
+    // connection this browser never opens.
+    const calls = vi.mocked(runEvidenceGate).mock.calls.map(([options]) => options);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ hostname: publishedEndpoint().hostname, endpointName: publishedEndpoint().name }),
+      ]),
+    );
+  });
+
+  it('runs a second, relay-only check for the upstream', async () => {
+    render(externalMocks());
+    await screen.findByRole('button', { name: 'Inspect upstream attestation' });
+
+    const calls = vi.mocked(runEvidenceGate).mock.calls.map(([options]) => options);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          hostname: verifiedUpstream().hostname,
+          endpointName: 'partner-cloud',
+          kind: 'external',
+        }),
+      ]),
+    );
+  });
+
+  it('offers both panels, and labels which is which', async () => {
+    render(externalMocks());
+
+    expect(await screen.findByRole('button', { name: 'Inspect upstream attestation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inspect attestation' })).toBeInTheDocument();
+  });
+
+  it('says where the model runs, so the badge above is not misread', async () => {
+    render(externalMocks());
+
+    const note = await screen.findByText(/This model runs in another deployment/);
+    expect(note).toHaveTextContent(verifiedUpstream().hostname);
+    // The badge is about this router; the note is what stops a reader reading it
+    // as a statement about where the prompt ends up.
+    expect(note).toHaveTextContent(/the badge above is about this router/i);
+  });
+
+  it('badges the picker row as external, and puts no verdict in it', async () => {
+    render(externalMocks());
+
+    const picker = await screen.findByRole('combobox', { name: 'Model' });
+    expect(screen.getByText('External')).toBeInTheDocument();
+    // The picker carries origin and price and neither vocabulary: admission is
+    // the API's (`chatModelIds`), and a row that said "verified by this router"
+    // beside a trigger that also shows the router's own badge would be the two
+    // vocabularies in one control (ADR-008 §1).
+    for (const word of ['Verified by this router', 'Denied by this router', 'Published', 'Stale', 'Not published']) {
+      expect(picker).not.toHaveTextContent(word);
+    }
+  });
+
+  it('keeps the composer shut when the router cannot name its own endpoint', async () => {
+    render([
+      screenMock({
+        chatSettings: settings({ chatModelIds: [EXTERNAL_MODEL_ID] }),
+        routerEndpoint: null,
+        models: [externalChatModel()],
+      }),
+      threadsMock([]),
+      threadMock([]),
+    ]);
+
+    expect(
+      await screen.findByText(/cannot tell which of its endpoints your browser is connected to/),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Message')).toBeDisabled();
+  });
+
+  /*
+   * The regression this pair exists for: `Model.endpoint` is nullable now, so a
+   * reader can move from a model whose gate passed to one the screen has no
+   * endpoint for at all. Before, "no endpoint" meant "no models", so no verdict
+   * could ever have been reached first.
+   */
+  it('drops the previous model’s verdict when there is nothing left to check', async () => {
+    const user = userEvent.setup();
+    render([
+      screenMock({
+        chatSettings: settings({ chatModelIds: [MODEL_ID, EXTERNAL_MODEL_ID] }),
+        routerEndpoint: null,
+        models: [model(), externalChatModel()],
+      }),
+      threadsMock([]),
+      threadMock([]),
+    ]);
+
+    // The built-in model carries its own endpoint, so tier 1 runs and unlocks.
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled());
+
+    await user.click(screen.getByRole('combobox', { name: 'Model' }));
+    await user.click(await screen.findByRole('option', { name: /Llama 3\.3 70B \(partner\)/ }));
+
+    // An open composer here would be a verdict about a different endpoint
+    // holding the gate for a model nobody checked.
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeDisabled());
+  });
+
+  it('still offers the upstream panel when the router cannot name its own endpoint', async () => {
+    render([
+      screenMock({
+        chatSettings: settings({ chatModelIds: [EXTERNAL_MODEL_ID] }),
+        routerEndpoint: null,
+        models: [externalChatModel()],
+      }),
+      threadsMock([]),
+      threadMock([]),
+    ]);
+
+    // It needs the upstream and nothing else — and this is where checking the
+    // other end yourself is worth most, because there is no badge to read.
+    expect(await screen.findByRole('button', { name: 'Inspect upstream attestation' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Inspect attestation' })).not.toBeInTheDocument();
   });
 });

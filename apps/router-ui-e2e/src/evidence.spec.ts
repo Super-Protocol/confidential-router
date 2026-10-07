@@ -1,12 +1,14 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
   CONSOLE_OPERATIONS,
+  MIXED_CATALOGUE_DATA,
   PUBLISHED_DIGEST_HEX,
   PUBLISHED_HOST,
   PUBLISHED_JWS,
   REFRESHED_JWS,
   ROTATING_HOST,
   UNPUBLISHED_HOST,
+  UPSTREAM_HOST,
 } from './evidence-fixtures';
 import { mockClipboard, signIn } from './fixtures';
 
@@ -127,5 +129,80 @@ test.describe('Models', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Nothing published' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Copy evidence JWS' })).toBeDisabled();
+  });
+});
+
+/**
+ * External models on the Models page (SUP-227, ADR-008 §7).
+ *
+ * The component tests pin the branching; what a real browser adds here is the
+ * thing the acceptance criterion is actually about — both vocabularies rendered
+ * into the *same table*, each confined to its own cell. A regression that blended
+ * them would still satisfy a per-component assertion.
+ */
+test.describe('Models, with an external endpoint', () => {
+  const mixed = { ...CONSOLE_OPERATIONS, ModelCatalogue: MIXED_CATALOGUE_DATA };
+
+  function externalRow(page: Page) {
+    return page
+      .getByRole('table', { name: 'Model catalogue' })
+      .getByRole('row', { name: /Llama 3\.3 70B \(partner\)/ });
+  }
+
+  test('badges the external row and nothing else', async ({ page, baseURL }) => {
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, mixed);
+    await page.goto('/models');
+
+    await expect(externalRow(page).getByText('External')).toBeVisible();
+    // One badge in the whole table: the information is "this one is different",
+    // which an absent badge on everything else is what makes legible.
+    await expect(page.getByText('External', { exact: true })).toHaveCount(1);
+  });
+
+  test('renders both vocabularies in one table, neither borrowing the other’s words', async ({ page, baseURL }) => {
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, mixed);
+    await page.goto('/models');
+
+    await expect(
+      page.getByRole('button', { name: `Attestation of ${UPSTREAM_HOST}: Verified by this router` }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: `Evidence for ${PUBLISHED_HOST}: Published` })).toBeVisible();
+
+    // The external row carries no publication word, and the own-endpoint rows
+    // carry no verdict — the separation ADR-008 §1 makes a contract.
+    const external = externalRow(page);
+    for (const word of ['Published', 'Stale', 'Not published']) {
+      await expect(external.getByText(word, { exact: true })).toHaveCount(0);
+    }
+    const ownRow = page
+      .getByRole('table', { name: 'Model catalogue' })
+      .getByRole('row', { name: /Llama 3\.3 70B Instruct/ });
+    await expect(ownRow.getByText(/by this router/)).toHaveCount(0);
+  });
+
+  test('says whose verdict it is, and what a measurement does not pin', async ({ page, baseURL }) => {
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, mixed);
+    await page.goto('/models');
+
+    await page.getByRole('button', { name: `Attestation of ${UPSTREAM_HOST}: Verified by this router` }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'This router verified this upstream' })).toBeVisible();
+    await expect(dialog).toContainText('not by you');
+    await expect(dialog).toContainText('admits a cloud');
+  });
+
+  test('declares no TEE label for another deployment’s hardware', async ({ page, baseURL }) => {
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, mixed);
+    await page.goto('/models');
+
+    // The TEE filter narrows on an operator's declaration about *this*
+    // deployment, so selecting one hides the external row rather than guessing.
+    await page.getByRole('tab', { name: 'AMD SEV-SNP' }).click();
+    await expect(page.getByText('Llama 3.3 70B (partner)')).toHaveCount(0);
   });
 });

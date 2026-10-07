@@ -23,6 +23,17 @@ import { mockClipboard, signIn } from './fixtures';
 const MODEL_ID = 'meta/llama-3.3-70b-instruct:tdx';
 const ENDPOINT_HOST = 'router.e2e.swarm.cloud';
 
+/** This deployment's own endpoint, served both as `routerEndpoint` and on the model. */
+const CHAT_ENDPOINT = {
+  __typename: 'Endpoint',
+  id: 'ep-1',
+  name: 'confidential-router',
+  hostname: ENDPOINT_HOST,
+  tee: 'Intel TDX + H100 CC',
+  evidenceState: 'PUBLISHED',
+  latestEvidence: null,
+};
+
 function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = {}) {
   return {
     ChatScreen: {
@@ -36,6 +47,10 @@ function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = 
         chatModelIds: [MODEL_ID],
         ...overrides.chatSettings,
       },
+      // The endpoint the browser's connection terminates at, which is what tier 1
+      // runs against. For a config model it is also the endpoint serving it; the
+      // two only come apart for an external model (SUP-227).
+      routerEndpoint: CHAT_ENDPOINT,
       models: [
         {
           __typename: 'Model',
@@ -44,16 +59,10 @@ function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = 
           contextLength: 128_000,
           capabilities: ['CHAT', 'COMPLETIONS'],
           tee: 'Intel TDX + H100 CC',
+          origin: 'CONFIG',
           pricing: { __typename: 'Pricing', promptPer1m: '280000', completionPer1m: '420000' },
-          endpoint: {
-            __typename: 'Endpoint',
-            id: 'ep-1',
-            name: 'confidential-router',
-            hostname: ENDPOINT_HOST,
-            tee: 'Intel TDX + H100 CC',
-            evidenceState: 'PUBLISHED',
-            latestEvidence: null,
-          },
+          endpoint: CHAT_ENDPOINT,
+          externalUpstream: null,
         },
       ],
     },

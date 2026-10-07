@@ -3,6 +3,7 @@ import type { VerificationState } from './components/chat/verification/use-verif
 import type {
   EndpointEvidenceFieldsFragment,
   EvidenceSnapshotFieldsFragment,
+  ExternalUpstreamFieldsFragment,
   ModelCatalogueQuery,
   OverviewQuery,
 } from './generated/graphql';
@@ -309,23 +310,80 @@ function dayPoint(bucket: string, weight: number): OverviewQuery['activitySeries
   });
 }
 
+/**
+ * An upstream this router has verified, as the catalogue hands it over to a
+ * signed-in reader.
+ *
+ * The hostname is deliberately in somebody else's namespace: every fixture host
+ * above is `*.tee.swarm.cloud`, this deployment's own, and a test that confuses
+ * the two vocabularies should read wrong at a glance.
+ */
+export function verifiedUpstream(
+  overrides: Partial<ExternalUpstreamFieldsFragment> = {},
+): ExternalUpstreamFieldsFragment {
+  return typed('ExternalUpstream', {
+    id: 'ext-1',
+    name: 'partner-cloud',
+    hostname: 'llama-33-70b.partner.example',
+    status: 'VERIFIED_BY_THIS_ROUTER' as const,
+    lastCheckedAt: '2026-10-06T11:58:00.000Z',
+    measurementSeen: 'a'.repeat(64),
+    evidenceDigestSeen: 'sha256/Qd4sB7nR1wYvT9xQmL2aZc3Ef5JhUpGi7NrXoVeSbAo',
+    ...overrides,
+  });
+}
+
+type CatalogueModelFixture = ModelCatalogueQuery['models'][number];
+
+/** A model in this deployment's own cluster space. */
+function configModel(
+  overrides: Partial<CatalogueModelFixture> & Pick<CatalogueModelFixture, 'id'>,
+): CatalogueModelFixture {
+  return typed('Model', {
+    slug: overrides.id,
+    name: 'Llama 3.3 70B Instruct',
+    contextLength: 128_000,
+    tee: 'Intel TDX + H100 CC',
+    origin: 'CONFIG' as const,
+    available: true,
+    pricing: typed('Pricing', { promptPer1m: '280000', completionPer1m: '420000' }),
+    endpoint: publishedEndpoint(),
+    externalUpstream: null,
+    ...overrides,
+  });
+}
+
+/**
+ * A model on an external endpoint, with the two fields a config row has filled
+ * in the other way round: no `endpoint`, an `externalUpstream`.
+ *
+ * Pass `externalUpstream: null` for the anonymous reader's view of the same row
+ * (SUP-221 ruling 3) — name, price and `available`, and no verdict detail.
+ */
+export function externalModel(overrides: Partial<CatalogueModelFixture> = {}): CatalogueModelFixture {
+  const id = overrides.id ?? 'partner/llama-3.3-70b:snp';
+  return typed('Model', {
+    id,
+    slug: id,
+    name: 'Llama 3.3 70B (partner)',
+    contextLength: 128_000,
+    tee: null,
+    origin: 'EXTERNAL' as const,
+    available: true,
+    pricing: typed('Pricing', { promptPer1m: '400000', completionPer1m: '800000' }),
+    endpoint: null,
+    externalUpstream: verifiedUpstream(),
+    ...overrides,
+  });
+}
+
 export function catalogueData(overrides: Partial<ModelCatalogueQuery> = {}): ModelCatalogueQuery {
   return {
     models: [
-      typed('Model', {
-        id: 'meta/llama-3.3-70b-instruct:tdx',
-        slug: 'meta/llama-3.3-70b-instruct:tdx',
-        name: 'Llama 3.3 70B Instruct',
-        contextLength: 128_000,
-        tee: 'Intel TDX + H100 CC',
-        pricing: typed('Pricing', { promptPer1m: '280000', completionPer1m: '420000' }),
-        endpoint: publishedEndpoint(),
-      }),
-      typed('Model', {
+      configModel({ id: 'meta/llama-3.3-70b-instruct:tdx' }),
+      configModel({
         id: 'alibaba/qwen2.5-72b-instruct:snp',
-        slug: 'alibaba/qwen2.5-72b-instruct:snp',
         name: 'Qwen2.5 72B Instruct',
-        contextLength: 128_000,
         tee: 'AMD SEV-SNP',
         pricing: typed('Pricing', { promptPer1m: '240000', completionPer1m: '360000' }),
         endpoint: unpublishedEndpoint(),
