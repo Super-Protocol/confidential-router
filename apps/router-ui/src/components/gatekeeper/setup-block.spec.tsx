@@ -33,11 +33,18 @@ function releaseMock(): MockLink.MockedResponse {
   };
 }
 
-/** Every command the block currently renders, in order, wherever it is mounted. */
+/** Every command of the numbered sequence, in order, wherever the block is mounted. */
 function renderedCommands(): string[] {
   const block = document.querySelector('[data-testid="gatekeeper-setup"]');
   expect(block).not.toBeNull();
-  return [...(block?.querySelectorAll('pre code') ?? [])].map((node) => node.textContent ?? '');
+  return [...(block?.querySelectorAll('ol pre code') ?? [])].map((node) => node.textContent ?? '');
+}
+
+/** The commands of the collapsed test-build section. */
+function testBuildCommands(): string[] {
+  const section = document.querySelector('[data-testid="gatekeeper-setup-test-builds"]');
+  expect(section).not.toBeNull();
+  return [...(section?.querySelectorAll('pre code') ?? [])].map((node) => node.textContent ?? '');
 }
 
 beforeEach(() => {
@@ -62,12 +69,40 @@ describe('GatekeeperSetupBlock', () => {
 
     const commands = renderedCommands();
 
-    expect(commands).toHaveLength(6);
-    for (const command of commands) {
+    expect(commands).toHaveLength(5);
+    for (const command of [...commands, ...testBuildCommands()]) {
       expect(command).toMatch(/^[^<>]*$/);
     }
     expect(commands.some((command) => command.includes(`--upstream ${CONFIG.apiOrigin}`))).toBe(true);
-    expect(commands.some((command) => command.includes(CONFIG.swarmRootPemUrl))).toBe(true);
+  });
+
+  // SUP-253: a cloud built by the release flow is admitted on its signed
+  // measurement, so the default path has nothing to paste about trust. The
+  // root certificate is still one click away, for a build the registry never
+  // signed — and it is not in the copy-all script.
+  it('keeps the root certificate out of the default sequence and in the collapsed test-build section', () => {
+    render(
+      <MockedProvider mocks={[releaseMock()]}>
+        <GatekeeperScreen />
+      </MockedProvider>,
+    );
+
+    const commands = renderedCommands();
+    expect(commands.some((command) => command.includes('trust roots add'))).toBe(false);
+    expect(commands.some((command) => command.includes(CONFIG.swarmRootPemUrl))).toBe(false);
+
+    const section = screen.getByTestId('gatekeeper-setup-test-builds');
+    expect(section.tagName).toBe('DETAILS');
+    expect((section as HTMLDetailsElement).open).toBe(false);
+    expect(section).toHaveTextContent('Optional: test or unsigned builds');
+    expect(section).toHaveTextContent('not signed in the Super Protocol registry');
+    expect(section).toHaveTextContent('without a restart');
+
+    const optional = testBuildCommands();
+    expect(optional).toEqual([
+      'gatekeeper trust measurements add --from-upstream router',
+      `curl -fsSL ${CONFIG.swarmRootPemUrl} | gatekeeper trust roots add swarm-prod --pem-file -`,
+    ]);
   });
 
   // SUP-153/165 were catalogue copies drifting apart; this is the same failure

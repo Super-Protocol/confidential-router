@@ -174,6 +174,16 @@ attested. Because it proves less, it is reported as a different verdict:
 and in `input.attestation.rootAttestation.measurementSource`, so a stricter
 deployment can refuse it in one Rego line.
 
+**How often the registry is asked.** The attested-root verdict for a root is
+cached for `attestedRoots.cacheTtl` — 10 minutes by default — and a denial is
+cached the same as an admission. Every endpoint re-attests on its own schedule
+(`reattestInterval`, 5 minutes by default), so the first re-attestation after the
+cache expires looks the measurement up again. A gatekeeper that is already
+running therefore admits a cloud whose measurement Super Protocol signs later
+within about `cacheTtl + reattestInterval` (15 minutes by default) with no
+restart; set a shorter `attestedRoots.cacheTtl` to tighten that, or send `SIGHUP`
+to rebuild the verifier and ask straight away.
+
 Every edit goes through `config.Document`, so the comments and formatting of a
 hand-written file survive, and every save is atomic.
 

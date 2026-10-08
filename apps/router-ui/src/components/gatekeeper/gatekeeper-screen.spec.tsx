@@ -7,7 +7,7 @@ import { DEFAULT_API_ORIGIN } from '../../lib/public-config';
 import { GatekeeperScreen } from './gatekeeper-screen';
 import { INSTALL_COMMANDS } from './install-commands';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
-import { UNSIGNED_MEASUREMENT_COMMAND } from './setup-commands';
+import { ENDPOINT_NAME } from './setup-commands';
 
 const RELEASE = {
   __typename: 'GatekeeperRelease',
@@ -135,18 +135,23 @@ describe('GatekeeperScreen', () => {
   });
 
   // The escape hatch for a stand the Super Protocol registry never signed. It is
-  // deliberately not a fifth step — the four steps are the path — but it has to
-  // be on the page, because the alternative an operator finds on their own is to
-  // fetch that cloud's certificate out of band and trust it blind.
-  it("names the command that accepts an unsigned cloud's measurement", async () => {
+  // deliberately not a step — the registry is the path — but it has to be on the
+  // page, because the alternative an operator finds on their own is to fetch that
+  // cloud's certificate out of band and trust it blind.
+  it("keeps the unsigned-build commands on the page, collapsed under 'Optional: test or unsigned builds'", async () => {
     renderScreen();
 
-    expect(screen.getByText(UNSIGNED_MEASUREMENT_COMMAND)).toBeInTheDocument();
+    const optional = screen.getByText('Optional: test or unsigned builds').closest('details');
+    expect(optional).not.toBeNull();
+    expect(optional?.open).toBe(false);
+
+    const measurement = `gatekeeper trust measurements add --from-upstream ${ENDPOINT_NAME}`;
+    expect(screen.getByText(measurement)).toBeInTheDocument();
     expect(screen.getByText(/attested \(operator-pinned\)/)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: "Copy: accept this cloud's measurement" }));
+    await userEvent.click(screen.getByRole('button', { name: 'Copy: Accept this cloud\u2019s measurement yourself' }));
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(UNSIGNED_MEASUREMENT_COMMAND);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(measurement);
   });
 
   it('shows the data flow, the four checks and both fail modes — the page is an explainer, not a control panel', () => {

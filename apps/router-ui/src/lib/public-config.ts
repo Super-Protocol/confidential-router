@@ -23,7 +23,8 @@ export interface PublicConfig {
   authCallbackUrl: string;
   /**
    * Where the Swarm cloud's root certificate authority is published, for the
-   * `gatekeeper trust roots add` line of the setup block (SUP-193).
+   * `gatekeeper trust roots add` line of the setup block's optional test-build
+   * section (SUP-193, SUP-253).
    *
    * It is the one value in that sequence this deployment cannot *derive*, and
    * deliberately so: a gatekeeper that took its trust anchor from the endpoint

@@ -224,6 +224,53 @@ func TestVerifyCachesVerdicts(t *testing.T) {
 	}
 }
 
+// TestVerifyRechecksOnceTheCacheExpires is what lets a long-running gatekeeper
+// admit a cloud whose measurement is signed after it started (SUP-253): a
+// verdict — a denial included — is reused only for CacheTTL, and the first
+// Verify after that derives it again, registry lookup and all. No restart, and
+// no separate refresh loop: the endpoint's own re-attestation is the trigger.
+func TestVerifyRechecksOnceTheCacheExpires(t *testing.T) {
+	cert := newRootCert(t, rootCertOptions{challengeType: "sev-snp", evidence: []byte{0xff}})
+	now := time.Unix(0, 0)
+	verifier := &Verifier{Registry: &stubRegistry{}, CacheTTL: time.Minute, Now: func() time.Time { return now }}
+
+	first, err := verifier.Verify(context.Background(), cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Minute)
+	if again, _ := verifier.Verify(context.Background(), cert); again != first {
+		t.Error("the verdict was re-derived before CacheTTL had passed")
+	}
+
+	now = now.Add(time.Second)
+	fresh, err := verifier.Verify(context.Background(), cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh == first {
+		t.Error("a verdict older than CacheTTL was reused; a newly signed measurement would stay denied")
+	}
+}
+
+// TestVerifyDefaultCacheTTLIsTenMinutes pins the number the setup guide quotes.
+func TestVerifyDefaultCacheTTLIsTenMinutes(t *testing.T) {
+	cert := newRootCert(t, rootCertOptions{challengeType: "sev-snp", evidence: []byte{0xff}})
+	now := time.Unix(0, 0)
+	verifier := &Verifier{Registry: &stubRegistry{}, Now: func() time.Time { return now }}
+
+	first, _ := verifier.Verify(context.Background(), cert)
+	now = now.Add(10 * time.Minute)
+	if again, _ := verifier.Verify(context.Background(), cert); again != first {
+		t.Error("the default cache expired before ten minutes")
+	}
+	now = now.Add(time.Second)
+	if again, _ := verifier.Verify(context.Background(), cert); again == first {
+		t.Error("the default cache outlived ten minutes")
+	}
+}
+
 // TestBindsPublicKey covers the check on its own, in both directions.
 func TestBindsPublicKey(t *testing.T) {
 	var digest [32]byte

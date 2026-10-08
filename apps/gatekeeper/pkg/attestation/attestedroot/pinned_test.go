@@ -120,7 +120,12 @@ func TestAdmitMeasurementRefusesAnUnvouchedMeasurement(t *testing.T) {
 	if v.AdmitMeasurement(context.Background(), result, EvidenceSevSnpQemu) {
 		t.Fatal("an unsigned, unpinned measurement was admitted")
 	}
-	for _, want := range []string{pinnedMeasurement, "trusted registry", "trustedMeasurements"} {
+	for _, want := range []string{
+		pinnedMeasurement, "trusted registry", "trustedMeasurements",
+		// SUP-253: an unsigned image is the expected state of a test build, and
+		// the reason points at the setup section that handles it.
+		"unsigned or test build", "Optional: test or unsigned builds",
+	} {
 		if !strings.Contains(result.Reason, want) {
 			t.Errorf("reason = %q, want it to mention %q", result.Reason, want)
 		}

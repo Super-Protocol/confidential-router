@@ -7,6 +7,7 @@ import {
   setupScript,
   setupSteps,
   TRUST_ROOT_NAME,
+  testBuildSteps,
 } from './setup-commands';
 
 const [SH, POWERSHELL] = INSTALL_COMMANDS;
@@ -24,14 +25,18 @@ function input(overrides: Partial<SetupInput> = {}): SetupInput {
 
 describe('setupSteps', () => {
   it('is the sequence the landing page ships, install first (SUP-155 parity)', () => {
-    expect(setupSteps(input()).map((step) => step.id)).toEqual([
-      'install',
-      'init',
-      'trust-root',
-      'endpoint',
-      'pin',
-      'run',
-    ]);
+    expect(setupSteps(input()).map((step) => step.id)).toEqual(['install', 'init', 'endpoint', 'pin', 'run']);
+  });
+
+  // SUP-253: the registry of signed measurements is the default anchor, so no
+  // step of the default path trusts a certificate.
+  it('has no trust-root step and never touches the published root certificate', () => {
+    for (const platform of INSTALL_COMMANDS) {
+      for (const step of setupSteps(input({ platform }))) {
+        expect(step.command).not.toContain('trust roots add');
+        expect(step.command).not.toContain('swarm-root.pem');
+      }
+    }
   });
 
   // The bug SUP-193 was opened for: a page reached from the deployment that *is*
@@ -40,7 +45,10 @@ describe('setupSteps', () => {
   it('renders every command free of angle-bracket placeholders', () => {
     for (const platform of INSTALL_COMMANDS) {
       for (const evidenceDigestHex of [DIGEST, null]) {
-        for (const step of setupSteps(input({ platform, evidenceDigestHex }))) {
+        for (const step of [
+          ...setupSteps(input({ platform, evidenceDigestHex })),
+          ...testBuildSteps(input({ platform, evidenceDigestHex })),
+        ]) {
           expect(step.command).toMatch(/^[^<>]*$/);
         }
       }
@@ -56,8 +64,8 @@ describe('setupSteps', () => {
     expect(GATEKEEPER_LISTEN.startsWith('127.0.0.1:')).toBe(true);
   });
 
-  it('fetches the trust root from where it is published, not from the endpoint under inspection', () => {
-    const trustRoot = setupSteps(input()).find((step) => step.id === 'trust-root');
+  it('fetches the test-build trust root from where it is published, not from the endpoint under inspection', () => {
+    const trustRoot = testBuildSteps(input()).find((step) => step.id === 'trust-root');
 
     expect(trustRoot?.command).toContain('https://router.example.com/swarm-root.pem');
     expect(trustRoot?.command).toContain(`gatekeeper trust roots add ${TRUST_ROOT_NAME}`);
@@ -86,17 +94,28 @@ describe('setupSteps', () => {
 
     expect(windows.find((step) => step.id === 'install')?.command).toBe(POWERSHELL.command);
     // PowerShell pipes objects, so the PEM goes to a file rather than stdin.
-    expect(windows.find((step) => step.id === 'trust-root')?.command).not.toContain('--pem-file -');
-    expect(setupSteps(input()).find((step) => step.id === 'trust-root')?.command).toContain('--pem-file -');
+    const rootFor = (platform: typeof SH) =>
+      testBuildSteps(input({ platform })).find((step) => step.id === 'trust-root')?.command;
+    expect(rootFor(POWERSHELL)).not.toContain('--pem-file -');
+    expect(rootFor(SH)).toContain('--pem-file -');
   });
 
   it('leaves the shell-independent commands identical across platforms', () => {
     const shared = (platform: typeof SH) =>
       setupSteps(input({ platform }))
-        .filter((step) => step.id !== 'install' && step.id !== 'trust-root')
+        .filter((step) => step.id !== 'install')
         .map((step) => step.command);
 
     expect(shared(POWERSHELL)).toEqual(shared(SH));
+  });
+});
+
+describe('testBuildSteps', () => {
+  it('offers the measurement pin first, the root certificate second', () => {
+    expect(testBuildSteps(input()).map((step) => step.id)).toEqual(['trust-measurement', 'trust-root']);
+    expect(testBuildSteps(input())[0].command).toBe(
+      `gatekeeper trust measurements add --from-upstream ${ENDPOINT_NAME}`,
+    );
   });
 });
 
@@ -106,5 +125,11 @@ describe('setupScript', () => {
 
     expect(setupScript(input())).toBe(steps.map((step) => step.command).join('\n'));
     expect(setupScript(input()).split('\n')).toHaveLength(steps.length);
+  });
+
+  it('leaves the test-build commands out of the script', () => {
+    for (const step of testBuildSteps(input())) {
+      expect(setupScript(input())).not.toContain(step.command);
+    }
   });
 });

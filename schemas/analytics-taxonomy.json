@@ -152,6 +152,7 @@
             "gatekeeper_sdk",
             "install",
             "gatekeeper_setup",
+            "gatekeeper_test_build",
             "gatekeeper_verdict"
           ],
           "example": "curl"
