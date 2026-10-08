@@ -25,12 +25,14 @@ const STATUS_PRESENTATION: Record<ExternalEndpointStatus, StatusPresentation> = 
   PENDING: {
     label: 'Pending',
     variant: 'secondary',
-    detail: 'Registered, no verdict yet. It serves nothing until one arrives.',
+    detail:
+      'No verdict yet, or its deployment is awaiting approval (digest-not-pinned). It serves nothing until both trust factors hold.',
   },
   VERIFIED_BY_THIS_ROUTER: {
     label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
     variant: 'success',
-    detail: 'Evidence verified, measurement on the trust list, certificate pinned. Its models are routable.',
+    detail:
+      'Evidence verified, cloud measurement on the trust list, deployment digest pinned, certificate pinned. Its models are routable.',
   },
   DENIED_BY_THIS_ROUTER: {
     label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER,
@@ -63,15 +65,16 @@ export interface EventPresentation {
 
 /**
  * The timeline's labels. `DIGEST_CHANGED` and `MEASUREMENT_CHANGED` are warnings
- * rather than neutral notes on purpose: a trusted cloud redeploying a different
- * image is exactly what cloud-granularity trust (threat T13) cannot catch, so it
- * is the one thing in here an operator has to read.
+ * rather than neutral notes on purpose: under two-factor trust (SUP-252) a digest
+ * change fails the endpoint closed until an admin approves it, so it is the one
+ * thing in here an operator has to read. `DIGEST_PINNED` is that approval.
  */
 const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> = {
   REGISTERED: { label: 'Registered', variant: 'secondary' },
   VERIFIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER, variant: 'success' },
   DENIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER, variant: 'destructive' },
-  DIGEST_CHANGED: { label: 'Image digest changed', variant: 'warning' },
+  DIGEST_CHANGED: { label: 'Deployment digest changed', variant: 'warning' },
+  DIGEST_PINNED: { label: 'Deployment digest pinned', variant: 'secondary' },
   MEASUREMENT_CHANGED: { label: 'Measurement changed', variant: 'warning' },
   DISABLED: { label: 'Disabled', variant: 'outline' },
   KEY_ROTATED: { label: 'Key rotated', variant: 'secondary' },
@@ -87,7 +90,9 @@ export function eventPresentation(kind: ExternalEndpointEventKind): EventPresent
  * it, which is SUP-221 ruling 1 restated as a predicate.
  */
 export function showsEvidenceSummary(kind: ExternalEndpointEventKind): boolean {
-  return kind === 'REGISTERED' || kind === 'DIGEST_CHANGED' || kind === 'MEASUREMENT_CHANGED';
+  return (
+    kind === 'REGISTERED' || kind === 'DIGEST_CHANGED' || kind === 'DIGEST_PINNED' || kind === 'MEASUREMENT_CHANGED'
+  );
 }
 
 const MEASUREMENT_SOURCE_LABEL: Record<MeasurementSource, string> = {

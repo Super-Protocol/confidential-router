@@ -539,6 +539,11 @@ type ExternalEndpoint {
   """Canonical digest of the upstream deployment snapshot."""
   evidenceDigestSeen: String
 
+  """
+  evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115).
+  """
+  evidenceDigestSeenHex: String
+
   """Derived from baseUrl; what the evidence is fetched from and bound to."""
   hostname: String!
   id: ID!
@@ -589,6 +594,9 @@ type ExternalEndpoint {
   The deployment an admin approved — the second trust factor beside the cloud measurement. Admission requires evidenceDigestSeen to equal it. Null: nothing approved yet, so the endpoint stays PENDING. Readable by any signed-in user, like the trust list.
   """
   pinnedEvidenceDigest: String
+
+  """pinnedEvidenceDigest as 64 hex characters."""
+  pinnedEvidenceDigestHex: String
   status: ExternalEndpointStatus!
   updatedAt: DateTime!
 }

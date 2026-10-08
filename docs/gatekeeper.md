@@ -251,6 +251,40 @@ registry does sign it, but in this mode the list is the sole authority and a
 registry signature admits nothing on its own)
 ```
 
+### `trust: measurement-and-digest` — both, approved as they are seen
+
+The mode the router's attested egress renders since SUP-252. It asks both
+questions at once: the cloud's measurement must be on
+`attestedRoots.trustedMeasurements` **and** the deployment's evidenceDigest must
+be pinned in this endpoint's `trustedEvidence`. A trusted cloud therefore no
+longer admits every deployment on it.
+
+```yaml
+endpoints:
+  - name: external-llama
+    listen: 127.0.0.1:8443
+    upstream: https://llama.other-cloud.example
+    trust: measurement-and-digest
+    trustedEvidence: []        # nothing approved yet — legal in this mode
+```
+
+What sets it apart from the other two is that **neither factor has to be
+configured for the file to run**. It exists for a control loop that approves
+what it has *seen* — trust on first use with an operator in the loop — so the
+first verification has to happen before anything is approved. Until both
+factors hold the endpoint admits nothing, and the verdict says which factor is
+missing with a `refusal` code beside the usual stage and reason:
+
+| `refusal` | Means | Fix |
+| --- | --- | --- |
+| `digest-not-pinned` | no evidenceDigest is pinned at all | approve the digest the report shows |
+| `measurement-not-trusted` | the cloud's measurement is not on the list (or there is none to compare) | add the measurement, if you trust that cloud |
+| `digest-mismatch` | a digest is pinned, and the deployment now publishes another — a redeploy | approve the new digest after reading what changed |
+
+The first that applies is the code; the reason names every missing factor. Like
+`cloud-measurement`, it needs the attested-root path and is never written by the
+CLI's own commands.
+
 ## What a verdict is made of
 
 ```
@@ -476,6 +510,18 @@ allow if {
   input.attestation.rootAttestation.attested == true
   some measurement in data.gatekeeper.trust.measurements
   measurement == input.attestation.rootAttestation.measurement
+}
+
+# See "`trust: measurement-and-digest`" above: the two clauses at once.
+allow if {
+  input.attestation.verified == true
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "measurement-and-digest"
+  input.attestation.rootAttestation.attested == true
+  some measurement in data.gatekeeper.trust.measurements
+  measurement == input.attestation.rootAttestation.measurement
+  some digest in endpoint.evidence_digests
+  digest == input.evidence.evidenceDigest
 }
 ```
 

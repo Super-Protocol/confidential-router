@@ -29,6 +29,9 @@ import { EXTERNAL_ENDPOINTS_QUERY, SET_EXTERNAL_ENDPOINT_ENABLED } from './opera
 import { RegisterEndpointDialog } from './register-endpoint-dialog';
 import { RotateKeyDialog } from './rotate-key-dialog';
 
+/** How often an open dossier re-reads an endpoint that is waiting for a verdict. */
+const DOSSIER_POLL_MS = 3_000;
+
 /**
  * Denied first, then pending, then verified, then disabled — and alphabetically
  * inside a group. An operator opens this screen because something is wrong, so
@@ -52,7 +55,7 @@ export function ExternalEndpointsScreen() {
    */
   const isAdmin = useViewerIsAdmin();
 
-  const { data, loading, error, refetch } = useQuery(EXTERNAL_ENDPOINTS_QUERY, {
+  const { data, loading, error, refetch, startPolling, stopPolling } = useQuery(EXTERNAL_ENDPOINTS_QUERY, {
     // A verdict flips on the sidecar's own schedule, so a cache read on
     // navigation can show an endpoint as routable after it stopped being.
     fetchPolicy: 'cache-and-network',
@@ -75,6 +78,18 @@ export function ExternalEndpointsScreen() {
 
   const endpoints = React.useMemo(() => sortEndpoints(data?.externalEndpoints ?? []), [data]);
   const openEndpoint = endpoints.find((endpoint) => endpoint.id === openEndpointId) ?? null;
+
+  /*
+   * While a dossier is open on an endpoint that is not admitted, keep reading: an
+   * approval from the drawer re-attests at once (SUP-252), and the admin is
+   * looking at the screen waiting for exactly that verdict.
+   */
+  const awaitingVerdict =
+    openEndpoint !== null && openEndpoint.status !== 'VERIFIED_BY_THIS_ROUTER' && openEndpoint.status !== 'DISABLED';
+  React.useEffect(() => {
+    if (awaitingVerdict) startPolling(DOSSIER_POLL_MS);
+    else stopPolling();
+  }, [awaitingVerdict, startPolling, stopPolling]);
   const rotating = endpoints.find((endpoint) => endpoint.id === rotatingId) ?? null;
   const discovering = endpoints.find((endpoint) => endpoint.id === discoveringId) ?? null;
 

@@ -16,6 +16,9 @@ import { type MigrationInterface, type QueryRunner, TableColumn } from 'typeorm'
  * no longer admits every deployment on it, so every existing endpoint needs its
  * deployment approved once.
  *
+ * Numbered after SUP-251's `1759700000000-ExternalEndpointRegistrySignal`, which is
+ * in flight beside this one, so the two append in either merge order.
+ *
  * `observedCertFingerprint` is verdict state like `pinnedCertFingerprint`, and
  * wider: the TLS leaf the last *cryptographically verified* report bound its
  * evidence to, whether or not a trust factor then refused it. An approval is made
@@ -24,8 +27,8 @@ import { type MigrationInterface, type QueryRunner, TableColumn } from 'typeorm'
  * leaf the sidecar actually observed; `pinnedCertFingerprint` is only set once the
  * endpoint is admitted, which is after the decision it would inform.
  */
-export class ExternalEndpointPinnedDigest1759700000000 implements MigrationInterface {
-  name = 'ExternalEndpointPinnedDigest1759700000000';
+export class ExternalEndpointPinnedDigest1759800000000 implements MigrationInterface {
+  name = 'ExternalEndpointPinnedDigest1759800000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.addColumns('external_endpoints', [

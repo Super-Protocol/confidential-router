@@ -253,12 +253,21 @@ export class ExternalEndpointModel {
 
   @Field(() => String, {
     nullable: true,
+    description: 'evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115).',
+  })
+  evidenceDigestSeenHex!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
     description:
       'The deployment an admin approved — the second trust factor beside the cloud measurement. Admission requires ' +
       'evidenceDigestSeen to equal it. Null: nothing approved yet, so the endpoint stays PENDING. Readable by any ' +
       'signed-in user, like the trust list.',
   })
   pinnedEvidenceDigest!: string | null;
+
+  @Field(() => String, { nullable: true, description: 'pinnedEvidenceDigest as 64 hex characters.' })
+  pinnedEvidenceDigestHex!: string | null;
 
   @Field(() => ExternalEndpointEvidenceModel, {
     nullable: true,

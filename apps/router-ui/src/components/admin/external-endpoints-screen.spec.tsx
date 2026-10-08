@@ -6,10 +6,14 @@ import { isAdminMock, renderWithSession, sessionMock } from '../../test-utils';
 import {
   ALL_ENDPOINTS,
   DENIED_ENDPOINT,
+  DIGEST_APPROVED,
+  DIGEST_APPROVED_HEX,
   discoverMock,
   endpointsMock,
   MEASUREMENT_ROGUE,
+  measurementsMock,
   PENDING_ENDPOINT,
+  TRUSTED,
   VERIFIED_ENDPOINT,
   verdictMock,
 } from './admin-mocks';
@@ -156,7 +160,7 @@ describe('ExternalEndpointsScreen', () => {
       const entries = [...timeline.querySelectorAll(':scope > li')];
 
       expect(entries).toHaveLength(3);
-      expect(entries[0]).toHaveTextContent('Image digest changed');
+      expect(entries[0]).toHaveTextContent('Deployment digest changed');
       expect(entries[1]).toHaveTextContent('Verified by this router');
       expect(entries[2]).toHaveTextContent('Registered');
     });
@@ -181,11 +185,11 @@ describe('ExternalEndpointsScreen', () => {
       expect(within(current).getByText(/ghcr.io\/example\/vllm@sha256:1111/)).toBeInTheDocument();
     });
 
-    it('says the summary is informational, so a green chip is never read as approval', async () => {
+    it('says the summary is what a pinned digest approves, so it is read before approving', async () => {
       renderScreen();
       const drawer = await openDrawer('qwen3-coder');
 
-      expect(within(drawer).getAllByText(/Informational, not a gate/)[0]).toBeInTheDocument();
+      expect(within(drawer).getAllByText(/this is what a pin approves/)[0]).toBeInTheDocument();
     });
 
     it('shows the digest a change brought in, not only the one in force', async () => {
@@ -418,6 +422,39 @@ describe('ExternalEndpointsScreen', () => {
         expect(within(stages).getByRole('alert')).toHaveTextContent('policy: measurement not on the trust list');
         expect(within(stages).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
         expect(within(stages).getByText(/not one request goes upstream before it/)).toBeInTheDocument();
+        expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      });
+      /**
+       * SUP-252: under two-factor trust a fresh endpoint is never admitted until
+       * an admin approves what the first check saw, so the approvals appear in
+       * the stage that waits for them — one click each, no second screen.
+       */
+      it('offers both approvals in the attest stage while the deployment awaits them', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            registerBareMock(),
+            measurementsMock([TRUSTED]),
+            verdictMock('ext-new', 'PENDING', {
+              lastCheckedAt: '2026-10-08T14:00:00.000Z',
+              lastStage: 'digest-not-pinned',
+              lastReason: 'no evidenceDigest is pinned',
+              measurementSeen: MEASUREMENT_ROGUE,
+              measurementSource: 'REGISTRY',
+              evidenceDigestSeen: DIGEST_APPROVED,
+              evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+            }),
+          ],
+        });
+
+        await verifyAndDiscover();
+
+        const stages = await screen.findByRole('list', { name: 'Verification stages' });
+        expect(await within(stages).findByText(/Approve the cloud and this deployment below/)).toBeInTheDocument();
+        const factors = within(stages).getByTestId('trust-factors');
+        expect(await within(factors).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
+        expect(within(factors).getByRole('button', { name: 'Pin this digest' })).toBeInTheDocument();
+        // Nothing is listed before the verdict: the order is the selling point.
         expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
       });
     });

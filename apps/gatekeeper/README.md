@@ -493,9 +493,10 @@ Validation reports every problem at once, each addressed by its path
 are rejected: a mistyped `trustedEvidance` would otherwise mean an endpoint
 running with the wrong pins. Cross-field rules live here too, notably the one
 trust mode per endpoint: `trustedEvidence` and `trust: cloud-measurement` are
-mutually exclusive, and an endpoint with neither is refused — a file that
-listed a pin next to a cloud-wide rule would read as though the pin were still
-enforced.
+mutually exclusive, and an `evidence-digest` endpoint with no pin is refused — a
+file that listed a pin next to a cloud-wide rule would read as though the pin
+were still enforced. `trust: measurement-and-digest` is the mode that requires
+both, and the one that runs with neither configured yet (SUP-252).
 
 Edits (`gatekeeper trust roots add …`, `gatekeeper endpoint add …`) go through `config.Document`, which rewrites
 the file through the yaml.v3 node API — comments, key order and block scalars
@@ -549,7 +550,10 @@ satisfies it — and in this mode the operator's list is the **sole** authority:
 measurement the Super Protocol registry signed but the operator did not list is
 denied, with `measurementSource` still reported for display and for user
 policies. It exists for a caller that registers upstreams at runtime and cannot
-approve each one by digest, and nothing else should use it.
+approve each one by digest, and nothing else should use it. `trust:
+measurement-and-digest` (SUP-252) is the two clauses at once — the router's egress
+renders it — and a built-in denial of it carries a `refusal` code naming the
+missing factor: `digest-not-pinned`, `measurement-not-trusted` or `digest-mismatch`.
 
 A request is admitted only if **every** loaded package's `allow` is true, so a
 user policy can narrow trust but never widen it — including back to the closed

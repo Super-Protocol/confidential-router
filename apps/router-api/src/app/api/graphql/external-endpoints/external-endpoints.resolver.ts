@@ -1,3 +1,4 @@
+import { evidenceDigestHex } from '@confidential-router/types';
 import { Inject, Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
@@ -359,7 +360,9 @@ export class ExternalEndpointsResolver {
         measurementSeen: endpoint.measurementSeen,
         measurementSource: measurementSourceOf(endpoint.measurementSource),
         evidenceDigestSeen: endpoint.evidenceDigestSeen,
+        evidenceDigestSeenHex: hexOf(endpoint.evidenceDigestSeen),
         pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
+        pinnedEvidenceDigestHex: hexOf(endpoint.pinnedEvidenceDigest),
         pinnedEvidence: evidenceOf(forEndpoint, endpoint.pinnedEvidenceDigest),
         pinnedCertFingerprint: endpoint.pinnedCertFingerprint,
         apiKeyPrefix: admin ? endpoint.apiKeyPrefix : null,
@@ -457,6 +460,20 @@ function evidenceModel(snapshot: EvidenceSnapshot): ExternalEndpointEvidenceMode
       value: typeof value === 'string' ? value : JSON.stringify(value),
     })),
   };
+}
+
+/**
+ * A stored digest as hex, or null. A value the parser refuses is shown canonical
+ * rather than failing the page: the column is the sidecar's report, and a screen
+ * that cannot render one row is worse than one that renders it in the other form.
+ */
+function hexOf(digest: string | null): string | null {
+  if (!digest) return null;
+  try {
+    return evidenceDigestHex(digest);
+  } catch {
+    return null;
+  }
 }
 
 function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {

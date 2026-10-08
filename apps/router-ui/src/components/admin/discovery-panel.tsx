@@ -22,9 +22,13 @@ import {
   EXTERNAL_ENDPOINTS_QUERY,
   UPDATE_EXTERNAL_ENDPOINT,
 } from './operations';
+import { TrustFactors } from './trust-factors';
 
 /** How often the panel re-reads the verdict while it waits; the server polls the sidecar every ~5 s. */
 export const VERDICT_POLL_MS = 2_000;
+
+/** The stages a two-factor refusal is reported at (SUP-252) — each one fixed by an approval, not a retry. */
+const FACTOR_REFUSALS = new Set(['digest-not-pinned', 'measurement-not-trusted', 'digest-mismatch']);
 
 type DiscoveredModel = DiscoverExternalModelsQuery['discoverExternalModels'][number];
 type ExistingModel = NonNullable<ExternalEndpointVerdictQuery['externalEndpoint']>['models'][number];
@@ -215,6 +219,10 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
 
   const status = endpoint?.status ?? 'PENDING';
   const presentation = statusPresentation(status);
+  // Refused by a trust factor rather than by the pipeline: the approvals above
+  // are the fix, so the generic "add it to the trust list" pointer is not shown.
+  const factorRefusal = FACTOR_REFUSALS.has(endpoint?.lastStage ?? '');
+  const awaitingApproval = status === 'PENDING' && endpoint?.lastStage === 'digest-not-pinned';
   const attestState: StageState =
     status === 'VERIFIED_BY_THIS_ROUTER' ? 'done' : status === 'DENIED_BY_THIS_ROUTER' ? 'failed' : 'running';
   const listState: StageState = !verified ? 'waiting' : discovery.error ? 'failed' : discovered ? 'done' : 'running';
@@ -235,11 +243,24 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
             ) : null}
           </div>
           <p className="text-muted-foreground text-xs">
-            {status === 'PENDING'
-              ? 'Fetching its evidence, checking the measurement against the trust list and pinning its certificate.'
-              : presentation.detail}
+            {awaitingApproval
+              ? 'Evidence verified. Approve the cloud and this deployment below — one click each — and the router re-checks at once.'
+              : status === 'PENDING'
+                ? 'Fetching its evidence, checking the cloud measurement and the deployment digest, and pinning its certificate.'
+                : presentation.detail}
           </p>
-          {status === 'DENIED_BY_THIS_ROUTER' ? (
+          {/*
+           * Two-factor trust (SUP-252): a fresh endpoint is never admitted until an
+           * admin approves what the first check saw, so the approval lives in the
+           * stage that waits for it.
+           */}
+          {endpoint &&
+          !verified &&
+          status !== 'DISABLED' &&
+          (endpoint.measurementSeen || endpoint.evidenceDigestSeen) ? (
+            <TrustFactors endpoint={{ ...endpoint, name: endpointName }} isAdmin />
+          ) : null}
+          {status === 'DENIED_BY_THIS_ROUTER' && !factorRefusal ? (
             <p role="alert" className="text-destructive text-xs">
               {endpoint?.lastStage ? `${endpoint.lastStage}: ` : ''}
               {endpoint?.lastReason ?? 'refused'}. If this cloud should be trusted, add its measurement on the{' '}
