@@ -6,6 +6,7 @@ import { CurrentUser, SessionGuard, type SessionUser, WorkspaceScopeService } fr
 import { CatalogService } from '../../../catalog/catalog.service.js';
 import { ChatService } from '../../../chat/index.js';
 import { routerConfig } from '../../../config.js';
+import { ExternalCatalogService } from '../../../external-endpoints/index.js';
 import {
   AppendChatMessageInputModel,
   ChatCredentialInputModel,
@@ -44,6 +45,7 @@ export class ChatResolver {
     private readonly apiKeys: ApiKeyService,
     private readonly workspaces: WorkspaceScopeService,
     private readonly catalog: CatalogService,
+    private readonly external: ExternalCatalogService,
     private readonly chat: ChatService,
   ) {}
 
@@ -256,11 +258,22 @@ export class ChatResolver {
    * Chat-capable models only. A model that serves embeddings alone would fail
    * the request at LiteLLM, and offering it in the picker would make that the
    * user's mistake rather than ours.
+   *
+   * External models join the same list, and the filter that decides *which* is
+   * the one the API already owns: `ExternalCatalogService.list()` holds a model
+   * **iff** its endpoint is enabled and holds a live verdict admitting it
+   * (ADR-008 decision 5). So an upstream that fails a re-attestation leaves the
+   * picker on the next refresh and leaves the scope of the next chat credential,
+   * without the screen having to know what a verdict is — which is the same
+   * division of labour chat capability already had.
+   *
+   * It is also, deliberately, the scope every chat key is minted with. A key that
+   * could reach a model the picker would not offer would be the gate living in
+   * the browser.
    */
   private chatModelIds(): string[] {
-    return this.catalog
-      .list()
-      .filter((model) => model.capabilities.includes('chat'))
-      .map((model) => model.id);
+    const builtIn = this.catalog.list().filter((model) => model.capabilities.includes('chat'));
+    const external = this.external.list().filter((model) => model.capabilities.includes('chat'));
+    return [...builtIn, ...external].map((model) => model.id);
   }
 }

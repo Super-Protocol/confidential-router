@@ -35,6 +35,7 @@ export const API_KEYS_QUERY = graphql(`
     models {
       id
       name
+      available
     }
   }
 `);

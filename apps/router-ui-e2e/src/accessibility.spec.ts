@@ -136,6 +136,32 @@ test.describe('accessibility', () => {
     });
   }
 
+  for (const theme of ['light', 'dark'] as const) {
+    test(`the external upstream panel has no serious axe violations in ${theme} mode`, async ({ page }) => {
+      /*
+       * The same panel in its external mode (SUP-227): different headings,
+       * different provenance copy, a graph with nothing to compare against. It
+       * is audited from the review route for the reason above and one more —
+       * reaching it for real needs an upstream this stand has a verdict for,
+       * which is a sidecar and therefore SUP-229's stand rather than this suite's.
+       */
+      await page.addInitScript((value) => window.localStorage.setItem('theme', value), theme);
+      await page.goto('/dev/attestation');
+      await page.getByRole('button', { name: 'Inspect upstream attestation' }).click();
+
+      const dialog = page.getByRole('dialog', { name: /Attestation for this external upstream/i });
+      await expect(dialog).toBeVisible();
+      // The provenance line the issue requires: through this router's relay, and
+      // whose publication it is.
+      await expect(dialog.getByText(/this router’s relay of/)).toBeVisible();
+      await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
+      await expect(dialog.getByRole('button', { name: /^Ingress host/ }).first()).toBeVisible();
+
+      const violations = await auditPage(page);
+      expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    });
+  }
+
   test('the deployment graph is walkable with the keyboard, node by node', async ({ page }) => {
     await page.goto('/dev/attestation');
     await page.getByRole('button', { name: 'Inspect attestation' }).first().click();
