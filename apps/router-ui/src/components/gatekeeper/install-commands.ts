@@ -32,10 +32,10 @@ export interface InstallCommand {
   /**
    * `gatekeeper trust roots add`, written for this shell.
    *
-   * It is the one step of the setup block that pipes a download into a command,
-   * and the two shells do not spell that the same way — so the sequence carries
-   * a variant per shell rather than a `sh` line a Windows reader has to
-   * translate (SUP-193).
+   * It pipes a download into a command, and the two shells do not spell that
+   * the same way — so the setup block's test-build section carries a variant per
+   * shell rather than a `sh` line a Windows reader has to translate (SUP-193).
+   * It is off the default path since SUP-253.
    */
   trustRoot: (name: string, pemUrl: string) => string;
 }

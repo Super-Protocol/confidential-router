@@ -26,10 +26,10 @@ export const GATEKEEPER_LISTEN = '127.0.0.1:8787';
 /** The endpoint name used throughout the docs; any name works. */
 export const ENDPOINT_NAME = 'router';
 
-/** The trust-store name the Swarm cloud's CA is filed under; any name works. */
+/** The trust-store name a manually added Swarm cloud CA is filed under; any name works. */
 export const TRUST_ROOT_NAME = 'swarm-prod';
 
-export type SetupStepId = 'install' | 'init' | 'trust-root' | 'endpoint' | 'pin' | 'run';
+export type SetupStepId = 'install' | 'init' | 'endpoint' | 'pin' | 'run';
 
 export interface SetupStep {
   /** Stable across wording changes, so a test can name a step without counting. */
@@ -48,9 +48,12 @@ export interface SetupInput {
    * can speak for.
    */
   upstream: string;
-  /** Where the Swarm cloud's root CA is published — `publicConfig().swarmRootPemUrl`. */
+  /**
+   * Where the Swarm cloud's root CA is published — `publicConfig().swarmRootPemUrl`.
+   * Only the optional test-build path uses it ({@link testBuildSteps}).
+   */
   swarmRootPemUrl: string;
-  /** The shell the two piped lines are written for. */
+  /** The shell the piped lines are written for. */
   platform: InstallCommand;
   /**
    * The digest to pin outright. Absent takes the published one with
@@ -63,6 +66,12 @@ export interface SetupInput {
 /**
  * The whole sequence, in the order it is run.
  *
+ * There is no certificate step. A Swarm cloud's CA carries its own TEE
+ * evidence, and the gatekeeper accepts it when the measurement in that evidence
+ * is signed in the Super Protocol registry it already polls — so a cloud built
+ * by the release flow needs nothing pasted. The manual paths are for every other
+ * build and live in {@link testBuildSteps}, off the default path (SUP-253).
+ *
  * `--from-upstream` rather than a placeholder pin is the substantive difference
  * between the two callers: the chat panel knows which digest the evidence it
  * just checked carried, and the Gatekeeper page is reached before any endpoint
@@ -70,7 +79,7 @@ export interface SetupInput {
  * read, the other pins what the gatekeeper reads for itself and shows you.
  */
 export function setupSteps(input: SetupInput): SetupStep[] {
-  const { upstream, swarmRootPemUrl, platform, evidenceDigestHex } = input;
+  const { upstream, platform, evidenceDigestHex } = input;
 
   return [
     {
@@ -85,13 +94,6 @@ export function setupSteps(input: SetupInput): SetupStep[] {
       title: 'Write a starter config',
       detail:
         'Creates ~/.config/confidential-gatekeeper/config.yaml with the default policy. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
-    },
-    {
-      id: 'trust-root',
-      command: platform.trustRoot(TRUST_ROOT_NAME, swarmRootPemUrl),
-      title: 'Trust the Swarm cloud\u2019s certificate authority',
-      detail:
-        'Gatekeeper ships with an empty trust store and no trust-on-first-use, so the CA that signs a Swarm cloud’s evidence has to get in somehow. It is fetched from where Super Protocol publishes it rather than from the endpoint under inspection: a root taken from the thing it vouches for would prove nothing.',
     },
     {
       id: 'endpoint',
@@ -131,20 +133,61 @@ export function setupScript(input: SetupInput): string {
 }
 
 /**
- * The command for a stand whose image the Super Protocol registry has never
- * signed.
- *
- * It is a footnote rather than a seventh step on purpose: the six steps are the
- * path, and a Swarm cloud's certificate authority is normally accepted on its
- * own TEE evidence with nothing to paste. This is what to reach for when step 5
- * denies with "not in the Super Protocol trusted registry" — which happens on a
- * stand built outside the flow that publishes those signatures.
+ * How often a running gatekeeper notices a measurement that has just been
+ * signed: the attested-root verdict is cached for `attestedRoots.cacheTtl`
+ * (default 10 minutes, `apps/gatekeeper/pkg/config/attestedroots.go`) and every
+ * endpoint re-attests on its own schedule (`reattestInterval`, default 5
+ * minutes), so the next re-attestation after the cache expires asks the
+ * registry again — no restart.
  */
-export const UNSIGNED_MEASUREMENT_COMMAND = `gatekeeper trust measurements add --from-upstream ${ENDPOINT_NAME}`;
+export const REGISTRY_REFRESH_NOTE =
+  'A running gatekeeper re-asks the registry at most 10 minutes after a denial (attestedRoots.cacheTtl), ' +
+  'so a cloud whose measurement is signed later is admitted without a restart.';
 
-export const UNSIGNED_MEASUREMENT_NOTE =
-  'If the gatekeeper denies with \u201cnot in the Super Protocol trusted registry\u201d, this cloud\u2019s ' +
-  'image was built outside the flow that publishes those signatures. You can accept its measurement ' +
-  'yourself \u2014 the command prints the full hardware report and asks first. Everything else still has ' +
-  'to pass, and a root admitted this way is reported as \u201cattested (operator-pinned)\u201d, never as ' +
-  'registry-signed.';
+export type TestBuildStepId = 'trust-measurement' | 'trust-root';
+
+/** The one sentence that says when the optional section applies at all. */
+export const TEST_BUILD_SUMMARY =
+  'Needed only when this cloud\u2019s measurement is not signed in the Super Protocol registry \u2014 ' +
+  'a local or test build \u2014 and the gatekeeper denies with \u201cnot in the Super Protocol trusted registry\u201d.';
+
+/**
+ * The optional section for a cloud the registry has never signed — a local or
+ * test build made outside the flow that publishes those signatures.
+ *
+ * Two ways in, strongest first. Pinning the measurement replaces exactly one
+ * leg of the attested path and is reported as `attested (operator-pinned)`;
+ * trusting the root certificate replaces the whole attested path with a CA
+ * fetched from where Super Protocol publishes it, which is the escape hatch for
+ * a gatekeeper with no network to the registry. Neither is on the default path,
+ * and neither is part of the copy-all script.
+ */
+export function testBuildSteps(input: SetupInput): TestBuildStep[] {
+  const { swarmRootPemUrl, platform } = input;
+  return [
+    {
+      id: 'trust-measurement',
+      command: `gatekeeper trust measurements add --from-upstream ${ENDPOINT_NAME}`,
+      title: 'Accept this cloud\u2019s measurement yourself',
+      detail:
+        'Prints the full hardware report and asks first. Everything else still has to pass, and a root admitted ' +
+        'this way is reported as \u201cattested (operator-pinned)\u201d, never as registry-signed.',
+    },
+    {
+      id: 'trust-root',
+      command: platform.trustRoot(TRUST_ROOT_NAME, swarmRootPemUrl),
+      title: 'Or trust the cloud\u2019s root certificate',
+      detail:
+        'Skips the attested check for this CA entirely and works offline. It is fetched from where Super Protocol ' +
+        'publishes it rather than from the endpoint under inspection: a root taken from the thing it vouches for ' +
+        'would prove nothing.',
+    },
+  ];
+}
+
+export interface TestBuildStep {
+  id: TestBuildStepId;
+  command: string;
+  title: string;
+  detail: string;
+}
