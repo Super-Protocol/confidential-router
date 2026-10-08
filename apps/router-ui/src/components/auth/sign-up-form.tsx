@@ -68,12 +68,26 @@ export function SignUpForm() {
   const [code, setCode] = React.useState<string | null>(context.code);
   const invite = useInviteLookup(code);
 
-  const { data, loading } = useQuery(SIGN_IN_OPTIONS_QUERY, { fetchPolicy: 'cache-and-network' });
+  const {
+    data,
+    loading,
+    error: optionsError,
+    refetch,
+  } = useQuery(SIGN_IN_OPTIONS_QUERY, {
+    fetchPolicy: 'cache-and-network',
+    notifyOnNetworkStatusChange: true,
+  });
   const settled = !loading || data !== undefined;
   // Unlike the sign-in screen, a failed query is not a reason to offer this:
   // there is nothing to fall back to, and a form that can only 404 is worse
   // than a sentence saying where to go instead.
   const offered = data?.signInOptions.password ?? false;
+  /**
+   * No answer at all, as opposed to an answer of "no". Said as what it is: on a
+   * deployment whose API is not up yet, "does not offer password sign-up" sent
+   * people looking for a setting that was on all along (SUP-248).
+   */
+  const unreachable = data === undefined && optionsError !== undefined;
   const minLength = data?.signInOptions.passwordMinLength ?? 0;
   /**
    * Invite-only registration (SUP-173). Defaults to false while the answer is on
@@ -163,6 +177,28 @@ export function SignUpForm() {
         <CardContent className="flex flex-col gap-2 pt-6" data-testid="sign-up-options-loading">
           <Skeleton className="h-9 w-full" />
           <Skeleton className="h-9 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (unreachable) {
+    return (
+      <Card>
+        <CardHeader>
+          <h1 className="font-semibold leading-none">Sign up</h1>
+          <CardDescription data-testid="sign-up-api-unreachable">
+            The console cannot reach this deployment's API, so it cannot tell which ways of signing up it offers. If the
+            deployment was created moments ago it may still be starting; try again shortly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <Button variant="brand" className="w-full" disabled={loading} onClick={() => void refetch().catch(() => {})}>
+            {loading ? 'Trying…' : 'Try again'}
+          </Button>
+          <Button variant="outline" className="w-full" asChild>
+            <Link href="/login">Back to sign in</Link>
+          </Button>
         </CardContent>
       </Card>
     );
