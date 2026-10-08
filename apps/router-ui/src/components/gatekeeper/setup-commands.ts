@@ -141,8 +141,9 @@ export function setupScript(input: SetupInput): string {
  * registry again — no restart.
  */
 export const REGISTRY_REFRESH_NOTE =
-  'A running gatekeeper re-asks the registry at most 10 minutes after a denial (attestedRoots.cacheTtl), ' +
-  'so a cloud whose measurement is signed later is admitted without a restart.';
+  'A running gatekeeper asks the registry again once its 10-minute cache (attestedRoots.cacheTtl) expires \u2014 ' +
+  'within about 15 minutes with the default re-attestation \u2014 so a cloud whose measurement is signed later ' +
+  'is admitted without a restart.';
 
 export type TestBuildStepId = 'trust-measurement' | 'trust-root';
 
