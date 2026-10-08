@@ -186,7 +186,29 @@ describe('SignUpForm', () => {
     routeFetch({});
     renderForm([{ request: { query: SIGN_IN_OPTIONS_QUERY }, error: new Error('API is down') }]);
 
-    expect(await screen.findByText(/does not offer password sign-up/)).toBeInTheDocument();
+    expect(await screen.findByTestId('sign-up-api-unreachable')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+  });
+
+  // SUP-248: an API behind a 503 read as a deployment that had switched
+  // passwords off, which sent people looking for a setting that was on.
+  it('says the API is unreachable rather than that password sign-up is off', async () => {
+    routeFetch({});
+    renderForm([{ request: { query: SIGN_IN_OPTIONS_QUERY }, error: new Error('API is down') }]);
+
+    expect(await screen.findByText(/cannot reach this deployment's API/)).toBeInTheDocument();
+    expect(screen.queryByText(/does not offer password sign-up/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
+  });
+
+  it('offers the form once a retry reaches the API', async () => {
+    routeFetch({});
+    renderForm([{ request: { query: SIGN_IN_OPTIONS_QUERY }, error: new Error('API is down') }, optionsMock()]);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    expect(screen.queryByTestId('sign-up-api-unreachable')).not.toBeInTheDocument();
   });
 
   it('renders no form until the answer arrives', () => {
