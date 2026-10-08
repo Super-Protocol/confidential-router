@@ -72,6 +72,12 @@ describe('validateEndpointForm', () => {
     });
   });
 
+  it('asks for a missing context length rather than calling it malformed', () => {
+    expect(validateEndpointForm({ ...FILLED, models: [{ ...FILLED.models[0], contextLength: ' ' }] })).toMatchObject({
+      'models.0.contextLength': 'A context length is required.',
+    });
+  });
+
   it('refuses a price that is not a plain amount', () => {
     expect(validateEndpointForm({ ...FILLED, models: [{ ...FILLED.models[0], promptPer1m: '-1' }] })).toMatchObject({
       'models.0.promptPer1m': expect.stringContaining('USD'),
