@@ -64,7 +64,8 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      // router-api, mock-litellm and the mock evidence host, behind one command.
+      // router-api, mock-litellm, the mock evidence host — and, behind
+      // `CR_DEMO_EXTERNAL`, an attested upstream in another deployment.
       command: 'pnpm exec tsx tools/demo/src/serve.ts',
       cwd: new URL('../..', import.meta.url).pathname,
       env: {
@@ -72,6 +73,10 @@ export default defineConfig({
         ROUTER_UI_BASE_URL: CONSOLE_ORIGIN,
         ROUTER_API_E2E_ORIGIN: API_ORIGIN,
         ROUTER_API_E2E_PORT: String(API_PORT),
+        // Only this suite can run the browser's own tier 1 over a *relayed*
+        // bundle, so it is the only one that pays for the upstream and the
+        // sidecar the flag starts (ADR-008 §7, `serve.ts`).
+        CR_DEMO_EXTERNAL: '1',
       },
       url: `${API_ORIGIN}/health`,
       reuseExistingServer: !process.env.CI,

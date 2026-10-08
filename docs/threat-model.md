@@ -143,6 +143,7 @@ withdraw its hardware report; the suites hold each of them to the stage that mus
 | T16 trust withdrawn live | `removeTrustedMeasurement` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (denied on the next forced check; an in-flight stream ends `attestation_revoked`) |
 | T15 key never read back | registration + the egress leg | `apps/router-api/src/app/secrets`, `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (only the upstream ever sees the bearer) |
 | T17 / the anchor below the list | `sidecar.denyAttestation()` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`stage: untrusted-root` — with no attested root there is no measurement, and the admin's list cannot rescue it) |
+| T14 the user checks the other end | a registered upstream, relayed through `GET /v1/evidence/{endpoint}` | `apps/router-ui-e2e/src/secure-origin.spec.ts` — a real browser runs its own tier 1 over the upstream's publication and draws its graph, on the only origin where `crypto.subtle` exists. T14's residual is that users do not pin upstream digests; this is what they get instead, so it is asserted rather than described |
 
 ## Out of scope for v1
 
