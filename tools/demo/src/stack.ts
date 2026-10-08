@@ -61,6 +61,22 @@ export interface RouterStackOptions {
   routerPort?: number;
   /** Origins allowed to call the API with credentials, beyond {@link CONSOLE_ORIGIN}. */
   extraClientOrigins?: string[];
+  /**
+   * `auth.adminEmails`. The external-endpoint control plane is behind
+   * `AdminGuard`, so a stand that registers one has to sign in as an operator
+   * (ADR-008 §7); the default deployment has no admin at all.
+   */
+  adminEmails?: string[];
+  /** `externalEndpoints` — the seam to the egress sidecar (ADR-008 §5). */
+  externalEndpoints?: Record<string, unknown>;
+  /**
+   * Roots added to the router process's trust store beside the evidence host's
+   * own. `NODE_EXTRA_CA_CERTS` names one file, so they are concatenated into it.
+   * An external upstream's root belongs here: router-api fetches that upstream's
+   * published bundle over an ordinary TLS connection (ADR-008 §7, and it must
+   * not pin — the sidecar is the only component allowed a verdict).
+   */
+  extraTrustedRootsPem?: readonly string[];
 }
 
 export interface RouterStack {
@@ -98,6 +114,8 @@ export function demoRouterConfig(input: {
   evidenceUrl: string;
   hostname: string;
   clientOrigins?: string[];
+  adminEmails?: string[];
+  externalEndpoints?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
     version: 1,
@@ -161,7 +179,11 @@ export function demoRouterConfig(input: {
         pricing: { promptPer1mMicros: 280000, completionPer1mMicros: 420000 },
       },
     ],
-    auth: { magicLink: { mailer: 'console', from: 'no-reply@confidential-router.local' } },
+    auth: {
+      magicLink: { mailer: 'console', from: 'no-reply@confidential-router.local' },
+      ...(input.adminEmails ? { adminEmails: input.adminEmails } : {}),
+    },
+    ...(input.externalEndpoints ? { externalEndpoints: input.externalEndpoints } : {}),
     evidence: { pollInterval: '2s' },
     log: { level: 'info', pretty: false },
     graphql: { path: '/graphql', introspection: true },
@@ -199,7 +221,11 @@ export async function startRouterStack(options: RouterStackOptions = {}): Promis
     started.push(() => evidenceHost.close());
 
     const trustedRootFile = join(directory, 'mock-cloud-root.pem');
-    writeFileSync(trustedRootFile, evidenceHost.trustedRootPem, 'utf8');
+    writeFileSync(
+      trustedRootFile,
+      [evidenceHost.trustedRootPem, ...(options.extraTrustedRootsPem ?? [])].join('\n'),
+      'utf8',
+    );
 
     const router = await startRouterProcess({
       port: routerPort,
@@ -215,6 +241,8 @@ export async function startRouterStack(options: RouterStackOptions = {}): Promis
         hostname: evidenceHost.hostname,
         evidenceUrl: `${evidenceHost.url}${EVIDENCE_PATH_SUFFIX}`,
         clientOrigins: options.extraClientOrigins,
+        adminEmails: options.adminEmails,
+        externalEndpoints: options.externalEndpoints,
       }),
     });
     started.push(() => router.stop());

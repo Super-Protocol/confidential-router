@@ -65,14 +65,13 @@ type Options struct {
 	Stdout, Stderr io.Writer
 }
 
-// Run waits for the configuration file to appear, starts the gatekeeper, and
-// reloads it whenever the file changes, until the child exits or ctx is
-// cancelled. It returns the exit status the container should report.
+// Run waits for a configuration the gatekeeper can run, starts it, and reloads
+// it whenever the file changes, until the child exits or ctx is cancelled. It
+// returns the exit status the container should report.
 //
-// Waiting for the file rather than failing on a missing one is not politeness:
-// a sidecar and the container that renders its configuration start in
-// parallel, and a crash loop until the writer wins would be the only
-// observable difference.
+// Waiting rather than failing is not politeness: a sidecar and the container
+// that renders its configuration start in parallel, and a crash loop until the
+// writer wins would be the only observable difference.
 func Run(ctx context.Context, opts Options) (int, error) {
 	if opts.Config == "" {
 		return 1, errors.New("sidecar: a configuration file path is required")
@@ -154,24 +153,66 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	}
 }
 
-// waitForConfig blocks until the configuration file can be read.
+// waitForConfig blocks until the file holds a configuration the gatekeeper will
+// run, logging each distinct reason it will not, once.
+//
+// Readable is deliberately not enough, and the difference is a crash loop.
+// router-api renders this file out of its database (ADR-008 §5), so on a
+// deployment where no external endpoint has been registered — the state every
+// deployment ships in — the first render is a perfectly valid document with an
+// empty `endpoints` list, which `gatekeeper run` refuses: for a person, a
+// configuration with nothing in it is a mistake. Starting the gatekeeper on it
+// would have it exit at once, and this supervisor deliberately does not restart
+// it (see the package comment), so the container would back off and take the
+// pod's readiness with it — with no external endpoint configured, which is not
+// a fault at all. Waiting is the same answer this function already gives a file
+// that has not appeared yet: the egress has nothing to carry until an endpoint
+// exists, and the render that adds one is the signal to start.
 func waitForConfig(ctx context.Context, path string, interval time.Duration, log io.Writer) error {
-	if _, err := stampOf(path); err == nil {
+	reported := ""
+	ready := func() bool {
+		why := runnableAt(path)
+		if why == nil {
+			return true
+		}
+		if message := why.Error(); message != reported {
+			reported = message
+			fmt.Fprintf(log, "sidecar: waiting for %s — %s\n", path, message)
+		}
+		return false
+	}
+
+	if ready() {
 		return nil
 	}
-	fmt.Fprintf(log, "sidecar: waiting for %s to be rendered\n", path)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("sidecar: %s was never rendered: %w", path, ctx.Err())
+			return fmt.Errorf("sidecar: %s was never rendered as a configuration the gatekeeper can run: %w",
+				path, ctx.Err())
 		case <-ticker.C:
-			if _, err := stampOf(path); err == nil {
+			if ready() {
 				return nil
 			}
 		}
 	}
+}
+
+// runnableAt reports why the gatekeeper would refuse the configuration at path,
+// or nil when it would accept it. It applies the full [config.Config.Validate],
+// which is exactly the check `gatekeeper run` makes a moment later.
+func runnableAt(path string) error {
+	body, _, err := readOf(path)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Parse(bytes.NewReader(body), path)
+	if err != nil {
+		return err
+	}
+	return cfg.Validate()
 }
 
 // watcher decides, once per tick, whether the configuration the gatekeeper is

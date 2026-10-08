@@ -5,6 +5,7 @@ dist
 tmp
 out-tsc
 /apps/gatekeeper/bin
+/apps/gatekeeper/bin-teststand
 # Copied in by GoReleaser's before-hooks so the archives can carry them.
 /apps/gatekeeper/LICENSE
 /apps/gatekeeper/NOTICE

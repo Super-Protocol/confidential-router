@@ -369,7 +369,16 @@ error."* and could not tell a deliberate refusal from an outage.
 download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
 **Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatThreads` / `chatThread` `+ chatCredential` / `createChatThread` / `setChatThreadModel` / `appendChatMessage` / `deleteChatThread`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
-`updatePreferences` / `exportEvidence`.
+`updatePreferences` / `exportEvidence`;
+**Admin — external endpoints** `externalEndpoints` / `externalEndpoint` `+ registerExternalEndpoint` /
+`updateExternalEndpoint` / `setExternalEndpointEnabled` / `rotateExternalEndpointKey`;
+**Admin — trust list** `trustedMeasurements` `+ addTrustedMeasurement` / `updateTrustedMeasurement` /
+`removeTrustedMeasurement`.
+
+The two Admin reads are session-scoped and the mutations are not: every screen in the nav is reachable
+by any signed-in member, and the Admin entry is reachable by one in `auth.adminEmails` — `me { isAdmin }`
+is what the browser gates it on. The reads being wider than the nav entry is deliberate (ruling 3, ADR-008
+§7), and the API is where it is enforced; the nav is sidebar hygiene.
 
 ## As shipped (SUP-180) — the console chat
 
@@ -476,16 +485,18 @@ open until their cached secret expired. Clients should still treat a `401` of co
 `api_key_expired` or `invalid_api_key` as "mint again and retry once" — that is what the console does,
 and it is the only reason a caller needs to read those codes.
 
-## As shipped (SUP-225) — the admin section
+## As shipped (SUP-225, SUP-226) — the admin section
 
 The external-endpoint control plane (ADR-008 §7), split across two issues that code against this
-block and nothing else: **SUP-225** implements the resolvers in router-api, **SUP-226** the console
-screens. While SUP-225 is in flight the committed `schema.graphql` cannot carry these types — it is
-emitted from the resolvers — so the same SDL also lives at
-[`apps/router-ui/schema.contract-pending.graphql`](../../apps/router-ui/schema.contract-pending.graphql),
-which router-ui's codegen reads as an overlay. `apps/router-ui/src/components/admin/schema-contract.spec.ts`
-asserts the two are byte-identical and fails with a delete-the-overlay instruction the moment the real
-schema defines `externalEndpoints`. A contract change lands **here first**, and both sides follow.
+block and nothing else: **SUP-225** implemented the resolvers in router-api, **SUP-226** the console
+screens. Both have landed, so the SDL below is now in the committed
+[`apps/router-api/schema.graphql`](../../apps/router-api/schema.graphql) and that file is what
+router-ui's codegen reads. The overlay the console was built against while the resolvers were in
+flight is gone with it; `apps/router-ui/src/components/admin/schema-contract.spec.ts` keeps the two
+guards that are about the schema rather than about the overlay — the external vocabulary never
+collapses into the own-endpoint one, and nothing readable can carry the upstream key (threat T15).
+A contract change still lands **here first**, and both sides follow; SUP-237 is the standing
+document-↔-schema conformance check that will hold that rule mechanically.
 
 Three decisions in this block are worth reading before the SDL:
 

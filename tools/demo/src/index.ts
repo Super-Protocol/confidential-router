@@ -1,6 +1,31 @@
 export { type ConsoleSession, createApiKey, type DemoCredential, signIn, topUp } from './console-client.js';
 export { EVIDENCE_PATH_SUFFIX, VERDICT_HEADER } from './constants.js';
 export {
+  addTrustedMeasurement,
+  type EgressSidecar,
+  type EgressSidecarOptions,
+  type ExternalModelRegistration,
+  type ExternalSeam,
+  type ExternalStand,
+  type ExternalStandOptions,
+  type ExternalUpstream,
+  type ExternalUpstreamOptions,
+  externalEndpointEvents,
+  externalSeam,
+  type RegisteredExternalEndpoint,
+  ROTATED_MEASUREMENT,
+  readExternalEndpoint,
+  registerExternalEndpoint,
+  removeTrustedMeasurement,
+  SIDECAR_BIN,
+  STAND_MEASUREMENT,
+  startEgressSidecar,
+  startExternalStand,
+  startExternalUpstream,
+  TESTSTAND_BIN,
+  waitForExternalStatus,
+} from './external-stand.js';
+export {
   type CommandResult,
   createGatekeeper,
   GATEKEEPER_BIN,

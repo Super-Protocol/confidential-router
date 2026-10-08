@@ -208,6 +208,42 @@ describe('a leg’s own account of a broken stream', () => {
     expect(outcome.completionTokens).toBeGreaterThan(0);
   });
 
+  it('is not consulted when a client closes after [DONE] — that generation finished', async () => {
+    // What the `openai` SDK does at the end of `for await (… of stream)`: it has
+    // read the terminator and lets the response go. Nothing is owed after
+    // `[DONE]`, so this is an `ok` generation and not an abort — and the
+    // cancellation it causes on the upstream body is not a failure to report.
+    const abort = new AbortController();
+    const source = upstream(abort);
+    const response = new RecordingResponse();
+    let consulted = false;
+
+    const relay = relayStream({
+      context: { ...context, startedAt: Date.now() },
+      upstream: source.response,
+      response: response.as(),
+      readTimeoutMs: 5_000,
+      abort,
+      heartbeatIntervalMs: 10_000,
+      failureMapper: async () => {
+        consulted = true;
+        return { status: 'error', error: openAiErrors.internal() };
+      },
+    });
+    pending = relay;
+
+    source.push(CONTENT);
+    source.push('data: [DONE]\n\n');
+    await sleep(10);
+    response.hangUp();
+    const outcome = await relay;
+
+    expect(outcome.status).toBe('ok');
+    expect(outcome.errorCode).toBeNull();
+    expect(outcome.completionTokens).toBeGreaterThan(0);
+    expect(consulted).toBe(false);
+  });
+
   it('is not consulted when the client is the one who left', async () => {
     // A client hang-up is already `aborted` and has no error frame to carry: the
     // socket is gone. Asking the sidecar why would be an HTTP call on a path where

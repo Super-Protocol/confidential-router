@@ -42,6 +42,9 @@ try {
   console.log(`   rotated to  ${result.rotatedDigest}`);
   console.log(`   refused     HTTP ${result.denial.status} — ${result.denial.stage}: ${result.denial.reason}`);
   console.log(`   metered     ${result.metered.count} generation(s)`);
+  console.log(`   external    ${result.external.model} on a cloud the admin listed`);
+  console.log(`   rotated to  ${result.external.rotatedMeasurement} (unlisted)`);
+  console.log(`   dropped     ${result.external.denial.reason}`);
 } catch (error) {
   console.error(`\n${style.red}The demo failed at step ${step}.${style.reset}  ${elapsed()}`);
   console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));

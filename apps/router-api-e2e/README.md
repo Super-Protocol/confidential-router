@@ -27,9 +27,14 @@ project asserts and it deliberately leaves the rest alone.
 | `bootstrap.e2e.spec.ts` | first sign-in on an empty deployment: the token must not reach the log, and the CSRF guard is only observable outside a test runner |
 | `password.e2e.spec.ts` | the same two, for email and password |
 | `invites.e2e.spec.ts` | `dist/cli/invites.js` ↔ the running process: a second webpack entry point can stop existing while every in-process test stays green, so the CLI mints a campaign and each URL in its CSV is resolved against the live lookup endpoint |
+| `external-endpoints.e2e.spec.ts` | router-api ↔ the **real** egress sidecar ↔ an upstream in another cloud (ADR-008): the config router-api renders is a file the shipped binary accepts, an admin's trust-list edit reaches a running proxy, and a connection the gatekeeper closes mid-stream comes back as `attestation_revoked` |
 
 The stack is `tools/demo`'s `startRouterStack()` — the same one the gatekeeper
-demo runs on, so a change that breaks one breaks both.
+demo runs on, so a change that breaks one breaks both. The external-endpoint
+suite adds `startExternalStand()` on top of it: the upstream, the real
+`gatekeeper-sidecar`, and the admin API that registers one. Its one substitution
+— the attested-root hardware leg — and why it cannot be avoided are in
+`tools/demo/README.md`.
 
 ## Shape
 
@@ -41,6 +46,11 @@ demo runs on, so a change that breaks one breaks both.
   parallel, so two suites never contend for a port or a ledger.
 - Everything is resolved from source (`@confidential-router/source`), so a suite
   is never held to a stale `dist/` of the tools it drives.
+- The `e2e` target builds `router-api`, the gatekeeper's own binaries and the
+  stand binary first, so a Go toolchain is needed to run it. CI runs it
+  unconditionally rather than through `nx affected`: the seams it covers live in
+  libraries, and a change that breaks one rarely touches every project involved
+  (the ADR-007 §7a precedent).
 
 ## When one fails
 
