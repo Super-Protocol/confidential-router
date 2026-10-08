@@ -239,6 +239,59 @@ describe('signing up with an invitation', () => {
   });
 });
 
+describe('the operator sign-up grant (SUP-249)', () => {
+  const SIGNUP_GRANT_MICROS = 20_000_000;
+
+  async function balanceAfterSignUp(body: Record<string, unknown>): Promise<{ balance: string; ledger: unknown[] }> {
+    const created = await signUp({ password: PASSWORD, name: 'New', ...body }).expect(200);
+    const session = await consoleSession(sessionCookiesOf(created));
+    const data = await expectData(
+      session,
+      `{ creditBalance(workspaceId: "${session.workspaceId}") { balanceMicros } }`,
+    );
+    const ledger = await expectData(session, LEDGER, { workspaceId: session.workspaceId });
+    return {
+      balance: data.creditBalance.balanceMicros,
+      ledger: ledger.creditTransactions.edges.map((edge: { node: unknown }) => edge.node),
+    };
+  }
+
+  it('credits every new account, visible on its first page load', async () => {
+    await inviteHarness({ CR_API_BILLING__SIGNUP_GRANT_MICROS: String(SIGNUP_GRANT_MICROS) });
+
+    const { balance, ledger } = await balanceAfterSignUp({ email: 'organic@example.com' });
+
+    expect(balance).toBe(String(SIGNUP_GRANT_MICROS));
+    expect(ledger).toEqual([
+      {
+        kind: 'GRANT',
+        amountMicros: String(SIGNUP_GRANT_MICROS),
+        reference: 'signup',
+        description: expect.any(String),
+      },
+    ]);
+  });
+
+  it('stacks with an invitation: 20 + 100 = 120', async () => {
+    await inviteHarness({ CR_API_BILLING__SIGNUP_GRANT_MICROS: String(SIGNUP_GRANT_MICROS) });
+    const [invite] = await issue(dataSourceOf(harness));
+
+    const { balance, ledger } = await balanceAfterSignUp({ email: 'both@example.com', inviteCode: invite.code });
+
+    expect(balance).toBe(String(SIGNUP_GRANT_MICROS + GRANT_MICROS));
+    expect(ledger).toHaveLength(2);
+  });
+
+  it('grants nothing at 0, the schema default', async () => {
+    await inviteHarness();
+
+    const { balance, ledger } = await balanceAfterSignUp({ email: 'unfunded@example.com' });
+
+    expect(balance).toBe('0');
+    expect(ledger).toEqual([]);
+  });
+});
+
 describe('signing up with a code that cannot be redeemed', () => {
   beforeEach(async () => {
     await inviteHarness();

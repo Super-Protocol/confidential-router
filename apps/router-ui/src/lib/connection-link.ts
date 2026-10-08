@@ -105,7 +105,7 @@ export function suggestedEndpointName(hostname: string): string {
 }
 
 /** Strips the `/v1` surface, keeping any other path as a prefix. */
-function baseUrlOf(url: URL): string {
+export function baseUrlOf(url: URL): string {
   const path = url.pathname.replace(/\/+$/, '');
   const prefix = path.endsWith('/v1') ? path.slice(0, -'/v1'.length) : path;
   return `${url.origin}${prefix}${url.search}`;

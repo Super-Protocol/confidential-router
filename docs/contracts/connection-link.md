@@ -72,11 +72,18 @@ Every failure is one of these, and each is a sentence the dialog can show as it 
 the router operator's call, and a producer that could set it would be setting what this deployment
 charges its own users. The dialog opens pre-filled and still requires a submit.
 
+**One field, two inputs** (SUP-249). The register dialog's single *Endpoint URL or connection link*
+field tells them apart by shape: a string that parses as a link fills everything above; one that is
+refused **only** as `missing_fragment` — an https URL with no `#…` — is a bare endpoint URL and starts
+model discovery instead (paste the key, the router attests, then lists `/v1/models`;
+`console-graphql.md` "As shipped (SUP-249)"). Every other refusal is still shown in the link's own
+words. The field's help text names where links live — the model deployment's *Outputs* panel.
+
 ## Handling one
 
 A connection link is a credential. Treat a pasted one the way the console treats a created API key:
 
 - never put it in a URL the browser navigates to, a `history.pushState`, or an analytics event;
 - the registration mutation sends the key in the request body, and no read path returns it (T15);
-- the paste field is cleared once the fields are filled, so the secret does not sit in a form the
-  next screenshot catches.
+- the paste field is cleared — and hidden — once the fields are filled, so the secret does not sit in a
+  form the next screenshot catches.

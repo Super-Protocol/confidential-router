@@ -10,3 +10,4 @@ export * from './invites.errors.js';
 export * from './invites.module.js';
 export * from './invites.service.js';
 export * from './sign-up-invite.js';
+export * from './signup-grant.service.js';
