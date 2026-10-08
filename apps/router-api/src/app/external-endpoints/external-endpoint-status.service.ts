@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, Not } from 'typeorm';
+import { DataSource, In, IsNull, Not } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import {
@@ -54,8 +54,27 @@ export class ExternalEndpointStatusService {
    * restarted, which is this process's news and not the upstream's.
    */
   async resetToPending(): Promise<number> {
-    const { affected } = await this.dataSource.getRepository(ExternalEndpoint).update(
-      { enabled: true, status: Not('pending') },
+    const repository = this.dataSource.getRepository(ExternalEndpoint);
+    // A `pending` row can carry a verdict too since SUP-252 — a deployment awaiting
+    // approval was checked, and its factors are on the row — so the reset is about
+    // what the row holds, not only its status. Matched on the varchar verdict
+    // columns: `lastCheckedAt` goes through a column transformer that an `IS NOT
+    // NULL` operator cannot pass through.
+    const stale = await repository.find({
+      select: { id: true },
+      where: [
+        { enabled: true, status: Not('pending') },
+        { enabled: true, lastStage: Not(IsNull()) },
+        { enabled: true, evidenceDigestSeen: Not(IsNull()) },
+        { enabled: true, observedCertFingerprint: Not(IsNull()) },
+      ],
+    });
+    if (stale.length === 0) {
+      await this.catalog.refresh();
+      return 0;
+    }
+    const { affected } = await repository.update(
+      { id: In(stale.map((row) => row.id)) },
       {
         status: 'pending',
         lastStage: null,
@@ -65,6 +84,7 @@ export class ExternalEndpointStatusService {
         measurementInRegistry: null,
         evidenceDigestSeen: null,
         pinnedCertFingerprint: null,
+        observedCertFingerprint: null,
         lastCheckedAt: null,
         updatedAt: new Date(),
       },
@@ -121,11 +141,15 @@ export class ExternalEndpointStatusService {
     return report;
   }
 
-  /** Appends one event the sidecar has no opinion about — registration, a disable, a key rotation. */
+  /**
+   * Appends one event the sidecar has no opinion about — registration, a disable, a
+   * key rotation, an approved digest. `evidenceDigest` is what a `digest_pinned`
+   * event approved.
+   */
   async recordEvent(
     externalEndpointId: string,
     kind: ExternalEndpointEventKind,
-    now: Date = new Date(),
+    { now = new Date(), evidenceDigest = null }: { now?: Date; evidenceDigest?: string | null } = {},
   ): Promise<void> {
     await this.dataSource.getRepository(ExternalEndpointEvent).save({
       id: randomUUID(),
@@ -135,7 +159,7 @@ export class ExternalEndpointStatusService {
       stage: null,
       reason: null,
       measurement: null,
-      evidenceDigest: null,
+      evidenceDigest,
     });
   }
 

@@ -129,6 +129,37 @@ describe('resetToPending', () => {
     expect(await eventsOf(endpoint.id)).toEqual([]);
   });
 
+  it('clears a pending endpoint that was checked — awaiting approval is a verdict too (SUP-252)', async () => {
+    // `digest-not-pinned` is `pending` with both factors on the row and a leaf the
+    // evidence poller binds to. From a previous process, none of that is a live
+    // observation; the pin itself is trust and stays.
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'pending', pinnedEvidenceDigest: DIGEST });
+    await dataSource.getRepository(ExternalEndpoint).update(
+      { id: endpoint.id },
+      {
+        lastStage: 'digest-not-pinned',
+        measurementSeen: MEASUREMENT,
+        evidenceDigestSeen: DIGEST,
+        observedCertFingerprint: FINGERPRINT,
+        lastCheckedAt: new Date(),
+      },
+    );
+    const untouched = await seedExternalEndpoint(dataSource, { status: 'pending' });
+
+    await expect(service.resetToPending()).resolves.toBe(1);
+
+    expect(await rowOf(endpoint.id)).toMatchObject({
+      status: 'pending',
+      lastStage: null,
+      measurementSeen: null,
+      evidenceDigestSeen: null,
+      observedCertFingerprint: null,
+      lastCheckedAt: null,
+      pinnedEvidenceDigest: DIGEST,
+    });
+    expect((await rowOf(untouched.id)).status).toBe('pending');
+  });
+
   it('leaves a disabled endpoint alone — that value is the operator’s, not a verdict', async () => {
     const endpoint = await seedExternalEndpoint(dataSource, { enabled: false, status: 'disabled' });
 

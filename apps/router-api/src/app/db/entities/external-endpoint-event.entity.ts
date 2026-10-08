@@ -5,16 +5,18 @@ import { ExternalEndpoint } from './external-endpoint.entity.js';
 /**
  * What happened to an external endpoint, in order.
  *
- * `digest_changed` and `measurement_changed` fire even while the endpoint stays
- * verified: the same cloud redeploying a different image is exactly the event an
- * operator has to see, and cloud-granularity trust (threat T13) is the reason it
- * cannot be inferred from the status alone.
+ * `digest_changed` and `measurement_changed` are reported on every change. Under
+ * two-factor trust (SUP-252) a digest change is also *gating* — the pinned digest
+ * no longer matches, so the same pass records the `denied` it caused — and
+ * `digest_pinned` is the admin's approval of a deployment, carrying the digest
+ * approved.
  */
 export type ExternalEndpointEventKind =
   | 'registered'
   | 'verified'
   | 'denied'
   | 'digest_changed'
+  | 'digest_pinned'
   | 'measurement_changed'
   | 'disabled'
   | 'key_rotated';

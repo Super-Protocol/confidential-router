@@ -36,6 +36,7 @@ export const ExternalEndpointEventKindEnum = {
   VERIFIED_BY_THIS_ROUTER: 'verified',
   DENIED_BY_THIS_ROUTER: 'denied',
   DIGEST_CHANGED: 'digest_changed',
+  DIGEST_PINNED: 'digest_pinned',
   MEASUREMENT_CHANGED: 'measurement_changed',
   DISABLED: 'disabled',
   KEY_ROTATED: 'key_rotated',
@@ -44,8 +45,9 @@ export const ExternalEndpointEventKindEnum = {
 registerEnumType(ExternalEndpointEventKindEnum, {
   name: 'ExternalEndpointEventKind',
   description:
-    'DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud ' +
-    'redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone.',
+    'DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a ' +
+    'DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives ' +
+    'with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest.',
 });
 
 /**
@@ -225,7 +227,10 @@ export class ExternalEndpointModel {
 
   @Field(() => String, {
     nullable: true,
-    description: 'Stage of the last failure: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy.',
+    description:
+      'Where the last check stopped: a pipeline stage (fetch, cert-chain, untrusted-root, jws, tls-fingerprint, ' +
+      'policy) or the trust factor refused — digest-not-pinned (PENDING: nothing approved yet), ' +
+      'measurement-not-trusted, or digest-mismatch (a redeploy nobody approved).',
   })
   lastStage!: string | null;
 
@@ -257,6 +262,32 @@ export class ExternalEndpointModel {
 
   @Field(() => String, {
     nullable: true,
+    description: 'evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115).',
+  })
+  evidenceDigestSeenHex!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The deployment an admin approved — the second trust factor beside the cloud measurement. Admission requires ' +
+      'evidenceDigestSeen to equal it. Null: nothing approved yet, so the endpoint stays PENDING. Readable by any ' +
+      'signed-in user, like the trust list.',
+  })
+  pinnedEvidenceDigest!: string | null;
+
+  @Field(() => String, { nullable: true, description: 'pinnedEvidenceDigest as 64 hex characters.' })
+  pinnedEvidenceDigestHex!: string | null;
+
+  @Field(() => ExternalEndpointEvidenceModel, {
+    nullable: true,
+    description:
+      'The evidence summary behind pinnedEvidenceDigest, when this router filed it — what "approve new digest" ' +
+      'compares the current publication against.',
+  })
+  pinnedEvidence!: ExternalEndpointEvidenceModel | null;
+
+  @Field(() => String, {
+    nullable: true,
     description: 'The TLS leaf the egress pinned. Upstream connections verify against this and no CA bundle.',
   })
   pinnedCertFingerprint!: string | null;
@@ -280,8 +311,9 @@ export class ExternalEndpointModel {
   @Field(() => ExternalEndpointEvidenceModel, {
     nullable: true,
     description:
-      'What the upstream publishes right now, as the last verdict saw it. Null until a verdict has admitted the ' +
-      'endpoint and this router has retrieved the publication that verdict names.',
+      'What the upstream publishes right now, as the last verdict saw it. Null until a verdict has verified the ' +
+      'evidence — admitted, or refused only by a trust factor — and this router has retrieved the publication that ' +
+      'verdict names.',
   })
   latestEvidence!: ExternalEndpointEvidenceModel | null;
 
@@ -510,6 +542,18 @@ export class RotateExternalEndpointKeyInputModel {
   @IsNotEmpty()
   @Length(1, 512)
   apiKey!: string;
+}
+
+@InputType('PinExternalEndpointDigestInput')
+export class PinExternalEndpointDigestInputModel {
+  @Field(() => String, {
+    description:
+      'The deployment to approve: sha256:<64 hex> (what the console shows) or sha256/<base64url>. Normalised. ' +
+      'Replaces any earlier pin.',
+  })
+  @IsString()
+  @Length(1, 128)
+  evidenceDigest!: string;
 }
 
 @InputType('AddTrustedMeasurementInput')

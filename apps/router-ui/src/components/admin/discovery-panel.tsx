@@ -20,12 +20,15 @@ import {
   DISCOVER_EXTERNAL_MODELS,
   EXTERNAL_ENDPOINT_VERDICT_QUERY,
   EXTERNAL_ENDPOINTS_QUERY,
-  TRUSTED_MEASUREMENTS_QUERY,
   UPDATE_EXTERNAL_ENDPOINT,
 } from './operations';
+import { TrustFactors } from './trust-factors';
 
 /** How often the panel re-reads the verdict while it waits; the server polls the sidecar every ~5 s. */
 export const VERDICT_POLL_MS = 2_000;
+
+/** The stages a two-factor refusal is reported at (SUP-252) — each one fixed by an approval, not a retry. */
+const FACTOR_REFUSALS = new Set(['digest-not-pinned', 'measurement-not-trusted', 'digest-mismatch']);
 
 type DiscoveredModel = DiscoverExternalModelsQuery['discoverExternalModels'][number];
 type ExistingModel = NonNullable<ExternalEndpointVerdictQuery['externalEndpoint']>['models'][number];
@@ -131,14 +134,6 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
   const endpoint = verdict.data?.externalEndpoint ?? null;
   const verified = endpoint?.status === 'VERIFIED_BY_THIS_ROUTER';
 
-  // With nothing on the trust list the egress verifier has nothing to admit
-  // against and runs no check at all, so no verdict ever arrives (SUP-249 QA).
-  // The panel says so instead of claiming evidence is being fetched, and keeps
-  // watching: the first measurement an admin trusts starts the checks.
-  const trust = useQuery(TRUSTED_MEASUREMENTS_QUERY, { fetchPolicy: 'network-only', pollInterval: VERDICT_POLL_MS });
-  const trustListEmpty = trust.data?.trustedMeasurements.length === 0;
-  const awaitingTrust = trustListEmpty && endpoint?.status === 'PENDING';
-
   // Lazy, and asked once per panel: the call spends the upstream key, so a
   // verdict that flickers during a re-attest must not send it again. "Ask
   // again" is the admin's own way back.
@@ -178,16 +173,10 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
   // Nothing left to wait for once the list is in, or once the endpoint is off.
   const settled = (verified && discovered !== undefined) || endpoint?.status === 'DISABLED';
   const { startPolling, stopPolling } = verdict;
-  const { startPolling: startTrustPolling, stopPolling: stopTrustPolling } = trust;
   React.useEffect(() => {
-    if (settled) {
-      stopPolling();
-      stopTrustPolling();
-    } else {
-      startPolling(VERDICT_POLL_MS);
-      startTrustPolling(VERDICT_POLL_MS);
-    }
-  }, [settled, startPolling, stopPolling, startTrustPolling, stopTrustPolling]);
+    if (settled) stopPolling();
+    else startPolling(VERDICT_POLL_MS);
+  }, [settled, startPolling, stopPolling]);
 
   const setRow = (index: number, patch: Partial<PickerRow>) =>
     setRows((current) => current?.map((row, at) => (at === index ? { ...row, ...patch } : row)) ?? current);
@@ -240,12 +229,16 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
 
   const status = endpoint?.status ?? 'PENDING';
   const presentation = statusPresentation(status);
+  // Refused by a trust factor rather than by the pipeline: the approvals above
+  // are the fix, so the generic "add it to the trust list" pointer is not shown.
+  const factorRefusal = FACTOR_REFUSALS.has(endpoint?.lastStage ?? '');
+  const awaitingApproval = status === 'PENDING' && endpoint?.lastStage === 'digest-not-pinned';
   const attestState: StageState =
     status === 'VERIFIED_BY_THIS_ROUTER'
       ? 'done'
       : status === 'DENIED_BY_THIS_ROUTER'
         ? 'failed'
-        : awaitingTrust
+        : awaitingApproval
           ? 'waiting'
           : 'running';
   const listState: StageState = !verified ? 'waiting' : discovery.error ? 'failed' : discovered ? 'done' : 'running';
@@ -265,23 +258,28 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
               </span>
             ) : null}
           </div>
-          {awaitingTrust ? (
-            <p role="alert" className="text-destructive text-xs">
-              The trust list is empty, so this router has nothing to admit an upstream against and has not checked it
-              yet. Add the measurement of the cloud it runs on to the{' '}
-              <Link href="/admin/trust" className="underline underline-offset-2">
-                trust list
-              </Link>{' '}
-              — the check starts then, and this panel keeps watching.
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-xs">
-              {status === 'PENDING'
-                ? 'Fetching its evidence, checking the measurement against the trust list and pinning its certificate.'
+          <p className="text-muted-foreground text-xs">
+            {awaitingApproval
+              ? 'Evidence verified. Approve the cloud and this deployment below — one click each — and the router re-checks at once.'
+              : status === 'PENDING'
+                ? 'Fetching its evidence, checking the cloud measurement and the deployment digest, and pinning its certificate.'
                 : presentation.detail}
-            </p>
-          )}
-          {status === 'DENIED_BY_THIS_ROUTER' ? (
+          </p>
+          {/*
+           * Two-factor trust (SUP-252): a fresh endpoint is never admitted until an
+           * admin approves what the first check saw, so the approval lives in the
+           * stage that waits for it. The check runs whether or not anything is on
+           * the trust list yet — the egress renders `measurement-and-digest`,
+           * which starts with neither factor approved — so an empty list is
+           * answered here by "Add to trust list", not by a wait.
+           */}
+          {endpoint &&
+          !verified &&
+          status !== 'DISABLED' &&
+          (endpoint.measurementSeen || endpoint.evidenceDigestSeen) ? (
+            <TrustFactors endpoint={{ ...endpoint, name: endpointName }} isAdmin />
+          ) : null}
+          {status === 'DENIED_BY_THIS_ROUTER' && !factorRefusal ? (
             <p role="alert" className="text-destructive text-xs">
               {endpoint?.lastStage ? `${endpoint.lastStage}: ` : ''}
               {endpoint?.lastReason ?? 'refused'}.{' '}

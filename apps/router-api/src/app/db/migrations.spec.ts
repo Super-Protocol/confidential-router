@@ -111,14 +111,22 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-251's registry signal is one additive column; undoing it drops only that.
+      // SUP-252's two-factor trust added the pinned digest and the observed leaf;
+      // the first undo drops both and touches nothing else.
+      expect(await queryRunner.hasColumn('external_endpoints', 'pinnedEvidenceDigest')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('external_endpoints', 'pinnedEvidenceDigest')).toBe(false);
+      expect(await queryRunner.hasColumn('external_endpoints', 'observedCertFingerprint')).toBe(false);
+      expect(await queryRunner.hasColumn('external_endpoints', 'pinnedCertFingerprint')).toBe(true);
+
+      // SUP-251's registry signal is one additive column; the next undo drops only that.
       expect(await queryRunner.hasColumn('external_endpoints', 'measurementInRegistry')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('external_endpoints', 'measurementInRegistry')).toBe(false);
       expect(await queryRunner.hasColumn('external_endpoints', 'measurementSource')).toBe(true);
 
       // ADR-008 §6's evidence leg loosened `evidence_snapshots.endpointId`; the
-      // first undo puts the NOT NULL back and drops the column it added.
+      // next undo puts the NOT NULL back and drops the column it added.
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(false);

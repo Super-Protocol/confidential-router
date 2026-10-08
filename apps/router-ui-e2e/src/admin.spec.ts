@@ -47,6 +47,14 @@ function discoveryOperations(calls: string[]) {
           lastStage: null,
           lastReason: null,
           measurementSeen: status === 'PENDING' ? null : TRUSTED_MEASUREMENT,
+          measurementSource: status === 'PENDING' ? null : 'REGISTRY',
+          measurementInRegistry: status === 'PENDING' ? null : true,
+          evidenceDigestSeen: status === 'PENDING' ? null : 'sha256/AAAABBBBCCCCDDDDEEEEFFFF',
+          evidenceDigestSeenHex:
+            status === 'PENDING' ? null : '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
+          pinnedEvidenceDigest: status === 'PENDING' ? null : 'sha256/AAAABBBBCCCCDDDDEEEEFFFF',
+          pinnedEvidenceDigestHex:
+            status === 'PENDING' ? null : '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
           pinnedCertFingerprint: status === 'PENDING' ? null : 'ab'.repeat(32),
           models: [],
         },
@@ -137,9 +145,133 @@ test.describe('the admin section', () => {
     await expect(current).toBeVisible();
     await expect(current.getByText('Deployment/vllm')).toBeVisible();
     await expect(current.getByText(/ghcr.io\/example\/vllm@sha256:1111/)).toBeVisible();
-    await expect(drawer.getByTestId('endpoint-timeline').getByText('Image digest changed')).toBeVisible();
+    await expect(drawer.getByTestId('endpoint-timeline').getByText('Deployment digest changed')).toBeVisible();
     // The registration and the digest change each render their own.
     await expect(drawer.getByTestId('evidence-summary')).toHaveCount(3);
+  });
+
+  /**
+   * SUP-252's TOFU-with-approval loop in a browser: the dossier shows both
+   * factors the first check saw, one click approves each, and after a redeploy
+   * it shows old vs new with the evidence diff and approves the new digest. The
+   * API is a stateful fixture — the server half of the loop runs against the real
+   * sidecar in `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts`.
+   */
+  test('approves both trust factors from the dossier, then a redeploy', async ({ page, baseURL }, testInfo) => {
+    const APPROVED = VERIFIED_ENDPOINT.evidenceDigestSeen;
+    const APPROVED_HEX = VERIFIED_ENDPOINT.evidenceDigestSeenHex;
+    const REDEPLOYED = 'sha256/EEEEFFFF0000111122223333';
+    const REDEPLOYED_HEX = '9999888877776666555544443333222211110000ffffeeeeddddccccbbbbaaaa';
+    const ROGUE = 'b'.repeat(64);
+    const calls: string[] = [];
+    let trusted = false;
+    let pinned: string | null = null;
+    let published = APPROVED;
+    const endpoint = () => {
+      const both = trusted && pinned === published;
+      const redeployed = published === REDEPLOYED;
+      return {
+        ...VERIFIED_ENDPOINT,
+        id: 'ext-demo',
+        name: 'llama-demo',
+        status: both ? 'VERIFIED_BY_THIS_ROUTER' : pinned === null ? 'PENDING' : 'DENIED_BY_THIS_ROUTER',
+        lastStage: both
+          ? null
+          : pinned === null
+            ? 'digest-not-pinned'
+            : !trusted
+              ? 'measurement-not-trusted'
+              : 'digest-mismatch',
+        lastReason: both ? null : 'refused by a trust factor',
+        measurementSeen: ROGUE,
+        measurementSource: 'REGISTRY',
+        measurementInRegistry: true,
+        evidenceDigestSeen: published,
+        evidenceDigestSeenHex: redeployed ? REDEPLOYED_HEX : APPROVED_HEX,
+        pinnedEvidenceDigest: pinned,
+        pinnedEvidenceDigestHex: pinned === null ? null : pinned === REDEPLOYED ? REDEPLOYED_HEX : APPROVED_HEX,
+        pinnedCertFingerprint: both ? VERIFIED_ENDPOINT.pinnedCertFingerprint : null,
+        latestEvidence: redeployed
+          ? {
+              ...VERIFIED_ENDPOINT.latestEvidence,
+              evidenceDigest: REDEPLOYED,
+              evidenceDigestHex: REDEPLOYED_HEX,
+              containerImages: [`ghcr.io/example/vllm@sha256:${'3'.repeat(64)}`],
+            }
+          : VERIFIED_ENDPOINT.latestEvidence,
+        pinnedEvidence: pinned === APPROVED ? VERIFIED_ENDPOINT.latestEvidence : null,
+        events: [],
+      };
+    };
+    const measurements = () => ({
+      trustedMeasurements: [
+        ...ADMIN_OPERATIONS.TrustedMeasurements.trustedMeasurements,
+        ...(trusted
+          ? [
+              {
+                __typename: 'TrustedMeasurement',
+                id: 'tm-new',
+                measurement: ROGUE,
+                note: null,
+                addedByEmail: null,
+                addedAt: '2026-10-08T14:00:00.000Z',
+                admits: 0,
+              },
+            ]
+          : []),
+      ],
+    });
+    await signIn(page, baseURL as string, {
+      ViewerIsAdmin: viewerIsAdmin(true),
+      ExternalEndpoints: () => ({ externalEndpoints: [endpoint()] }),
+      TrustedMeasurements: measurements,
+      AddTrustedMeasurement: (variables) => {
+        calls.push(`AddTrustedMeasurement:${(variables.input as { measurement: string }).measurement}`);
+        trusted = true;
+        return { addTrustedMeasurement: measurements().trustedMeasurements.at(-1) };
+      },
+      PinExternalEndpointDigest: (variables) => {
+        const digest = (variables.input as { evidenceDigest: string }).evidenceDigest;
+        calls.push(`PinExternalEndpointDigest:${digest}`);
+        pinned = digest;
+        return { pinExternalEndpointDigest: endpoint() };
+      },
+    });
+
+    await page.goto('/admin/endpoints');
+    await page.getByRole('button', { name: /^Open llama-demo:/ }).click();
+    const factors = page.getByRole('dialog').getByTestId('trust-factors');
+    const measurement = factors.getByTestId('trust-factor-measurement');
+    const digest = factors.getByTestId('trust-factor-digest');
+
+    // First check: both factors seen, neither approved.
+    await expect(measurement.getByText('Not on the trust list')).toBeVisible();
+    await expect(measurement.getByText('Registry-signed')).toBeVisible();
+    await expect(digest.getByText('Not pinned')).toBeVisible();
+    await page.getByRole('dialog').screenshot({ path: testInfo.outputPath('1-awaiting-approval.png') });
+
+    // One click each.
+    await measurement.getByRole('button', { name: 'Add to trust list' }).click();
+    await expect(measurement.getByText('On the trust list')).toBeVisible();
+    await digest.getByRole('button', { name: 'Pin this digest' }).click();
+    await expect(page.getByRole('dialog').getByText('Verified by this router').first()).toBeVisible();
+    await expect(digest.getByText('Pinned', { exact: true })).toBeVisible();
+    await page.getByRole('dialog').screenshot({ path: testInfo.outputPath('2-verified.png') });
+
+    // The upstream redeploys: fail closed, old vs new, the diff, one click.
+    published = REDEPLOYED;
+    await expect(digest.getByText('Changed — not approved')).toBeVisible({ timeout: 10_000 });
+    const change = digest.getByTestId('digest-change');
+    await expect(change.getByRole('list', { name: 'What changed' }).getByText(/vllm@sha256:3333/)).toBeVisible();
+    await page.getByRole('dialog').screenshot({ path: testInfo.outputPath('3-redeployed.png') });
+    await digest.getByRole('button', { name: 'Approve new digest' }).click();
+    await expect(digest.getByText('Pinned', { exact: true })).toBeVisible();
+
+    expect(calls).toEqual([
+      `AddTrustedMeasurement:${ROGUE}`,
+      `PinExternalEndpointDigest:${APPROVED}`,
+      `PinExternalEndpointDigest:${REDEPLOYED}`,
+    ]);
   });
 
   test('fills the register dialog from a pasted connection link', async ({ page, baseURL }) => {

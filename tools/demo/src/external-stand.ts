@@ -22,11 +22,15 @@
  * What the stand can make happen, because these are the beats worth testing:
  *
  *   rotateMeasurement()   the trusted cloud redeploys on an image nobody listed
- *                         → denied at `policy`, models dropped, in-flight cut
+ *                         → denied at `measurement-not-trusted`, models dropped,
+ *                           in-flight cut
  *   denyAttestation()     the hardware report itself stops verifying
  *                         → denied at `untrusted-root`
  *   the upstream's own `rotateDeployment()` / `breakChannelBinding()` / … are
  *   unchanged and apply here too: the upstream is an ordinary mock evidence host.
+ *   Under two-factor trust (SUP-252) `rotateDeployment()` is the redeploy beat:
+ *   same cloud, new evidence digest → denied at `digest-mismatch` until an admin
+ *   approves the new digest.
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -92,6 +96,8 @@ const RELAY_TIMEOUT_MS = 60_000;
 export interface ExternalUpstreamOptions {
   /** Milliseconds between streamed chunks; raise it to keep a generation alive. */
   chunkGapMs?: number;
+  /** What the upstream lists on `GET /v1/models` — what the router discovers through the egress. */
+  models?: readonly string[];
 }
 
 /** A model endpoint in another deployment: one TLS hostname, evidence and `/v1`. */
@@ -114,7 +120,7 @@ export interface ExternalUpstream {
  * different port would be a statement about nothing the prompt ever reaches.
  */
 export async function startExternalUpstream(options: ExternalUpstreamOptions = {}): Promise<ExternalUpstream> {
-  const backend = await startMockLiteLLM({ chunkGapMs: options.chunkGapMs });
+  const backend = await startMockLiteLLM({ chunkGapMs: options.chunkGapMs, models: options.models });
   try {
     const evidenceHost = await startMockEvidenceHost({ upstream: backend.url });
     return {
@@ -374,11 +380,17 @@ export interface RegisteredExternalEndpoint {
   apiKeyPrefix: string | null;
   measurementSeen: string | null;
   measurementSource: string | null;
-  /** The upstream publication the admitting verdict observed — the relay's key (ADR-008 §7). */
+  /** The deployment digest the last check saw — what an admin pins (SUP-252). */
   evidenceDigestSeen: string | null;
+  /** The deployment an admin approved; null until one is. */
+  pinnedEvidenceDigest: string | null;
   lastStage: string | null;
   lastReason: string | null;
   models: { id: string; name: string }[];
+  /** The evidence summary behind the digest seen, once the router has filed it. */
+  latestEvidence: { evidenceDigest: string; containerImages: string[] } | null;
+  /** The evidence summary behind the pinned digest. */
+  pinnedEvidence: { evidenceDigest: string; containerImages: string[] } | null;
 }
 
 const ENDPOINT_FIELDS = `
@@ -390,9 +402,12 @@ const ENDPOINT_FIELDS = `
   measurementSeen
   measurementSource
   evidenceDigestSeen
+  pinnedEvidenceDigest
   lastStage
   lastReason
   models { id name }
+  latestEvidence { evidenceDigest containerImages }
+  pinnedEvidence { evidenceDigest containerImages }
 `;
 
 /** `registerExternalEndpoint` — the register dialog's mutation, nothing else. */
@@ -467,6 +482,37 @@ export async function addTrustedMeasurement(
   return added;
 }
 
+/**
+ * `pinExternalEndpointDigest` — the dossier's "Pin this digest" / "Approve new
+ * digest" (SUP-252). Approves one deployment; the sidecar re-attests at once.
+ */
+export async function pinExternalEndpointDigest(
+  session: ConsoleSession,
+  id: string,
+  evidenceDigest: string,
+): Promise<RegisteredExternalEndpoint> {
+  const { pinExternalEndpointDigest: pinned } = await session.graphql<{
+    pinExternalEndpointDigest: RegisteredExternalEndpoint;
+  }>(
+    `mutation Pin($id: ID!, $input: PinExternalEndpointDigestInput!) {
+       pinExternalEndpointDigest(id: $id, input: $input) { ${ENDPOINT_FIELDS} }
+     }`,
+    { id, input: { evidenceDigest } },
+  );
+  return pinned;
+}
+
+/** `discoverExternalModels` — the register dialog's attest-then-list call (SUP-249). */
+export async function discoverExternalModels(
+  session: ConsoleSession,
+  id: string,
+): Promise<{ upstreamModel: string; registeredAs: string | null }[]> {
+  const { discoverExternalModels: models } = await session.graphql<{
+    discoverExternalModels: { upstreamModel: string; registeredAs: string | null }[];
+  }>('query Discover($id: ID!) { discoverExternalModels(id: $id) { upstreamModel registeredAs } }', { id });
+  return models;
+}
+
 export async function removeTrustedMeasurement(session: ConsoleSession, id: string): Promise<boolean> {
   const { removeTrustedMeasurement: removed } = await session.graphql<{ removeTrustedMeasurement: boolean }>(
     'mutation Withdraw($id: ID!) { removeTrustedMeasurement(id: $id) }',
@@ -524,18 +570,34 @@ export async function waitForExternalStatus(
   id: string,
   wanted: readonly string[],
 ): Promise<RegisteredExternalEndpoint> {
+  return waitForExternal(session, id, {
+    until: (endpoint) => wanted.includes(endpoint.status),
+    wanted: `one of ${wanted.join(' / ')}`,
+  });
+}
+
+/**
+ * Polls `externalEndpoint(id)` until `until` holds — for the states a status
+ * alone cannot name: `PENDING` *at* `digest-not-pinned` with both factors seen,
+ * or a summary the evidence poller has filed (SUP-252).
+ */
+export async function waitForExternal(
+  session: ConsoleSession,
+  id: string,
+  { until, wanted }: { until: (endpoint: RegisteredExternalEndpoint) => boolean; wanted: string },
+): Promise<RegisteredExternalEndpoint> {
   const timeoutMs = STATUS_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   let last: RegisteredExternalEndpoint | null = null;
   for (;;) {
     last = await readExternalEndpoint(session, id);
-    if (last && wanted.includes(last.status)) {
+    if (last && until(last)) {
       return last;
     }
     if (Date.now() > deadline) {
       throw new Error(
-        `external endpoint ${id} was ${last?.status ?? 'absent'} after ${timeoutMs}ms, wanted one of ` +
-          `${wanted.join(' / ')}${last?.lastReason ? ` (last reason: ${last.lastStage}: ${last.lastReason})` : ''}`,
+        `external endpoint ${id} was ${last?.status ?? 'absent'} after ${timeoutMs}ms, wanted ${wanted}` +
+          `${last?.lastReason ? ` (last reason: ${last.lastStage}: ${last.lastReason})` : ''}`,
       );
     }
     await delay(200);
@@ -549,6 +611,8 @@ export async function waitForExternalStatus(
 export interface ExternalStandOptions {
   /** Milliseconds between the upstream's streamed chunks. */
   chunkGapMs?: number;
+  /** What the upstream lists on `GET /v1/models`. */
+  upstreamModels?: readonly string[];
   /** Mirror every process's log to stderr. */
   verbose?: boolean;
   /**
@@ -605,7 +669,7 @@ export async function startExternalStand(options: ExternalStandOptions = {}): Pr
   };
 
   try {
-    const upstream = await startExternalUpstream({ chunkGapMs: options.chunkGapMs });
+    const upstream = await startExternalUpstream({ chunkGapMs: options.chunkGapMs, models: options.upstreamModels });
     started.push(() => upstream.stop());
 
     const seam = await externalSeam();

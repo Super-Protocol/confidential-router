@@ -6,11 +6,14 @@ import { isAdminMock, renderWithSession, sessionMock } from '../../test-utils';
 import {
   ALL_ENDPOINTS,
   DENIED_ENDPOINT,
+  DIGEST_APPROVED,
+  DIGEST_APPROVED_HEX,
   discoverMock,
   endpointsMock,
   MEASUREMENT_ROGUE,
   measurementsMock,
   PENDING_ENDPOINT,
+  TRUSTED,
   VERIFIED_ENDPOINT,
   verdictMock,
 } from './admin-mocks';
@@ -148,31 +151,40 @@ describe('ExternalEndpointsScreen', () => {
         measurementInRegistry: true,
       };
 
-      it('offers the whole measurement for copying, and a registry badge that admits nothing', async () => {
+      /*
+       * SUP-251 put the copy button and the registry badge beside the measurement;
+       * SUP-252 moved both into the trust-factors section and — Denis's newer
+       * ruling — added the one-click "Add to trust list" the SUP-251 ruling had
+       * kept out. The badge still admits nothing; the button is an explicit trust
+       * action, not a shortcut taken by the badge.
+       */
+      it('offers the whole measurement for copying, a registry badge that admits nothing, and an explicit trust action', async () => {
         const user = userEvent.setup();
-        renderScreen({ mocks: [endpointsMock([signedDenial])] });
+        renderScreen({ mocks: [endpointsMock([signedDenial]), measurementsMock([TRUSTED])] });
         const drawer = await openDrawer('gemma-2-2b');
-        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+        const measurement = within(drawer).getByTestId('trust-factor-measurement');
 
-        await user.click(within(verdict).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }));
+        await user.click(
+          within(measurement).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
+        );
         await expect(navigator.clipboard.readText()).resolves.toBe(MEASUREMENT_ROGUE);
 
-        expect(within(verdict).getByText('Registry-signed')).toBeInTheDocument();
-        expect(verdict).toHaveTextContent('A registry signature admits nothing on its own.');
-        // The way forward is the trust list itself, never a shortcut beside the badge.
-        expect(within(verdict).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
-        expect(within(drawer).queryByRole('button', { name: /trust/i })).not.toBeInTheDocument();
+        expect(within(measurement).getByText('Registry-signed')).toHaveAttribute(
+          'title',
+          expect.stringContaining('only the trust list admits'),
+        );
+        expect(await within(measurement).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
       });
 
       it('shows no registry badge for a measurement the registry does not sign', async () => {
         renderScreen({ mocks: [endpointsMock([{ ...signedDenial, measurementInRegistry: false }])] });
         const drawer = await openDrawer('gemma-2-2b');
-        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+        const measurement = within(drawer).getByTestId('trust-factor-measurement');
 
         expect(
-          within(verdict).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
+          within(measurement).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
         ).toBeInTheDocument();
-        expect(within(verdict).queryByText('Registry-signed')).not.toBeInTheDocument();
+        expect(within(measurement).queryByText('Registry-signed')).not.toBeInTheDocument();
       });
 
       it('offers neither when no measurement was derived', async () => {
@@ -180,11 +192,11 @@ describe('ExternalEndpointsScreen', () => {
           mocks: [endpointsMock([{ ...signedDenial, measurementSeen: null, measurementInRegistry: null }])],
         });
         const drawer = await openDrawer('gemma-2-2b');
-        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+        const measurement = within(drawer).getByTestId('trust-factor-measurement');
 
-        expect(within(verdict).queryByRole('button', { name: /^Copy the measurement/ })).not.toBeInTheDocument();
-        expect(within(verdict).queryByText('Registry-signed')).not.toBeInTheDocument();
-        expect(within(verdict).queryByRole('link', { name: 'trust list' })).not.toBeInTheDocument();
+        expect(within(measurement).queryByRole('button', { name: /^Copy the measurement/ })).not.toBeInTheDocument();
+        expect(within(measurement).queryByText('Registry-signed')).not.toBeInTheDocument();
+        expect(within(measurement).queryByRole('button', { name: 'Add to trust list' })).not.toBeInTheDocument();
       });
     });
 
@@ -211,7 +223,7 @@ describe('ExternalEndpointsScreen', () => {
       const entries = [...timeline.querySelectorAll(':scope > li')];
 
       expect(entries).toHaveLength(3);
-      expect(entries[0]).toHaveTextContent('Image digest changed');
+      expect(entries[0]).toHaveTextContent('Deployment digest changed');
       expect(entries[1]).toHaveTextContent('Verified by this router');
       expect(entries[2]).toHaveTextContent('Registered');
     });
@@ -236,11 +248,11 @@ describe('ExternalEndpointsScreen', () => {
       expect(within(current).getByText(/ghcr.io\/example\/vllm@sha256:1111/)).toBeInTheDocument();
     });
 
-    it('says the summary is informational, so a green chip is never read as approval', async () => {
+    it('says the summary is what a pinned digest approves, so it is read before approving', async () => {
       renderScreen();
       const drawer = await openDrawer('qwen3-coder');
 
-      expect(within(drawer).getAllByText(/Informational, not a gate/)[0]).toBeInTheDocument();
+      expect(within(drawer).getAllByText(/this is what a pin approves/)[0]).toBeInTheDocument();
     });
 
     it('shows the digest a change brought in, not only the one in force', async () => {
@@ -475,6 +487,39 @@ describe('ExternalEndpointsScreen', () => {
         expect(within(stages).getByText(/not one request goes upstream before it/)).toBeInTheDocument();
         expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
       });
+      /**
+       * SUP-252: under two-factor trust a fresh endpoint is never admitted until
+       * an admin approves what the first check saw, so the approvals appear in
+       * the stage that waits for them — one click each, no second screen.
+       */
+      it('offers both approvals in the attest stage while the deployment awaits them', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            registerBareMock(),
+            measurementsMock([TRUSTED]),
+            verdictMock('ext-new', 'PENDING', {
+              lastCheckedAt: '2026-10-08T14:00:00.000Z',
+              lastStage: 'digest-not-pinned',
+              lastReason: 'no evidenceDigest is pinned',
+              measurementSeen: MEASUREMENT_ROGUE,
+              measurementSource: 'REGISTRY',
+              evidenceDigestSeen: DIGEST_APPROVED,
+              evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+            }),
+          ],
+        });
+
+        await verifyAndDiscover();
+
+        const stages = await screen.findByRole('list', { name: 'Verification stages' });
+        expect(await within(stages).findByText(/Approve the cloud and this deployment below/)).toBeInTheDocument();
+        const factors = within(stages).getByTestId('trust-factors');
+        expect(await within(factors).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
+        expect(within(factors).getByRole('button', { name: 'Pin this digest' })).toBeInTheDocument();
+        // Nothing is listed before the verdict: the order is the selling point.
+        expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      });
     });
 
     describe('what the panel says while nothing can be checked (SUP-249 QA)', () => {
@@ -498,14 +543,32 @@ describe('ExternalEndpointsScreen', () => {
         return screen.findByRole('list', { name: 'Verification stages' });
       }
 
-      it('says the trust list is empty instead of claiming evidence is being fetched', async () => {
-        renderScreen({ mocks: [endpointsMock(), measurementsMock([]), register, verdictMock('ext-new', 'PENDING')] });
+      /*
+       * SUP-249 QA found the egress ran no check at all while the trust list was
+       * empty. Under two-factor trust (SUP-252) it does: `measurement-and-digest`
+       * starts with neither factor approved, so the first check reports both and
+       * the panel offers to trust the cloud instead of waiting for it.
+       */
+      it('checks with an empty trust list, and offers the measurement it saw for trusting', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            measurementsMock([]),
+            register,
+            verdictMock('ext-new', 'PENDING', {
+              lastCheckedAt: '2026-10-08T14:00:00.000Z',
+              lastStage: 'digest-not-pinned',
+              measurementSeen: MEASUREMENT_ROGUE,
+              evidenceDigestSeen: DIGEST_APPROVED,
+              evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+            }),
+          ],
+        });
 
         const stages = await start();
 
-        expect(await within(stages).findByRole('alert')).toHaveTextContent(/The trust list is empty/);
-        expect(within(stages).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
-        expect(within(stages).queryByText(/Fetching its evidence/)).not.toBeInTheDocument();
+        expect(await within(stages).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
+        expect(within(stages).queryByText(/The trust list is empty/)).not.toBeInTheDocument();
       });
 
       it('does not send the admin to the trust list for a failure it cannot fix', async () => {
@@ -527,10 +590,11 @@ describe('ExternalEndpointsScreen', () => {
         expect(within(stages).queryByRole('link', { name: 'trust list' })).not.toBeInTheDocument();
       });
 
-      it('marks a pending row as unchecked while the trust list is empty', async () => {
+      it('does not call a pending row unchecked just because the trust list is empty', async () => {
         renderScreen({ mocks: [endpointsMock(), measurementsMock([])] });
 
-        expect(await screen.findByText(/Not checked: the/)).toBeInTheDocument();
+        expect(await screen.findByText('llama-3-2-3b')).toBeInTheDocument();
+        expect(screen.queryByText(/Not checked/)).not.toBeInTheDocument();
       });
     });
 

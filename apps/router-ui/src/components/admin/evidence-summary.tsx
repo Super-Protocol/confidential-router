@@ -15,17 +15,11 @@ export interface EvidenceSummaryProps {
  * What a cloud-level admission actually let in: the upstream's workloads and the
  * image digests they run.
  *
- * SUP-221 ruling 1 makes this non-optional, and it is worth saying why in the
- * component rather than only in the issue. Admission here is one check — is the
- * cloud's launch measurement on the admin list (ADR-008 §3) — and that check
- * cannot see *what* was deployed on that cloud (threat T13). So the operator is
- * shown the whole picture at registration and on every change, labelled as
- * informational, because the alternative is an operator who believes a green
- * chip means they looked.
- *
- * Nothing here gates anything, and the copy says so out loud: a reader who
- * thinks this list was approved would be reading per-endpoint approval back into
- * a design that deliberately removed it.
+ * SUP-221 ruling 1 made this non-optional, and SUP-252 made it the basis of a
+ * decision: admission now also requires the deployment's evidence digest to be
+ * the one an admin pinned, and this summary is what that digest stands for. It is
+ * shown at registration and on every change, so the admin approving a digest has
+ * read what it lets in.
  */
 export function EvidenceSummary({ evidence, heading = 'Evidence summary', bare = false }: EvidenceSummaryProps) {
   const images = evidence.containerImages;
@@ -48,8 +42,8 @@ export function EvidenceSummary({ evidence, heading = 'Evidence summary', bare =
       <p className="flex items-start gap-1.5 text-muted-foreground text-xs">
         <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
         <span>
-          Informational, not a gate. Admission is the measurement check alone, which admits a cloud and cannot see which
-          deployment on it answered — this is what it let in.
+          What this snapshot digest stands for. The digest is what an admin pins as the deployment trust factor, so this
+          is what a pin approves — read it before approving.
         </span>
       </p>
 
