@@ -95,8 +95,14 @@ func (v *Verifier) AdmitMeasurement(ctx context.Context, result *Result, evidenc
 		result.MeasurementSource = SourceOperatorPinned
 	case errors.Is(err, ErrNotInRegistry):
 		result.MeasurementUnknown = true
+		// Everything before this leg held up, so the honest reading is an image
+		// nobody has signed yet — a local or test build — not a hostile cloud.
+		// The wording says so and points at the optional setup section, rather
+		// than leaving an operator to conclude the cloud is lying (SUP-253).
 		result.deny("measurement %s is not in the Super Protocol trusted registry, "+
-			"and it is not listed in attestedRoots.trustedMeasurements", result.MeasurementHex())
+			"and it is not listed in attestedRoots.trustedMeasurements — the hardware report verified, "+
+			"so this is what an unsigned or test build looks like (see \"Optional: test or unsigned builds\" "+
+			"in the setup guide)", result.MeasurementHex())
 		return false
 	default:
 		// Unknown is not the same as untrusted, but it cannot be admitted

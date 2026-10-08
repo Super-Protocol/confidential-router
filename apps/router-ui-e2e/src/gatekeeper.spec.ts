@@ -96,14 +96,21 @@ test.describe('Gatekeeper', () => {
     await expect(page.getByText(/verifies it against the release checksums/)).toBeVisible();
 
     // One sequence at a time, in the reader's own shell: the whole block switches
-    // with the tab, because two of its lines are a pipe (SUP-193).
+    // with the tab, because the install line and the test-build root line are
+    // pipes (SUP-193).
     await page.getByRole('tab', { name: 'Windows' }).click();
     await expect(
       page.getByText(
         'irm https://github.com/Super-Protocol/confidential-router/releases/latest/download/install.ps1 | iex',
       ),
     ).toBeVisible();
-    await expect(page.getByText(/gatekeeper trust roots add swarm-prod --pem-file swarm-root.pem/)).toBeVisible();
+
+    // The root certificate is off the default path (SUP-253): collapsed until
+    // the reader opens the test-build section.
+    const rootLine = page.getByText(/gatekeeper trust roots add swarm-prod --pem-file swarm-root.pem/);
+    await expect(rootLine).toBeHidden();
+    await page.getByText('Optional: test or unsigned builds').click();
+    await expect(rootLine).toBeVisible();
   });
 
   test('keeps the setup usable when no build has been published', async ({ page, baseURL }) => {
