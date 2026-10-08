@@ -24,6 +24,7 @@ export {
   startExternalUpstream,
   TESTSTAND_BIN,
   waitForExternalStatus,
+  waitForRelayedBundle,
 } from './external-stand.js';
 export {
   type CommandResult,

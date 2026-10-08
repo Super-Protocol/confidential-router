@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@confidential-router/u
 import * as React from 'react';
 import { publicConfig } from '../../lib/public-config';
 import { INSTALL_COMMANDS } from './install-commands';
-import { setupScript, setupSteps } from './setup-commands';
+import { REGISTRY_REFRESH_NOTE, setupScript, setupSteps, TEST_BUILD_SUMMARY, testBuildSteps } from './setup-commands';
 
 export interface GatekeeperSetupBlockProps {
   /**
@@ -29,14 +29,20 @@ export interface GatekeeperSetupBlockProps {
  * neither screen writes a command of its own (SUP-193).
  *
  * Every value is resolved: the upstream from the deployment's own configuration,
- * the trust root from where the platform publishes it, the pin either from the
- * evidence the caller already holds or from `--from-upstream`. There is nothing
- * for a reader to substitute, which is why there is no input here either.
+ * the pin either from the evidence the caller already holds or from
+ * `--from-upstream`, and — in the collapsed test-build section — the root
+ * certificate from where the platform publishes it. There is nothing for a
+ * reader to substitute, which is why there is no input here either.
+ *
+ * The default path has no trust step: the gatekeeper admits a Swarm cloud's CA
+ * on its TEE evidence and a measurement signed in the Super Protocol registry.
+ * The manual anchors are for builds that registry never signed, so they sit
+ * behind a disclosure rather than in the numbered sequence (SUP-253).
  */
 export function GatekeeperSetupBlock({ upstream, evidenceDigestHex = null }: GatekeeperSetupBlockProps) {
   const config = publicConfig();
-  // Two of the six lines are a pipe, and the two shells do not spell one the
-  // same way — so the platform is a control on the whole block rather than a
+  // The install line and the test-build root line are pipes, and the two shells
+  // do not spell one the same way — so the platform is a control on the whole block rather than a
   // footnote under one line: a reader copies one sequence, in their own shell.
   const [platformId, setPlatformId] = React.useState<string>(INSTALL_COMMANDS[0].id);
   const platform = INSTALL_COMMANDS.find((entry) => entry.id === platformId) ?? INSTALL_COMMANDS[0];
@@ -87,6 +93,22 @@ export function GatekeeperSetupBlock({ upstream, evidenceDigestHex = null }: Gat
               </li>
             ))}
           </ol>
+          <details className="group mt-3 rounded-lg border border-dashed" data-testid="gatekeeper-setup-test-builds">
+            <summary className="cursor-pointer select-none p-4 font-medium text-sm">
+              Optional: test or unsigned builds
+            </summary>
+            <div className="space-y-3 px-4 pb-4">
+              <p className="text-muted-foreground text-xs leading-relaxed">{TEST_BUILD_SUMMARY}</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">{REGISTRY_REFRESH_NOTE}</p>
+              {testBuildSteps(inputFor(entry)).map((step) => (
+                <div key={step.id}>
+                  <p className="font-medium text-sm">{step.title}</p>
+                  <p className="mt-1 mb-3 text-muted-foreground text-xs leading-relaxed">{step.detail}</p>
+                  <CodeBlock code={step.command} copyLabel={`Copy: ${step.title}`} />
+                </div>
+              ))}
+            </div>
+          </details>
         </TabsContent>
       ))}
     </Tabs>

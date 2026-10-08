@@ -349,9 +349,20 @@ to find there. The denial reads:
 ```
 DENIED — … not in trusted store (attested-root check: measurement bb6962eb… is
 not in the Super Protocol trusted registry, and it is not listed in
-attestedRoots.trustedMeasurements; pin it with `gatekeeper trust measurements add
+attestedRoots.trustedMeasurements — the hardware report verified, so this is
+what an unsigned or test build looks like (see "Optional: test or unsigned
+builds" in the setup guide); pin it with `gatekeeper trust measurements add
 --from-upstream router`, or add the cloud's root with `gatekeeper trust roots add`)
 ```
+
+The console's setup block keeps both commands in that collapsed "Optional: test
+or unsigned builds" section, out of the default sequence.
+
+A running gatekeeper does not need either if the image is signed later: the
+verdict is cached for `attestedRoots.cacheTtl` (10 minutes by default), a denial
+included, and the next re-attestation after that asks the registry again — so a
+newly signed cloud is admitted within `cacheTtl + reattestInterval` (15 minutes
+by default) without a restart, or at once on `SIGHUP`.
 
 The second fix is the older one and it is worse: you fetch that cloud's
 certificate out of band, trust it, and repeat the whole ritual the next time the
