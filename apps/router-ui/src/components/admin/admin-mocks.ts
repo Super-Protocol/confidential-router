@@ -1,5 +1,10 @@
 import type { MockLink } from '@apollo/client/testing';
-import { EXTERNAL_ENDPOINTS_QUERY, TRUSTED_MEASUREMENTS_QUERY } from './operations';
+import {
+  DISCOVER_EXTERNAL_MODELS,
+  EXTERNAL_ENDPOINT_VERDICT_QUERY,
+  EXTERNAL_ENDPOINTS_QUERY,
+  TRUSTED_MEASUREMENTS_QUERY,
+} from './operations';
 
 /**
  * Fixtures for the admin screens.
@@ -212,5 +217,52 @@ export function measurementsMock(measurements: unknown[] = [TRUSTED, TRUSTED_UNU
     request: { query: TRUSTED_MEASUREMENTS_QUERY },
     result: { data: { trustedMeasurements: measurements } },
     maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+/** The register dialog's verdict poll (SUP-249). Unbounded: the panel polls until it closes. */
+export function verdictMock(
+  id: string,
+  status: 'PENDING' | 'VERIFIED_BY_THIS_ROUTER' | 'DENIED_BY_THIS_ROUTER' | 'DISABLED',
+  overrides: Record<string, unknown> = {},
+): MockLink.MockedResponse {
+  return {
+    request: { query: EXTERNAL_ENDPOINT_VERDICT_QUERY, variables: { id } },
+    result: {
+      data: {
+        externalEndpoint: {
+          __typename: 'ExternalEndpoint',
+          id,
+          status,
+          lastCheckedAt: status === 'PENDING' ? null : '2026-10-08T10:00:00.000Z',
+          lastStage: null,
+          lastReason: null,
+          measurementSeen: status === 'PENDING' ? null : MEASUREMENT_TRUSTED,
+          pinnedCertFingerprint: status === 'VERIFIED_BY_THIS_ROUTER' ? 'ab'.repeat(32) : null,
+          models: [],
+          ...overrides,
+        },
+      },
+    },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+export function discoverMock(id: string, models: Record<string, unknown>[]): MockLink.MockedResponse {
+  return {
+    request: { query: DISCOVER_EXTERNAL_MODELS, variables: { id } },
+    result: {
+      data: {
+        discoverExternalModels: models.map((model) => ({
+          __typename: 'DiscoveredExternalModel',
+          name: null,
+          contextLength: null,
+          promptPer1mMicros: null,
+          completionPer1mMicros: null,
+          registeredAs: null,
+          ...model,
+        })),
+      },
+    },
   };
 }

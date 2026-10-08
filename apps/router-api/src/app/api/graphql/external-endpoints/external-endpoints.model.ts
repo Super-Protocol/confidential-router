@@ -352,6 +352,37 @@ export class TrustedMeasurementModel {
   admits!: number;
 }
 
+@ObjectType('DiscoveredExternalModel', {
+  description:
+    'One model an attested upstream lists on its own GET /v1/models (SUP-249). Hints only — the operator ' +
+    'chooses the public id, the name and the prices when registering it.',
+})
+export class DiscoveredExternalModelModel {
+  @Field(() => String, { description: 'The upstream’s id for it: what ExternalModelInput.upstreamModel takes.' })
+  upstreamModel!: string;
+
+  @Field(() => String, { nullable: true })
+  name!: string | null;
+
+  @Field(() => Int, { nullable: true })
+  contextLength!: number | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'Micro-USD per 1M prompt tokens, when the upstream publishes a price (another router does).',
+  })
+  promptPer1mMicros!: string | null;
+
+  @Field(() => String, { nullable: true, description: 'Micro-USD per 1M completion tokens, likewise.' })
+  completionPer1mMicros!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'The public model id this endpoint already publishes it under, or null.',
+  })
+  registeredAs!: string | null;
+}
+
 @InputType('ExternalModelInput', {
   description: 'A model on an external endpoint, and what this router charges for it.',
 })

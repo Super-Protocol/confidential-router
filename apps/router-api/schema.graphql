@@ -358,6 +358,27 @@ input DisableInviteCodesInput {
 }
 
 """
+One model an attested upstream lists on its own GET /v1/models (SUP-249). Hints only — the operator chooses the public id, the name and the prices when registering it.
+"""
+type DiscoveredExternalModel {
+  """Micro-USD per 1M completion tokens, likewise."""
+  completionPer1mMicros: String
+  contextLength: Int
+  name: String
+
+  """
+  Micro-USD per 1M prompt tokens, when the upstream publishes a price (another router does).
+  """
+  promptPer1mMicros: String
+
+  """The public model id this endpoint already publishes it under, or null."""
+  registeredAs: String
+
+  """The upstream’s id for it: what ExternalModelInput.upstreamModel takes."""
+  upstreamModel: String!
+}
+
+"""
 A router hostname the platform publishes evidence for. Projected from the router config; never created or edited through this API.
 """
 type Endpoint {
@@ -1240,6 +1261,11 @@ type Query {
 
   """The credits ledger, newest first."""
   creditTransactions(after: String, first: Int! = 20, workspaceId: ID!): CreditTransactionConnection!
+
+  """
+  Asks a VERIFIED_BY_THIS_ROUTER endpoint for its own GET /v1/models, through the attested egress — never before the verdict: an endpoint that is not verified is refused with CONFLICT and nothing is sent. Read-only; register the chosen models with updateExternalEndpoint. Restricted to auth.adminEmails, because the call carries the stored upstream key.
+  """
+  discoverExternalModels(id: ID!): [DiscoveredExternalModel!]!
 
   """
   The router hostnames the platform publishes evidence for, with what each currently publishes.

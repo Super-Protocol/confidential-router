@@ -41,9 +41,15 @@ const KIND_LABELS: Record<CreditTransactionKind, string> = {
  */
 const FEEDBACK_GRANT_REFERENCE = 'feedback';
 
+/** `reference` on the operator's sign-up credit (`signup-grant.service.ts`, SUP-249). */
+const SIGNUP_GRANT_REFERENCE = 'signup';
+
 function kindLabelOf(entry: TransactionRow): string {
   if (entry.kind === 'GRANT' && entry.reference === FEEDBACK_GRANT_REFERENCE) {
     return 'Feedback grant';
+  }
+  if (entry.kind === 'GRANT' && entry.reference === SIGNUP_GRANT_REFERENCE) {
+    return 'Sign-up credit';
   }
   return KIND_LABELS[entry.kind];
 }

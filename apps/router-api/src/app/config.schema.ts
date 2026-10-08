@@ -261,6 +261,16 @@ const BillingSchema = z
      */
     maxTopUpMicros: integerish().pipe(z.number().int().positive()).prefault(10_000_000_000),
     allowOverdraftMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
+    /**
+     * Credit every new account receives at registration, as a ledger `grant`
+     * referenced `signup` (SUP-249). Stacks with an invitation grant.
+     *
+     * Zero here, so a bare config grants nothing; the marketplace listing sets
+     * its own default (`signupGrantUsd`). It is an operator's deploy-time
+     * decision, not a purchase: nothing a user can call reaches it, and each
+     * account gets it at most once (idempotency key `signup:<userId>`).
+     */
+    signupGrantMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
     /** Where Stripe (or the manual provider) sends the browser back after a checkout. */
     checkoutReturnUrl: z.url().prefault('http://localhost:4200/credits'),
     /**

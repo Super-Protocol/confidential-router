@@ -54,6 +54,10 @@ export class MockEgressSidecar {
   readonly behaviour = new Map<string, SidecarBehaviour>();
   /** What `/verdicts` reports, by endpoint name. */
   readonly verdicts = new Map<string, MockVerdict>();
+  /** What the upstream's `GET /v1/models` lists, by endpoint name (SUP-249 discovery). */
+  readonly modelLists = new Map<string, unknown[]>();
+  /** A raw answer to `GET /v1/models` instead of a list — a refusal, or a body nobody should buffer. */
+  readonly modelListAnswers = new Map<string, { status: number; body: string }>();
 
   private readonly listeners = new Map<string, Server>();
   private admin?: Server;
@@ -74,6 +78,10 @@ export class MockEgressSidecar {
           accept: request.headers.accept,
           headers: request.headers,
         });
+        if (request.method === 'GET' && request.url === '/v1/models') {
+          this.listModels(endpoint, response);
+          return;
+        }
         this.respond(endpoint, body, response);
       });
     });
@@ -147,6 +155,16 @@ export class MockEgressSidecar {
     this.listeners.clear();
     this.admin = undefined;
     await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  }
+
+  private listModels(endpoint: string, response: ServerResponse): void {
+    if ((this.behaviour.get(endpoint) ?? 'serve') === 'deny') {
+      this.respond(endpoint, {}, response);
+      return;
+    }
+    const answer = this.modelListAnswers.get(endpoint);
+    response.writeHead(answer?.status ?? 200, { 'content-type': 'application/json', 'x-gatekeeper-verdict': 'allow' });
+    response.end(answer?.body ?? JSON.stringify({ object: 'list', data: this.modelLists.get(endpoint) ?? [] }));
   }
 
   private respond(endpoint: string, body: Record<string, unknown>, response: ServerResponse): void {

@@ -19,10 +19,12 @@ import {
   ExternalEndpointAdminService,
   type ExternalEndpointView,
   ExternalEvidenceService,
+  ExternalModelDiscoveryService,
   type ExternalModelSpec,
 } from '../../../external-endpoints/index.js';
 import {
   AddTrustedMeasurementInputModel,
+  DiscoveredExternalModelModel,
   ExternalEndpointEventModel,
   ExternalEndpointEvidenceModel,
   ExternalEndpointModel,
@@ -85,6 +87,7 @@ export class ExternalEndpointsResolver {
   constructor(
     private readonly admin: ExternalEndpointAdminService,
     private readonly evidence: ExternalEvidenceService,
+    private readonly discovery: ExternalModelDiscoveryService,
     private readonly profiles: UserProfileService,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
@@ -131,6 +134,24 @@ export class ExternalEndpointsResolver {
       this.admin.measurementUsage(),
     ]);
     return rows.map((row) => measurementModel(row, emails, usage));
+  }
+
+  @Query(() => [DiscoveredExternalModelModel], {
+    name: 'discoverExternalModels',
+    description:
+      'Asks a VERIFIED_BY_THIS_ROUTER endpoint for its own GET /v1/models, through the attested egress — never ' +
+      'before the verdict: an endpoint that is not verified is refused with CONFLICT and nothing is sent. ' +
+      'Read-only; register the chosen models with updateExternalEndpoint. Restricted to auth.adminEmails, ' +
+      'because the call carries the stored upstream key.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async discoverExternalModels(@Args('id', { type: () => ID }) id: string): Promise<DiscoveredExternalModelModel[]> {
+    const models = await this.discovery.discover(id);
+    return models.map((model) => ({
+      ...model,
+      promptPer1mMicros: model.promptPer1mMicros === null ? null : String(model.promptPer1mMicros),
+      completionPer1mMicros: model.completionPer1mMicros === null ? null : String(model.completionPer1mMicros),
+    }));
   }
 
   @Mutation(() => ExternalEndpointModel, {

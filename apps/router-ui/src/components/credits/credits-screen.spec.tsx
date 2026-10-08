@@ -391,6 +391,21 @@ describe('CreditsScreen', () => {
     expect(screen.getByText('Feedback grant · launch-2026-10-devs')).toBeInTheDocument();
   });
 
+  it('names the sign-up credit, which is a GRANT too (SUP-249)', async () => {
+    const signup = transaction({
+      id: 'txn-signup',
+      kind: 'GRANT',
+      amountMicros: '20000000',
+      reference: 'signup',
+      description: 'Credit granted at sign-up',
+    });
+
+    render([creditsMock(BALANCE, [signup])]);
+
+    expect(await screen.findByText('Sign-up credit')).toBeInTheDocument();
+    expect(screen.getByText('+$20.00')).toBeInTheDocument();
+  });
+
   it('shows the feedback offer when the server is making one', async () => {
     renderWithSession(<CreditsScreen />, {
       mocks: [

@@ -12,6 +12,7 @@ import type {
   ExternalEndpointAdminService,
   ExternalEndpointView,
   ExternalEvidenceService,
+  ExternalModelDiscoveryService,
 } from '../../../external-endpoints/index.js';
 import { ExternalEndpointsResolver } from './external-endpoints.resolver.js';
 
@@ -159,7 +160,13 @@ function build({ admin: adminOverrides = {}, evidence: evidenceOverrides = {}, a
     admin,
     evidence,
     profiles,
-    resolver: new ExternalEndpointsResolver(admin, evidence, profiles, config(adminEmails)),
+    resolver: new ExternalEndpointsResolver(
+      admin,
+      evidence,
+      { discover: vi.fn().mockResolvedValue([]) } as unknown as ExternalModelDiscoveryService,
+      profiles,
+      config(adminEmails),
+    ),
   };
 }
 

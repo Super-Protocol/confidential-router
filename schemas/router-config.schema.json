@@ -454,6 +454,12 @@
           "minimum": 0,
           "default": 0
         },
+        "signupGrantMicros": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Credit every new account receives at registration, in micro-USD, as a ledger grant referenced 'signup' (once per account). Stacks with an invitation grant. 0 disables."
+        },
         "checkoutReturnUrl": {
           "type": "string",
           "format": "uri",
