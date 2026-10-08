@@ -20,6 +20,7 @@ import {
   DISCOVER_EXTERNAL_MODELS,
   EXTERNAL_ENDPOINT_VERDICT_QUERY,
   EXTERNAL_ENDPOINTS_QUERY,
+  TRUSTED_MEASUREMENTS_QUERY,
   UPDATE_EXTERNAL_ENDPOINT,
 } from './operations';
 
@@ -103,6 +104,16 @@ function Stage({ state, title, children }: { state: StageState; title: string; c
 }
 
 /**
+ * Whether a denial is one the trust list can answer. A refusal at `fetch` (DNS,
+ * TCP, TLS), at the certificate chain or at the TLS binding is about the
+ * upstream or the network, and sending the admin to the trust list for it would
+ * be advice that cannot work.
+ */
+function isTrustRefusal(stage: string | null | undefined): boolean {
+  return stage === 'policy' || stage === 'untrusted-root' || !stage;
+}
+
+/**
  * Attest, then list (SUP-249).
  *
  * The endpoint already exists, registered with no models. This panel watches the
@@ -119,6 +130,14 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
   });
   const endpoint = verdict.data?.externalEndpoint ?? null;
   const verified = endpoint?.status === 'VERIFIED_BY_THIS_ROUTER';
+
+  // With nothing on the trust list the egress verifier has nothing to admit
+  // against and runs no check at all, so no verdict ever arrives (SUP-249 QA).
+  // The panel says so instead of claiming evidence is being fetched, and keeps
+  // watching: the first measurement an admin trusts starts the checks.
+  const trust = useQuery(TRUSTED_MEASUREMENTS_QUERY, { fetchPolicy: 'network-only', pollInterval: VERDICT_POLL_MS });
+  const trustListEmpty = trust.data?.trustedMeasurements.length === 0;
+  const awaitingTrust = trustListEmpty && endpoint?.status === 'PENDING';
 
   // Lazy, and asked once per panel: the call spends the upstream key, so a
   // verdict that flickers during a re-attest must not send it again. "Ask
@@ -159,10 +178,16 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
   // Nothing left to wait for once the list is in, or once the endpoint is off.
   const settled = (verified && discovered !== undefined) || endpoint?.status === 'DISABLED';
   const { startPolling, stopPolling } = verdict;
+  const { startPolling: startTrustPolling, stopPolling: stopTrustPolling } = trust;
   React.useEffect(() => {
-    if (settled) stopPolling();
-    else startPolling(VERDICT_POLL_MS);
-  }, [settled, startPolling, stopPolling]);
+    if (settled) {
+      stopPolling();
+      stopTrustPolling();
+    } else {
+      startPolling(VERDICT_POLL_MS);
+      startTrustPolling(VERDICT_POLL_MS);
+    }
+  }, [settled, startPolling, stopPolling, startTrustPolling, stopTrustPolling]);
 
   const setRow = (index: number, patch: Partial<PickerRow>) =>
     setRows((current) => current?.map((row, at) => (at === index ? { ...row, ...patch } : row)) ?? current);
@@ -216,7 +241,13 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
   const status = endpoint?.status ?? 'PENDING';
   const presentation = statusPresentation(status);
   const attestState: StageState =
-    status === 'VERIFIED_BY_THIS_ROUTER' ? 'done' : status === 'DENIED_BY_THIS_ROUTER' ? 'failed' : 'running';
+    status === 'VERIFIED_BY_THIS_ROUTER'
+      ? 'done'
+      : status === 'DENIED_BY_THIS_ROUTER'
+        ? 'failed'
+        : awaitingTrust
+          ? 'waiting'
+          : 'running';
   const listState: StageState = !verified ? 'waiting' : discovery.error ? 'failed' : discovered ? 'done' : 'running';
 
   return (
@@ -234,19 +265,37 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
               </span>
             ) : null}
           </div>
-          <p className="text-muted-foreground text-xs">
-            {status === 'PENDING'
-              ? 'Fetching its evidence, checking the measurement against the trust list and pinning its certificate.'
-              : presentation.detail}
-          </p>
-          {status === 'DENIED_BY_THIS_ROUTER' ? (
+          {awaitingTrust ? (
             <p role="alert" className="text-destructive text-xs">
-              {endpoint?.lastStage ? `${endpoint.lastStage}: ` : ''}
-              {endpoint?.lastReason ?? 'refused'}. If this cloud should be trusted, add its measurement on the{' '}
+              The trust list is empty, so this router has nothing to admit an upstream against and has not checked it
+              yet. Add the measurement of the cloud it runs on to the{' '}
               <Link href="/admin/trust" className="underline underline-offset-2">
                 trust list
               </Link>{' '}
-              — the next check picks it up, and this panel keeps watching.
+              — the check starts then, and this panel keeps watching.
+            </p>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              {status === 'PENDING'
+                ? 'Fetching its evidence, checking the measurement against the trust list and pinning its certificate.'
+                : presentation.detail}
+            </p>
+          )}
+          {status === 'DENIED_BY_THIS_ROUTER' ? (
+            <p role="alert" className="text-destructive text-xs">
+              {endpoint?.lastStage ? `${endpoint.lastStage}: ` : ''}
+              {endpoint?.lastReason ?? 'refused'}.{' '}
+              {isTrustRefusal(endpoint?.lastStage) ? (
+                <>
+                  If this cloud should be trusted, add its measurement on the{' '}
+                  <Link href="/admin/trust" className="underline underline-offset-2">
+                    trust list
+                  </Link>{' '}
+                  — the next check picks it up, and this panel keeps watching.
+                </>
+              ) : (
+                'The next check tries again, and this panel keeps watching.'
+              )}
             </p>
           ) : null}
         </Stage>

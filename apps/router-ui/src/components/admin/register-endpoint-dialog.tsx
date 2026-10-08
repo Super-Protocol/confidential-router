@@ -291,7 +291,7 @@ export function RegisterEndpointDialog({ open, onOpenChange, onRegistered }: Reg
                   <div className="grid gap-4 sm:grid-cols-2">
                     {nameField}
                     <FormField id="endpoint-base-url" label="Base URL">
-                      <Input id="endpoint-base-url" value={values.baseUrl} readOnly className="font-mono text-xs" />
+                      <Input id="endpoint-base-url" value={values.baseUrl} readOnly />
                     </FormField>
                   </div>
                   {keyField}
