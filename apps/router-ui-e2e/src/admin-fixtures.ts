@@ -57,6 +57,10 @@ const VERIFIED_ENDPOINT = {
   measurementSeen: TRUSTED_MEASUREMENT,
   measurementSource: 'REGISTRY',
   evidenceDigestSeen: 'sha256/AAAABBBBCCCCDDDDEEEEFFFF',
+  evidenceDigestSeenHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
+  // Two-factor trust (SUP-252): the approved deployment is the one answering.
+  pinnedEvidenceDigest: 'sha256/AAAABBBBCCCCDDDDEEEEFFFF' as string | null,
+  pinnedEvidenceDigestHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff' as string | null,
   pinnedCertFingerprint: 'ffffeeeeddddccccbbbbaaaa000099998888777766665555444433332222111',
   apiKeyPrefix: 'sk-up-9f3a',
   createdAt: '2026-10-01T09:00:00.000Z',
@@ -73,6 +77,7 @@ const VERIFIED_ENDPOINT = {
     },
   ],
   latestEvidence: EVIDENCE,
+  pinnedEvidence: EVIDENCE as typeof EVIDENCE | null,
   events: [
     {
       __typename: 'ExternalEndpointEvent',
@@ -140,8 +145,12 @@ const PENDING_ENDPOINT = {
   measurementSeen: null,
   measurementSource: null,
   evidenceDigestSeen: null,
+  evidenceDigestSeenHex: null,
+  pinnedEvidenceDigest: null,
+  pinnedEvidenceDigestHex: null,
   pinnedCertFingerprint: null,
   latestEvidence: null,
+  pinnedEvidence: null,
   events: [],
 };
 

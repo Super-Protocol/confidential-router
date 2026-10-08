@@ -165,8 +165,9 @@ export class EvidenceController {
   /**
    * An upstream's stored publication, verbatim, or the same typed 503.
    *
-   * Deliberately indifferent to the endpoint's current status. A `denied` or
-   * `disabled` upstream still had a publication the router once admitted, and
+   * Deliberately indifferent to the endpoint's current status — but only ever the
+   * *approved* deployment's publication (SUP-252: the digest an admin pinned). A
+   * `denied` or `disabled` upstream still has the publication its admin approved, and
    * handing it back is not a claim that the router would route there now — this
    * surface has never carried a verdict in either direction (ADR-002), and the
    * screens that *do* carry one say *denied by this router* in so many words

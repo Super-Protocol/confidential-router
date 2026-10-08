@@ -187,13 +187,17 @@ export class ExternalEvidenceService {
    * served by anyone but that upstream was never filed, and a real but superseded
    * publication of that upstream is never surfaced.
    *
-   * Null is therefore the honest answer in three different situations, and the
-   * caller reports all three the same way (503, not a denial): no verdict yet, a
-   * verdict whose publication this router has not managed to retrieve, and an
-   * upstream that republished between the verdict and the fetch.
+   * Null is therefore the honest answer in four different situations, and the
+   * caller reports all of them the same way (503, not a denial): no verdict yet, a
+   * verdict whose publication this router has not managed to retrieve, an
+   * upstream that republished between the verdict and the fetch — and, since
+   * SUP-252, a deployment no admin has approved. Bundles are now filed *before*
+   * approval, so the console can show what a digest stands for; the public relay
+   * still hands out only the approved deployment's publication, which is the one
+   * a user's own verification of "what this router lets my prompt reach" is about.
    */
   async latestAdmitted(endpoint: ExternalEndpoint): Promise<EvidenceSnapshot | null> {
-    if (!endpoint.evidenceDigestSeen) {
+    if (!endpoint.evidenceDigestSeen || endpoint.evidenceDigestSeen !== endpoint.pinnedEvidenceDigest) {
       return null;
     }
     return this.dataSource.getRepository(EvidenceSnapshot).findOne({

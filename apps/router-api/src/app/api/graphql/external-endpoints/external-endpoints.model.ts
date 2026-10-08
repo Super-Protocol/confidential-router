@@ -46,8 +46,8 @@ registerEnumType(ExternalEndpointEventKindEnum, {
   name: 'ExternalEndpointEventKind',
   description:
     'DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a ' +
-    'DIGEST_CHANGED is gating: the pinned digest no longer matches, so it arrives with the ' +
-    'DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest.',
+    'DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives ' +
+    'with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest.',
 });
 
 /**

@@ -463,9 +463,10 @@ function evidenceModel(snapshot: EvidenceSnapshot): ExternalEndpointEvidenceMode
 }
 
 /**
- * A stored digest as hex, or null. A value the parser refuses is shown canonical
- * rather than failing the page: the column is the sidecar's report, and a screen
- * that cannot render one row is worse than one that renders it in the other form.
+ * A stored digest as hex, or null. A value the parser refuses comes back null
+ * rather than failing the page — the console then shows the canonical column
+ * instead: it is the sidecar's report, and a screen that cannot render one row is
+ * worse than one that renders it in the other form.
  */
 function hexOf(digest: string | null): string | null {
   if (!digest) return null;

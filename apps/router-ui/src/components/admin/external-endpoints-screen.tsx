@@ -29,7 +29,7 @@ import { EXTERNAL_ENDPOINTS_QUERY, SET_EXTERNAL_ENDPOINT_ENABLED } from './opera
 import { RegisterEndpointDialog } from './register-endpoint-dialog';
 import { RotateKeyDialog } from './rotate-key-dialog';
 
-/** How often an open dossier re-reads an endpoint that is waiting for a verdict. */
+/** How often an open dossier re-reads its endpoint's verdict. */
 const DOSSIER_POLL_MS = 3_000;
 
 /**
@@ -80,16 +80,17 @@ export function ExternalEndpointsScreen() {
   const openEndpoint = endpoints.find((endpoint) => endpoint.id === openEndpointId) ?? null;
 
   /*
-   * While a dossier is open on an endpoint that is not admitted, keep reading: an
-   * approval from the drawer re-attests at once (SUP-252), and the admin is
-   * looking at the screen waiting for exactly that verdict.
+   * While a dossier is open, keep reading. An approval from the drawer re-attests
+   * at once (SUP-252) and the admin is waiting for exactly that verdict; and a
+   * verified endpoint can fail closed under the reader at any re-attest — a
+   * redeploy is `digest-mismatch` — which is the moment the dossier's "approve
+   * new digest" exists for. A switched-off endpoint has nothing to report.
    */
-  const awaitingVerdict =
-    openEndpoint !== null && openEndpoint.status !== 'VERIFIED_BY_THIS_ROUTER' && openEndpoint.status !== 'DISABLED';
+  const watching = openEndpoint !== null && openEndpoint.status !== 'DISABLED';
   React.useEffect(() => {
-    if (awaitingVerdict) startPolling(DOSSIER_POLL_MS);
+    if (watching) startPolling(DOSSIER_POLL_MS);
     else stopPolling();
-  }, [awaitingVerdict, startPolling, stopPolling]);
+  }, [watching, startPolling, stopPolling]);
   const rotating = endpoints.find((endpoint) => endpoint.id === rotatingId) ?? null;
   const discovering = endpoints.find((endpoint) => endpoint.id === discoveringId) ?? null;
 
@@ -108,7 +109,7 @@ export function ExternalEndpointsScreen() {
   const header = (
     <PageHeader
       title="External endpoints"
-      description="Models served by other deployments. This router verifies each one's evidence against the trust list and pins its certificate before proxying a single prompt; a failed check drops its models immediately."
+      description="Models served by other deployments. This router verifies each one's evidence, requires both its cloud's measurement on the trust list and its deployment's pinned digest, and pins its certificate before proxying a single prompt; a failed check drops its models immediately."
       actions={
         isAdmin ? (
           <Button variant="brand" onClick={() => setRegistering(true)}>

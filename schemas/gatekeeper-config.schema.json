@@ -271,7 +271,11 @@
         },
         "trust": {
           "type": "string",
-          "enum": ["evidence-digest", "cloud-measurement", "measurement-and-digest"],
+          "enum": [
+            "evidence-digest",
+            "cloud-measurement",
+            "measurement-and-digest"
+          ],
           "default": "evidence-digest",
           "description": "What the built-in policy requires before it admits this endpoint. `evidence-digest` (the default, and the only mode `gatekeeper init` and the `endpoint` commands write) admits only an evidenceDigest listed in `trustedEvidence` \u2014 one deployment. `cloud-measurement` admits any deployment whose cloud's root CA passed the attested-root check with a measurement listed in `attestedRoots.trustedMeasurements`: strictly weaker, because a measurement admits a cloud, never a deployment, and it exists for a caller that registers upstreams at runtime and cannot approve each one by digest (ADR-008 \u00a73). In that mode the measurement list is the sole authority \u2014 a registry signature is reported and admits nothing on its own \u2014 and `trustedEvidence` must be empty, so that no pin can be misread as still enforced. `measurement-and-digest` (SUP-252) requires both: the cloud's measurement on the list *and* this deployment's evidenceDigest in `trustedEvidence`. It is approved from what a verification has seen, so either list may be empty — the endpoint then admits nothing and the verdict names the missing factor."
         },

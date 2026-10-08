@@ -784,7 +784,7 @@ evidence digest it publishes equals the one an admin pinned for it. The addition
   and `digest-mismatch` (both `DENIED_BY_THIS_ROUTER`; the latter is a redeploy nobody approved, and
   fails closed — models dropped, in-flight connections closed).
 - **`DIGEST_PINNED`** joins the event kinds (carrying the digest approved); **`DIGEST_CHANGED`** is now
-  gating — it arrives with the denial a mismatched pin causes.
+  gating — on an admitted endpoint it arrives with the denial a mismatched pin causes.
 - **`latestEvidence`** is filed whenever the last report's cryptography held, admitted or refused only by
   a trust factor, so the summary exists *before* the approval it informs.
 - **`pinExternalEndpointDigest`** — `AdminGuard`, one input object like every mutation here. Accepts

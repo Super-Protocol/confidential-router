@@ -228,7 +228,10 @@ async function registerUpstream(input: {
       measurementSeen: null,
       measurementSource: null,
       evidenceDigestSeen: input.evidenceDigestSeen,
+      // The approved deployment (SUP-252): the relay hands out only its publication.
+      pinnedEvidenceDigest: input.evidenceDigestSeen,
       pinnedCertFingerprint: bundle.certFingerprint as string,
+      observedCertFingerprint: bundle.certFingerprint as string,
       apiKeyCiphertext: 'v1.sealed',
       apiKeyPrefix: 'sk-upstr',
       createdByUserId: null,
