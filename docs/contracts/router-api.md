@@ -154,6 +154,13 @@ chunks as they arrive from LiteLLM (no buffering); through the gatekeeper this i
 (SUP-71). Errors after the stream started are sent as a last `data:` event with an `error` object, then
 `[DONE]`.
 
+`[DONE]` is also where the generation *ends*, for metering: a client that closes the connection once it
+has read the terminator has the whole answer and the row is `ok`. Only a client that leaves before it is
+metered `aborted` with no `errorCode`, and only a verdict withdrawn under a running stream is metered
+`aborted` with `attestation_revoked` (ADR-008, ruling 5). The distinction is load-bearing in both
+directions — the official SDK closes the response the instant it sees `[DONE]`, so calling that an abort
+would both misprice the Logs screen and leave `aborted` unable to mean "policy cut this short".
+
 ### `GET /v1/models`
 
 ```json

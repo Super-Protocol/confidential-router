@@ -1,9 +1,12 @@
 # ADR-008 — External model endpoints: a router-attested egress
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-06
 - **Decided by:** Denis (decisions 1–5 and the attestation semantics, SUP-221, 2026-10-06); CTO
   (reuse shape, data path, schema, runner — this document)
+- **Review of record:** the six rulings on §10's open points, delegated by Denis to the CTO and posted
+  on SUP-221 (2026-10-06). They are restated inline in §10 below; nothing in this document is proposed
+  any more.
 
 ## Context
 
@@ -204,9 +207,24 @@ that property:
    admin config, `admin.listen` on a loopback TCP port. No secrets in the file (§4).
 2. **Reload.** The sidecar image's entrypoint watches the rendered file and sends the process
    SIGHUP on change — confined to the sidecar container, no `shareProcessNamespace`, no core
-   change. A reload that fails validation changes nothing and logs why
-   (`pkg/cli/cmd_run.go:189-201`); unchanged endpoints keep their connections
-   (`pkg/proxy/endpoint.go:156-158`).
+   change. A reload that fails to load changes nothing and logs why (`pkg/cli/cmd_run.go`);
+   unchanged endpoints keep their connections (`pkg/proxy/endpoint.go:156-158`).
+
+   Two refinements the e2e stand forced (SUP-229), both about the difference between a file a *person*
+   wrote and a file a control loop renders:
+
+   - **The entrypoint waits for a configuration the gatekeeper will run**, not merely for one it can
+     read. The first render on a deployment with no external endpoint registered is a valid document
+     with an empty `endpoints` list, which `gatekeeper run` refuses — correctly, for a person. Starting
+     the gatekeeper on it would have the container exit at once and crash-loop over a deployment that
+     has done nothing wrong, so `pkg/sidecar` keeps waiting and logs why.
+   - **A reload is validated as *editable*, not as runnable.** The completeness rules — at least one
+     endpoint, and a non-empty measurement list for a `trust: cloud-measurement` endpoint — say the
+     opposite of what they mean at reload time: a configuration that admits nothing is exactly what an
+     admin withdrawing their last trusted cloud asked for. Refusing it would keep the previous
+     configuration running, and with it the listeners and the verdicts that admitted the traffic being
+     revoked — a fail-open produced by caution. Malformed values are still refused; those are not an
+     instruction.
 3. **Read back.** Router-api polls the admin socket — `/verdicts` and `/status` return the full
    per-endpoint `status.Report` including stage, reason, measurement, `measurementSource`, observed
    digest and pinned fingerprint (`pkg/status/status.go:162-218`) — and projects it into endpoint
@@ -301,22 +319,29 @@ T6's residual is deliberately reversed for external endpoints, and these are new
 | T16 | Admin abuse of the trust list (add a rogue cloud's measurement) | Every trust mutation is an event + WARN log naming the operator; proposed public read-only trust list (§7) | An admin is trusted today for invites; this raises the stakes — open point 3 |
 | T17 | Evidence replay / stale upstream bundle | Same bounds as the user-side gatekeeper: `maxBundleAge` 24 h, forced re-attest ≤ TTL, cert rotation re-binds via the platform's re-signed bundle | Window ≤ min(TTL, bundle age) as in T3 |
 
-## 10. Open points for Denis
+## 10. Open points, and how they were ruled
 
-1. **Cloud-granularity trust (T13).** Accept as v1 semantics, or require per-endpoint
-   `declaredImages`-style narrowing at registration (which quietly reintroduces per-endpoint
-   approval — contra decision 1)? Proposed: accept for v1, design the narrowing as an optional
-   later tightening.
-2. **Registry-signed measurements not on the admin list: reject.** Proposed and assumed in §3 — the
-   list is the sole authority. Confirm.
-3. **Transparency surface** (§7): public read-only external-endpoint + trust list for signed-in
-   users. Proposed: yes. Confirm, and whether it should extend to the anonymous `models` query.
-4. **Settlement**: the upstream key is the router operator's account with the upstream operator;
-   inter-operator billing is out of band and out of scope. Confirm.
-5. **Mid-stream aborts**: a verdict flip closes in-flight upstream connections (decision 5 as
-   implemented), so a running generation dies mid-stream and is metered as `aborted`. Confirm this
-   UX is intended.
-6. **TTL default 10 min** with admin-configurable bounds [1 min, 1 h]. Confirm.
+Denis delegated these to the CTO ("нет времени углубляться, если согласен — делай"); the rulings were
+posted on SUP-221 on 2026-10-06 and are the review of record for this document. None of them is open.
+
+1. **Cloud-granularity trust (T13): accepted for v1**, with one UX obligation that is not optional —
+   the admin section renders the full evidence summary (workloads, image digests) for every registered
+   endpoint at registration and on every change, informational and never gating, so the operator always
+   sees exactly what a cloud-level admission let in. `declaredImages`-style narrowing ships as a later
+   tightening, designed here and not built now.
+2. **Registry-signed measurements not on the admin list: rejected.** The list is the sole authority; a
+   registry signature renders as an advisory badge and admits nothing. Carried into the core by
+   SUP-222's list-is-sole-authority knob, and the denial names the misreading it pre-empts.
+3. **Transparency: yes for signed-in users** — read-only external endpoints, trust list and verdict
+   history. The anonymous `models` surface lists external models like any other (name, price,
+   availability) and exposes no endpoint URLs, no trust list and no verdict detail, so a prober learns
+   nothing about topology.
+4. **Settlement stays out of band.** The upstream key is the router operator's account with the model
+   operator; inter-operator billing is out of scope.
+5. **Mid-stream abort on a verdict flip, metered `aborted`** — with one addition: the terminal SSE or
+   error frame must name the reason class (`attestation_revoked`) so a client sees policy rather than
+   flakiness.
+6. **TTL default 10 min, bounds [1 min, 1 h].**
 
 ## Consequences
 
@@ -332,6 +357,14 @@ T6's residual is deliberately reversed for external endpoints, and these are new
   vocabulary + screen table, threat model §9) and an e2e stand: mock external upstream =
   `tools/mock-evidence-host` + `tools/mock-litellm` behind one hostname, with a rotate-measurement
   beat for the fail-closed demo.
+- The stand (8, SUP-229) runs the shipped `gatekeeper-sidecar` over
+  `apps/gatekeeper/cmd/gatekeeper-teststand`: the real gatekeeper with its attested-root *hardware* leg
+  read from a file, behind a build tag no release compiles. A SEV-SNP report is signed by AMD and its
+  `reportData` commits to the issuing CA's public key, so there is no mock that can mint one and no
+  stand that can issue leaves from the one real fixture this repository holds. Every other leg — the
+  rendered config, the evidence fetch, JWS and chain verification, the channel binding, the Rego set,
+  the trust store, forced re-attestation, the fail-closed drop of in-flight connections — is the
+  production path, and the substitution names itself in the verdict's own logs.
 - The sidecar changes the router's canonical snapshot: shipping this is a re-pin rollout for every
   pinned user, announced as such.
 - `swarm-chrome-extension` and the user-side gatekeeper are unaffected; a future "verify the whole

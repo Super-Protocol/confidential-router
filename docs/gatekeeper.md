@@ -633,13 +633,32 @@ docker run --rm --read-only --user 65532 \
 
 The entrypoint is not the gatekeeper itself but a supervisor, because in this
 shape the configuration is **rendered** rather than edited: it waits for
-`$GATEKEEPER_CONFIG` (default `/etc/gatekeeper/config.yaml`) to appear, runs
-`gatekeeper run --headless`, and sends SIGHUP whenever the file's contents
-change — so an edit by whoever renders it is applied in place, without
+`$GATEKEEPER_CONFIG` (default `/etc/gatekeeper/config.yaml`) to hold a
+configuration the gatekeeper will run, runs `gatekeeper run --headless`, and
+sends SIGHUP whenever the file's contents change — so an edit by whoever renders it is applied in place, without
 `shareProcessNamespace` and without restarting endpoints that did not change.
 `$GATEKEEPER_WATCH_INTERVAL` (default `2s`) tunes the poll. SIGTERM is passed
 through, so the gatekeeper drains its own listeners and the container exits with
 the gatekeeper's status.
+
+It waits for a *runnable* configuration rather than for any readable file
+because `gatekeeper run` refuses an incomplete one — no endpoints, or a
+`trust: cloud-measurement` endpoint with nothing on the measurement list — and
+that is the right answer for a person who typed it. A control loop renders
+exactly that document before anything has been registered, so the container
+would exit at once and back off over a deployment that has done nothing wrong.
+Instead the supervisor keeps waiting and logs what is missing:
+
+```
+sidecar: waiting for /etc/gatekeeper/config.yaml — invalid …: endpoints: at least one endpoint is required
+```
+
+The reverse case is a reload, and there the rule inverts: a rendered
+configuration that admits nothing is an *instruction* — somebody withdrew their
+last trusted cloud — so SIGHUP applies it and every endpoint is denied. Keeping
+the previous configuration would leave the listeners and the verdicts being
+revoked in place, which is the opposite of fail-closed. Malformed values are
+still refused on reload; those are not an instruction.
 
 Two things it will not forward, both of them normal for a rendered file:
 

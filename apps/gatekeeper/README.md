@@ -428,12 +428,17 @@ The image is the *cluster* packaging, not a replacement for the binaries: it
 exists for a pod running the gatekeeper as an attested egress, where the
 configuration is rendered by a control loop rather than edited by a person. Its
 entrypoint is [`cmd/gatekeeper-sidecar`](./cmd/gatekeeper-sidecar) — see
-[`pkg/sidecar`](./pkg/sidecar) — which waits for the configuration to be
-rendered, runs `gatekeeper run --headless`, and SIGHUPs it when the file's
+[`pkg/sidecar`](./pkg/sidecar) — which waits for a configuration the gatekeeper
+will *run*, runs `gatekeeper run --headless`, and SIGHUPs it when the file's
 contents change — never for identical bytes, and never for a render that does
 not parse as a configuration, which is what a truncate-then-write renderer is
-briefly observable as. `docs/gatekeeper.md` §"In a cluster" is the
-operator-facing version; the PR gate builds the image and runs that whole loop.
+briefly observable as. Waiting for a *runnable* one, rather than for any file
+that reads, is what keeps a deployment with no external endpoint registered yet
+— the state every deployment ships in — out of a crash loop: an empty
+`endpoints` list is a valid document that `gatekeeper run` refuses, so the
+supervisor waits and logs why. `docs/gatekeeper.md` §"In a cluster" is the
+operator-facing version; the PR gate builds the image and runs that whole loop,
+and `apps/router-api-e2e` drives it against a live router.
 
 ```sh
 docker build -f gatekeeper.dockerfile -t gatekeeper .
@@ -445,6 +450,7 @@ docker build -f gatekeeper.dockerfile -t gatekeeper .
 | ------------------------ | ----------------------------------------------------------------------- |
 | `cmd/gatekeeper/`        | Process entry point. Four lines: it maps the CLI's exit status onto the process's. |
 | `cmd/gatekeeper-sidecar/`| Entry point of the container image. Flags and signals onto `pkg/sidecar`; never part of a Release. |
+| `cmd/gatekeeper-teststand/`| The gatekeeper with its attested-root *hardware* leg read from a file, for the external-endpoint e2e stand. Behind the `teststand` build tag, so no release build contains it; `go build ./cmd/...` does not compile it. |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
 | `pkg/cli/`               | Every command, its output and its exit code. Driven end to end in tests through `cli.Run`. |
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
