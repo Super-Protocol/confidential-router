@@ -189,3 +189,62 @@ func TestCloudMeasurementDeniesARootTakenFromTheManualList(t *testing.T) {
 		}
 	}
 }
+
+// TestCloudMeasurementRootDenialNamesTheMeasurementProblem pins the SUP-251
+// wording. A cloud-measurement endpoint whose root was not admitted used to be
+// told "<root fingerprint> not in trusted store" — the certificate-store
+// answer, with a hash that is nothing an admin can put on the trust list. The
+// reason must instead say what the measurement check found.
+func TestCloudMeasurementRootDenialNamesTheMeasurementProblem(t *testing.T) {
+	unparseable := &attestedroot.Result{
+		Reason: "unrecognised evidence format: the root's TEE evidence carries only branch field(s) [7], " +
+			"which this build does not know",
+	}
+	unlisted := attestedOK()
+	unlisted.Attested, unlisted.InRegistry, unlisted.MeasurementUnknown = false, false, true
+	unlisted.MeasurementSource = ""
+	unlisted.Reason = "measurement " + unlisted.MeasurementHex() + " is not in the Super Protocol trusted registry, " +
+		"and it is not listed in attestedRoots.trustedMeasurements"
+
+	for _, tc := range []struct {
+		name   string
+		result *attestedroot.Result
+		want   []string
+	}{
+		{
+			name:   "no measurement could be extracted",
+			result: unparseable,
+			want:   []string{"could not extract a launch measurement from the upstream's root CA", "unrecognised evidence format"},
+		},
+		{
+			name:   "a measurement nobody listed",
+			result: unlisted,
+			want:   []string{"attests launch measurement " + unlisted.MeasurementHex(), "not listed"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca := newTestCA(t)
+			document := ca.bundle(t, bundleOptions{EvidenceDigest: pinnedDigest})
+			v := newVerifier(t, measurementConfig(t, otherMeasurement), ca.fetcher(document, ca.leafFingerprint())).
+				WithAttestedRoots(&stubAttestedRoots{result: tc.result})
+
+			report, err := v.Verify(t.Context(), status.VerifyRequest{Endpoint: "llama-33-70b"})
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if report.Admitted || report.Stage != "untrusted-root" {
+				t.Fatalf("admitted = %v at stage %q, want an untrusted-root denial", report.Admitted, report.Stage)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(report.Reason, want) {
+					t.Errorf("reason = %q\nwant it to mention %q", report.Reason, want)
+				}
+			}
+			for _, banned := range []string{"not in trusted store", "trust roots add", report.UntrustedRoot} {
+				if banned != "" && strings.Contains(report.Reason, banned) {
+					t.Errorf("reason = %q\nstill mentions %q", report.Reason, banned)
+				}
+			}
+		})
+	}
+}

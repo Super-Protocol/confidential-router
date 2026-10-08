@@ -72,9 +72,13 @@ func (v *Verifier) attestRoot(ctx context.Context, report *status.Report) *attes
 			// The report itself held up and the only missing thing is somebody
 			// vouching for the image. That is a denial with two concrete fixes,
 			// and naming them here is what keeps a rebuilt stand from costing a
-			// certificate fetched out of band.
+			// certificate fetched out of band. A cloud-measurement endpoint has
+			// only the first: it never trusts a root by certificate.
 			report.AttestedRoot.Reason += "; pin it with `gatekeeper trust measurements add --from-upstream " +
-				pinTarget(report) + "`, or add the cloud's root with `gatekeeper trust roots add`"
+				pinTarget(report) + "`"
+			if !report.ByMeasurement() {
+				report.AttestedRoot.Reason += ", or add the cloud's root with `gatekeeper trust roots add`"
+			}
 		}
 		return nil
 	}

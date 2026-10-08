@@ -52,6 +52,7 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
     lastReason
     measurementSeen
     measurementSource
+    measurementInRegistry
     evidenceDigestSeen
     pinnedCertFingerprint
     apiKeyPrefix

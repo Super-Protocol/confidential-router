@@ -146,6 +146,8 @@ func (v *Verifier) verify(ctx context.Context, cert *x509.Certificate) *Result {
 		err = v.verifySevSnp(ctx, evidence.SevSnp, ext, out)
 	case evidence.Tdx != nil:
 		err = v.verifyTdx(evidence.Tdx, ext, out)
+	case evidence.Azure != nil:
+		err = v.verifyAzure(evidence.Azure, evidence.Type, ext, out)
 	default:
 		err = fmt.Errorf("evidence type %s is not supported by this build", evidence.Type)
 	}

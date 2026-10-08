@@ -60,12 +60,16 @@ export const OID_TEE_EVIDENCE = '0.6.9.42.840.113741.1337.6';
  * enum of the platform's `TeeEvidence.proto`, and they also select a folder of
  * the signed-measurement registry.
  */
-export type RootEvidenceType = 'sev-snp-qemu' | 'tdx-qemu' | 'tdx-gcp';
+export type RootEvidenceType = 'sev-snp-qemu' | 'tdx-qemu' | 'tdx-gcp' | 'tdx-azure' | 'sev-snp-azure';
 
 /** Which Super Protocol network a root declares. */
 export type RootNetworkType = 'trusted' | 'untrusted';
 
-/** The registry sub-folder a type's measurements live in; TDX shares one. */
+/**
+ * The registry sub-folder of a type's base technology. Cloud platforms have their
+ * own folders in front of it (`sev-snp-azure`, `tdx-google`, …), which the
+ * gatekeeper probes first; this is the one every type falls back to.
+ */
 export type RegistryFolder = 'sev-snp' | 'tdx';
 
 /**
@@ -151,21 +155,26 @@ export interface RootTeeEvidence {
   /** The type as the platform's own surfaces label it, e.g. "AMD SEV-SNP (QEMU)". */
   label: string;
   registryFolder: RegistryFolder;
-  /** The sp-vm release the VM booted, e.g. `build-370`. SEV-SNP only. */
+  /** The sp-vm release the VM booted, e.g. `build-370`. SEV-SNP on QEMU only. */
   build: string | null;
   /**
    * Lowercase hex of the report's own 48-byte `MEASUREMENT`. **Not** a registry
-   * lookup key — see this module's header. SEV-SNP only.
+   * lookup key — see this module's header. SEV-SNP only; on Azure it is the
+   * launch digest of Microsoft's paravisor, not of the image.
    */
   reportMeasurement: string | null;
   /**
    * Whether the report's `REPORT_DATA` commits to this certificate's public key:
    * `REPORT_DATA[0..32) === SHA-256(SubjectPublicKeyInfo)`.
    *
-   * `null` when it could not be decided — today that means TDX, whose quote body
-   * this repository has no fixture to parse against, so the offsets are not
-   * guessed. A `false` is a real negative: the evidence in this certificate
-   * attests a *different* key, and Gatekeeper treats that as fatal.
+   * On Azure the key is committed one step removed: the hardware report commits
+   * to the paravisor's runtime data, whose `user-data` carries the key digest, so
+   * both links are checked.
+   *
+   * `null` when it could not be decided — today that means TDX on QEMU or GCP,
+   * whose quote body this repository has no fixture to parse against, so the
+   * offsets are not guessed. A `false` is a real negative: the evidence in this
+   * certificate attests a *different* key, and Gatekeeper treats that as fatal.
    */
   keyBinding: boolean | null;
   /**
@@ -341,12 +350,25 @@ const LABELS: Record<RootEvidenceType, string> = {
   'sev-snp-qemu': 'AMD SEV-SNP (QEMU)',
   'tdx-qemu': 'Intel TDX (QEMU)',
   'tdx-gcp': 'Intel TDX (GCP)',
+  'tdx-azure': 'Intel TDX (Azure)',
+  'sev-snp-azure': 'AMD SEV-SNP (Azure)',
 };
 
 const FOLDERS: Record<RootEvidenceType, RegistryFolder> = {
   'sev-snp-qemu': 'sev-snp',
   'tdx-qemu': 'tdx',
   'tdx-gcp': 'tdx',
+  'tdx-azure': 'tdx',
+  'sev-snp-azure': 'sev-snp',
+};
+
+/** The TeeEvidence field each branch is carried in — also the platform's enum. */
+const BRANCH_FIELDS: Record<number, RootEvidenceType> = {
+  1: 'sev-snp-qemu',
+  2: 'tdx-qemu',
+  3: 'tdx-gcp',
+  4: 'tdx-azure',
+  5: 'sev-snp-azure',
 };
 
 /**
@@ -369,7 +391,8 @@ async function decodeEvidence(serialized: Uint8Array, spki: Uint8Array): Promise
   let branch: Uint8Array | null = null;
   for (const field of fields(serialized)) {
     if (field.wire !== 'bytes') continue;
-    if (field.number !== 1 && field.number !== 2 && field.number !== 3) continue;
+    const fieldType = BRANCH_FIELDS[field.number];
+    if (!fieldType) continue;
     // The branches are alternatives, and which one is present selects both the
     // verifier and the registry folder. A message carrying two has no single
     // answer to either question, so it is refused rather than resolved by field
@@ -377,14 +400,19 @@ async function decodeEvidence(serialized: Uint8Array, spki: Uint8Array): Promise
     if (type !== null) {
       throw new Error('the root certificate’s TEE evidence carries more than one hardware branch');
     }
-    type = field.number === 1 ? 'sev-snp-qemu' : field.number === 2 ? 'tdx-qemu' : 'tdx-gcp';
+    type = fieldType;
     branch = field.bytes;
   }
   if (type === null || branch === null) {
-    throw new Error('the root certificate’s TEE evidence carries no hardware branch this reader recognises');
+    throw new Error(
+      'unrecognised evidence format: the root certificate’s TEE evidence carries no hardware branch this reader recognises',
+    );
   }
 
   const base = { type, label: LABELS[type], registryFolder: FOLDERS[type] };
+  if (type === 'tdx-azure' || type === 'sev-snp-azure') {
+    return { ...base, ...(await azureFields(type, branch, spki)) };
+  }
   if (type !== 'sev-snp-qemu') {
     /*
      * The TDX quote body does carry a reportData, at a fixed offset of a
@@ -410,6 +438,77 @@ async function decodeEvidence(serialized: Uint8Array, spki: Uint8Array): Promise
     ),
     security: securityFieldsOf(report.raw),
   };
+}
+
+/**
+ * HCL report layout on an Azure confidential VM (vTPM NV index 0x01400001): a
+ * 32-byte header, the hardware report area sized for a SEV-SNP report, a 20-byte
+ * runtime-data header, then the runtime data JSON. The hardware report's
+ * `report_data` is SHA-256 of that JSON, and the JSON's `user-data` is what the
+ * enrolling CA bound its key into. Same constants as the gatekeeper's vendored
+ * `azurecvm` package, which is held to a captured TDX and SEV-SNP VM each.
+ */
+const HCL_MAGIC = 'HCLA';
+const HCL_HEADER_BYTES = 32;
+const HCL_HW_REPORT_AREA_BYTES = 0x4a0;
+const HCL_RUNTIME_HEADER_OFFSET = HCL_HEADER_BYTES + HCL_HW_REPORT_AREA_BYTES;
+const HCL_RUNTIME_SIZE_OFFSET = HCL_RUNTIME_HEADER_OFFSET + 16;
+const HCL_RUNTIME_DATA_OFFSET = HCL_RUNTIME_HEADER_OFFSET + 20;
+/** Where a TDREPORT keeps its 64-byte `REPORTDATA`. */
+const TDREPORT_DATA_OFFSET = 128;
+
+/**
+ * The Azure branches. Field 1 of both IntelTDXAzureEvidence and
+ * AmdSevSnpAzureEvidence is the HCL report; everything else they carry (the TD
+ * quote, the AMD and Microsoft chains, the vTPM quote) is Gatekeeper's to check.
+ */
+async function azureFields(
+  type: 'tdx-azure' | 'sev-snp-azure',
+  branch: Uint8Array,
+  spki: Uint8Array,
+): Promise<Pick<RootTeeEvidence, 'build' | 'reportMeasurement' | 'keyBinding' | 'security'>> {
+  let hcl: Uint8Array | null = null;
+  for (const field of fields(branch)) {
+    if (field.number === 1 && field.wire === 'bytes') hcl = field.bytes;
+  }
+  if (!hcl || hcl.length < HCL_RUNTIME_DATA_OFFSET || new TextDecoder().decode(hcl.subarray(0, 4)) !== HCL_MAGIC) {
+    throw new Error('the root certificate’s Azure evidence carries no HCL report');
+  }
+
+  const runtimeSize = Number(readUintLE(hcl, HCL_RUNTIME_SIZE_OFFSET, 4));
+  const runtimeEnd = HCL_RUNTIME_DATA_OFFSET + runtimeSize;
+  if (runtimeEnd > hcl.length) {
+    throw new Error('the root certificate’s HCL report is shorter than its runtime data');
+  }
+  const runtime = hcl.subarray(HCL_RUNTIME_DATA_OFFSET, runtimeEnd);
+  const hardware = hcl.subarray(HCL_HEADER_BYTES, HCL_RUNTIME_HEADER_OFFSET);
+  const reportDataOffset = type === 'sev-snp-azure' ? SNP_REPORT_DATA_OFFSET : TDREPORT_DATA_OFFSET;
+  const reportData = hardware.subarray(reportDataOffset, reportDataOffset + SNP_REPORT_DATA_BYTES);
+
+  const runtimeDigest = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(runtime)));
+  const keyBinding = bindsPublicKey(reportData, runtimeDigest) && bindsPublicKey(userDataOf(runtime), spki);
+
+  if (type === 'tdx-azure') {
+    return { build: null, reportMeasurement: null, keyBinding, security: null };
+  }
+  return {
+    build: null,
+    reportMeasurement: toHex(hardware.subarray(SNP_MEASUREMENT_OFFSET, SNP_MEASUREMENT_OFFSET + SNP_MEASUREMENT_BYTES)),
+    keyBinding,
+    security: securityFieldsOf(hardware),
+  };
+}
+
+/** The `user-data` of the HCL runtime JSON, empty when it is absent or not hex. */
+function userDataOf(runtime: Uint8Array): Uint8Array {
+  let hex: unknown;
+  try {
+    hex = (JSON.parse(new TextDecoder().decode(runtime)) as { 'user-data'?: unknown })['user-data'];
+  } catch {
+    throw new Error('the root certificate’s HCL runtime data is not JSON');
+  }
+  if (typeof hex !== 'string' || !/^(?:[0-9a-fA-F]{2})*$/.test(hex)) return new Uint8Array();
+  return Uint8Array.from(hex.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
 }
 
 /**

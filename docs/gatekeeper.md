@@ -294,6 +294,18 @@ gatekeeper checks that evidence rather than giving up:
    key **pinned in the gatekeeper binary**. Step 4 is what makes the chain
    closed: without it, any tenant of any AMD host could produce steps 1–3.
 
+Roots enrolled on **Azure confidential VMs** (evidence types `Intel TDX (Azure)`
+and `AMD SEV-SNP (Azure)`) are checked the same way, with one layer added. The
+hardware report there belongs to Microsoft's paravisor, so the image is
+measured by the VM's vTPM instead: the hardware report has to commit to the
+paravisor's runtime data, Microsoft's certificate chain has to vouch for the
+vTPM key that data names, that key's quote over PCR4 and PCR9 has to replay
+from the firmware event log, and the runtime data's `user-data` has to commit to
+this certificate's key. The measurement is
+`SHA-256(vm-config flags ‖ PCR4′ ‖ PCR9′)` — the same value the browser
+extension derives. Microsoft Azure Attestation is not consulted; the check stays
+offline.
+
 `gatekeeper verify` prints all of it:
 
 ```

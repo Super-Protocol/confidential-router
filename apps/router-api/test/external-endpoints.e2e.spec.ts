@@ -554,7 +554,9 @@ describe('the evidence summary (SUP-221 ruling 1)', () => {
       fetchedAt: new Date('2026-10-06T12:00:00.000Z'),
       issuedAt: new Date('2026-10-06T11:50:00.000Z'),
       evidenceDigest,
-      evidenceDigestHex: 'a'.repeat(64),
+      // The hex of the digest itself. It used to be `MEASUREMENT`, which the trust
+      // list now refuses as a known evidence digest (SUP-251).
+      evidenceDigestHex: Buffer.from(evidenceDigest.slice('sha256/'.length), 'base64url').toString('hex'),
       certFingerprint: LEAF,
       quoteFormat: 'intel-tdx-quote-v5',
       containerImages: [image],

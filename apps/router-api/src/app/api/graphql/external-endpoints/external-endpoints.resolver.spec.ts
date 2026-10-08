@@ -66,6 +66,7 @@ function view(endpoint: Partial<ExternalEndpoint> = {}, models: Model[] = [model
       lastReason: null,
       measurementSeen: MEASUREMENT,
       measurementSource: 'operator-pinned',
+      measurementInRegistry: false,
       evidenceDigestSeen: DIGEST_NOW,
       pinnedCertFingerprint: LEAF,
       apiKeyCiphertext: `v1.${Buffer.from(UPSTREAM_KEY).toString('base64url')}`,
@@ -286,6 +287,25 @@ describe('the catalogue an endpoint reports', () => {
     // versions separately; a gatekeeper that grows a third anchor should make the
     // console say nothing, not make the admin screen fail to load.
     expect((await resolver.externalEndpoints(ADMIN))[0].measurementSource).toBeNull();
+  });
+
+  it('passes the registry signal of a denial through, without changing the status', async () => {
+    const { resolver } = build({
+      admin: {
+        list: vi
+          .fn()
+          .mockResolvedValue([
+            view({ status: 'denied', lastStage: 'policy', measurementSource: null, measurementInRegistry: true }),
+          ]),
+      } as Partial<ExternalEndpointAdminService>,
+    });
+
+    // SUP-251: informational only — the console badges it, the trust list still decides.
+    expect((await resolver.externalEndpoints(MEMBER))[0]).toMatchObject({
+      status: 'denied',
+      measurementSeen: MEASUREMENT,
+      measurementInRegistry: true,
+    });
   });
 });
 

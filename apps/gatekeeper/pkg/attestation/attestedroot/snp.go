@@ -32,22 +32,43 @@ const (
 // Everything that can be decided offline is decided before anything is
 // fetched, so a root that fails on its own evidence never causes a download.
 func (v *Verifier) verifySevSnp(ctx context.Context, ev *SevSnpEvidence, ext *RootExtensions, out *Result) error {
-	report, err := abi.ReportToProto(ev.RawReport)
+	report, err := v.verifySnpReport(ev.RawReport, ev.Certs, out)
 	if err != nil {
-		return fmt.Errorf("attestation report: %w", err)
+		return err
 	}
-
 	out.ReportData = report.GetReportData()
 	out.KeyBinding = BindsPublicKey(out.ReportData, ext.SPKIDigest)
+	if !out.KeyBinding {
+		return fmt.Errorf(
+			"the report's reportData does not commit to this certificate's public key (SHA-256 %x)", ext.SPKIDigest)
+	}
+
+	measurement, err := v.snpMeasurement(ctx, ev, report)
+	if err != nil {
+		return err
+	}
+	out.Measurement = measurement
+	return nil
+}
+
+// verifySnpReport checks a raw SEV-SNP attestation report's signature and its
+// ARK/ASK/VCEK chain, and records what that establishes — integrity, CPU line,
+// revocation and the security fields — on out. It is shared by the QEMU and
+// Azure branches, which differ only in what the report's reportData commits to.
+func (v *Verifier) verifySnpReport(raw []byte, certs map[SevSnpCertType][]byte, out *Result) (*spb.Report, error) {
+	report, err := abi.ReportToProto(raw)
+	if err != nil {
+		return nil, fmt.Errorf("attestation report: %w", err)
+	}
 	out.SecurityFields = securityFieldsOf(report)
 
 	chain := &spb.CertificateChain{
-		ArkCert:  derOf(ev.Certs[CertARK]),
-		AskCert:  derOf(ev.Certs[CertASK]),
-		VcekCert: derOf(ev.Certs[CertVCEK]),
+		ArkCert:  derOf(certs[CertARK]),
+		AskCert:  derOf(certs[CertASK]),
+		VcekCert: derOf(certs[CertVCEK]),
 	}
 	if len(chain.ArkCert) == 0 || len(chain.AskCert) == 0 || len(chain.VcekCert) == 0 {
-		return errors.New("attestation report: the evidence does not carry the full ARK/ASK/VCEK chain")
+		return nil, errors.New("attestation report: the evidence does not carry the full ARK/ASK/VCEK chain")
 	}
 	attestation := &spb.Attestation{Report: report, CertificateChain: chain}
 
@@ -58,7 +79,7 @@ func (v *Verifier) verifySevSnp(ctx context.Context, ev *SevSnpEvidence, ext *Ro
 	// producer's omission into a network dependency.
 	options := &verify.Options{DisableCertFetching: true, Now: v.clock()}
 	if err := verify.SnpAttestation(attestation, options); err != nil {
-		return fmt.Errorf("attestation report: %w", err)
+		return nil, fmt.Errorf("attestation report: %w", err)
 	}
 	out.ReportIntegrity = true
 	out.CPUGeneration = productLineOf(chain.VcekCert)
@@ -76,18 +97,7 @@ func (v *Verifier) verifySevSnp(ctx context.Context, ev *SevSnpEvidence, ext *Ro
 		ok := verify.SnpAttestation(attestation, revoked) == nil
 		out.RevocationChecked, out.NotRevoked = true, ok
 	}
-
-	if !out.KeyBinding {
-		return fmt.Errorf(
-			"the report's reportData does not commit to this certificate's public key (SHA-256 %x)", ext.SPKIDigest)
-	}
-
-	measurement, err := v.snpMeasurement(ctx, ev, report)
-	if err != nil {
-		return err
-	}
-	out.Measurement = measurement
-	return nil
+	return report, nil
 }
 
 // snpMeasurement rebuilds the VM's launch digest from published artefacts and

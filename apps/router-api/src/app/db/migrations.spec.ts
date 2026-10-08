@@ -111,6 +111,12 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-251's registry signal is one additive column; undoing it drops only that.
+      expect(await queryRunner.hasColumn('external_endpoints', 'measurementInRegistry')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('external_endpoints', 'measurementInRegistry')).toBe(false);
+      expect(await queryRunner.hasColumn('external_endpoints', 'measurementSource')).toBe(true);
+
       // ADR-008 §6's evidence leg loosened `evidence_snapshots.endpointId`; the
       // first undo puts the NOT NULL back and drops the column it added.
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(true);
