@@ -12,12 +12,6 @@
 // that signature and its certificate chain, which callers must verify
 // separately (the TD quote with go-tdx-guest, the SEV-SNP report with the AMD
 // verifier). Without that check the result proves nothing.
-//
-// Provenance: copied verbatim from Super-Protocol/sp-nodejs-addons
-// (attestation-wasm/go/azurecvm @ da2d762), the verifier the browser
-// extension's WebAssembly build runs. Keeping the two byte-identical is what
-// makes the gatekeeper and the extension derive the same mrEnclave from the
-// same Azure root; change it upstream first and re-copy.
 package azurecvm
 
 import (
