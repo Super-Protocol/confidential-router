@@ -103,6 +103,7 @@ describe('resetToPending', () => {
       status: 'pending',
       measurementSeen: null,
       measurementSource: null,
+      measurementInRegistry: null,
       evidenceDigestSeen: null,
       pinnedCertFingerprint: null,
       lastCheckedAt: null,

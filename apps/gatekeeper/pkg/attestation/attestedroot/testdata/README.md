@@ -9,6 +9,7 @@ client of the platform downloads.
 | --- | --- |
 | `swarm-root-sev-snp-evidence.bin` | The serialised `TeeEvidence` of a real Super Swarm Root CA, AMD SEV-SNP on Genoa. Taken from the platform's own conformance fixture (`sp-nodejs-addons/attestation-wasm/test/sev-snp-evidence-fixture.json`), which is the same value the browser extension's panel is built from. |
 | `build-350-firmware.json` | The reduced form of the `OVMF_AMD.fd` that the evidence's build boots, plus that release's kernel/initrd hashes. It is what `snpmeasure.ParseFirmware` produces, so the measurement test needs neither the 4 MiB image nor the network. |
+| `apps-448-azure-sev-snp-root.pem` | The root CA of the build-448 demo cloud (`*.conf-apps.superprotocol.dev`), an Azure SEV-SNP (Genoa) CVM, as served in `certChain` of that cloud's `/.well-known/swarm-evidence` on 2026-10-08. Unlike the QEMU fixture this is the certificate itself, so the Azure path is exercised end to end, key binding included; its measurement is signed in the registry's `sev-snp-azure` folder. The Azure TDX path reuses `internal/azurecvm/testdata/tdx-evidence.json`. |
 | `registry-signature.json` | One real entry of the signed-measurement registry, so the pinned Super Protocol key is exercised against a signature the platform actually published. |
 
 ## Regenerating `build-350-firmware.json`

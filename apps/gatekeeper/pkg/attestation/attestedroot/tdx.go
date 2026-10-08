@@ -32,20 +32,9 @@ var normalizedRTMR0Events = map[string]bool{
 // verifyTdx runs the hardware half of an Intel TDX attested root.
 func (v *Verifier) verifyTdx(ev *TdxEvidence, ext *RootExtensions, out *Result) error {
 	// Quote integrity first, and offline: the signature and the Intel chain.
-	// Collateral (TCB status, CRLs) is a separate, network-dependent step, and
-	// go-tdx-guest treats a missing collateral fetch as a verification failure —
-	// which would make an offline gatekeeper unable to see a sound quote at all.
-	options := tdxverify.DefaultOptions()
-	options.GetCollateral = false
-	options.CheckRevocations = false
-	options.Now = v.clock()
-	if v.TdxGetter != nil {
-		options.Getter = v.TdxGetter
+	if err := v.verifyTdxQuote(ev.Quote, out); err != nil {
+		return err
 	}
-	if err := tdxverify.RawTdxQuote(ev.Quote, options); err != nil {
-		return fmt.Errorf("tdx quote: %w", err)
-	}
-	out.ReportIntegrity = true
 
 	body, err := tdQuoteBody(ev.Quote)
 	if err != nil {
@@ -56,10 +45,6 @@ func (v *Verifier) verifyTdx(ev *TdxEvidence, ext *RootExtensions, out *Result) 
 	if !out.KeyBinding {
 		return fmt.Errorf(
 			"the quote's reportData does not commit to this certificate's public key (SHA-256 %x)", ext.SPKIDigest)
-	}
-
-	if v.CheckRevocations {
-		out.RevocationChecked, out.NotRevoked = v.tdxRevocation(ev.Quote)
 	}
 
 	measurement, err := tdxMeasurement(body, ev.EventLog)

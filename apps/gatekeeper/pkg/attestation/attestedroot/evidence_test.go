@@ -58,7 +58,8 @@ func TestParseEvidenceRejectsMalformedInput(t *testing.T) {
 		{name: "empty", input: nil},
 		{name: "a truncated length prefix", input: []byte{0x0a, 0x7f}},
 		{name: "an unknown wire type", input: []byte{0x0b, 0x00}},
-		{name: "no recognised branch", input: []byte{0x22, 0x00}},
+		{name: "no recognised branch", input: []byte{0x3a, 0x00}},
+		{name: "an Azure branch with no HCL report", input: []byte{0x2a, 0x00}},
 		{name: "a SEV-SNP branch with no report", input: []byte{0x0a, 0x00}},
 		{
 			// Which branch is present selects both the verifier and the
@@ -124,24 +125,41 @@ func TestParseEvidenceBoundsProducerSuppliedNumbers(t *testing.T) {
 	}
 }
 
+// TestParseEvidenceNamesAnUnknownBranch keeps the denial an operator reads
+// about the problem it is: a format this build does not know, not a broken
+// root and not an untrusted certificate.
+func TestParseEvidenceNamesAnUnknownBranch(t *testing.T) {
+	_, err := ParseEvidence(field(7, []byte("from a newer producer")))
+	if err == nil {
+		t.Fatal("an unknown branch was accepted")
+	}
+	for _, want := range []string{"unrecognised evidence format", "[7]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
+	}
+}
+
 // TestEvidenceTypeLabels keeps the labels aligned with the platform's own UI,
 // and the registry folders with its layout.
 func TestEvidenceTypeLabels(t *testing.T) {
 	for _, tc := range []struct {
 		evidence EvidenceType
 		label    string
-		folder   string
+		folders  string
 	}{
 		{EvidenceSevSnpQemu, "AMD SEV-SNP (QEMU)", "sev-snp"},
 		{EvidenceTdxQemu, "Intel TDX (QEMU)", "tdx"},
-		{EvidenceTdxGCP, "Intel TDX (GCP)", "tdx"},
+		{EvidenceTdxGCP, "Intel TDX (GCP)", "tdx-google,tdx"},
+		{EvidenceTdxAzure, "Intel TDX (Azure)", "tdx-azure,tdx"},
+		{EvidenceSevSnpAzure, "AMD SEV-SNP (Azure)", "sev-snp-azure,sev-snp"},
 		{EvidenceUnspecified, "Unspecified", ""},
 	} {
 		if got := tc.evidence.String(); got != tc.label {
 			t.Errorf("%d.String() = %q, want %q", tc.evidence, got, tc.label)
 		}
-		if got := tc.evidence.registryFolder(); got != tc.folder {
-			t.Errorf("%d.registryFolder() = %q, want %q", tc.evidence, got, tc.folder)
+		if got := strings.Join(tc.evidence.registryFolders(), ","); got != tc.folders {
+			t.Errorf("%d.registryFolders() = %q, want %q", tc.evidence, got, tc.folders)
 		}
 	}
 }

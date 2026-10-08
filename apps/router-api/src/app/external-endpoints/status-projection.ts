@@ -28,6 +28,7 @@ export type ExternalEndpointStatusPatch = Pick<
   | 'lastReason'
   | 'measurementSeen'
   | 'measurementSource'
+  | 'measurementInRegistry'
   | 'evidenceDigestSeen'
   | 'pinnedCertFingerprint'
 >;
@@ -110,6 +111,9 @@ export function projectVerdict(
     lastReason: clip(verdict.reason ?? report?.reason ?? null, 255),
     measurementSeen: measurement,
     measurementSource: report?.attestedRoot?.measurementSource ?? null,
+    // Only meaningful about a measurement: with none derived, "not in the
+    // registry" would be a claim about nothing.
+    measurementInRegistry: measurement ? (report?.attestedRoot?.inRegistry ?? false) : null,
     evidenceDigestSeen: evidenceDigest,
     // Only an admitted verdict pins a leaf. Keeping a stale fingerprint on a
     // denied endpoint would read as "this is what we are pinned to" about an

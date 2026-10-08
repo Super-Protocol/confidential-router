@@ -336,6 +336,7 @@ export class ExternalEndpointsResolver {
         lastReason: endpoint.lastReason,
         measurementSeen: endpoint.measurementSeen,
         measurementSource: measurementSourceOf(endpoint.measurementSource),
+        measurementInRegistry: endpoint.measurementInRegistry,
         evidenceDigestSeen: endpoint.evidenceDigestSeen,
         pinnedCertFingerprint: endpoint.pinnedCertFingerprint,
         apiKeyPrefix: admin ? endpoint.apiKeyPrefix : null,

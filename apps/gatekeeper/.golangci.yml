@@ -21,6 +21,12 @@ linters:
       - path: _test\.go$
         linters:
           - gosec
+      # A verbatim copy of sp-nodejs-addons' azurecvm (see its package
+      # comment); kept byte-identical to upstream rather than restyled here.
+      - path: pkg/attestation/attestedroot/internal/azurecvm/
+        linters:
+          - gosec
+          - revive
 
 formatters:
   enable:

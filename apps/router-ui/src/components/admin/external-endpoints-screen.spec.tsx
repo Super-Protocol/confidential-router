@@ -133,6 +133,59 @@ describe('ExternalEndpointsScreen', () => {
   });
 
   describe('the drawer', () => {
+    /**
+     * SUP-251: an operator facing a denial needs the measurement in the form the
+     * trust list takes, and the registry signal beside it — without the signal
+     * turning into a way round the list.
+     */
+    describe('the measurement a denial saw', () => {
+      const signedDenial = {
+        ...DENIED_ENDPOINT,
+        lastStage: 'untrusted-root',
+        measurementSource: null,
+        measurementInRegistry: true,
+      };
+
+      it('offers the whole measurement for copying, and a registry badge that admits nothing', async () => {
+        const user = userEvent.setup();
+        renderScreen({ mocks: [endpointsMock([signedDenial])] });
+        const drawer = await openDrawer('gemma-2-2b');
+        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+
+        await user.click(within(verdict).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }));
+        await expect(navigator.clipboard.readText()).resolves.toBe(MEASUREMENT_ROGUE);
+
+        expect(within(verdict).getByText('Registry-signed')).toBeInTheDocument();
+        expect(verdict).toHaveTextContent('A registry signature admits nothing on its own.');
+        // The way forward is the trust list itself, never a shortcut beside the badge.
+        expect(within(verdict).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
+        expect(within(drawer).queryByRole('button', { name: /trust/i })).not.toBeInTheDocument();
+      });
+
+      it('shows no registry badge for a measurement the registry does not sign', async () => {
+        renderScreen({ mocks: [endpointsMock([{ ...signedDenial, measurementInRegistry: false }])] });
+        const drawer = await openDrawer('gemma-2-2b');
+        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+
+        expect(
+          within(verdict).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
+        ).toBeInTheDocument();
+        expect(within(verdict).queryByText('Registry-signed')).not.toBeInTheDocument();
+      });
+
+      it('offers neither when no measurement was derived', async () => {
+        renderScreen({
+          mocks: [endpointsMock([{ ...signedDenial, measurementSeen: null, measurementInRegistry: null }])],
+        });
+        const drawer = await openDrawer('gemma-2-2b');
+        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+
+        expect(within(verdict).queryByRole('button', { name: /^Copy the measurement/ })).not.toBeInTheDocument();
+        expect(within(verdict).queryByText('Registry-signed')).not.toBeInTheDocument();
+        expect(within(verdict).queryByRole('link', { name: 'trust list' })).not.toBeInTheDocument();
+      });
+    });
+
     it('renders the verdict, the stage and the pinned certificate', async () => {
       renderScreen();
       const drawer = await openDrawer('gemma-2-2b');

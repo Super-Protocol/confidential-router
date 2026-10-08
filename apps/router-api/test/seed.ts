@@ -215,6 +215,7 @@ export async function seedExternalEndpoint(
     lastReason: null,
     measurementSeen: null,
     measurementSource: null,
+    measurementInRegistry: null,
     evidenceDigestSeen: null,
     pinnedCertFingerprint: null,
     apiKeyCiphertext: 'v1.placeholder',

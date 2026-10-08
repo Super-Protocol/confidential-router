@@ -92,7 +92,7 @@ func (r *HTTPRegistry) Verify(ctx context.Context, mrEnclave []byte, evidence Ev
 		base = DefaultRegistryBaseURL
 	}
 	var paths []string
-	if folder := evidence.registryFolder(); folder != "" {
+	for _, folder := range evidence.registryFolders() {
 		paths = append(paths,
 			fmt.Sprintf("%s/%s/latest/mrenclave-%s.json", base, folder, measurement),
 			fmt.Sprintf("%s/%s/pre-release/mrenclave-%s.json", base, folder, measurement),
