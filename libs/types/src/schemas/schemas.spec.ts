@@ -212,7 +212,7 @@ describe('gatekeeper-config rules', () => {
       expect(errorsOf(validate)).toContain('trustedEvidence');
     });
 
-    it('only allows the two named modes, and `evidence-digest` stays the default', () => {
+    it('only allows the named modes, and `evidence-digest` stays the default', () => {
       const cfg = base();
       cfg.endpoints[0].trust = 'evidence-digest';
       expect(validate(cfg), errorsOf(validate)).toBe(true);
@@ -222,6 +222,33 @@ describe('gatekeeper-config rules', () => {
         broken.endpoints[0].trust = bad;
         expect(validate(broken), bad).toBe(false);
       }
+    });
+  });
+
+  // SUP-252: two-factor trust — the cloud by measurement and the deployment by a pinned digest.
+  // Approved from what a verification has seen, so the pins may be absent, empty or present.
+  describe('trust: measurement-and-digest', () => {
+    const twoFactorEndpoint = () => {
+      const cfg = base();
+      cfg.endpoints[0].trust = 'measurement-and-digest';
+      delete cfg.endpoints[0].trustedEvidence;
+      return cfg;
+    };
+
+    it('accepts an endpoint with neither factor approved yet', () => {
+      expect(validate(twoFactorEndpoint()), errorsOf(validate)).toBe(true);
+      const empty = twoFactorEndpoint();
+      empty.endpoints[0].trustedEvidence = [];
+      expect(validate(empty), errorsOf(validate)).toBe(true);
+    });
+
+    it('accepts a pinned digest as the second factor, and still checks its shape', () => {
+      const cfg = twoFactorEndpoint();
+      cfg.endpoints[0].trustedEvidence = [`sha256:${'a'.repeat(64)}`];
+      expect(validate(cfg), errorsOf(validate)).toBe(true);
+
+      cfg.endpoints[0].trustedEvidence = ['not-a-digest'];
+      expect(validate(cfg)).toBe(false);
     });
   });
 });

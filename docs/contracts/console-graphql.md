@@ -504,11 +504,13 @@ Three decisions in this block are worth reading before the SDL:
    router's own endpoints because it never verifies itself. An external upstream is the mirror case —
    there is a verifier, and it is this router — so the enum says `VERIFIED_BY_THIS_ROUTER` /
    `DENIED_BY_THIS_ROUTER` and never a bare `verified` (ADR-008 §1).
-2. **`ExternalEndpointEvidence` is informational, never gating** (SUP-221 ruling 1). Admission is the
-   measurement check alone, which admits a *cloud* and cannot see which deployment on it answered
-   (threat T13). The console therefore renders the upstream's workloads and image digests for every
-   registered endpoint and on every change — `ExternalEndpointEvent.evidence` is what makes "on every
-   change" a field rather than a convention.
+2. **`ExternalEndpointEvidence` is what a pinned digest stands for** (SUP-221 ruling 1, as amended by
+   SUP-252). Admission was first the measurement check alone, which admits a *cloud* and cannot see
+   which deployment on it answered (threat T13); it is now two-factor — the measurement *and* the
+   evidence digest an admin pinned for the endpoint — and this summary is what the admin reads before
+   pinning. The console renders the upstream's workloads and image digests for every registered
+   endpoint, before every approval and on every change — `ExternalEndpointEvent.evidence` is what makes
+   "on every change" a field rather than a convention. See [As shipped (SUP-252)](#as-shipped-sup-252--two-factor-endpoint-trust).
 3. **The two reads are session-scoped, not admin-scoped** (ruling 3, ADR-008 §7). A non-admin gets the
    same rows with `apiKeyPrefix` and `upstreamModel` null; every mutation is `AdminGuard`. The nav
    entry is admin-only, which is sidebar hygiene and not the access control.
@@ -766,6 +768,57 @@ extend type Mutation {
   removeTrustedMeasurement(id: ID!): Boolean!
 }
 ```
+
+## As shipped (SUP-252) — two-factor endpoint trust
+
+Denis's design change superseding ADR-008 §10 ruling 1: an external endpoint is
+`VERIFIED_BY_THIS_ROUTER` only while its cloud's launch measurement is on the trust list **and** the
+evidence digest it publishes equals the one an admin pinned for it. The additions to the block above:
+
+- **`ExternalEndpoint.pinnedEvidenceDigest`** (+ `…Hex`) — the approved deployment, readable by any
+  signed-in user (ruling 3). Null means nothing is approved yet: the endpoint stays `PENDING` with
+  `lastStage: digest-not-pinned`. **`pinnedEvidence`** is the summary behind it, for the old-vs-new
+  diff. **`evidenceDigestSeenHex`** is the spelling every screen shows and copies (SUP-115).
+- **`lastStage`** gains the three factor codes the sidecar reports for a built-in two-factor denial:
+  `digest-not-pinned` (`PENDING` — waiting for an approval, not a refusal), `measurement-not-trusted`
+  and `digest-mismatch` (both `DENIED_BY_THIS_ROUTER`; the latter is a redeploy nobody approved, and
+  fails closed — models dropped, in-flight connections closed).
+- **`DIGEST_PINNED`** joins the event kinds (carrying the digest approved); **`DIGEST_CHANGED`** is now
+  gating — on an admitted endpoint it arrives with the denial a mismatched pin causes.
+- **`latestEvidence`** is filed whenever the last report's cryptography held, admitted or refused only by
+  a trust factor, so the summary exists *before* the approval it informs.
+- **`pinExternalEndpointDigest`** — `AdminGuard`, one input object like every mutation here. Accepts
+  `sha256:<hex>` or `sha256/<base64url>`, stores the canonical form, replaces any earlier pin (approving
+  a redeploy is this call with the new digest), records `DIGEST_PINNED`, writes a WARN naming the
+  operator, and re-renders the sidecar config so the endpoint is re-checked at once.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  DIGEST_PINNED
+}
+
+extend type ExternalEndpoint {
+  evidenceDigestSeenHex: String
+  pinnedEvidenceDigest: String
+  pinnedEvidenceDigestHex: String
+  pinnedEvidence: ExternalEndpointEvidence
+}
+
+input PinExternalEndpointDigestInput {
+  evidenceDigest: String!
+}
+
+extend type Mutation {
+  pinExternalEndpointDigest(id: ID!, input: PinExternalEndpointDigestInput!): ExternalEndpoint!
+}
+```
+
+The console's dossier (`apps/router-ui/src/components/admin/trust-factors.tsx`) is the
+TOFU-with-approval loop: *Measurement seen* with the registry-signed badge and "Add to trust list"
+(`addTrustedMeasurement`), *Digest seen* with "Pin this digest"; after a redeploy, the approved and the
+new digest with the evidence diff and "Approve new digest". The register dialog shows the same two
+approvals in the stage that waits for them.
 
 ## As shipped (SUP-249) — model discovery, attest-then-list
 

@@ -343,13 +343,18 @@ This service drives it through a file and reads it back over a socket:
 - **`SidecarConfigWriterService`** renders `externalEndpoints.configFile` from
   `external_endpoints` and `trusted_measurements` on boot and after every admin
   mutation, atomically, and only when the bytes change. Every endpoint is rendered
-  `trust: cloud-measurement` and `failMode: closed`; there is no setting that
-  renders otherwise, and the file carries no secret — the upstream API key is
+  `trust: measurement-and-digest` — two-factor, the cloud by measurement and the
+  deployment by the digest an admin pinned as its `trustedEvidence` (SUP-252) —
+  and `failMode: closed`; there is no setting that renders otherwise, and the file
+  carries no secret — the upstream API key is
   injected by router-api on the egress leg and the sidecar passes `Authorization`
   through untouched. `testdata/sidecar-config.golden.yaml` is the committed shape.
 - **`ExternalEndpointStatusPollerService`** reads the sidecar's `/verdicts` every
   `externalEndpoints.statusPollInterval` and projects each one onto its row and
-  its event timeline. A transition is an event; a repetition is not.
+  its event timeline. A transition is an event; a repetition is not. A two-factor
+  refusal is projected with its factor as `lastStage`: `digest-not-pinned` stays
+  `pending` (awaiting an approval), `measurement-not-trusted` and `digest-mismatch`
+  are `denied`.
 - **`ExternalEvidencePollerService`** / **`ExternalEvidenceService`** fetch a
   verified upstream's own published bundle every
   `externalEndpoints.evidencePollInterval` and file it in `evidence_snapshots`

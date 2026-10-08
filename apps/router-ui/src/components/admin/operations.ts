@@ -54,6 +54,9 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
     measurementSource
     measurementInRegistry
     evidenceDigestSeen
+    evidenceDigestSeenHex
+    pinnedEvidenceDigest
+    pinnedEvidenceDigestHex
     pinnedCertFingerprint
     apiKeyPrefix
     createdAt
@@ -70,6 +73,9 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
       }
     }
     latestEvidence {
+      ...ExternalEndpointEvidenceFields
+    }
+    pinnedEvidence {
       ...ExternalEndpointEvidenceFields
     }
     events {
@@ -113,7 +119,8 @@ export const UPDATE_EXTERNAL_ENDPOINT = graphql(`
 
 /**
  * What the register dialog polls while the router attests a freshly registered
- * upstream (SUP-249): status and the stage/reason of the last check, plus the
+ * upstream (SUP-249): status and the stage/reason of the last check, the two
+ * trust factors the check saw and what is approved (SUP-252), plus the
  * models the endpoint publishes *now* — `updateExternalEndpoint` replaces the
  * set, so the picker re-reads them before it writes rather than trusting a list
  * fetched minutes ago. The evidence summary arrives with the list once the dialog
@@ -128,6 +135,12 @@ export const EXTERNAL_ENDPOINT_VERDICT_QUERY = graphql(`
       lastStage
       lastReason
       measurementSeen
+      measurementSource
+      measurementInRegistry
+      evidenceDigestSeen
+      evidenceDigestSeenHex
+      pinnedEvidenceDigest
+      pinnedEvidenceDigestHex
       pinnedCertFingerprint
       models {
         id
@@ -154,6 +167,18 @@ export const DISCOVER_EXTERNAL_MODELS = graphql(`
       promptPer1mMicros
       completionPer1mMicros
       registeredAs
+    }
+  }
+`);
+
+/**
+ * Approves one deployment — the second trust factor (SUP-252). Also how a redeploy
+ * is approved: the same call with the new digest. The sidecar re-attests at once.
+ */
+export const PIN_EXTERNAL_ENDPOINT_DIGEST = graphql(`
+  mutation PinExternalEndpointDigest($id: ID!, $input: PinExternalEndpointDigestInput!) {
+    pinExternalEndpointDigest(id: $id, input: $input) {
+      ...ExternalEndpointFields
     }
   }
 `);

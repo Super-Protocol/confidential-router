@@ -90,6 +90,9 @@ async function seedExternalEndpoint(
     measurementSource: 'operator-pinned',
     evidenceDigestSeen: parsed.digest.canonical,
     pinnedCertFingerprint: parsed.certFingerprint,
+    observedCertFingerprint: parsed.certFingerprint,
+    // The approved deployment: the relay only ever hands out its publication.
+    pinnedEvidenceDigest: parsed.digest.canonical,
     apiKeyCiphertext: 'v1.sealed',
     apiKeyPrefix: 'sk-upstr',
     createdByUserId: null,
@@ -305,6 +308,27 @@ describe('relaying a registered external upstream’s bundle', () => {
     const stored = await seedExternalEndpoint(fixture.dataSource);
     await storeUpstreamBundle(external, stored);
     await fixture.dataSource.getRepository(ExternalEndpoint).update({ id: stored.id }, { evidenceDigestSeen: null });
+
+    const error = await controller.latest('partner-cloud').catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('does not relay a deployment no admin approved — a redeploy behind a pin (SUP-252)', async () => {
+    const { controller, external } = controllerOn('http://127.0.0.1:3000');
+    // Filed — the console shows it so the admin can decide — but not approved:
+    // the pin names another deployment, and the public relay hands out only the
+    // approved one's publication.
+    const endpoint = await seedExternalEndpoint(fixture.dataSource);
+    await storeUpstreamBundle(external, endpoint);
+    await fixture.dataSource.getRepository(ExternalEndpoint).update(
+      { id: endpoint.id },
+      {
+        status: 'denied',
+        lastStage: 'digest-mismatch',
+        pinnedEvidenceDigest: `sha256/${Buffer.alloc(32, 4).toString('base64url')}`,
+      },
+    );
 
     const error = await controller.latest('partner-cloud').catch((caught: unknown) => caught);
 

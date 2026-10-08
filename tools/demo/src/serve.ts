@@ -26,6 +26,7 @@ import { dirname } from 'node:path';
 import {
   addTrustedMeasurement,
   type ExternalStand,
+  pinExternalEndpointDigest,
   registerExternalEndpoint,
   STAND_MEASUREMENT,
   startExternalStand,
@@ -109,7 +110,7 @@ if (WITH_EXTERNAL) {
  *
  * Three waits, in the order the product imposes them, and none of them skippable:
  * the sidecar has nothing to supervise until an endpoint is rendered, no verdict
- * until the measurement is listed, and nothing to relay until the evidence
+ * until the measurement is listed and the digest pinned, and nothing to relay until the evidence
  * poller has fetched the publication that verdict named.
  */
 async function registerUpstream(ready: ExternalStand): Promise<ExternalHandoff> {
@@ -135,6 +136,11 @@ async function registerUpstream(ready: ExternalStand): Promise<ExternalHandoff> 
     models: [{ id: EXTERNAL_MODEL_ID, name: EXTERNAL_MODEL_NAME, upstreamModel: EXTERNAL_UPSTREAM_MODEL }],
   });
   await addTrustedMeasurement(ready.admin, STAND_MEASUREMENT, 'the partner cloud');
+  // Two-factor trust (SUP-252): the cloud alone admits nothing, so the stand
+  // approves the deployment too — ahead of the first check, from the digest it
+  // just redeployed to, which is what an operator copying it from the upstream
+  // would do.
+  await pinExternalEndpointDigest(ready.admin, registered.id, upstreamDigest);
   await ready.sidecar.waitUntilStarted();
   const verified = await waitForExternalStatus(ready.admin, registered.id, ['VERIFIED_BY_THIS_ROUTER']);
   await waitForRelayedBundle(ready.stack.router.baseUrl, EXTERNAL_ENDPOINT);

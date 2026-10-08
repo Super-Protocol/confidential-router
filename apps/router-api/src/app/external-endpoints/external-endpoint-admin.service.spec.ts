@@ -318,6 +318,102 @@ describe('rotating the upstream key', () => {
   });
 });
 
+describe('pinning a deployment’s evidence digest (SUP-252)', () => {
+  const DIGEST = 'sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490';
+  const DIGEST_HEX = `sha256:${Buffer.from(DIGEST.slice('sha256/'.length), 'base64url').toString('hex')}`;
+  const NEW_DIGEST = `sha256/${Buffer.alloc(32, 3).toString('base64url')}`;
+
+  it('starts with nothing approved', async () => {
+    const { endpoint } = await register();
+
+    expect(endpoint.pinnedEvidenceDigest).toBeNull();
+  });
+
+  it('pins the digest in its canonical spelling, records it, and re-renders at once', async () => {
+    const { endpoint } = await register();
+    render.mockClear();
+
+    // The console shows and copies `sha256:<hex>`; the verdict reports the
+    // canonical form. The pin has to compare like with like in the sidecar.
+    const pinned = await service.pinDigest(endpoint.id, DIGEST_HEX);
+
+    expect(pinned.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+    // The render is the "re-attest (immediate)": the sidecar reloads and
+    // force-re-attests rather than waiting for the TTL.
+    expect(render).toHaveBeenCalledTimes(1);
+    const events = await dataSource.getRepository(ExternalEndpointEvent).find({ order: { at: 'ASC' } });
+    expect(events.map((event) => [event.kind, event.evidenceDigest])).toContainEqual(['digest_pinned', DIGEST]);
+  });
+
+  it('approving a new digest replaces the old one — one approved deployment per endpoint', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const approved = await service.pinDigest(endpoint.id, NEW_DIGEST);
+
+    expect(approved.endpoint.pinnedEvidenceDigest).toBe(NEW_DIGEST);
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins).toHaveLength(2);
+  });
+
+  it('is a no-op for the digest already pinned: no event, no reload', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+    render.mockClear();
+
+    await service.pinDigest(endpoint.id, DIGEST_HEX);
+
+    expect(render).not.toHaveBeenCalled();
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins).toHaveLength(1);
+  });
+
+  it('refuses something that is not a digest, and says what it wants', async () => {
+    const { endpoint } = await register();
+
+    await expect(service.pinDigest(endpoint.id, 'a'.repeat(63))).rejects.toThrow(BadRequestException);
+    await expect(service.pinDigest(endpoint.id, 'not a digest')).rejects.toThrow(/sha256:<64 hex>/);
+  });
+
+  it('is a 404 for an endpoint that is not there', async () => {
+    await expect(service.pinDigest('missing', DIGEST)).rejects.toThrow(NotFoundException);
+  });
+
+  it('re-pointing the endpoint withdraws the approval: the new upstream has not been looked at', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const repointed = await service.update({ id: endpoint.id, baseUrl: 'https://elsewhere.example' });
+
+    expect(repointed.endpoint.pinnedEvidenceDigest).toBeNull();
+  });
+
+  it('re-pricing keeps the approval: a price does not change which deployment answers', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const repriced = await service.update({ id: endpoint.id, models: [model({ promptPer1mMicros: 1 })] });
+
+    expect(repriced.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+  });
+
+  it('survives a boot reset: the pin is trust, not a verdict', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+    await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { status: 'verified' });
+
+    await new ExternalEndpointStatusService(config(), dataSource, catalog).resetToPending();
+
+    const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });
+    expect(row.status).toBe('pending');
+    expect(row.pinnedEvidenceDigest).toBe(DIGEST);
+  });
+});
+
 describe('the trust list', () => {
   it('normalises on the way in, so one cloud is one row', async () => {
     const added = await service.addMeasurement(`0x${MEASUREMENT.toUpperCase()}`, '  Partner cloud  ', 'user-1');

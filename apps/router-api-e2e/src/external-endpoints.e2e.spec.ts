@@ -9,8 +9,8 @@
  * Why this suite exists beside the unit ones. Every piece of this is already
  * covered in isolation: `sidecar-config.spec.ts` pins the rendered file against
  * a golden, `external-endpoint-status.service.spec.ts` projects a hand-written
- * verdict, and the gatekeeper's Go tests drive `trust: cloud-measurement` with a
- * stubbed hardware report. What none of them can show is that the *seam* holds —
+ * verdict, and the gatekeeper's Go tests drive `trust: measurement-and-digest`
+ * with a stubbed hardware report. What none of them can show is that the *seam* holds —
  * that the file router-api renders is a file the real binary accepts, that the
  * admin API's `removeTrustedMeasurement` reaches a running proxy and takes a
  * model off `/v1/models`, and that a connection the gatekeeper closes mid-stream
@@ -27,13 +27,16 @@
  */
 import {
   addTrustedMeasurement,
+  discoverExternalModels,
   type ExternalStand,
   externalEndpointEvents,
+  pinExternalEndpointDigest,
   ROTATED_MEASUREMENT,
   registerExternalEndpoint,
   removeTrustedMeasurement,
   STAND_MEASUREMENT,
   startExternalStand,
+  waitForExternal,
   waitForExternalStatus,
 } from '@confidential-router/demo';
 import OpenAI from 'openai';
@@ -49,17 +52,15 @@ const UPSTREAM_MODEL = 'vllm/llama-3.3-70b-instruct';
 
 const VERIFIED = 'VERIFIED_BY_THIS_ROUTER';
 const DENIED = 'DENIED_BY_THIS_ROUTER';
+const PENDING = 'PENDING';
 
 /**
- * Another cloud the operator trusts, and never the stand's.
+ * Another cloud the operator trusts, and never the stand's — an operator curating
+ * external capacity has several clouds listed and withdraws one.
  *
- * It is on the list for the whole suite, and it has to be: a
- * `trust: cloud-measurement` endpoint with an empty `trustedMeasurements` is an
- * *incomplete* gatekeeper configuration, which `gatekeeper run` refuses — so a
- * stand whose only listed cloud is the one it keeps withdrawing would spend half
- * its beats waiting for a configuration to start on rather than exercising a
- * denial. An operator curating external capacity has several clouds listed and
- * withdraws one, which is this.
+ * Not needed to start the sidecar any more: a `trust: measurement-and-digest`
+ * endpoint runs before either factor is approved (SUP-252), because the first
+ * check is how the console learns what to approve.
  */
 const OTHER_CLOUD_MEASUREMENT = '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0';
 
@@ -73,10 +74,12 @@ const CHUNK_GAP_MS = 400;
 let stand: ExternalStand;
 let endpointId: string;
 let trustedId: string;
+/** The deployment the admin approved in the registration beats. */
+let approvedDigest: string;
 let client: OpenAI;
 
 beforeAll(async () => {
-  stand = await startExternalStand({ chunkGapMs: CHUNK_GAP_MS });
+  stand = await startExternalStand({ chunkGapMs: CHUNK_GAP_MS, upstreamModels: [UPSTREAM_MODEL] });
   client = new OpenAI({
     apiKey: stand.stack.credential.secret,
     baseURL: `${stand.stack.router.baseUrl}/v1`,
@@ -144,24 +147,31 @@ describe('registration', () => {
     expect(JSON.stringify(registered)).not.toContain(UPSTREAM_API_KEY);
   });
 
-  it('serves nothing until a verdict admits it, and the registry is not a verdict', async () => {
-    // The registration and this entry together are what give the sidecar the
-    // first configuration the gatekeeper will run at all — before them there is
-    // nothing to supervise, which is the state every deployment ships in
-    // (`pkg/sidecar`).
+  it('checks it once with nothing approved, and reports both factors for the admin to approve', async () => {
     await addTrustedMeasurement(stand.admin, OTHER_CLOUD_MEASUREMENT, 'another cloud, not this one');
     await stand.sidecar.waitUntilStarted();
 
-    // The stand's upstream reports a registry-signed measurement, which is the
-    // strongest anchor there is, and the admin has not listed *this* cloud.
-    // Ruling 2 on SUP-221: the list is the sole authority, so this is a denial,
-    // and the denial pre-empts the obvious misreading. (`lastReason` is
-    // `varchar(255)` and the full sentence is longer, so the assertion is on the
-    // half that reaches a screen.)
-    const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
-    expect(denied.lastStage).toBe('policy');
-    expect(denied.lastReason).toContain(`measurement ${STAND_MEASUREMENT} is not listed`);
-    expect(denied.lastReason).toContain('the Super Protocol registry does sign it');
+    // SUP-252's TOFU-with-approval loop, first beat: the sidecar verifies the
+    // upstream with whatever is approved — nothing — and the dossier gets both
+    // values it saw. Pending, not denied: it is waiting for the admin, not for a
+    // better upstream.
+    const seen = await waitForExternal(stand.admin, endpointId, {
+      until: (endpoint) => endpoint.lastStage === 'digest-not-pinned' && endpoint.evidenceDigestSeen !== null,
+      wanted: 'both factors seen, digest-not-pinned',
+    });
+    expect(seen.status).toBe(PENDING);
+    expect(seen.measurementSeen).toBe(STAND_MEASUREMENT);
+    expect(seen.measurementSource).toBe('REGISTRY');
+    expect(seen.pinnedEvidenceDigest).toBeNull();
+    expect(seen.lastReason).toContain('no evidenceDigest is pinned');
+
+    // The evidence summary the admin approves the digest from is filed before
+    // any approval — bound to the leaf the sidecar observed, not to an egress pin.
+    const summarised = await waitForExternal(stand.admin, endpointId, {
+      until: (endpoint) => endpoint.latestEvidence?.evidenceDigest === endpoint.evidenceDigestSeen,
+      wanted: 'the evidence summary for the digest seen',
+    });
+    expect(summarised.latestEvidence?.containerImages.length).toBeGreaterThan(0);
 
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
     const refused = await chat({});
@@ -174,18 +184,44 @@ describe('registration', () => {
     expect(stand.upstream.backend.requests).toHaveLength(0);
   });
 
-  it('admits it once the admin lists the cloud', async () => {
+  it('a trusted cloud alone admits nothing — the deployment is the second factor (T13)', async () => {
     const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
     trustedId = trusted.id;
 
-    const verified = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    // The trust-list edit reloads the sidecar and forces a re-check at once;
+    // several re-attestation intervals later the endpoint is still waiting for
+    // its deployment to be approved. Under ADR-008's original ruling 1 this is
+    // exactly where it would have been admitted.
+    await sleep(3 * 2_000);
+    const still = await waitForExternalStatus(stand.admin, endpointId, [PENDING]);
+    expect(still.lastStage).toBe('digest-not-pinned');
+    expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
+    expect((await chat({})).status).toBe(503);
+  });
 
+  it('admits it once the admin pins the digest it saw, and discovers its models through the egress', async () => {
+    const seen = await waitForExternal(stand.admin, endpointId, {
+      until: (endpoint) => endpoint.evidenceDigestSeen !== null,
+      wanted: 'a digest seen',
+    });
+    approvedDigest = seen.evidenceDigestSeen ?? '';
+
+    const pinned = await pinExternalEndpointDigest(stand.admin, endpointId, approvedDigest);
+    expect(pinned.pinnedEvidenceDigest).toBe(approvedDigest);
+
+    const verified = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
     expect(verified.measurementSeen).toBe(STAND_MEASUREMENT);
-    expect(verified.measurementSource).toBe('REGISTRY');
+    expect(verified.evidenceDigestSeen).toBe(approvedDigest);
     expect(await listedModels()).toContain(EXTERNAL_MODEL);
+
+    // Attest, then list (SUP-249): the first request upstream is the model list,
+    // through the attested, certificate-pinned egress.
+    const discovered = await discoverExternalModels(stand.admin, endpointId);
+    expect(discovered).toEqual([{ upstreamModel: UPSTREAM_MODEL, registeredAs: EXTERNAL_MODEL }]);
 
     const kinds = (await externalEndpointEvents(stand.admin, endpointId)).map((event) => event.kind);
     expect(kinds).toContain('REGISTERED');
+    expect(kinds).toContain('DIGEST_PINNED');
     expect(kinds).toContain(VERIFIED);
   });
 });
@@ -239,7 +275,9 @@ describe('fail-closed', () => {
     expect(await removeTrustedMeasurement(stand.admin, trustedId)).toBe(true);
 
     const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
-    expect(denied.lastStage).toBe('policy');
+    // The refused factor, not the generic `policy` stage: the console's fix for
+    // it is "Add to trust list", and the stage is what tells it so.
+    expect(denied.lastStage).toBe('measurement-not-trusted');
     // The denial names the measurement and the rule, which is what makes it
     // actionable rather than "the built-in pin policy denied".
     expect(denied.lastReason).toContain(STAND_MEASUREMENT);
@@ -323,6 +361,7 @@ describe('fail-closed', () => {
     expect(stand.sidecar.rotateMeasurement()).toBe(ROTATED_MEASUREMENT);
 
     const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
+    expect(denied.lastStage).toBe('measurement-not-trusted');
     expect(denied.lastReason).toContain(ROTATED_MEASUREMENT);
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
 
@@ -335,6 +374,57 @@ describe('fail-closed', () => {
     const readmitted = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
     expect(readmitted.measurementSeen).toBe(STAND_MEASUREMENT);
     expect(await listedModels()).toContain(EXTERNAL_MODEL);
+    await removeTrustedMeasurement(stand.admin, trusted.id);
+  });
+
+  /**
+   * The beat two-factor trust exists for (SUP-252, closing T13): the cloud is
+   * unchanged and still trusted, the upstream redeploys, and the new deployment
+   * is not the one an admin approved. It fails closed — `digest-mismatch`, models
+   * dropped — and the dossier has both digests and both evidence summaries for
+   * the "approve new digest" decision.
+   */
+  it('fails closed with digest-mismatch when the upstream redeploys, until the new digest is approved', async () => {
+    const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
+    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+
+    // No admin edit: the upstream redeploys, and only the sidecar's own
+    // re-attestation loop can notice.
+    const redeployed = await stand.upstream.evidenceHost.rotateDeployment('sup-252-redeploy');
+
+    const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
+    expect(denied.lastStage).toBe('digest-mismatch');
+    expect(denied.pinnedEvidenceDigest).toBe(approvedDigest);
+    expect(denied.evidenceDigestSeen).not.toBe(approvedDigest);
+    expect(denied.measurementSeen).toBe(STAND_MEASUREMENT);
+    expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
+    const refused = await chat({});
+    expect(refused.status).toBe(503);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('attestation_failed');
+
+    const kinds = (await externalEndpointEvents(stand.admin, endpointId)).map((event) => event.kind);
+    expect(kinds).toContain('DIGEST_CHANGED');
+
+    // Old vs new, from what this router filed: the approved deployment's summary
+    // and the redeployed one's, which is what the dossier diffs.
+    const dossier = await waitForExternal(stand.admin, endpointId, {
+      until: (endpoint) =>
+        endpoint.latestEvidence?.evidenceDigest === endpoint.evidenceDigestSeen && endpoint.pinnedEvidence !== null,
+      wanted: 'both evidence summaries filed',
+    });
+    expect(dossier.pinnedEvidence?.evidenceDigest).toBe(approvedDigest);
+    expect(dossier.latestEvidence?.evidenceDigest).toBe(dossier.evidenceDigestSeen);
+
+    // Approve new digest — one click, the same mutation — and it is admitted
+    // again without anybody re-registering it.
+    expect(dossier.evidenceDigestSeen).toBe(redeployed);
+    await pinExternalEndpointDigest(stand.admin, endpointId, redeployed);
+    const readmitted = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    expect(readmitted.pinnedEvidenceDigest).toBe(redeployed);
+    expect(readmitted.evidenceDigestSeen).toBe(redeployed);
+    expect(await listedModels()).toContain(EXTERNAL_MODEL);
+    approvedDigest = readmitted.pinnedEvidenceDigest ?? '';
+
     await removeTrustedMeasurement(stand.admin, trusted.id);
   });
 

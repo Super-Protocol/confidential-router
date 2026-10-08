@@ -172,10 +172,10 @@ describe('ModelsScreen, external models', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent('This router verified this upstream');
-    // The two caveats that make the verdict readable: whose verdict it is, and
-    // that a measurement admits a cloud rather than a deployment.
+    // The two things that make the verdict readable: whose verdict it is, and
+    // that it covers the deployment its operator approved, not only the cloud.
     expect(dialog).toHaveTextContent(/not by you/);
-    expect(dialog).toHaveTextContent(/admits a cloud/);
+    expect(dialog).toHaveTextContent(/the one its operator approved/);
     expect(within(dialog).getByText('partner-cloud')).toBeInTheDocument();
   });
 

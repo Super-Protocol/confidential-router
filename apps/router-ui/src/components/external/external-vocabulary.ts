@@ -77,7 +77,7 @@ export const EXTERNAL_STATUS_PRESENTATION: Record<ExternalEndpointStatus, Extern
      */
     variant: 'warning',
     headline: 'This router verified this upstream',
-    note: 'This router fetched the upstream’s signed evidence, checked it, found the measurement on its trust list and pinned the TLS certificate the evidence names. That is a verdict reached by this deployment, not by you — and a measurement admits a cloud rather than a deployment, so it says which hardware answered and not which software. Inspect the relayed evidence to see what it actually let in.',
+    note: 'This router fetched the upstream’s signed evidence, checked it, found the cloud’s measurement on its trust list and the deployment’s evidence digest equal to the one its operator approved, and pinned the TLS certificate the evidence names. That is a verdict reached by this deployment, not by you — inspect the relayed evidence to see what was approved.',
   },
   DENIED_BY_THIS_ROUTER: {
     label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER,
@@ -89,7 +89,7 @@ export const EXTERNAL_STATUS_PRESENTATION: Record<ExternalEndpointStatus, Extern
     label: 'Awaiting a verdict',
     variant: 'secondary',
     headline: 'No verdict yet',
-    note: 'Registered, and not yet checked — which is where every upstream starts and where every one of them restarts, because a verdict is never persisted as trust. It serves nothing until a check admits it.',
+    note: 'Registered, and not yet admitted — not checked yet, or checked and waiting for its operator to approve the deployment. Every upstream starts here and restarts here, because a verdict is never persisted as trust. It serves nothing until a check admits it.',
   },
   DISABLED: {
     label: 'Switched off',

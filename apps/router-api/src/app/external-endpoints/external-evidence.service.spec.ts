@@ -71,6 +71,7 @@ async function endpoint(overrides: Partial<ExternalEndpoint> = {}): Promise<Exte
     measurementSource: 'operator-pinned',
     evidenceDigestSeen: digestOf(),
     pinnedCertFingerprint: leafOf(),
+    observedCertFingerprint: leafOf(),
     apiKeyCiphertext: 'v1.whatever',
     apiKeyPrefix: 'sk-upstr',
     createdByUserId: null,
@@ -128,8 +129,9 @@ describe('filing an upstream’s published bundle', () => {
     expect(stored[0]?.fetchedAt.toISOString()).toBe('2026-10-06T12:05:00.000Z');
   });
 
-  it('refuses a bundle claiming a leaf the egress is not pinned to', async () => {
-    const row = await endpoint({ pinnedCertFingerprint: `sha256/${Buffer.alloc(32, 9).toString('base64url')}` });
+  it('refuses a bundle claiming a leaf the sidecar did not observe', async () => {
+    const other = `sha256/${Buffer.alloc(32, 9).toString('base64url')}`;
+    const row = await endpoint({ pinnedCertFingerprint: other, observedCertFingerprint: other });
 
     // The whole of this service's judgement, and it is a string comparison rather
     // than a signature check: a document about some other channel is not a
@@ -147,7 +149,11 @@ describe('filing an upstream’s published bundle', () => {
   it('files a bundle whose signature a verifier would reject — that is not this router’s question', async () => {
     const raw = bundle('jws-bad-signature');
     vi.stubGlobal('fetch', serving(raw));
-    const row = await endpoint({ pinnedCertFingerprint: leafOf(raw), evidenceDigestSeen: digestOf(raw) });
+    const row = await endpoint({
+      pinnedCertFingerprint: leafOf(raw),
+      observedCertFingerprint: leafOf(raw),
+      evidenceDigestSeen: digestOf(raw),
+    });
 
     await service.refresh(row);
 
@@ -159,18 +165,47 @@ describe('filing an upstream’s published bundle', () => {
 });
 
 describe('which upstreams are polled at all', () => {
-  it('skips one with no verdict: there is no pin to bind a fetched bundle to', async () => {
-    await endpoint({ status: 'pending', evidenceDigestSeen: null, pinnedCertFingerprint: null });
+  it('skips one with no verdict: there is no observed leaf to bind a fetched bundle to', async () => {
+    await endpoint({
+      status: 'pending',
+      evidenceDigestSeen: null,
+      pinnedCertFingerprint: null,
+      observedCertFingerprint: null,
+    });
 
     expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('skips a denied one and a disabled one for the same reason', async () => {
-    await endpoint({ name: 'denied', status: 'denied', pinnedCertFingerprint: null });
+  it('skips one denied in the pipeline, and a disabled one, for the same reason', async () => {
+    await endpoint({
+      name: 'denied',
+      status: 'denied',
+      lastStage: 'tls-fingerprint',
+      pinnedCertFingerprint: null,
+      observedCertFingerprint: null,
+    });
     await endpoint({ name: 'off', enabled: false, status: 'disabled' });
 
     expect(await service.refreshAll()).toMatchObject({ polled: 0 });
+  });
+
+  it('files the deployment a two-factor refusal asks an admin to approve (SUP-252)', async () => {
+    // `digest-not-pinned` on a fresh registration and `digest-mismatch` after a
+    // redeploy: the cryptography held, a trust factor refused, and the summary is
+    // exactly what the admin reads before pinning. Bound to the observed leaf —
+    // there is no egress pin yet, and none is pretended.
+    const pending = await endpoint({
+      name: 'awaiting-approval',
+      status: 'pending',
+      lastStage: 'digest-not-pinned',
+      pinnedCertFingerprint: null,
+      observedCertFingerprint: leafOf(),
+    });
+
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0 });
+    const [stored] = await dataSource.getRepository(EvidenceSnapshot).find();
+    expect(stored).toMatchObject({ externalEndpointId: pending.id, evidenceDigest: digestOf() });
   });
 
   it('skips one whose current publication is already filed', async () => {

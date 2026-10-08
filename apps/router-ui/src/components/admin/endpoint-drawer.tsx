@@ -1,7 +1,6 @@
 'use client';
 
 import { Badge } from '@confidential-router/ui/components/badge';
-import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import {
   Sheet,
   SheetContent,
@@ -9,14 +8,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@confidential-router/ui/components/sheet';
-import Link from 'next/link';
 import type * as React from 'react';
 import type { ExternalEndpointFieldsFragment } from '../../generated/graphql';
-import { formatContextLength, formatPricePer1m, formatTimestamp, shortenDigest } from '../../lib/format';
+import { formatContextLength, formatPricePer1m, formatTimestamp } from '../../lib/format';
 import { DigestValue } from '../evidence/digest-value';
 import { measurementSourceLabel, statusPresentation } from './endpoint-status';
 import { EndpointTimeline } from './endpoint-timeline';
 import { EvidenceSummary } from './evidence-summary';
+import { TrustFactors } from './trust-factors';
 
 export interface EndpointDrawerProps {
   endpoint: ExternalEndpointFieldsFragment | null;
@@ -36,8 +35,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 /**
  * Everything this router knows about one external upstream, in the order an
- * operator asks it: where it stands, what admitted it, what it is running, and
- * what has happened to it.
+ * operator asks it: where it stands, what admits it — the two trust factors, each
+ * approvable from here — what it is running, and what has happened to it.
  *
  * A drawer rather than a page so the list keeps its place — the list is where an
  * operator compares endpoints, and the drawer is where they interrogate one.
@@ -47,12 +46,6 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
 
   const presentation = statusPresentation(endpoint.status);
   const source = measurementSourceLabel(endpoint.measurementSource);
-  const registrySigned = Boolean(endpoint.measurementSeen && endpoint.measurementInRegistry);
-  // The stages a measurement missing from the trust list is refused at; a denial
-  // at `tls-fingerprint` is not one the list can fix, so it gets no pointer there.
-  const deniedAtTrust =
-    endpoint.status === 'DENIED_BY_THIS_ROUTER' &&
-    (endpoint.lastStage === 'untrusted-root' || endpoint.lastStage === 'policy');
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -85,6 +78,9 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
             </dl>
           </section>
 
+          {/* SUP-252: the two factors, and the one-click approval of each. */}
+          <TrustFactors endpoint={endpoint} isAdmin={isAdmin} />
+
           <section aria-label="Last verdict" className="space-y-2">
             <h3 className="font-medium text-sm">Last verdict</h3>
             <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5">
@@ -97,60 +93,7 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
                 </Field>
               ) : null}
               {endpoint.lastReason ? <Field label="Reason">{endpoint.lastReason}</Field> : null}
-              <Field label="Measurement seen">
-                {endpoint.measurementSeen ? (
-                  <>
-                    <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <span className="font-mono text-xs" title={endpoint.measurementSeen}>
-                        {shortenDigest(endpoint.measurementSeen, 8)}
-                      </span>
-                      {/* Bare hex: the form the trust list stores, so it pastes straight in. */}
-                      <CopyButton
-                        value={endpoint.measurementSeen}
-                        label={`Copy the measurement ${endpoint.name} presented`}
-                      />
-                      {/*
-                       * Informational only (product ruling on SUP-251): a registry
-                       * signature never admits an external endpoint and there is
-                       * deliberately no one-click "trust" beside it — the admin trust
-                       * list is the sole authority (ADR-008 §3).
-                       */}
-                      {registrySigned ? (
-                        <Badge
-                          variant="outline"
-                          title="Signed in the Super Protocol registry. Informational only — only the trust list admits."
-                        >
-                          Registry-signed
-                        </Badge>
-                      ) : null}
-                      {source && !(registrySigned && endpoint.measurementSource === 'REGISTRY') ? (
-                        <span className="text-muted-foreground text-xs">{source}</span>
-                      ) : null}
-                    </span>
-                    {deniedAtTrust ? (
-                      <p className="mt-1 text-muted-foreground text-xs">
-                        {registrySigned ? 'A registry signature admits nothing on its own. ' : ''}
-                        If this is the cloud you mean to trust, add this measurement to the{' '}
-                        <Link href="/admin/trust" className="underline underline-offset-2">
-                          trust list
-                        </Link>
-                        .
-                      </p>
-                    ) : null}
-                  </>
-                ) : (
-                  '—'
-                )}
-              </Field>
-              <Field label="Digest seen">
-                {endpoint.evidenceDigestSeen ? (
-                  <span className="font-mono text-xs" title={endpoint.evidenceDigestSeen}>
-                    {shortenDigest(endpoint.evidenceDigestSeen, 8)}
-                  </span>
-                ) : (
-                  '—'
-                )}
-              </Field>
+              {source ? <Field label="Measurement anchor">{source}</Field> : null}
               <Field label="Pinned certificate">
                 {endpoint.pinnedCertFingerprint ? (
                   <DigestValue

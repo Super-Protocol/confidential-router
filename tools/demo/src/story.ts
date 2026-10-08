@@ -28,9 +28,11 @@ import { VERDICT_HEADER } from './constants.js';
 import {
   addTrustedMeasurement,
   type ExternalStand,
+  pinExternalEndpointDigest,
   registerExternalEndpoint,
   STAND_MEASUREMENT,
   startExternalStand,
+  waitForExternal,
   waitForExternalStatus,
 } from './external-stand.js';
 import { createGatekeeper, type Gatekeeper, type RunningGatekeeper } from './gatekeeper.js';
@@ -210,7 +212,7 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
 
     const after = await waitForMetering(stack, metered.count + 1);
 
-    step('Register a model endpoint in another cloud, and trust that cloud');
+    step('Register a model endpoint in another cloud, and approve its cloud and its deployment');
     const registered = await registerExternalEndpoint(stand.admin, {
       name: EXTERNAL_ENDPOINT,
       baseUrl: stand.upstream.url,
@@ -222,8 +224,16 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
     detail(`registered  ${registered.name} → ${stand.upstream.url}, status ${registered.status}`);
     detail(`key         ${registered.apiKeyPrefix}… (sealed; no read path returns it)`);
     await addTrustedMeasurement(stand.admin, OTHER_CLOUD_MEASUREMENT, 'another cloud, not this one');
+    // Two-factor trust (SUP-252): the first check reports both factors, and the
+    // admin approves each — the cloud by measurement, the deployment by digest.
+    const seen = await waitForExternal(stand.admin, registered.id, {
+      until: (endpoint) => endpoint.lastStage === 'digest-not-pinned' && endpoint.evidenceDigestSeen !== null,
+      wanted: 'both trust factors seen and awaiting approval',
+    });
     await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT, 'the partner cloud');
     detail(`trusted     measurement ${STAND_MEASUREMENT}`);
+    await pinExternalEndpointDigest(stand.admin, registered.id, seen.evidenceDigestSeen ?? '');
+    detail(`pinned      deployment ${seen.evidenceDigestSeen}`);
     const verified = await waitForExternalStatus(stand.admin, registered.id, [EXTERNAL_VERIFIED]);
     detail(`verdict     ${verified.status} — measurement seen ${verified.measurementSeen}`);
     expect(await listsModel(stack, EXTERNAL_MODEL), 'a verified external endpoint should put its model in /v1/models');

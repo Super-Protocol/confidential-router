@@ -40,6 +40,12 @@ export interface MockLiteLLMOptions {
    * without a second server.
    */
   failures?: Record<string, UpstreamFailure>;
+  /**
+   * Model ids `GET /v1/models` lists. Empty by default — the router serves its
+   * own catalogue — and set when this backend stands in for an *external*
+   * upstream the router discovers models on (SUP-249, SUP-252).
+   */
+  models?: readonly string[];
 }
 
 export interface UpstreamFailure {
@@ -258,7 +264,8 @@ export function startMockLiteLLM(options: MockLiteLLMOptions = {}): Promise<Mock
       // The router serves /v1/models from its own catalogue and never asks
       // here, but a curl against the backend should not 404.
       if (path === '/v1/models' || path === '/models') {
-        json(response, 200, { object: 'list', data: [] });
+        const data = (options.models ?? []).map((id) => ({ id, object: 'model', owned_by: 'mock-litellm' }));
+        json(response, 200, { object: 'list', data });
         return;
       }
       json(response, 404, { error: { message: `mock-litellm does not serve ${path}` } });

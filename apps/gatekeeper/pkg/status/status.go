@@ -218,15 +218,21 @@ type Report struct {
 	// Pinned reports whether EvidenceDigest is in the endpoint's
 	// trustedEvidence list.
 	Pinned bool `json:"pinned"`
-	// TrustMode is the endpoint's configured trust mode — `evidence-digest` or
-	// `cloud-measurement` (ADR-008 §3) — and is empty for a host that is not a
-	// configured endpoint.
+	// TrustMode is the endpoint's configured trust mode — `evidence-digest`,
+	// `cloud-measurement` (ADR-008 §3) or `measurement-and-digest` (SUP-252) —
+	// and is empty for a host that is not a configured endpoint.
 	TrustMode string `json:"trustMode,omitempty"`
-	// MeasurementTrusted is the `cloud-measurement` counterpart of Pinned:
-	// whether the attested root's measurement is on the operator's
+	// MeasurementTrusted is the cloud counterpart of Pinned: whether the
+	// attested root's measurement is on the operator's
 	// `attestedRoots.trustedMeasurements` list. Like Pinned it is display
 	// state — the admission decision is always the policy engine's.
 	MeasurementTrusted bool `json:"measurementTrusted,omitempty"`
+	// Refusal names which trust factor a `measurement-and-digest` endpoint's
+	// built-in denial is about — one of the Refusal* codes — so a caller that
+	// approves factors can act on it without parsing Reason. Empty on
+	// admission, for the other modes, and for any denial that is not the
+	// built-in clause's (a pipeline stage, a user policy, an evaluation error).
+	Refusal string `json:"refusal,omitempty"`
 	// Images are the container images named anywhere in the snapshot.
 	Images []string `json:"images,omitempty"`
 	// QuoteFormat is rootCaTeeQuote.format when the bundle carried a quote. The
@@ -264,6 +270,26 @@ func (r *Report) RootAnchor() string {
 	default:
 		return "attested"
 	}
+}
+
+// Refusal codes of a two-factor (`measurement-and-digest`) denial, in the order
+// they are decided: the first that applies is the one reported.
+const (
+	// RefusalDigestNotPinned: the endpoint has no evidenceDigest pinned at all,
+	// so nothing can admit it yet. Approval is pending, not refused.
+	RefusalDigestNotPinned = "digest-not-pinned"
+	// RefusalMeasurementNotTrusted: the cloud's launch measurement is not on
+	// the list, or there is no attested measurement to compare.
+	RefusalMeasurementNotTrusted = "measurement-not-trusted"
+	// RefusalDigestMismatch: a digest is pinned and the deployment now
+	// publishes a different one — a redeploy nobody approved.
+	RefusalDigestMismatch = "digest-mismatch"
+)
+
+// TrustsCloud reports whether admission depends on the measurement list, alone
+// or as one of two factors.
+func (r *Report) TrustsCloud() bool {
+	return r != nil && config.TrustsCloud(r.TrustMode)
 }
 
 // ByMeasurement reports whether this endpoint trusts its cloud by measurement

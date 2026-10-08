@@ -2,6 +2,7 @@ export { type ConsoleSession, createApiKey, type DemoCredential, signIn, topUp }
 export { EVIDENCE_PATH_SUFFIX, VERDICT_HEADER } from './constants.js';
 export {
   addTrustedMeasurement,
+  discoverExternalModels,
   type EgressSidecar,
   type EgressSidecarOptions,
   type ExternalModelRegistration,
@@ -12,6 +13,7 @@ export {
   type ExternalUpstreamOptions,
   externalEndpointEvents,
   externalSeam,
+  pinExternalEndpointDigest,
   type RegisteredExternalEndpoint,
   ROTATED_MEASUREMENT,
   readExternalEndpoint,
@@ -23,6 +25,7 @@ export {
   startExternalStand,
   startExternalUpstream,
   TESTSTAND_BIN,
+  waitForExternal,
   waitForExternalStatus,
   waitForRelayedBundle,
 } from './external-stand.js';

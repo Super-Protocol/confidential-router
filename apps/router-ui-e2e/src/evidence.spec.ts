@@ -182,7 +182,7 @@ test.describe('Models, with an external endpoint', () => {
     await expect(ownRow.getByText(/by this router/)).toHaveCount(0);
   });
 
-  test('says whose verdict it is, and what a measurement does not pin', async ({ page, baseURL }) => {
+  test('says whose verdict it is, and that it covers the approved deployment', async ({ page, baseURL }) => {
     await mockClipboard(page);
     await signIn(page, baseURL as string, mixed);
     await page.goto('/models');
@@ -192,7 +192,9 @@ test.describe('Models, with an external endpoint', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'This router verified this upstream' })).toBeVisible();
     await expect(dialog).toContainText('not by you');
-    await expect(dialog).toContainText('admits a cloud');
+    // Two-factor trust (SUP-252): the cloud by measurement and the deployment by
+    // the digest its operator approved — not the cloud alone.
+    await expect(dialog).toContainText('the one its operator approved');
   });
 
   test('declares no TEE label for another deployment’s hardware', async ({ page, baseURL }) => {

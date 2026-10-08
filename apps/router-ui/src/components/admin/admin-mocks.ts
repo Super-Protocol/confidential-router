@@ -6,6 +6,12 @@ import {
   TRUSTED_MEASUREMENTS_QUERY,
 } from './operations';
 
+/** The deployment an admin approved, and the one a redeploy brought in (SUP-252). */
+export const DIGEST_APPROVED = 'sha256/AAAABBBBCCCCDDDD';
+export const DIGEST_APPROVED_HEX = '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff';
+export const DIGEST_REDEPLOYED = 'sha256/EEEEFFFF99998888';
+export const DIGEST_REDEPLOYED_HEX = '9999888877776666555544443333222211110000ffffeeeeddddccccbbbbaaaa';
+
 /**
  * Fixtures for the admin screens.
  *
@@ -71,7 +77,10 @@ export const VERIFIED_ENDPOINT = {
   measurementSeen: MEASUREMENT_TRUSTED,
   measurementSource: 'REGISTRY' as const,
   measurementInRegistry: true,
-  evidenceDigestSeen: 'sha256/AAAABBBBCCCCDDDD',
+  evidenceDigestSeen: DIGEST_APPROVED,
+  evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+  pinnedEvidenceDigest: DIGEST_APPROVED as string | null,
+  pinnedEvidenceDigestHex: DIGEST_APPROVED_HEX as string | null,
   pinnedCertFingerprint: 'ffffeeeeddddccccbbbbaaaa00009999888877776666555544443333222211110',
   apiKeyPrefix: 'sk-up-9f3a',
   createdAt: '2026-10-01T09:00:00.000Z',
@@ -88,6 +97,7 @@ export const VERIFIED_ENDPOINT = {
     },
   ],
   latestEvidence: EVIDENCE,
+  pinnedEvidence: EVIDENCE as typeof EVIDENCE | null,
   events: [
     {
       __typename: 'ExternalEndpointEvent' as const,
@@ -169,8 +179,53 @@ export const PENDING_ENDPOINT = {
   measurementSource: null,
   measurementInRegistry: null,
   evidenceDigestSeen: null,
+  evidenceDigestSeenHex: null,
+  pinnedEvidenceDigest: null,
+  pinnedEvidenceDigestHex: null,
   pinnedCertFingerprint: null,
   latestEvidence: null,
+  pinnedEvidence: null,
+  events: [],
+};
+
+/**
+ * Registered and checked once: both factors seen, neither approved yet. The first
+ * screen of the TOFU-with-approval loop (SUP-252).
+ */
+export const AWAITING_APPROVAL_ENDPOINT = {
+  ...PENDING_ENDPOINT,
+  id: 'ext-5',
+  name: 'llama-demo',
+  baseUrl: 'https://llama-demo.swarm.example',
+  hostname: 'llama-demo.swarm.example',
+  lastCheckedAt: '2026-10-08T14:00:00.000Z',
+  lastStage: 'digest-not-pinned',
+  lastReason: 'no evidenceDigest is pinned for endpoint "llama-demo"',
+  measurementSeen: MEASUREMENT_ROGUE,
+  measurementSource: 'REGISTRY' as const,
+  measurementInRegistry: true,
+  evidenceDigestSeen: DIGEST_APPROVED,
+  evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+  latestEvidence: EVIDENCE,
+};
+
+/** The trusted cloud is unchanged and the upstream redeployed: failed closed at `digest-mismatch`. */
+export const REDEPLOYED_ENDPOINT = {
+  ...VERIFIED_ENDPOINT,
+  id: 'ext-6',
+  name: 'llama-redeployed',
+  status: 'DENIED_BY_THIS_ROUTER' as const,
+  lastStage: 'digest-mismatch',
+  lastReason: 'the deployment now publishes a different evidenceDigest',
+  pinnedCertFingerprint: null,
+  evidenceDigestSeen: DIGEST_REDEPLOYED,
+  evidenceDigestSeenHex: DIGEST_REDEPLOYED_HEX,
+  latestEvidence: {
+    ...EVIDENCE_AFTER_CHANGE,
+    evidenceDigest: DIGEST_REDEPLOYED,
+    evidenceDigestHex: DIGEST_REDEPLOYED_HEX,
+  },
+  pinnedEvidence: EVIDENCE,
   events: [],
 };
 
@@ -241,6 +296,12 @@ export function verdictMock(
           lastStage: null,
           lastReason: null,
           measurementSeen: status === 'PENDING' ? null : MEASUREMENT_TRUSTED,
+          measurementSource: status === 'PENDING' ? null : 'REGISTRY',
+          measurementInRegistry: status === 'PENDING' ? null : true,
+          evidenceDigestSeen: status === 'PENDING' ? null : DIGEST_APPROVED,
+          evidenceDigestSeenHex: status === 'PENDING' ? null : DIGEST_APPROVED_HEX,
+          pinnedEvidenceDigest: status === 'VERIFIED_BY_THIS_ROUTER' ? DIGEST_APPROVED : null,
+          pinnedEvidenceDigestHex: status === 'VERIFIED_BY_THIS_ROUTER' ? DIGEST_APPROVED_HEX : null,
           pinnedCertFingerprint: status === 'VERIFIED_BY_THIS_ROUTER' ? 'ab'.repeat(32) : null,
           models: [],
           ...overrides,

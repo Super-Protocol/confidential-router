@@ -293,7 +293,7 @@ func newTrustMeasurementsRemoveCommand(g *globals) *cobra.Command {
 func endpointsTrustingClouds(store *trust.Store) []string {
 	var names []string
 	for _, ep := range store.Endpoints() {
-		if ep.ByMeasurement() {
+		if ep.TrustsCloud() {
 			names = append(names, ep.Name)
 		}
 	}

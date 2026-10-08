@@ -186,12 +186,12 @@ func Evaluate(ctx context.Context, bundleJSON []byte, cfg *config.Config, opts O
 	// package's verifiers do. For a `trust: cloud-measurement` endpoint that is
 	// not a shortcut but the whole question, so the denial it produces says
 	// nothing about the measurement list and must not be read as if it did.
-	if endpoint.ByMeasurement() && verified.AttestedRoot == nil {
+	if endpoint.TrustsCloud() && verified.AttestedRoot == nil {
 		warnings = append(warnings, fmt.Sprintf(
 			"endpoint %q has trust: %s, and this run did not evaluate the attested-root check — "+
 				"input.attestation.rootAttestation is absent, so the built-in policy denies here whatever "+
 				"attestedRoots.trustedMeasurements says; `gatekeeper verify %s` is what answers for this endpoint",
-			endpoint.Name, config.TrustCloudMeasurement, endpoint.Name))
+			endpoint.Name, endpoint.Trust, endpoint.Name))
 	}
 
 	modules, err := policy.LoadModules(cfg)

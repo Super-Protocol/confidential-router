@@ -11,12 +11,14 @@ import { dump } from 'js-yaml';
  *
  * Three properties the golden file pins, each one load-bearing:
  *
- *  - **`trust: cloud-measurement` on every endpoint.** The core's default policy
- *    requires a per-endpoint `trustedEvidence` digest pin, which is exactly the
- *    per-endpoint approval decision 1 removes. This mode says instead: admit on a
- *    verified attested root whose measurement is in the configured list. It is the
- *    weaker mode — a measurement admits a cloud, never a deployment (threat T13) —
- *    and it is never the default for the user-facing CLI.
+ *  - **`trust: measurement-and-digest` on every endpoint** — two-factor trust
+ *    (SUP-252, superseding ADR-008 §10 ruling 1). The cloud is admitted by its
+ *    launch measurement against the configured list, *and* the deployment by the
+ *    digest the admin pinned for this endpoint, rendered as its `trustedEvidence`.
+ *    An endpoint with no pin yet renders an empty list: the sidecar still verifies
+ *    it — which is how the console learns the digest to approve — and refuses it
+ *    as `digest-not-pinned`. This is what closes threat T13: a trusted cloud no
+ *    longer admits every deployment on it.
  *  - **`failMode: closed` on every endpoint.** Decision 5. There is no setting
  *    that renders `open`, because an external upstream proxied without a verdict
  *    is the one thing this feature exists to prevent.
@@ -25,14 +27,14 @@ import { dump } from 'js-yaml';
  *    the rendered file is readable without being sensitive. `rendersNoSecrets` in
  *    the spec is the standing check.
  *
- * The shape is `schemas/gatekeeper-config.schema.json` plus the two additions
- * ADR-008 §3 commits the core to: `attestedRoots.trustedMeasurements` (SUP-139)
- * and the per-endpoint `trust` mode. Validating a rendered file against the real
- * binary belongs to stage 2, where the two sides meet.
+ * The shape is `schemas/gatekeeper-config.schema.json`, including the two
+ * additions ADR-008 §3 committed the core to: `attestedRoots.trustedMeasurements`
+ * (SUP-139) and the per-endpoint `trust` mode. The real binary reads a rendered
+ * file in `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts`.
  */
 
-/** The endpoint trust mode ADR-008 §3 adds to the core: the admin list decides, not a digest pin. */
-export const CLOUD_MEASUREMENT_TRUST = 'cloud-measurement' as const;
+/** Two-factor endpoint trust (SUP-252): the cloud by measurement *and* the deployment by its pinned digest. */
+export const TWO_FACTOR_TRUST = 'measurement-and-digest' as const;
 
 /** Bounds the core keeps at its own defaults, written out so the file states them (ADR-008 §3). */
 const MAX_BUNDLE_AGE = '24h';
@@ -44,6 +46,8 @@ export interface SidecarEndpointInput {
   /** `https://host[:port]`; the hostname is what evidence is fetched from and bound to. */
   baseUrl: string;
   listenPort: number;
+  /** The admin's approved deployment, canonical `sha256/<base64url>`; null renders no pin. */
+  pinnedEvidenceDigest: string | null;
 }
 
 export interface SidecarConfigInput {
@@ -65,7 +69,8 @@ export interface SidecarConfigDocument {
     name: string;
     listen: string;
     upstream: string;
-    trust: typeof CLOUD_MEASUREMENT_TRUST;
+    trust: typeof TWO_FACTOR_TRUST;
+    trustedEvidence: string[];
     failMode: 'closed';
   }>;
 }
@@ -112,7 +117,11 @@ export function buildSidecarConfig(input: SidecarConfigInput): SidecarConfigDocu
       // namespace, so there is no Service and nothing leaves the pod.
       listen: `127.0.0.1:${endpoint.listenPort}`,
       upstream: upstreamOf(endpoint),
-      trust: CLOUD_MEASUREMENT_TRUST,
+      trust: TWO_FACTOR_TRUST,
+      // One pin at most: the endpoint's approved deployment. Written as an empty
+      // list rather than left out, so the file says "nothing approved yet" in
+      // the same place it would say what was.
+      trustedEvidence: endpoint.pinnedEvidenceDigest ? [endpoint.pinnedEvidenceDigest] : [],
       failMode: 'closed' as const,
     }));
 

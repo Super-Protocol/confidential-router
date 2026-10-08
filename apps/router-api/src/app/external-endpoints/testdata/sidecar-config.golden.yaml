@@ -17,10 +17,13 @@ endpoints:
   - name: acme-mistral
     listen: 127.0.0.1:19000
     upstream: https://mistral.acme.example:8443
-    trust: cloud-measurement
+    trust: measurement-and-digest
+    trustedEvidence: []
     failMode: closed
   - name: partner-llama
     listen: 127.0.0.1:19001
     upstream: https://llama.partner.example
-    trust: cloud-measurement
+    trust: measurement-and-digest
+    trustedEvidence:
+      - sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490
     failMode: closed
