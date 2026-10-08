@@ -25,7 +25,9 @@ export type ExternalEndpointStatus = 'pending' | 'verified' | 'denied' | 'disabl
  * Every one of them is display and admission state re-derived from a live
  * verification, never an input to one: on boot the row is forced back to
  * `pending` and the sidecar re-attests from nothing. Trust lives in
- * {@link TrustedMeasurement} and in the evidence, never in this table.
+ * {@link TrustedMeasurement}, in {@link pinnedEvidenceDigest} — the one column
+ * here that is an operator's decision rather than a verdict — and in the
+ * evidence.
  */
 @Entity({ name: 'external_endpoints' })
 export class ExternalEndpoint {
@@ -70,7 +72,11 @@ export class ExternalEndpoint {
   @Column(timestampColumn({ nullable: true }))
   lastCheckedAt!: Date | null;
 
-  /** ADR-003 §1 stage name of the last failure: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy. */
+  /**
+   * Where the last check stopped: an ADR-003 §1 stage (fetch, cert-chain, untrusted-root, jws,
+   * tls-fingerprint, policy) or, for the built-in two-factor clause, the factor it refused on —
+   * `digest-not-pinned`, `measurement-not-trusted` or `digest-mismatch` (SUP-252).
+   */
   @Column({ type: 'varchar', length: 32, nullable: true })
   lastStage!: string | null;
 
@@ -89,9 +95,34 @@ export class ExternalEndpoint {
   @Column({ type: 'varchar', length: 128, nullable: true })
   evidenceDigestSeen!: string | null;
 
+  /**
+   * The deployment an admin approved: the second trust factor (SUP-252).
+   *
+   * Unlike every verdict column above, this is **trust**, not a projection of one —
+   * an operator's decision, rendered into the sidecar config as the endpoint's
+   * `trustedEvidence`, and never written by the status poll or reset on boot.
+   * Admission requires the verdict's {@link evidenceDigestSeen} to equal it *and*
+   * the cloud's measurement to be on the trust list. Null means no deployment has
+   * been approved yet, so the endpoint stays `pending` (`digest-not-pinned`).
+   * Canonical `sha256/<base64url>`, the spelling the verdict reports.
+   */
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  pinnedEvidenceDigest!: string | null;
+
   /** The TLS leaf the sidecar pinned; egress verifies against this and no CA bundle. */
   @Column({ type: 'varchar', length: 128, nullable: true })
   pinnedCertFingerprint!: string | null;
+
+  /**
+   * The TLS leaf the last cryptographically verified report bound its evidence to —
+   * set when the endpoint is admitted (it then equals {@link pinnedCertFingerprint})
+   * *and* when a trust factor refused sound evidence (SUP-252). It is what the
+   * evidence poller binds a fetched bundle to, so the console can show the
+   * deployment an admin is being asked to approve. Never an egress pin: nothing
+   * dials against it.
+   */
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  observedCertFingerprint!: string | null;
 
   /**
    * The upstream's LLM API key, sealed by `secret-envelope.ts`.

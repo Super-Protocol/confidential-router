@@ -192,7 +192,12 @@ let externalEndpoints = 0;
  */
 export async function seedExternalEndpoint(
   dataSource: DataSource,
-  options: { status?: ExternalEndpointStatus; enabled?: boolean; withModel?: boolean } = {},
+  options: {
+    status?: ExternalEndpointStatus;
+    enabled?: boolean;
+    withModel?: boolean;
+    pinnedEvidenceDigest?: string | null;
+  } = {},
 ): Promise<SeededExternalEndpoint> {
   externalEndpoints += 1;
   const nth = externalEndpoints;
@@ -216,7 +221,9 @@ export async function seedExternalEndpoint(
     measurementSeen: null,
     measurementSource: null,
     evidenceDigestSeen: null,
+    pinnedEvidenceDigest: options.pinnedEvidenceDigest ?? null,
     pinnedCertFingerprint: null,
+    observedCertFingerprint: null,
     apiKeyCiphertext: 'v1.placeholder',
     apiKeyPrefix: 'sk-up',
     createdByUserId: null,

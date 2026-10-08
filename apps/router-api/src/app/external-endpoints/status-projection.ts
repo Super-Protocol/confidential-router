@@ -13,10 +13,11 @@ import type { SidecarVerdict } from './sidecar-admin.client.js';
  * timeline an operator reads for "when did this cloud change what it runs" would
  * be unreadable.
  *
- * Three transitions are tracked separately from the status itself, because they
- * happen *while* an endpoint stays verified and they are the ones
- * cloud-granularity trust makes important (threat T13): the deployment digest
- * changing, the measurement changing, and the status flipping.
+ * Three transitions are tracked separately from the status itself: the
+ * deployment digest changing, the measurement changing, and the status flipping.
+ * Under two-factor trust (SUP-252) a digest change is gating — the pin no longer
+ * matches, so it arrives together with the `denied` it caused, and the timeline
+ * shows both.
  */
 
 /** The columns a verdict may write. `enabled` and the key columns are never among them. */
@@ -30,6 +31,7 @@ export type ExternalEndpointStatusPatch = Pick<
   | 'measurementSource'
   | 'evidenceDigestSeen'
   | 'pinnedCertFingerprint'
+  | 'observedCertFingerprint'
 >;
 
 /** One row to append to the timeline. */
@@ -72,12 +74,20 @@ export interface ProjectedVerdict {
  * Anything short of a report at all is `pending`, not `denied`: "we have not
  * looked yet" and "we looked and refused" are different things to tell an
  * operator, and only the second one is a verdict.
+ *
+ * So is `digest-not-pinned` (SUP-252): the sidecar looked, and what it is waiting
+ * for is the admin's approval of the deployment it saw, not a better upstream.
+ * Calling that a denial would make every fresh registration read as a failure.
+ * Admission is unaffected — `pending` serves nothing, exactly like `denied`.
  */
 export function statusOf(verdict: SidecarVerdict): ExternalEndpointStatus {
   if (verdict.admitted) {
     return 'verified';
   }
-  return verdict.report ? 'denied' : 'pending';
+  if (!verdict.report || verdict.report.refusal === 'digest-not-pinned') {
+    return 'pending';
+  }
+  return 'denied';
 }
 
 /**
@@ -104,7 +114,10 @@ export function projectVerdict(
     // there would both claim a check that never ran and make every five-second
     // poll of an `attesting` endpoint look like a change worth an `UPDATE`.
     lastCheckedAt: report ? (report.checkedAt ? new Date(report.checkedAt) : now) : endpoint.lastCheckedAt,
-    lastStage: report?.stage ?? null,
+    // The refused factor when the two-factor clause names one — it is the more
+    // specific answer, and the one an operator acts on (`digest-mismatch` means
+    // "approve the new digest", `policy` would mean nothing in particular).
+    lastStage: report?.refusal ?? report?.stage ?? null,
     // The sidecar's one-line denial, or nothing when it admitted. Clipped to the
     // column: a reason is for a human to read, not a payload to carry.
     lastReason: clip(verdict.reason ?? report?.reason ?? null, 255),
@@ -115,6 +128,11 @@ export function projectVerdict(
     // denied endpoint would read as "this is what we are pinned to" about an
     // endpoint that is refusing traffic.
     pinnedCertFingerprint: status === 'verified' ? (report?.certFingerprint ?? null) : null,
+    // Wider than the pin: any report whose cryptography held — the channel
+    // binding included — bound its evidence to this leaf, admitted or not. It is
+    // what lets the console file and show the deployment a two-factor refusal is
+    // asking an admin to approve (SUP-252). A pipeline failure binds nothing.
+    observedCertFingerprint: report?.verified ? (report.certFingerprint ?? null) : null,
   };
 
   const events: ProjectedEvent[] = [];
@@ -130,9 +148,9 @@ export function projectVerdict(
   if (statusChanged && status !== 'pending') {
     events.push(at(status === 'verified' ? 'verified' : 'denied'));
   }
-  // Reported whether or not the status moved: the same trusted cloud redeploying
-  // a different image keeps the endpoint verified and is exactly the change an
-  // operator has to be able to see.
+  // Reported whether or not the status moved: a redeploy is the change an
+  // operator approves or refuses, so it is named in its own right beside the
+  // denial a mismatched pin produces.
   if (evidenceDigest && endpoint.evidenceDigestSeen && endpoint.evidenceDigestSeen !== evidenceDigest) {
     events.push(at('digest_changed'));
   }

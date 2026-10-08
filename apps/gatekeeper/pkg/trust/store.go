@@ -61,8 +61,9 @@ type Endpoint struct {
 	Hostname string
 	Port     int
 	FailMode string
-	// Trust is the resolved trust mode — config.TrustEvidenceDigest or
-	// config.TrustCloudMeasurement — never empty.
+	// Trust is the resolved trust mode — config.TrustEvidenceDigest,
+	// config.TrustCloudMeasurement or config.TrustMeasurementAndDigest — never
+	// empty.
 	Trust string
 	Pins  []Pin
 }
@@ -70,6 +71,11 @@ type Endpoint struct {
 // ByMeasurement reports whether this endpoint trusts a cloud by measurement
 // rather than pinning a deployment's evidenceDigest.
 func (e Endpoint) ByMeasurement() bool { return e.Trust == config.TrustCloudMeasurement }
+
+// TrustsCloud reports whether admission depends on the measurement list —
+// alone (`cloud-measurement`) or as one factor of two
+// (`measurement-and-digest`).
+func (e Endpoint) TrustsCloud() bool { return config.TrustsCloud(e.Trust) }
 
 // IsPinned reports whether the endpoint accepts the given evidence digest.
 func (e Endpoint) IsPinned(d Digest) bool {

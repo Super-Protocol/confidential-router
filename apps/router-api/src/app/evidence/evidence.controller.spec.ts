@@ -90,6 +90,7 @@ async function seedExternalEndpoint(
     measurementSource: 'operator-pinned',
     evidenceDigestSeen: parsed.digest.canonical,
     pinnedCertFingerprint: parsed.certFingerprint,
+    observedCertFingerprint: parsed.certFingerprint,
     apiKeyCiphertext: 'v1.sealed',
     apiKeyPrefix: 'sk-upstr',
     createdByUserId: null,

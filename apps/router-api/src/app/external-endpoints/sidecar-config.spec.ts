@@ -1,21 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSidecarConfig,
-  CLOUD_MEASUREMENT_TRUST,
   goDuration,
   renderSidecarConfig,
   type SidecarConfigInput,
+  TWO_FACTOR_TRUST,
   UnrenderableEndpointError,
 } from './sidecar-config.js';
 
 const MEASUREMENT_A = 'a'.repeat(64);
 const MEASUREMENT_B = 'b'.repeat(64);
+const PINNED_DIGEST = 'sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490';
 
 function input(overrides: Partial<SidecarConfigInput> = {}): SidecarConfigInput {
   return {
     endpoints: [
-      { name: 'partner-llama', baseUrl: 'https://llama.partner.example', listenPort: 19001 },
-      { name: 'acme-mistral', baseUrl: 'https://mistral.acme.example:8443', listenPort: 19000 },
+      {
+        name: 'partner-llama',
+        baseUrl: 'https://llama.partner.example',
+        listenPort: 19001,
+        pinnedEvidenceDigest: PINNED_DIGEST,
+      },
+      {
+        name: 'acme-mistral',
+        baseUrl: 'https://mistral.acme.example:8443',
+        listenPort: 19000,
+        pinnedEvidenceDigest: null,
+      },
     ],
     trustedMeasurements: [MEASUREMENT_B, MEASUREMENT_A],
     adminListen: '127.0.0.1:9465',
@@ -32,17 +43,25 @@ describe('the rendered sidecar config', () => {
     await expect(renderSidecarConfig(input())).toMatchFileSnapshot('./testdata/sidecar-config.golden.yaml');
   });
 
-  it('renders no endpoint with a digest pin, because there is no per-endpoint approval', () => {
-    // Decision 1: trust is the admin measurement list, not a digest approved per
-    // endpoint. `trustedEvidence` is what the core's default policy would require
-    // instead, and its absence here is the whole reason the core needs the
-    // `cloud-measurement` mode at all (ADR-008 §3).
-    const rendered = renderSidecarConfig(input());
+  it('renders every endpoint two-factor: the listed cloud and its own approved deployment', () => {
+    // SUP-252: a trusted cloud no longer admits every deployment on it. Each
+    // endpoint carries the digest its admin pinned as `trustedEvidence`, and the
+    // core requires it *and* the measurement list.
+    const document = buildSidecarConfig(input());
 
-    expect(rendered).not.toContain('trustedEvidence');
-    for (const endpoint of buildSidecarConfig(input()).endpoints) {
-      expect(endpoint.trust).toBe(CLOUD_MEASUREMENT_TRUST);
+    for (const endpoint of document.endpoints) {
+      expect(endpoint.trust).toBe(TWO_FACTOR_TRUST);
     }
+    const byName = new Map(document.endpoints.map((endpoint) => [endpoint.name, endpoint]));
+    expect(byName.get('partner-llama')?.trustedEvidence).toEqual([PINNED_DIGEST]);
+  });
+
+  it('renders an endpoint with nothing approved as an empty pin list, so it is still verified', () => {
+    // Not left out: the sidecar has to verify it to report the digest an admin
+    // approves, and refuses it as `digest-not-pinned` meanwhile.
+    const document = buildSidecarConfig(input());
+
+    expect(document.endpoints.find((endpoint) => endpoint.name === 'acme-mistral')?.trustedEvidence).toEqual([]);
   });
 
   it('is fail-closed everywhere, with no setting that could render otherwise', () => {
@@ -108,7 +127,9 @@ describe('the rendered sidecar config', () => {
 
   it('reduces an upstream to scheme and authority, dropping any path', () => {
     const document = buildSidecarConfig(
-      input({ endpoints: [{ name: 'a', baseUrl: 'https://a.example/v1/', listenPort: 19000 }] }),
+      input({
+        endpoints: [{ name: 'a', baseUrl: 'https://a.example/v1/', listenPort: 19000, pinnedEvidenceDigest: null }],
+      }),
     );
 
     expect(document.endpoints[0].upstream).toBe('https://a.example');
@@ -116,13 +137,19 @@ describe('the rendered sidecar config', () => {
 
   it('refuses a plain-HTTP upstream, because there is no channel to bind', () => {
     expect(() =>
-      buildSidecarConfig(input({ endpoints: [{ name: 'a', baseUrl: 'http://a.example', listenPort: 19000 }] })),
+      buildSidecarConfig(
+        input({
+          endpoints: [{ name: 'a', baseUrl: 'http://a.example', listenPort: 19000, pinnedEvidenceDigest: null }],
+        }),
+      ),
     ).toThrow(UnrenderableEndpointError);
   });
 
   it('refuses an unparseable base URL by naming the endpoint', () => {
     expect(() =>
-      buildSidecarConfig(input({ endpoints: [{ name: 'broken', baseUrl: 'not a url', listenPort: 19000 }] })),
+      buildSidecarConfig(
+        input({ endpoints: [{ name: 'broken', baseUrl: 'not a url', listenPort: 19000, pinnedEvidenceDigest: null }] }),
+      ),
     ).toThrow(/"broken"/);
   });
 });

@@ -271,9 +271,9 @@
         },
         "trust": {
           "type": "string",
-          "enum": ["evidence-digest", "cloud-measurement"],
+          "enum": ["evidence-digest", "cloud-measurement", "measurement-and-digest"],
           "default": "evidence-digest",
-          "description": "What the built-in policy requires before it admits this endpoint. `evidence-digest` (the default, and the only mode `gatekeeper init` and the `endpoint` commands write) admits only an evidenceDigest listed in `trustedEvidence` \u2014 one deployment. `cloud-measurement` admits any deployment whose cloud's root CA passed the attested-root check with a measurement listed in `attestedRoots.trustedMeasurements`: strictly weaker, because a measurement admits a cloud, never a deployment, and it exists for a caller that registers upstreams at runtime and cannot approve each one by digest (ADR-008 \u00a73). In that mode the measurement list is the sole authority \u2014 a registry signature is reported and admits nothing on its own \u2014 and `trustedEvidence` must be empty, so that no pin can be misread as still enforced."
+          "description": "What the built-in policy requires before it admits this endpoint. `evidence-digest` (the default, and the only mode `gatekeeper init` and the `endpoint` commands write) admits only an evidenceDigest listed in `trustedEvidence` \u2014 one deployment. `cloud-measurement` admits any deployment whose cloud's root CA passed the attested-root check with a measurement listed in `attestedRoots.trustedMeasurements`: strictly weaker, because a measurement admits a cloud, never a deployment, and it exists for a caller that registers upstreams at runtime and cannot approve each one by digest (ADR-008 \u00a73). In that mode the measurement list is the sole authority \u2014 a registry signature is reported and admits nothing on its own \u2014 and `trustedEvidence` must be empty, so that no pin can be misread as still enforced. `measurement-and-digest` (SUP-252) requires both: the cloud's measurement on the list *and* this deployment's evidenceDigest in `trustedEvidence`. It is approved from what a verification has seen, so either list may be empty — the endpoint then admits nothing and the verdict names the missing factor."
         },
         "trustedEvidence": {
           "type": "array",
@@ -281,7 +281,7 @@
           "items": {
             "$ref": "#/$defs/evidenceDigest"
           },
-          "description": "Pinned evidenceDigest values accepted for this endpoint. Required, with at least one entry, unless `trust` is `cloud-measurement` \u2014 there is no trust-on-first-use."
+          "description": "Pinned evidenceDigest values accepted for this endpoint. Required, with at least one entry, when `trust` is `evidence-digest` \u2014 there is no trust-on-first-use; must be empty under `cloud-measurement`; optional under `measurement-and-digest`, where it is the second factor."
         },
         "failMode": {
           "$ref": "#/$defs/endpointTuning/properties/failMode"
@@ -301,7 +301,7 @@
       },
       "allOf": [
         {
-          "$comment": "One trust mode per endpoint, never both and never neither: a cloud-measurement endpoint must carry no pins, every other endpoint must carry at least one.",
+          "$comment": "One trust mode per endpoint: a cloud-measurement endpoint must carry no pins, a measurement-and-digest endpoint may carry any number (approved as they are seen), every other endpoint must carry at least one.",
           "if": {
             "type": "object",
             "properties": {
@@ -315,9 +315,18 @@
             }
           },
           "else": {
-            "required": ["trustedEvidence"],
-            "properties": {
-              "trustedEvidence": { "type": "array", "minItems": 1 }
+            "if": {
+              "type": "object",
+              "properties": {
+                "trust": { "const": "measurement-and-digest" }
+              },
+              "required": ["trust"]
+            },
+            "else": {
+              "required": ["trustedEvidence"],
+              "properties": {
+                "trustedEvidence": { "type": "array", "minItems": 1 }
+              }
             }
           }
         }

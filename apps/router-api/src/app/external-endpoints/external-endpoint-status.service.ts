@@ -64,6 +64,7 @@ export class ExternalEndpointStatusService {
         measurementSource: null,
         evidenceDigestSeen: null,
         pinnedCertFingerprint: null,
+        observedCertFingerprint: null,
         lastCheckedAt: null,
         updatedAt: new Date(),
       },
@@ -120,11 +121,15 @@ export class ExternalEndpointStatusService {
     return report;
   }
 
-  /** Appends one event the sidecar has no opinion about — registration, a disable, a key rotation. */
+  /**
+   * Appends one event the sidecar has no opinion about — registration, a disable, a
+   * key rotation, an approved digest. `evidenceDigest` is what a `digest_pinned`
+   * event approved.
+   */
   async recordEvent(
     externalEndpointId: string,
     kind: ExternalEndpointEventKind,
-    now: Date = new Date(),
+    { now = new Date(), evidenceDigest = null }: { now?: Date; evidenceDigest?: string | null } = {},
   ): Promise<void> {
     await this.dataSource.getRepository(ExternalEndpointEvent).save({
       id: randomUUID(),
@@ -134,7 +139,7 @@ export class ExternalEndpointStatusService {
       stage: null,
       reason: null,
       measurement: null,
-      evidenceDigest: null,
+      evidenceDigest,
     });
   }
 

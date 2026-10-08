@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In } from 'typeorm';
+import { DataSource, In, IsNull, Not } from 'typeorm';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 // The leaf modules rather than `../evidence/index.js`, and not as a style
@@ -36,11 +36,10 @@ export interface ExternalEvidenceReport {
  * bundle, filed so the admin section can render it (SUP-221 ruling 1, ADR-008 §7).
  *
  * **Informational, never gating.** Nothing here contributes to admission — that
- * is the measurement check in ADR-008 §3, performed by the sidecar, and this
- * service runs *after* it on an endpoint the sidecar has already admitted. It
- * exists because that check admits a *cloud* and cannot see which deployment on
- * it answered (threat T13), so an operator who is shown a verified chip and
- * nothing else is being told less than the design knows.
+ * is the two-factor check (ADR-008 §3 as amended by SUP-252), performed by the
+ * sidecar, and this service runs *after* it on an endpoint whose evidence the
+ * sidecar has already verified. It is what an admin reads before pinning a
+ * deployment's digest: the workloads and images that digest stands for.
  *
  * **Why fetching again is not a second verification.** router-api fetches the
  * bundle over an ordinary TLS connection; it does not pin, and it must not, because
@@ -80,23 +79,28 @@ export class ExternalEvidenceService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   /**
-   * One pass over every upstream whose last verdict admitted it.
+   * One pass over every upstream whose last report's cryptography held.
    *
-   * `pending` and `denied` endpoints are skipped, and that is the honest
-   * behaviour rather than a shortcut: without a verdict there is no pinned leaf
-   * to bind a fetched bundle to, so anything retrieved would be a document from
-   * an unauthenticated host rendered beside a measurement — exactly the
-   * confusion ruling 1's "informational" label is meant to prevent.
+   * That is every admitted endpoint, and also every endpoint a two-factor trust
+   * factor refused (SUP-252): `digest-not-pinned` on a fresh registration,
+   * `digest-mismatch` after a redeploy. Those are exactly the moments an admin is
+   * asked to approve a deployment, so they are the moments its evidence summary
+   * matters most. What is skipped is any endpoint with no observed leaf — no
+   * report yet, or a report that failed in the pipeline (fetch, chain, root,
+   * channel binding) — and that is the honest behaviour rather than a shortcut:
+   * without a leaf the sidecar observed there is nothing to bind a fetched bundle
+   * to, so anything retrieved would be a document from an unauthenticated host
+   * rendered beside a measurement.
    */
   async refreshAll(now: Date = new Date()): Promise<ExternalEvidenceReport> {
     const report: ExternalEvidenceReport = { polled: 0, stored: 0, failed: 0 };
     const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({
-      where: { enabled: true, status: 'verified' },
+      where: { enabled: true, observedCertFingerprint: Not(IsNull()) },
     });
 
     for (const endpoint of endpoints) {
       const digest = endpoint.evidenceDigestSeen;
-      if (!digest || !endpoint.pinnedCertFingerprint || this.settled.get(endpoint.id) === digest) {
+      if (!digest || !endpoint.observedCertFingerprint || this.settled.get(endpoint.id) === digest) {
         continue;
       }
       if (await this.has(endpoint.id, digest)) {
@@ -132,8 +136,8 @@ export class ExternalEvidenceService {
    *
    * The binding check is the whole of this method's judgement, and it is
    * deliberately the weakest one that is still sound: *is the leaf this document
-   * claims the leaf the sidecar pinned?* If it is, the document came from the
-   * channel the verdict was about. If it is not, it is filed nowhere and rendered
+   * claims the leaf the sidecar observed on a verified report?* If it is, the
+   * document came from the channel the verdict was about. If it is not, it is filed nowhere and rendered
    * nowhere, whatever else is true of it.
    */
   async refresh(endpoint: ExternalEndpoint, now: Date = new Date()): Promise<EvidenceSnapshot> {
@@ -148,10 +152,10 @@ export class ExternalEvidenceService {
       { timeoutMs: FETCH_TIMEOUT_MS },
     );
     const parsed = parseEvidenceBundle(raw, endpoint.hostname);
-    if (parsed.certFingerprint !== endpoint.pinnedCertFingerprint) {
+    if (parsed.certFingerprint !== endpoint.observedCertFingerprint) {
       throw new Error(
-        `the bundle claims the TLS leaf ${parsed.certFingerprint} and the egress is pinned to ` +
-          `${endpoint.pinnedCertFingerprint}, so it is not a document about the channel this verdict covers`,
+        `the bundle claims the TLS leaf ${parsed.certFingerprint} and the sidecar observed ` +
+          `${endpoint.observedCertFingerprint}, so it is not a document about the channel this verdict covers`,
       );
     }
     return this.record(endpoint.id, parsed, now);

@@ -26,6 +26,12 @@ export interface SidecarAttestedRoot {
   inRegistry?: boolean;
 }
 
+/**
+ * Which trust factor a two-factor denial is about — `pkg/status` `Refusal*`, in the
+ * order the core decides them (SUP-252).
+ */
+export type SidecarRefusal = 'digest-not-pinned' | 'measurement-not-trusted' | 'digest-mismatch';
+
 /** One verification of one endpoint, as `/verdicts` carries it. */
 export interface SidecarReport {
   checkedAt?: string;
@@ -34,6 +40,12 @@ export interface SidecarReport {
   /** ADR-003 §1 stage name of the failure; absent on success. */
   stage?: string;
   reason?: string;
+  /**
+   * Set only on a built-in denial of a `measurement-and-digest` endpoint: the
+   * factor it refused on. Absent for a pipeline-stage failure, which is not a trust
+   * answer about either factor.
+   */
+  refusal?: SidecarRefusal;
   attestedRoot?: SidecarAttestedRoot;
   /** The leaf the sidecar observed on its own handshake, and pinned on success. */
   observedTlsFingerprint?: string;

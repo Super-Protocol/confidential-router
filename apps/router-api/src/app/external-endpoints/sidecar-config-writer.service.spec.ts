@@ -56,7 +56,7 @@ describe('render', () => {
 
     await writer().render();
 
-    expect(readFileSync(configFile, 'utf8')).toContain('trust: cloud-measurement');
+    expect(readFileSync(configFile, 'utf8')).toContain('trust: measurement-and-digest');
   });
 
   it('leaves a disabled endpoint out entirely', async () => {
@@ -138,7 +138,7 @@ describe('onApplicationBootstrap', () => {
 
     await writer().onApplicationBootstrap();
 
-    expect(readFileSync(configFile, 'utf8')).toContain('trust: cloud-measurement');
+    expect(readFileSync(configFile, 'utf8')).toContain('trust: measurement-and-digest');
   });
 
   it('does not stop the service booting when the render fails', async () => {

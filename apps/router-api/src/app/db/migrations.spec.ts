@@ -111,8 +111,16 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-252's two-factor trust added the pinned digest and the observed leaf;
+      // the first undo drops both and touches nothing else.
+      expect(await queryRunner.hasColumn('external_endpoints', 'pinnedEvidenceDigest')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('external_endpoints', 'pinnedEvidenceDigest')).toBe(false);
+      expect(await queryRunner.hasColumn('external_endpoints', 'observedCertFingerprint')).toBe(false);
+      expect(await queryRunner.hasColumn('external_endpoints', 'pinnedCertFingerprint')).toBe(true);
+
       // ADR-008 §6's evidence leg loosened `evidence_snapshots.endpointId`; the
-      // first undo puts the NOT NULL back and drops the column it added.
+      // next undo puts the NOT NULL back and drops the column it added.
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'endpointId')).toBe(false);

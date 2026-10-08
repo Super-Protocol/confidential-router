@@ -548,12 +548,12 @@ type ExternalEndpoint {
   lastReason: String
 
   """
-  Stage of the last failure: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy.
+  Where the last check stopped: a pipeline stage (fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy) or the trust factor refused — digest-not-pinned (PENDING: nothing approved yet), measurement-not-trusted, or digest-mismatch (a redeploy nobody approved).
   """
   lastStage: String
 
   """
-  What the upstream publishes right now, as the last verdict saw it. Null until a verdict has admitted the endpoint and this router has retrieved the publication that verdict names.
+  What the upstream publishes right now, as the last verdict saw it. Null until a verdict has verified the evidence — admitted, or refused only by a trust factor — and this router has retrieved the publication that verdict names.
   """
   latestEvidence: ExternalEndpointEvidence
 
@@ -579,6 +579,16 @@ type ExternalEndpoint {
   The TLS leaf the egress pinned. Upstream connections verify against this and no CA bundle.
   """
   pinnedCertFingerprint: String
+
+  """
+  The evidence summary behind pinnedEvidenceDigest, when this router filed it — what "approve new digest" compares the current publication against.
+  """
+  pinnedEvidence: ExternalEndpointEvidence
+
+  """
+  The deployment an admin approved — the second trust factor beside the cloud measurement. Admission requires evidenceDigestSeen to equal it. Null: nothing approved yet, so the endpoint stays PENDING. Readable by any signed-in user, like the trust list.
+  """
+  pinnedEvidenceDigest: String
   status: ExternalEndpointStatus!
   updatedAt: DateTime!
 }
@@ -606,11 +616,12 @@ type ExternalEndpointEvent {
 }
 
 """
-DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone.
+DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest.
 """
 enum ExternalEndpointEventKind {
   DENIED_BY_THIS_ROUTER
   DIGEST_CHANGED
+  DIGEST_PINNED
   DISABLED
   KEY_ROTATED
   MEASUREMENT_CHANGED
@@ -1107,7 +1118,7 @@ type ModelUsage {
 
 type Mutation {
   """
-  Admits one more cloud. It admits a cloud, never a deployment — any TEE on it satisfies the check. Takes effect on the next check, not after the re-attest interval. Restricted to auth.adminEmails.
+  Admits one more cloud — one of the two trust factors; each endpoint also needs its own deployment digest pinned (pinExternalEndpointDigest). Takes effect on the next check, not after the re-attest interval. Restricted to auth.adminEmails.
   """
   addTrustedMeasurement(input: AddTrustedMeasurementInput!): TrustedMeasurement!
 
@@ -1146,6 +1157,11 @@ type Mutation {
 
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
+
+  """
+  Approves one deployment: pins the evidence digest this endpoint must publish, the second trust factor beside the cloud measurement. Replaces any earlier pin — approving a redeploy is this call with the new digest. Takes effect on the next check, which the sidecar runs at once. Restricted to auth.adminEmails.
+  """
+  pinExternalEndpointDigest(id: ID!, input: PinExternalEndpointDigestInput!): ExternalEndpoint!
   refreshEvidence(endpointId: ID!): EvidenceSnapshot
 
   """
@@ -1204,6 +1220,13 @@ type PageInfo {
   """Cursor of the last edge, to pass as `after`."""
   endCursor: String
   hasNextPage: Boolean!
+}
+
+input PinExternalEndpointDigestInput {
+  """
+  The deployment to approve: sha256:<64 hex> (what the console shows) or sha256/<base64url>. Normalised. Replaces any earlier pin.
+  """
+  evidenceDigest: String!
 }
 
 """

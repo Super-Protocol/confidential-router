@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { InvalidEvidenceDigestError, normalizeEvidenceDigest } from '@confidential-router/types';
 import {
   BadRequestException,
   ConflictException,
@@ -83,6 +84,7 @@ const PENDING_VERDICT = {
   measurementSource: null,
   evidenceDigestSeen: null,
   pinnedCertFingerprint: null,
+  observedCertFingerprint: null,
 } as const satisfies Partial<ExternalEndpoint>;
 
 /** The four values both catalogue writes need, grouped so neither takes four positional arguments. */
@@ -232,7 +234,10 @@ export class ExternalEndpointAdminService {
         measurementSeen: null,
         measurementSource: null,
         evidenceDigestSeen: null,
+        // Nothing approved yet: the first check reports the digest to pin.
+        pinnedEvidenceDigest: null,
         pinnedCertFingerprint: null,
+        observedCertFingerprint: null,
         apiKeyCiphertext: sealed.ciphertext,
         apiKeyPrefix: sealed.prefix,
         createdByUserId: spec.createdByUserId,
@@ -242,7 +247,7 @@ export class ExternalEndpointAdminService {
       await this.writeModels({ manager, externalEndpointId: id, models: spec.models, now });
     });
 
-    await this.status.recordEvent(id, 'registered', now);
+    await this.status.recordEvent(id, 'registered', { now });
     await this.publish();
     return this.view(id);
   }
@@ -259,6 +264,12 @@ export class ExternalEndpointAdminService {
    * re-attests), but the two refusals decision 5 relies on have to agree: the row
    * goes back to `pending` with its verdict columns cleared, the same reset a
    * restart and a re-enable do.
+   *
+   * Re-pointing also **withdraws the approved deployment** (SUP-252): the pin is
+   * an admin's approval of the deployment that answered at the old URL, and the
+   * new one has not been looked at. The endpoint comes back `digest-not-pinned`,
+   * which says exactly that, rather than `digest-mismatch`, which would read as a
+   * redeploy of the old upstream.
    *
    * The name is **not** among the things this changes, and the contract says so
    * out loud (`UpdateExternalEndpointInput` has no `name`): it is also the
@@ -285,6 +296,7 @@ export class ExternalEndpointAdminService {
           baseUrl,
           hostname: new URL(baseUrl).hostname,
           ...(repointed && endpoint.enabled ? PENDING_VERDICT : {}),
+          ...(repointed ? { pinnedEvidenceDigest: null } : {}),
           updatedAt: now,
         },
       );
@@ -318,7 +330,7 @@ export class ExternalEndpointAdminService {
       { ...PENDING_VERDICT, enabled, status: enabled ? 'pending' : 'disabled', updatedAt: now },
     );
     if (!enabled) {
-      await this.status.recordEvent(id, 'disabled', now);
+      await this.status.recordEvent(id, 'disabled', { now });
     }
     await this.publish();
     return this.view(id);
@@ -345,7 +357,40 @@ export class ExternalEndpointAdminService {
       { id },
       { apiKeyCiphertext: sealed.ciphertext, apiKeyPrefix: sealed.prefix, updatedAt: now },
     );
-    await this.status.recordEvent(id, 'key_rotated', now);
+    await this.status.recordEvent(id, 'key_rotated', { now });
+    return this.view(id);
+  }
+
+  /**
+   * Approves one deployment: the second trust factor (SUP-252).
+   *
+   * The endpoint is admitted only while the evidence digest its upstream publishes
+   * equals this pin *and* its cloud's measurement is on the trust list. Pinning
+   * replaces any earlier pin — there is one approved deployment per endpoint — so
+   * "approve the new digest" after a redeploy is this same call with the digest
+   * the dossier shows as seen.
+   *
+   * The digest is not required to be the one the last verdict saw. An admin may
+   * approve a deployment ahead of a redeploy, from the upstream operator's own
+   * published value; whatever is pinned, the sidecar still has to observe it
+   * before anything is admitted. Every accepted spelling is normalised to the
+   * canonical `sha256/<base64url>` the verdict reports, so the render compares like
+   * with like.
+   *
+   * The render is part of the call, as for every trust edit: the sidecar reloads,
+   * discards its cached verdict and re-attests at once — the "re-attest
+   * (immediate)" the console's approval loop relies on.
+   */
+  async pinDigest(id: string, evidenceDigest: string): Promise<ExternalEndpointView> {
+    const endpoint = await this.require(id);
+    const digest = this.requireDigest(evidenceDigest);
+    if (endpoint.pinnedEvidenceDigest === digest) {
+      return this.view(id);
+    }
+    const now = new Date();
+    await this.endpoints().update({ id }, { pinnedEvidenceDigest: digest, updatedAt: now });
+    await this.status.recordEvent(id, 'digest_pinned', { now, evidenceDigest: digest });
+    await this.publish();
     return this.view(id);
   }
 
@@ -494,6 +539,20 @@ export class ExternalEndpointAdminService {
       return normaliseMeasurement(value);
     } catch (error) {
       throw error instanceof InvalidMeasurementError ? new BadRequestException(error.message) : error;
+    }
+  }
+
+  private requireDigest(value: string): string {
+    try {
+      return normalizeEvidenceDigest(value);
+    } catch (error) {
+      if (error instanceof InvalidEvidenceDigestError) {
+        throw new BadRequestException(
+          `"${value}" is not an evidence digest. Expected sha256:<64 hex> — the form the console shows — ` +
+            'or sha256/<base64url>.',
+        );
+      }
+      throw error;
     }
   }
 

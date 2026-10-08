@@ -26,6 +26,7 @@ function endpoint(overrides: Partial<ExternalEndpoint> = {}): ExternalEndpoint {
     measurementSource: null,
     evidenceDigestSeen: null,
     pinnedCertFingerprint: null,
+    observedCertFingerprint: null,
     ...overrides,
   } as ExternalEndpoint;
 }
@@ -83,6 +84,68 @@ describe('statusOf', () => {
   });
 });
 
+/** A built-in two-factor denial, refused on `refusal` (SUP-252). */
+function refused(refusal: 'digest-not-pinned' | 'measurement-not-trusted' | 'digest-mismatch'): SidecarVerdict {
+  const verdict = denied();
+  return { ...verdict, report: { ...verdict.report, attestedRoot: { measurement: MEASUREMENT }, refusal } };
+}
+
+describe('two-factor refusals', () => {
+  it('holds an endpoint whose deployment nobody approved at pending, not denied', () => {
+    // The sidecar looked and is waiting for the admin, not for a better upstream:
+    // a fresh registration must not read as a failure. It still serves nothing.
+    const { patch, events } = projectVerdict(endpoint(), refused('digest-not-pinned'), NOW);
+
+    expect(statusOf(refused('digest-not-pinned'))).toBe('pending');
+    expect(patch.status).toBe('pending');
+    expect(patch.lastStage).toBe('digest-not-pinned');
+    // Both factors the admin approves are on the row, which is what the dossier
+    // offers its two buttons from.
+    expect(patch.measurementSeen).toBe(MEASUREMENT);
+    expect(patch.evidenceDigestSeen).toBe(DIGEST);
+    expect(patch.lastCheckedAt).toEqual(new Date('2026-10-06T11:59:58.000Z'));
+    expect(events).toEqual([]);
+  });
+
+  it('denies on an untrusted cloud and names the factor as the stage', () => {
+    const { patch } = projectVerdict(endpoint(), refused('measurement-not-trusted'), NOW);
+
+    expect(patch.status).toBe('denied');
+    expect(patch.lastStage).toBe('measurement-not-trusted');
+  });
+
+  it('fails a redeploy closed: digest-mismatch, the denial and the digest change, together', () => {
+    // The beat two-factor exists for (T13): the cloud is unchanged, the upstream
+    // redeployed, and the pin no longer matches. The DIGEST_CHANGED event is now
+    // gating — it arrives with the denial it caused.
+    const { patch, events, statusChanged } = projectVerdict(
+      endpoint({
+        status: 'verified',
+        measurementSeen: MEASUREMENT,
+        evidenceDigestSeen: OTHER_DIGEST,
+        pinnedCertFingerprint: FINGERPRINT,
+      }),
+      refused('digest-mismatch'),
+      NOW,
+    );
+
+    expect(statusChanged).toBe(true);
+    expect(patch.status).toBe('denied');
+    expect(patch.lastStage).toBe('digest-mismatch');
+    expect(patch.pinnedCertFingerprint).toBeNull();
+    expect(events.map((event) => event.kind)).toEqual(['denied', 'digest_changed']);
+    expect(events.every((event) => event.stage === 'digest-mismatch')).toBe(true);
+  });
+
+  it('keeps the pipeline stage for a failure that is not a trust answer', () => {
+    // No `refusal` on a fetch or channel failure: neither factor was the question.
+    const failed = denied();
+    const verdict = { ...failed, report: { ...failed.report, verified: false, stage: 'tls-fingerprint' } };
+
+    expect(projectVerdict(endpoint(), verdict, NOW).patch.lastStage).toBe('tls-fingerprint');
+  });
+});
+
 describe('projectVerdict', () => {
   it('writes the observed measurement, digest and pinned leaf on an admission', () => {
     const { patch } = projectVerdict(endpoint(), admitted(), NOW);
@@ -96,6 +159,7 @@ describe('projectVerdict', () => {
       measurementSource: 'operator-pinned',
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
+      observedCertFingerprint: FINGERPRINT,
     });
   });
 
@@ -166,6 +230,7 @@ describe('projectVerdict', () => {
       measurementSource: 'operator-pinned',
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
+      observedCertFingerprint: FINGERPRINT,
     });
 
     expect(projectVerdict(unchanged, admitted(), NOW).patchChanged).toBe(false);
@@ -210,8 +275,8 @@ describe('projectVerdict', () => {
   });
 
   it('reports a digest change even while the endpoint stays verified', () => {
-    // The same trusted cloud redeploying a different image: cloud-granularity
-    // trust (threat T13) is exactly why this cannot be left implicit.
+    // An admin approving the new digest ahead of the redeploy keeps the endpoint
+    // verified across it — and the change is still named in the timeline.
     const { events, statusChanged } = projectVerdict(
       endpoint({ status: 'verified', measurementSeen: MEASUREMENT, evidenceDigestSeen: OTHER_DIGEST }),
       admitted(),

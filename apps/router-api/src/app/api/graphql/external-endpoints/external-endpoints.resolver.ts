@@ -31,6 +31,7 @@ import {
   type ExternalModelInputModel,
   ExternalModelModel,
   measurementSourceOf,
+  PinExternalEndpointDigestInputModel,
   RegisterExternalEndpointInputModel,
   RotateExternalEndpointKeyInputModel,
   SetExternalEndpointEnabledInputModel,
@@ -238,9 +239,30 @@ export class ExternalEndpointsResolver {
     return this.presentOne(view, user);
   }
 
+  @Mutation(() => ExternalEndpointModel, {
+    description:
+      'Approves one deployment: pins the evidence digest this endpoint must publish, the second trust factor ' +
+      'beside the cloud measurement. Replaces any earlier pin — approving a redeploy is this call with the new ' +
+      'digest. Takes effect on the next check, which the sidecar runs at once. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async pinExternalEndpointDigest(
+    @CurrentUser() user: SessionUser,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: PinExternalEndpointDigestInputModel,
+  ): Promise<ExternalEndpointModel> {
+    const view = await this.admin.pinDigest(id, input.evidenceDigest);
+    this.logger.warn(
+      `External endpoint "${view.endpoint.name}" evidence digest ${view.endpoint.pinnedEvidenceDigest} pinned by ` +
+        `${user.email}.`,
+    );
+    return this.presentOne(view, user);
+  }
+
   @Mutation(() => TrustedMeasurementModel, {
     description:
-      'Admits one more cloud. It admits a cloud, never a deployment — any TEE on it satisfies the check. ' +
+      'Admits one more cloud — one of the two trust factors; each endpoint also needs its own deployment digest ' +
+      'pinned (pinExternalEndpointDigest). ' +
       'Takes effect on the next check, not after the re-attest interval. Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
@@ -337,6 +359,8 @@ export class ExternalEndpointsResolver {
         measurementSeen: endpoint.measurementSeen,
         measurementSource: measurementSourceOf(endpoint.measurementSource),
         evidenceDigestSeen: endpoint.evidenceDigestSeen,
+        pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
+        pinnedEvidence: evidenceOf(forEndpoint, endpoint.pinnedEvidenceDigest),
         pinnedCertFingerprint: endpoint.pinnedCertFingerprint,
         apiKeyPrefix: admin ? endpoint.apiKeyPrefix : null,
         // Retired rows stay in the catalogue so past generations keep their
@@ -373,7 +397,7 @@ export class ExternalEndpointsResolver {
 
 /**
  * Every (endpoint, digest) pair the page will render: each endpoint's current
- * digest, plus the digest on every timeline entry.
+ * digest, its pinned one, plus the digest on every timeline entry.
  *
  * Asked for by digest rather than "the latest snapshot per endpoint" because a
  * timeline entry has to show the evidence *that* verdict saw, which is a
@@ -389,6 +413,9 @@ function wantedDigests(
   for (const { endpoint } of views) {
     if (endpoint.evidenceDigestSeen) {
       wanted.push({ externalEndpointId: endpoint.id, evidenceDigest: endpoint.evidenceDigestSeen });
+    }
+    if (endpoint.pinnedEvidenceDigest) {
+      wanted.push({ externalEndpointId: endpoint.id, evidenceDigest: endpoint.pinnedEvidenceDigest });
     }
     for (const event of timelines.get(endpoint.id) ?? []) {
       if (event.evidenceDigest) {

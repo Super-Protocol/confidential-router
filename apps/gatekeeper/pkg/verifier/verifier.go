@@ -16,6 +16,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
@@ -239,7 +240,7 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	}
 	report.EvidenceDigest = digest.String()
 	report.Pinned = configured && !endpoint.ByMeasurement() && endpoint.IsPinned(digest)
-	if configured && endpoint.ByMeasurement() && report.AttestedRoot != nil {
+	if configured && endpoint.TrustsCloud() && report.AttestedRoot != nil {
 		report.MeasurementTrusted = v.store.IsTrustedMeasurement(report.AttestedRoot.Measurement)
 	}
 
@@ -270,12 +271,51 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	report.Admitted = decision.Allow
 	if !decision.Allow {
 		report.Reason = decision.Reason
-		if detail := measurementDenialDetail(decision, report); detail != "" {
+		detail := measurementDenialDetail(decision, report)
+		if report.TrustMode == config.TrustMeasurementAndDigest && builtinDeniedCleanly(decision) {
+			report.Refusal, detail = twoFactorRefusal(report, len(endpoint.Pins) > 0)
+		}
+		if detail != "" {
 			report.Reason += " (" + detail + ")"
 		}
 		report.Stage = "policy"
 	}
 	return report, nil
+}
+
+// twoFactorRefusal decides which factor a built-in denial of a
+// `measurement-and-digest` endpoint is about, and explains every factor that
+// is missing — an operator approving the first should not find out about the
+// second only after the next check.
+//
+// The code is the first that applies, in an order that reads as the approval
+// loop does: a digest never pinned means nothing has been approved yet, which
+// is a pending decision rather than a refusal; then the cloud, which outranks
+// the deployment running on it; then the deployment itself.
+func twoFactorRefusal(report *status.Report, digestsPinned bool) (string, string) {
+	var refusal string
+	var details []string
+	if !digestsPinned {
+		refusal = status.RefusalDigestNotPinned
+		details = append(details, fmt.Sprintf(
+			"no evidenceDigest is pinned for endpoint %q, so no deployment is approved yet — this one publishes %s",
+			report.Endpoint, report.EvidenceDigest))
+	}
+	if detail := cloudFactorDetail(report); detail != "" {
+		if refusal == "" {
+			refusal = status.RefusalMeasurementNotTrusted
+		}
+		details = append(details, detail)
+	}
+	if digestsPinned && !report.Pinned {
+		if refusal == "" {
+			refusal = status.RefusalDigestMismatch
+		}
+		details = append(details, fmt.Sprintf(
+			"the deployment now publishes evidenceDigest %s, which is not the one pinned for endpoint %q",
+			report.EvidenceDigest, report.Endpoint))
+	}
+	return refusal, strings.Join(details, "; ")
 }
 
 // measurementDenialDetail explains a built-in denial of a `cloud-measurement`
@@ -296,7 +336,13 @@ func measurementDenialDetail(decision policy.Decision, report *status.Report) st
 	if !builtinDeniedCleanly(decision) {
 		return ""
 	}
+	return cloudFactorDetail(report)
+}
 
+// cloudFactorDetail explains why the measurement factor does not admit, or
+// returns "" when it does. Shared by `cloud-measurement` and the cloud half of
+// `measurement-and-digest`.
+func cloudFactorDetail(report *status.Report) string {
 	switch {
 	case report.AttestedRoot == nil || !report.RootAttested:
 		return fmt.Sprintf(

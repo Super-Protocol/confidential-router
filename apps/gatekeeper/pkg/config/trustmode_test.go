@@ -83,7 +83,7 @@ func TestValidateRejectsAnEndpointInBothModesOrNeither(t *testing.T) {
 		{
 			name: "an unknown mode",
 			yaml: strings.Replace(cloudMeasurementConfig, "cloud-measurement", "cloud_measurement", 1),
-			want: "endpoints[0].trust: must be one of evidence-digest, cloud-measurement",
+			want: "endpoints[0].trust: must be one of evidence-digest, cloud-measurement, measurement-and-digest",
 		},
 		{
 			// The mode *is* the attested-root check; with the anchor off it
