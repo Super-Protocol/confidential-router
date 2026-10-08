@@ -9,8 +9,8 @@ hash.
 
 Do not edit these files here. Change them upstream, then re-copy every file
 (including `testdata/` and `azure-vtpm-root-ca-2023.pem`) and update the commit
-above. `golangci-lint` excludes this directory for the same reason
-(`apps/gatekeeper/.golangci.yml`).
+above. `golangci-lint` and Biome exclude this directory for the same reason
+(`apps/gatekeeper/.golangci.yml`, root `biome.json`).
 
 The gatekeeper's own glue — the hardware-signature checks and the key binding —
 lives in `../../azure.go`.
