@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@confidential-router/ui/components/table';
 import { Globe, Plus } from 'lucide-react';
+import Link from 'next/link';
 import * as React from 'react';
 import type { ExternalEndpointFieldsFragment } from '../../generated/graphql';
 import { formatTimestamp, shortenDigest } from '../../lib/format';
@@ -25,7 +26,7 @@ import { AdminReadOnlyNotice } from './admin-gate';
 import { DiscoverModelsDialog } from './discover-models-dialog';
 import { EndpointDrawer } from './endpoint-drawer';
 import { STATUS_ORDER, statusPresentation } from './endpoint-status';
-import { EXTERNAL_ENDPOINTS_QUERY, SET_EXTERNAL_ENDPOINT_ENABLED } from './operations';
+import { EXTERNAL_ENDPOINTS_QUERY, SET_EXTERNAL_ENDPOINT_ENABLED, TRUSTED_MEASUREMENTS_QUERY } from './operations';
 import { RegisterEndpointDialog } from './register-endpoint-dialog';
 import { RotateKeyDialog } from './rotate-key-dialog';
 
@@ -57,6 +58,10 @@ export function ExternalEndpointsScreen() {
     // navigation can show an endpoint as routable after it stopped being.
     fetchPolicy: 'cache-and-network',
   });
+  // An empty trust list is why a pending endpoint never gets a verdict: the
+  // egress verifier has nothing to admit against and runs no check (SUP-249 QA).
+  const trust = useQuery(TRUSTED_MEASUREMENTS_QUERY, { fetchPolicy: 'cache-and-network' });
+  const trustListEmpty = trust.data?.trustedMeasurements.length === 0;
 
   const [registering, setRegistering] = React.useState(false);
   const [openEndpointId, setOpenEndpointId] = React.useState<string | null>(null);
@@ -184,6 +189,14 @@ export function ExternalEndpointsScreen() {
                       <Badge variant={presentation.variant}>{presentation.label}</Badge>
                       {endpoint.lastReason ? (
                         <span className="mt-1 block max-w-60 text-muted-foreground text-xs">{endpoint.lastReason}</span>
+                      ) : trustListEmpty && endpoint.status === 'PENDING' ? (
+                        <span className="mt-1 block max-w-60 text-muted-foreground text-xs">
+                          Not checked: the{' '}
+                          <Link href="/admin/trust" className="underline underline-offset-2">
+                            trust list
+                          </Link>{' '}
+                          is empty.
+                        </span>
                       ) : null}
                     </TableCell>
                     <TableCell className="font-mono text-xs">

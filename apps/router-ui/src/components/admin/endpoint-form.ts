@@ -61,7 +61,9 @@ function validateModel(model: ModelFormValues, index: number, seen: Set<string>)
   if (model.upstreamModel.trim() === '') errors[at('upstreamModel')] = 'The upstream’s own model id is required.';
 
   const contextLength = Number(model.contextLength);
-  if (!Number.isInteger(contextLength) || contextLength <= 0) {
+  if (model.contextLength.trim() === '') {
+    errors[at('contextLength')] = 'A context length is required.';
+  } else if (!Number.isInteger(contextLength) || contextLength <= 0) {
     errors[at('contextLength')] = 'Context length must be a whole number of tokens.';
   }
 
