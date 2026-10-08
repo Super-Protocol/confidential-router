@@ -13,8 +13,8 @@ import { readHandoff, type StackHandoff, useSession } from './stack';
 
 let handoff: StackHandoff;
 
-test.beforeAll(() => {
-  handoff = readHandoff();
+test.beforeAll(async () => {
+  handoff = await readHandoff();
 });
 
 test.beforeEach(async ({ page, baseURL }) => {

@@ -37,4 +37,38 @@ export interface StackHandoff {
   /** Copy of {@link TRUSTED_ROOT_FILE}, so a reader has one path to point at. */
   trustedRootFile: string;
   balanceMicros: number;
+  /**
+   * The registered external upstream, when the stack was started with one
+   * (`CR_DEMO_EXTERNAL=1`). Absent otherwise, and a suite that needs it should
+   * say so rather than read `undefined` into a selector.
+   */
+  external?: ExternalHandoff;
+}
+
+/**
+ * A model endpoint in another deployment, already admitted and already
+ * inspectable (ADR-008).
+ *
+ * Everything here is read back from the product after the fact rather than
+ * assumed: the status and the digest come from the admin API, and the digest is
+ * the one the *admitting verdict* saw — which is the key the raw-bundle relay
+ * answers on, and therefore the only digest a browser inspecting this upstream
+ * can expect to see (ADR-008 §7).
+ */
+export interface ExternalHandoff {
+  /** `external_endpoints.name`, and the key of `GET /v1/evidence/{endpoint}`. */
+  endpointName: string;
+  /** The upstream's own hostname, as the panel's provenance row names it. */
+  hostname: string;
+  /** `https://<hostname>:<port>` — the upstream's OpenAI-compatible surface. */
+  upstreamUrl: string;
+  /** The public model id this router publishes for it, as the chat picker shows. */
+  modelId: string;
+  modelName: string;
+  /** `ExternalEndpoint.evidenceDigestSeen`, `sha256/<base64url>`. */
+  evidenceDigest: string;
+  /** `ExternalEndpoint.measurementSeen` — the cloud the admin's list admitted. */
+  measurement: string;
+  /** The address `auth.adminEmails` carries; deliberately not the browser's session. */
+  adminEmail: string;
 }
