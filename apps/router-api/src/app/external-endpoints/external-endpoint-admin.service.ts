@@ -12,6 +12,7 @@ import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, Not } from 'typeorm';
 import { routerConfig } from '../config.js';
+import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { ExternalEndpointEvent } from '../db/entities/external-endpoint-event.entity.js';
 import { Model, type ModelCapability } from '../db/entities/model.entity.js';
@@ -81,6 +82,7 @@ const PENDING_VERDICT = {
   lastReason: null,
   measurementSeen: null,
   measurementSource: null,
+  measurementInRegistry: null,
   evidenceDigestSeen: null,
   pinnedCertFingerprint: null,
 } as const satisfies Partial<ExternalEndpoint>;
@@ -231,6 +233,7 @@ export class ExternalEndpointAdminService {
         lastReason: null,
         measurementSeen: null,
         measurementSource: null,
+        measurementInRegistry: null,
         evidenceDigestSeen: null,
         pinnedCertFingerprint: null,
         apiKeyCiphertext: sealed.ciphertext,
@@ -396,6 +399,7 @@ export class ExternalEndpointAdminService {
     addedByUserId: string | null,
   ): Promise<TrustedMeasurement> {
     const normalised = this.requireMeasurement(measurement);
+    await this.refuseKnownDigest(normalised);
     if (await this.measurements().findOne({ where: { measurement: normalised }, select: { id: true } })) {
       throw new ConflictException(`The measurement ${normalised} is already on the trust list.`);
     }
@@ -495,6 +499,37 @@ export class ExternalEndpointAdminService {
     } catch (error) {
       throw error instanceof InvalidMeasurementError ? new BadRequestException(error.message) : error;
     }
+  }
+
+  /**
+   * Refuses a value this router already knows to be a digest rather than a
+   * measurement (SUP-251).
+   *
+   * Shape alone cannot tell them apart: an evidence digest and a certificate
+   * fingerprint are SHA-256 too, and the console offers both for copying in the
+   * same `sha256:<hex>` spelling a measurement is pasted in. Trusting one adds an
+   * entry that can never match any cloud — the endpoint stays denied at
+   * `untrusted-root` and the list looks correct. A SHA-256 collision between an
+   * image measurement and a digest is not a case worth admitting, so a match here
+   * is always a mistake.
+   */
+  private async refuseKnownDigest(hex: string): Promise<void> {
+    const spellings = [hex, `sha256:${hex}`, `sha256/${Buffer.from(hex, 'hex').toString('base64url')}`];
+    const snapshots = this.dataSource.getRepository(EvidenceSnapshot);
+    const isEvidenceDigest =
+      (await snapshots.exists({ where: { evidenceDigestHex: hex } })) ||
+      (await this.endpoints().exists({ where: { evidenceDigestSeen: In(spellings) } }));
+    const isCertFingerprint =
+      (await snapshots.exists({ where: { certFingerprint: In(spellings) } })) ||
+      (await this.endpoints().exists({ where: { pinnedCertFingerprint: In(spellings) } }));
+    if (!isEvidenceDigest && !isCertFingerprint) {
+      return;
+    }
+    const what = isEvidenceDigest ? 'an evidence digest' : 'a certificate fingerprint';
+    throw new BadRequestException(
+      `${hex} is ${what} this router has seen, not a cloud launch measurement. Trust the measurement the router ` +
+        'derived from the cloud’s root CA attestation instead — an endpoint’s “Measurement seen”.',
+    );
   }
 
   private requireSecretsKey(): void {

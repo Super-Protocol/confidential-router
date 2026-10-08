@@ -227,6 +227,7 @@ async function registerUpstream(input: {
       lastReason: null,
       measurementSeen: null,
       measurementSource: null,
+      measurementInRegistry: null,
       evidenceDigestSeen: input.evidenceDigestSeen,
       pinnedCertFingerprint: bundle.certFingerprint as string,
       apiKeyCiphertext: 'v1.sealed',

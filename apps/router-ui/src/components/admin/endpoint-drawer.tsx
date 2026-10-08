@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge } from '@confidential-router/ui/components/badge';
+import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import {
   Sheet,
   SheetContent,
@@ -8,6 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@confidential-router/ui/components/sheet';
+import Link from 'next/link';
 import type * as React from 'react';
 import type { ExternalEndpointFieldsFragment } from '../../generated/graphql';
 import { formatContextLength, formatPricePer1m, formatTimestamp, shortenDigest } from '../../lib/format';
@@ -45,6 +47,12 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
 
   const presentation = statusPresentation(endpoint.status);
   const source = measurementSourceLabel(endpoint.measurementSource);
+  const registrySigned = Boolean(endpoint.measurementSeen && endpoint.measurementInRegistry);
+  // The stages a measurement missing from the trust list is refused at; a denial
+  // at `tls-fingerprint` is not one the list can fix, so it gets no pointer there.
+  const deniedAtTrust =
+    endpoint.status === 'DENIED_BY_THIS_ROUTER' &&
+    (endpoint.lastStage === 'untrusted-root' || endpoint.lastStage === 'policy');
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -92,10 +100,43 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
               <Field label="Measurement seen">
                 {endpoint.measurementSeen ? (
                   <>
-                    <span className="font-mono text-xs" title={endpoint.measurementSeen}>
-                      {shortenDigest(endpoint.measurementSeen, 8)}
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-xs" title={endpoint.measurementSeen}>
+                        {shortenDigest(endpoint.measurementSeen, 8)}
+                      </span>
+                      {/* Bare hex: the form the trust list stores, so it pastes straight in. */}
+                      <CopyButton
+                        value={endpoint.measurementSeen}
+                        label={`Copy the measurement ${endpoint.name} presented`}
+                      />
+                      {/*
+                       * Informational only (product ruling on SUP-251): a registry
+                       * signature never admits an external endpoint and there is
+                       * deliberately no one-click "trust" beside it — the admin trust
+                       * list is the sole authority (ADR-008 §3).
+                       */}
+                      {registrySigned ? (
+                        <Badge
+                          variant="outline"
+                          title="Signed in the Super Protocol registry. Informational only — only the trust list admits."
+                        >
+                          Registry-signed
+                        </Badge>
+                      ) : null}
+                      {source && !(registrySigned && endpoint.measurementSource === 'REGISTRY') ? (
+                        <span className="text-muted-foreground text-xs">{source}</span>
+                      ) : null}
                     </span>
-                    {source ? <span className="ml-2 text-muted-foreground text-xs">{source}</span> : null}
+                    {deniedAtTrust ? (
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        {registrySigned ? 'A registry signature admits nothing on its own. ' : ''}
+                        If this is the cloud you mean to trust, add this measurement to the{' '}
+                        <Link href="/admin/trust" className="underline underline-offset-2">
+                          trust list
+                        </Link>
+                        .
+                      </p>
+                    ) : null}
                   </>
                 ) : (
                   '—'

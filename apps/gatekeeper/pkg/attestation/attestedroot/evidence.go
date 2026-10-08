@@ -18,14 +18,20 @@ const maxVCPUs = 4096
 // and they are also what selects a folder in the signed-measurement registry.
 type EvidenceType int
 
-// The evidence types the platform defines. Only the two the gatekeeper can
-// verify are handled below; the rest are named so an unsupported root fails
-// with something a human can act on.
+// The evidence types the platform defines. Each number is also the
+// TeeEvidence field that carries the branch, which is why ParseEvidence can
+// name the one it does not know.
 const (
 	EvidenceUnspecified EvidenceType = 0
 	EvidenceSevSnpQemu  EvidenceType = 1
 	EvidenceTdxQemu     EvidenceType = 2
 	EvidenceTdxGCP      EvidenceType = 3
+	// The Azure confidential-VM branches: the hardware report sits inside the
+	// paravisor's HCL report, and the image is measured by the vTPM rather
+	// than by the hardware registers (azurecvm's package comment has the
+	// chain).
+	EvidenceTdxAzure    EvidenceType = 4
+	EvidenceSevSnpAzure EvidenceType = 5
 )
 
 // String renders the type the way the platform's own UI labels it.
@@ -37,21 +43,34 @@ func (t EvidenceType) String() string {
 		return "Intel TDX (QEMU)"
 	case EvidenceTdxGCP:
 		return "Intel TDX (GCP)"
+	case EvidenceTdxAzure:
+		return "Intel TDX (Azure)"
+	case EvidenceSevSnpAzure:
+		return "AMD SEV-SNP (Azure)"
 	default:
 		return "Unspecified"
 	}
 }
 
-// registryFolder is the sub-folder of the signed-measurement registry that
-// holds this type's measurements. TDX under QEMU and under GCP share one.
-func (t EvidenceType) registryFolder() string {
+// registryFolders are the sub-folders of the signed-measurement registry that
+// may hold this type's measurements, in lookup order. Each cloud platform has
+// its own folder and falls back to its base technology's, which holds the
+// signatures published before the per-platform folders existed — the same map
+// as attestation-common's `SignatureFolderMap`, which the extension uses.
+func (t EvidenceType) registryFolders() []string {
 	switch t {
 	case EvidenceSevSnpQemu:
-		return "sev-snp"
-	case EvidenceTdxQemu, EvidenceTdxGCP:
-		return "tdx"
+		return []string{"sev-snp"}
+	case EvidenceTdxQemu:
+		return []string{"tdx"}
+	case EvidenceTdxGCP:
+		return []string{"tdx-google", "tdx"}
+	case EvidenceTdxAzure:
+		return []string{"tdx-azure", "tdx"}
+	case EvidenceSevSnpAzure:
+		return []string{"sev-snp-azure", "sev-snp"}
 	default:
-		return ""
+		return nil
 	}
 }
 
@@ -102,12 +121,33 @@ type TdxEvidence struct {
 	EventLog []TdxEventLogEntry
 }
 
+// AzureEvidence is either Azure branch of TeeEvidence (IntelTDXAzureEvidence
+// or AmdSevSnpAzureEvidence): the paravisor's HCL report with the hardware
+// report inside it, the vTPM quote over PCR4 and PCR9 with the event log that
+// explains them, and Microsoft's certificate chain for the vTPM key.
+type AzureEvidence struct {
+	// HCLReport is the raw HCL report from vTPM NV index 0x01400001.
+	HCLReport []byte
+	// Quote is the TD quote covering the TDREPORT in HCLReport. TDX only.
+	Quote []byte
+	// Certs is the AMD chain for the SEV-SNP report in HCLReport. SEV-SNP only.
+	Certs map[SevSnpCertType][]byte
+	// TPMAttest and TPMSignature are the TPM2_Quote the vTPM key signed.
+	TPMAttest    []byte
+	TPMSignature []byte
+	// EventLog is the TCG firmware event log the quoted PCRs replay from.
+	EventLog []byte
+	// AKCertChain is the vTPM attestation key's certificate chain, leaf first.
+	AKCertChain [][]byte
+}
+
 // Evidence is a decoded TeeEvidence: exactly one branch is populated, and Type
 // says which.
 type Evidence struct {
 	Type   EvidenceType
 	SevSnp *SevSnpEvidence
 	Tdx    *TdxEvidence
+	Azure  *AzureEvidence
 }
 
 // ParseEvidence decodes the serialised TeeEvidence a root certificate carries.
@@ -122,6 +162,7 @@ func ParseEvidence(serialized []byte) (*Evidence, error) {
 		return nil, errors.New("tee evidence is empty")
 	}
 	var out Evidence
+	var unknown []int
 	err := eachField(serialized, func(field int, wire wireType, value []byte, _ uint64) error {
 		if wire != wireBytes {
 			return nil
@@ -131,7 +172,7 @@ func ParseEvidence(serialized []byte) (*Evidence, error) {
 		// looked up in. A message carrying two of them has no single answer to
 		// either question, so it is rejected rather than resolved by field
 		// order.
-		if (field == 1 || field == 2 || field == 3) && out.Type != EvidenceUnspecified {
+		if field >= int(EvidenceSevSnpQemu) && field <= int(EvidenceSevSnpAzure) && out.Type != EvidenceUnspecified {
 			return errors.New("evidence carries more than one hardware branch")
 		}
 		switch field {
@@ -150,6 +191,14 @@ func ParseEvidence(serialized []byte) (*Evidence, error) {
 			if field == 3 {
 				out.Type = EvidenceTdxGCP
 			}
+		case 4, 5:
+			azure, err := parseAzureEvidence(value, EvidenceType(field))
+			if err != nil {
+				return err
+			}
+			out.Type, out.Azure = EvidenceType(field), azure
+		default:
+			unknown = append(unknown, field)
 		}
 		return nil
 	})
@@ -157,9 +206,59 @@ func ParseEvidence(serialized []byte) (*Evidence, error) {
 		return nil, fmt.Errorf("tee evidence: %w", err)
 	}
 	if out.Type == EvidenceUnspecified {
-		return nil, errors.New("tee evidence carries no recognised evidence branch")
+		// Said in terms of what an operator can act on: the root is not
+		// necessarily broken, it may simply come from a platform newer than
+		// this build — and the field numbers are what a developer needs to
+		// tell which.
+		if len(unknown) > 0 {
+			return nil, fmt.Errorf("unrecognised evidence format: the root's TEE evidence carries only "+
+				"branch field(s) %v, which this build does not know (it reads 1-5: SEV-SNP and TDX on QEMU, "+
+				"TDX on GCP, TDX and SEV-SNP on Azure)", unknown)
+		}
+		return nil, errors.New("unrecognised evidence format: the root's TEE evidence carries no hardware branch")
 	}
 	return &out, nil
+}
+
+// parseAzureEvidence decodes IntelTDXAzureEvidence or AmdSevSnpAzureEvidence.
+// The two share every field number; field 2 is the TD quote in the first and a
+// repeated AMD certificate in the second.
+func parseAzureEvidence(b []byte, kind EvidenceType) (*AzureEvidence, error) {
+	name := "intelTdxAzure"
+	if kind == EvidenceSevSnpAzure {
+		name = "amdSevSnpAzure"
+	}
+	out := &AzureEvidence{Certs: map[SevSnpCertType][]byte{}}
+	err := eachField(b, func(field int, wire wireType, value []byte, _ uint64) error {
+		if wire != wireBytes {
+			return nil
+		}
+		switch field {
+		case 1:
+			out.HCLReport = value
+		case 2:
+			if kind == EvidenceSevSnpAzure {
+				return parseSnpCert(value, out.Certs)
+			}
+			out.Quote = value
+		case 3:
+			out.TPMAttest = value
+		case 4:
+			out.TPMSignature = value
+		case 5:
+			out.EventLog = value
+		case 6:
+			out.AKCertChain = append(out.AKCertChain, value)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if len(out.HCLReport) == 0 {
+		return nil, fmt.Errorf("%s: evidence carries no HCL report", name)
+	}
+	return out, nil
 }
 
 func parseSevSnpEvidence(b []byte) (*SevSnpEvidence, error) {
@@ -169,7 +268,7 @@ func parseSevSnpEvidence(b []byte) (*SevSnpEvidence, error) {
 		case field == 1 && wire == wireBytes:
 			return parseSnpReport(value, out)
 		case field == 2 && wire == wireBytes:
-			return parseSnpCert(value, out)
+			return parseSnpCert(value, out.Certs)
 		}
 		return nil
 	})
@@ -211,7 +310,7 @@ func parseSnpReport(b []byte, out *SevSnpEvidence) error {
 	})
 }
 
-func parseSnpCert(b []byte, out *SevSnpEvidence) error {
+func parseSnpCert(b []byte, certs map[SevSnpCertType][]byte) error {
 	var role SevSnpCertType
 	var der []byte
 	err := eachField(b, func(field int, wire wireType, value []byte, varint uint64) error {
@@ -230,7 +329,7 @@ func parseSnpCert(b []byte, out *SevSnpEvidence) error {
 		return err
 	}
 	if len(der) > 0 {
-		out.Certs[role] = der
+		certs[role] = der
 	}
 	return nil
 }
