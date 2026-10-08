@@ -338,6 +338,7 @@ billing:
   minTopUpMicros: 5000000              # $5
   maxTopUpMicros: 10000000000          # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0              # how far a generation may push a balance negative
+  signupGrantMicros: 0                 # credit granted to every new account (ledger `grant`, reference `signup`); 0 disables
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h                # floor between two automatic top-ups of one workspace
   stripe:
@@ -390,6 +391,26 @@ The meter is exact rather than estimated: the router always asks the backend for
 did not ask for it. **Prompt and completion content is never stored** — the
 generation row holds token counts, cost, latency and status, and nothing you
 sent.
+
+## Sign-up credit
+
+`billing.signupGrantMicros` credits every new account at registration — a ledger
+`grant` with `reference` `signup` and `idempotencyKey` `signup:<userId>`, written
+by `SignUpGrantService` in the same account-creation hook as the invitation grant
+(SUP-249). `0`, the schema default, turns it off; the marketplace listing exposes
+it as `signupGrantUsd` with its own default of 20. It **stacks** with an
+invitation: a visitor with a $100 code on a deployment granting $20 at sign-up
+starts at $120. Like the invitation grant it never fails a registration, and each
+account gets it once however often the hook runs. It is an operator's deploy-time
+decision and not a purchase, so none of the billing provider's no-minting rules
+(SUP-167) are touched. A production launch that wants credit to come only from
+invitations sets it to `0`. See `docs/contracts/data-model.md` invariant 8.
+
+**Mind what it costs on an open deployment.** Password sign-up does not verify the
+address, so with registration open each throwaway account collects the credit:
+the grant is once per *account*, not per person. Pair a non-zero value with
+invite-only registration (`auth.requireInviteForSignUp`) where that matters, or
+keep it small enough to be an evaluation allowance rather than a prize.
 
 ## Invitation codes
 

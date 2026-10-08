@@ -91,3 +91,10 @@ Invariants enforced in code and tests:
    sit beside a credited one without the index calling them duplicates), and the ledger's
    `idempotencyKey`, `feedback:<userId>`. The credit and the submission row are written in one
    transaction (`feedback.service.spec.ts`, `feedback.e2e.spec.ts`).
+8. One **sign-up** grant per account, ever (SUP-249). `billing.signupGrantMicros` (0 by default; the
+   marketplace listing's `signupGrantUsd` sets it) is credited at account creation as a `grant` with
+   `reference` `signup` and `idempotencyKey` `signup:<userId>` — the unique key is the whole policy, so a
+   replayed hook or two racing creations of one account collapse onto the first row
+   (`signup-grant.service.spec.ts`). It is independent of, and stacks with, an invitation grant. It is an
+   operator's deploy-time setting written through `LedgerService` like every other credit, not a
+   purchase: no user-reachable call can trigger it for an account that already exists.

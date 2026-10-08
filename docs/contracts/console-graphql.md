@@ -370,8 +370,8 @@ download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout`
 **Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatThreads` / `chatThread` `+ chatCredential` / `createChatThread` / `setChatThreadModel` / `appendChatMessage` / `deleteChatThread`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
 `updatePreferences` / `exportEvidence`;
-**Admin — external endpoints** `externalEndpoints` / `externalEndpoint` `+ registerExternalEndpoint` /
-`updateExternalEndpoint` / `setExternalEndpointEnabled` / `rotateExternalEndpointKey`;
+**Admin — external endpoints** `externalEndpoints` / `externalEndpoint` / `discoverExternalModels` `+
+registerExternalEndpoint` / `updateExternalEndpoint` / `setExternalEndpointEnabled` / `rotateExternalEndpointKey`;
 **Admin — trust list** `trustedMeasurements` `+ addTrustedMeasurement` / `updateTrustedMeasurement` /
 `removeTrustedMeasurement`.
 
@@ -766,6 +766,53 @@ extend type Mutation {
   removeTrustedMeasurement(id: ID!): Boolean!
 }
 ```
+
+## As shipped (SUP-249) — model discovery, attest-then-list
+
+The register dialog's primary path is now *paste a URL and a key*, not *type every model*. The
+order is the point: the endpoint is registered with `models: []` (which `RegisterExternalEndpointInput`
+already allowed), the egress sidecar attests it like any other, and only once the row says
+`VERIFIED_BY_THIS_ROUTER` does the API make its first request upstream — `GET /v1/models` through the
+endpoint's attested, certificate-pinned loopback listener, with the stored key injected by router-api.
+An endpoint that is not verified is refused with `CONFLICT` and nothing is sent; a sidecar that
+withdrew its verdict in the meantime answers its fail-closed 503, which comes back as a `CONFLICT`
+naming the stage and reason. The admin ticks models and sets prices; the result is registered with
+the ordinary `updateExternalEndpoint`, so there is no second write path.
+
+```graphql
+"""
+One model an attested upstream lists on its own GET /v1/models. Hints only — the operator chooses
+the public id, the name and the prices when registering it.
+"""
+type DiscoveredExternalModel {
+  upstreamModel: String!
+  name: String
+  contextLength: Int
+  "Micro-USD per 1M tokens, when the upstream publishes a price (another router does)."
+  promptPer1mMicros: String
+  completionPer1mMicros: String
+  "The public model id this endpoint already publishes it under, or null."
+  registeredAs: String
+}
+
+extend type Query {
+  """
+  Admin, not session: the call spends the stored upstream key. Read-only — it writes no row.
+  """
+  discoverExternalModels(id: ID!): [DiscoveredExternalModel!]!
+}
+```
+
+The hints are read leniently from the fields the upstreams we know of publish — `context_length` and
+`pricing.*_per_1m_micros` (another Confidential Router), `max_model_len` (vLLM). The body is read up to
+2 MB and the list capped at 100 entries: it is another operator's answer, and it does not get to size
+this process's memory. A `401`/`403` is reported as a refused key, a `404`/`405` as an upstream without a
+model list (the dialog offers to type the models instead), and a stored key this deployment's
+`CR_API_SECRETS_KEY` can no longer open as `SERVICE_UNAVAILABLE` — not as a network failure worth retrying.
+The console's picker re-reads the endpoint's published models immediately before it writes, because
+`updateExternalEndpoint` replaces the set and a model another admin published meanwhile must survive. A price hint is a starting point in the form; what this router charges stays
+the operator's decision (decision 4). The connection link remains the one-paste fast path; the
+dialog tells the two apart by shape (`apps/router-ui/src/lib/endpoint-source.ts`).
 
 ## As shipped (SUP-227) — external models on the public catalogue
 

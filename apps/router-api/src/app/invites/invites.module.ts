@@ -10,10 +10,12 @@ import { InviteStatsService } from './invite-stats.service.js';
 import { InviteWithdrawalService } from './invite-withdrawal.service.js';
 import { InvitesController } from './invites.controller.js';
 import { InvitesService } from './invites.service.js';
+import { SignUpGrantService } from './signup-grant.service.js';
 
 /**
  * Invitation codes: the public lookup, the redemption that runs inside sign-up,
- * and the campaign aggregates.
+ * and the campaign aggregates — plus the operator-configured sign-up grant
+ * (SUP-249), which runs in the same hook and writes the ledger the same way.
  *
  * `BillingModule` for `LedgerService`, which stays the only writer of the ledger
  * — the grant goes through it like every other entry. The dependency runs one way
@@ -29,6 +31,7 @@ import { InvitesService } from './invites.service.js';
   providers: [
     { provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter },
     InvitesService,
+    SignUpGrantService,
     InviteStatsService,
     InviteWithdrawalService,
     InviteAttributionService,
@@ -36,6 +39,13 @@ import { InvitesService } from './invites.service.js';
   // `RATE_LIMITER` is exported so the console's `inviteGrantStatus` query spends
   // the same budget as the public lookup: both answer questions about a code, so
   // a signed-in caller must not get a second allowance for asking.
-  exports: [InvitesService, InviteStatsService, InviteWithdrawalService, InviteAttributionService, RATE_LIMITER],
+  exports: [
+    InvitesService,
+    SignUpGrantService,
+    InviteStatsService,
+    InviteWithdrawalService,
+    InviteAttributionService,
+    RATE_LIMITER,
+  ],
 })
 export class InvitesModule {}

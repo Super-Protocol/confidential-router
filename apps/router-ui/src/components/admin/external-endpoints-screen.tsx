@@ -22,6 +22,7 @@ import { errorMessageOf } from '../../lib/graphql-error';
 import { PageHeader } from '../page-header';
 import { useViewerIsAdmin } from '../session/use-viewer-is-admin';
 import { AdminReadOnlyNotice } from './admin-gate';
+import { DiscoverModelsDialog } from './discover-models-dialog';
 import { EndpointDrawer } from './endpoint-drawer';
 import { STATUS_ORDER, statusPresentation } from './endpoint-status';
 import { EXTERNAL_ENDPOINTS_QUERY, SET_EXTERNAL_ENDPOINT_ENABLED } from './operations';
@@ -60,6 +61,7 @@ export function ExternalEndpointsScreen() {
   const [registering, setRegistering] = React.useState(false);
   const [openEndpointId, setOpenEndpointId] = React.useState<string | null>(null);
   const [rotatingId, setRotatingId] = React.useState<string | null>(null);
+  const [discoveringId, setDiscoveringId] = React.useState<string | null>(null);
   const [actionFailure, setActionFailure] = React.useState<string | null>(null);
 
   const [setEnabled] = useMutation(SET_EXTERNAL_ENDPOINT_ENABLED);
@@ -74,6 +76,7 @@ export function ExternalEndpointsScreen() {
   const endpoints = React.useMemo(() => sortEndpoints(data?.externalEndpoints ?? []), [data]);
   const openEndpoint = endpoints.find((endpoint) => endpoint.id === openEndpointId) ?? null;
   const rotating = endpoints.find((endpoint) => endpoint.id === rotatingId) ?? null;
+  const discovering = endpoints.find((endpoint) => endpoint.id === discoveringId) ?? null;
 
   const toggle = async (endpoint: ExternalEndpointFieldsFragment) => {
     setActionFailure(null);
@@ -205,6 +208,16 @@ export function ExternalEndpointsScreen() {
                           >
                             {endpoint.enabled ? 'Disable' : 'Enable'}
                           </Button>
+                          {endpoint.enabled ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDiscoveringId(endpoint.id)}
+                              aria-label={`Discover models on ${endpoint.name}`}
+                            >
+                              Discover models
+                            </Button>
+                          ) : null}
                           <Button variant="ghost" size="sm" onClick={() => setRotatingId(endpoint.id)}>
                             Rotate key
                           </Button>
@@ -239,6 +252,18 @@ export function ExternalEndpointsScreen() {
         isAdmin={isAdmin}
         onOpenChange={(open) => !open && setOpenEndpointId(null)}
       />
+
+      {isAdmin ? (
+        <DiscoverModelsDialog
+          key={discovering?.id}
+          endpoint={discovering}
+          onOpenChange={(open) => !open && setDiscoveringId(null)}
+          onDone={(endpointId) => {
+            setDiscoveringId(null);
+            setOpenEndpointId(endpointId);
+          }}
+        />
+      ) : null}
 
       {/* `key` so the typed secret cannot survive into another endpoint's dialog. */}
       {isAdmin ? (

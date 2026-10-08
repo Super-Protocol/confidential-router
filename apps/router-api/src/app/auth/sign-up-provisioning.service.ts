@@ -3,6 +3,7 @@ import { AnalyticsService, eventUuid } from '../analytics/index.js';
 import type { InviteRedemptionOutcome } from '../invites/invites.service.js';
 import { InvitesService } from '../invites/invites.service.js';
 import type { SignUpInvite } from '../invites/sign-up-invite.js';
+import { SignUpGrantService } from '../invites/signup-grant.service.js';
 import type { SignUpMethod } from './sign-up-method.js';
 import { WorkspaceProvisioningService } from './workspace-provisioning.service.js';
 
@@ -23,7 +24,8 @@ export interface CreatedUser {
 
 /**
  * Everything that has to happen the moment an account comes into existence, in
- * order: the personal workspace, then the invitation grant into it, then the two
+ * order: the personal workspace, then the grants into it — the operator's
+ * sign-up credit (SUP-249) and the invitation's, which stack — then the two
  * analytics events that report what happened.
  *
  * It exists so `AuthService` stays the narrow boundary ADR-004 §3 asks for — one
@@ -45,14 +47,21 @@ export interface CreatedUser {
 export class SignUpProvisioning {
   private readonly logger = new Logger(SignUpProvisioning.name);
 
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly workspaces: WorkspaceProvisioningService,
     private readonly invites: InvitesService,
+    private readonly signUpGrant: SignUpGrantService,
     private readonly analytics: AnalyticsService,
   ) {}
 
   async onUserCreated(user: CreatedUser, invite: SignUpInvite, method: SignUpMethod): Promise<void> {
     const workspace = await this.workspaces.ensurePersonalWorkspace(user);
+
+    // Independent of the invitation: a sign-up with a code gets both credits
+    // (signup 20 + invite 100 = 120), one without gets the sign-up credit alone.
+    // Its own ledger entry and key, so neither grant can shadow the other.
+    await this.signUpGrant.grantOnSignUp({ userId: user.id, workspaceId: workspace.id });
 
     const outcome = await this.invites.redeemOnSignUp({
       userId: user.id,

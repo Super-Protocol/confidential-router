@@ -11,11 +11,11 @@ import {
   DialogTitle,
 } from '@confidential-router/ui/components/dialog';
 import { Input } from '@confidential-router/ui/components/input';
-import { Label } from '@confidential-router/ui/components/label';
-import { ClipboardPaste, Plus, Trash2 } from 'lucide-react';
+import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import * as React from 'react';
-import { connectionLinkRefusalMessage, parseConnectionLink } from '../../lib/connection-link';
+import { classifyEndpointSource, type EndpointSource } from '../../lib/endpoint-source';
 import { errorMessageOf } from '../../lib/graphql-error';
+import { DiscoveryPanel } from './discovery-panel';
 import {
   EMPTY_ENDPOINT_FORM,
   EMPTY_MODEL,
@@ -24,6 +24,7 @@ import {
   toRegisterInput,
   validateEndpointForm,
 } from './endpoint-form';
+import { describedBy, FieldError, FormField, ModelFields } from './form-field';
 import { EXTERNAL_ENDPOINTS_QUERY, REGISTER_EXTERNAL_ENDPOINT } from './operations';
 
 export interface RegisterEndpointDialogProps {
@@ -33,32 +34,50 @@ export interface RegisterEndpointDialogProps {
   onRegistered: (endpointId: string) => void;
 }
 
-function FieldError({ id, message }: { id: string; message: string | undefined }) {
-  if (!message) return null;
-  return (
-    <p id={id} role="alert" className="mt-1 text-destructive text-xs">
-      {message}
-    </p>
-  );
-}
+/**
+ * Which form the dialog is showing.
+ *
+ * - `start`: only the one field.
+ * - `discover`: a bare URL was pasted — name and key, then attest-then-list.
+ * - `typed`: a connection link filled everything, or the admin chose to type
+ *   the models by hand; the full form, submitted in one go.
+ */
+type Mode = 'start' | 'discover' | 'typed';
+
+const SOURCE_HELP = (
+  <>
+    The model’s base URL — or the <strong>connection link</strong> from the model deployment’s <em>Outputs</em> panel,
+    which carries the URL, key and model in one string. A link keeps the key after the <code>#</code>, so it never
+    reaches a server log; it never carries a price.
+  </>
+);
 
 /**
- * Register an external upstream: either by pasting the connection link the
- * upstream's marketplace listing emits, or by typing the four things that link
- * carries.
+ * Register an external upstream (SUP-249).
  *
- * The paste path is a convenience and nothing more — it fills fields, and the
- * admin still sets the price and submits (decision 4; `docs/contracts/connection-link.md`).
- * A producer that could set the price would be setting what this deployment
- * charges its own users.
+ * One field, two paths, told apart by what was pasted:
+ *
+ *  - **A bare URL** is the primary path. The admin adds the key; the router
+ *    registers the endpoint with no models, attests it — evidence, trust list,
+ *    certificate pin — and only then lists `/v1/models` through the attested
+ *    egress. The admin ticks what to publish and sets prices.
+ *  - **A connection link** is the fast path: it fills name, URL, key and model,
+ *    and the admin sets the price and submits (decision 4;
+ *    `docs/contracts/connection-link.md`). A producer that could set the price
+ *    would be setting what this deployment charges its own users.
  */
 export function RegisterEndpointDialog({ open, onOpenChange, onRegistered }: RegisterEndpointDialogProps) {
+  const [mode, setMode] = React.useState<Mode>('start');
+  const [source, setSource] = React.useState('');
+  const [sourceTouched, setSourceTouched] = React.useState(false);
+  const [linkAccepted, setLinkAccepted] = React.useState(false);
+  /** Once the admin types a name, a later paste no longer overwrites it. */
+  const [nameEdited, setNameEdited] = React.useState(false);
   const [values, setValues] = React.useState<EndpointFormValues>(EMPTY_ENDPOINT_FORM);
   const [errors, setErrors] = React.useState<EndpointFormErrors>({});
   const [failure, setFailure] = React.useState<string | null>(null);
-  const [link, setLink] = React.useState('');
-  const [linkRefusal, setLinkRefusal] = React.useState<string | null>(null);
-  const [linkAccepted, setLinkAccepted] = React.useState(false);
+  /** Set once a discovery registration went through; the panel takes over from there. */
+  const [registered, setRegistered] = React.useState<{ id: string; name: string } | null>(null);
 
   const [register, { loading }] = useMutation(REGISTER_EXTERNAL_ENDPOINT, {
     // The list is the screen's only copy, and the new row's place in it is the
@@ -68,12 +87,55 @@ export function RegisterEndpointDialog({ open, onOpenChange, onRegistered }: Reg
   });
 
   const reset = () => {
+    setMode('start');
+    setSource('');
+    setSourceTouched(false);
+    setLinkAccepted(false);
+    setNameEdited(false);
     setValues(EMPTY_ENDPOINT_FORM);
     setErrors({});
     setFailure(null);
-    setLink('');
-    setLinkRefusal(null);
-    setLinkAccepted(false);
+    setRegistered(null);
+  };
+
+  const classified: EndpointSource = classifyEndpointSource(source);
+  const sourceError =
+    classified.kind === 'refused' && (classified.urgent || sourceTouched) ? classified.message : undefined;
+
+  const onSourceChange = (next: string) => {
+    setSource(next);
+    setFailure(null);
+    const result = classifyEndpointSource(next);
+    if (result.kind === 'link') {
+      const { baseUrl, modelId, apiKey, suggestedName } = result.link;
+      setValues((current) => ({
+        name: nameEdited ? current.name : suggestedName,
+        baseUrl,
+        apiKey,
+        models: [
+          { ...(current.models[0] ?? EMPTY_MODEL), id: modelId, name: modelId, upstreamModel: modelId },
+          ...current.models.slice(1),
+        ],
+      }));
+      setErrors({});
+      setLinkAccepted(true);
+      setMode('typed');
+      // The link is a credential. Clearing the field keeps it out of the form the
+      // next screenshot catches (`docs/contracts/connection-link.md`).
+      setSource('');
+    } else if (result.kind === 'url') {
+      setValues((current) => ({
+        ...current,
+        name: nameEdited ? current.name : result.suggestedName,
+        baseUrl: result.baseUrl,
+      }));
+      setLinkAccepted(false);
+      setMode('discover');
+    } else if (mode === 'discover') {
+      // The URL the discovery fields were filled from is gone; so are they.
+      setValues((current) => ({ ...current, baseUrl: '' }));
+      setMode('start');
+    }
   };
 
   const setModel = (index: number, patch: Partial<EndpointFormValues['models'][number]>) => {
@@ -83,52 +145,89 @@ export function RegisterEndpointDialog({ open, onOpenChange, onRegistered }: Reg
     }));
   };
 
-  const applyLink = () => {
-    const result = parseConnectionLink(link);
-    if (!result.ok) {
-      setLinkAccepted(false);
-      setLinkRefusal(connectionLinkRefusalMessage(result.reason));
-      return;
-    }
+  const registerTyped = async () => {
+    const found = validateEndpointForm(values);
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
 
-    const { baseUrl, modelId, apiKey, suggestedName } = result.link;
-    setValues((current) => ({
-      name: current.name.trim() === '' ? suggestedName : current.name,
-      baseUrl,
-      apiKey,
-      models: [
-        { ...(current.models[0] ?? EMPTY_MODEL), id: modelId, name: modelId, upstreamModel: modelId },
-        ...current.models.slice(1),
-      ],
-    }));
-    setErrors({});
-    setLinkRefusal(null);
-    setLinkAccepted(true);
-    // The link is a credential. Clearing the field keeps it out of the form the
-    // next screenshot catches (`docs/contracts/connection-link.md`).
-    setLink('');
+    const result = await register({ variables: { input: toRegisterInput(values) } });
+    const created = result.data?.registerExternalEndpoint;
+    if (!created) throw new Error('The endpoint was not returned.');
+    onOpenChange(false);
+    reset();
+    onRegistered(created.id);
+  };
+
+  /** Registered with no models: it serves nothing, and the router attests it before anything is asked. */
+  const registerForDiscovery = async () => {
+    const found = validateEndpointForm({ ...values, models: [{ ...EMPTY_MODEL }] });
+    const endpointOnly = Object.fromEntries(Object.entries(found).filter(([key]) => !key.startsWith('models')));
+    setErrors(endpointOnly);
+    if (Object.keys(endpointOnly).length > 0) return;
+
+    const result = await register({ variables: { input: { ...toRegisterInput(values), models: [] } } });
+    const created = result.data?.registerExternalEndpoint;
+    if (!created) throw new Error('The endpoint was not returned.');
+    setRegistered({ id: created.id, name: created.name });
   };
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFailure(null);
-
-    const found = validateEndpointForm(values);
-    setErrors(found);
-    if (Object.keys(found).length > 0) return;
-
     try {
-      const result = await register({ variables: { input: toRegisterInput(values) } });
-      const registered = result.data?.registerExternalEndpoint;
-      if (!registered) throw new Error('The endpoint was not returned.');
-
-      onOpenChange(false);
-      reset();
-      onRegistered(registered.id);
+      await (mode === 'discover' ? registerForDiscovery() : registerTyped());
     } catch (caught) {
       setFailure(errorMessageOf(caught));
     }
   };
+
+  const finish = (endpointId: string) => {
+    onOpenChange(false);
+    reset();
+    onRegistered(endpointId);
+  };
+
+  const nameField = (
+    <FormField
+      id="endpoint-name"
+      label="Name"
+      help="Lower-case, hyphenated. Cannot be changed later — it is also the egress verifier's key for this upstream."
+      error={errors.name}
+    >
+      <Input
+        id="endpoint-name"
+        value={values.name}
+        onChange={(event) => {
+          setNameEdited(true);
+          setValues((current) => ({ ...current, name: event.target.value }));
+        }}
+        aria-describedby={describedBy('endpoint-name', { error: errors.name, help: true })}
+        aria-invalid={Boolean(errors.name)}
+        disabled={loading}
+        autoComplete="off"
+      />
+    </FormField>
+  );
+
+  const keyField = (
+    <FormField
+      id="endpoint-api-key"
+      label="Upstream API key"
+      help="The ordinary LLM key the upstream issued you. Stored encrypted and never shown again — afterwards this screen can only show its first characters."
+      error={errors.apiKey}
+    >
+      <Input
+        id="endpoint-api-key"
+        type="password"
+        value={values.apiKey}
+        onChange={(event) => setValues((current) => ({ ...current, apiKey: event.target.value }))}
+        aria-describedby={describedBy('endpoint-api-key', { error: errors.apiKey, help: true })}
+        aria-invalid={Boolean(errors.apiKey)}
+        disabled={loading}
+        autoComplete="off"
+      />
+    </FormField>
+  );
 
   return (
     <Dialog
@@ -143,246 +242,182 @@ export function RegisterEndpointDialog({ open, onOpenChange, onRegistered }: Reg
           <DialogTitle>Add external endpoint</DialogTitle>
           <DialogDescription>
             A model served by another deployment. This router fetches its evidence, checks the measurement against the
-            trust list and pins its certificate before any prompt is proxied — nothing routes until that succeeds.
+            trust list and pins its certificate before any request is sent — nothing routes until that succeeds.
           </DialogDescription>
         </DialogHeader>
 
-        <section aria-label="Connection link" className="space-y-2 rounded-lg border bg-muted/30 p-3">
-          <Label htmlFor="connection-link" className="flex items-center gap-1.5">
-            <ClipboardPaste className="size-3.5" aria-hidden="true" />
-            Paste a connection link
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              id="connection-link"
-              value={link}
-              onChange={(event) => {
-                setLink(event.target.value);
-                setLinkRefusal(null);
-              }}
-              placeholder="https://host.example/v1#key=…&model=…"
-              autoComplete="off"
-              spellCheck={false}
-              aria-describedby="connection-link-help"
-              aria-invalid={linkRefusal !== null}
-            />
-            <Button type="button" variant="outline" onClick={applyLink} disabled={link.trim() === '' || loading}>
-              Fill in
-            </Button>
-          </div>
-          <p id="connection-link-help" className="text-muted-foreground text-xs">
-            Model-serving marketplace apps emit one as a secret output. It carries the key after the <code>#</code>, so
-            it never reaches a server log — and it never carries a price: that is yours to set below.
-          </p>
-          <FieldError id="connection-link-error" message={linkRefusal ?? undefined} />
-          {linkAccepted ? (
-            <p role="status" className="text-success text-xs">
-              Filled in from the link. Set the prices and confirm.
-            </p>
-          ) : null}
-        </section>
-
-        <form id="register-endpoint-form" className="space-y-4" onSubmit={(event) => void submit(event)}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <Label htmlFor="endpoint-name">Name</Label>
-              <Input
-                id="endpoint-name"
-                value={values.name}
-                onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))}
-                aria-describedby={errors.name ? 'endpoint-name-error' : 'endpoint-name-help'}
-                aria-invalid={Boolean(errors.name)}
-                disabled={loading}
-                autoComplete="off"
-              />
-              <p id="endpoint-name-help" className="mt-1 text-muted-foreground text-xs">
-                Lower-case, hyphenated. Cannot be changed later — it is also the egress verifier's key for this
-                upstream.
-              </p>
-              <FieldError id="endpoint-name-error" message={errors.name} />
-            </div>
-
-            <div>
-              <Label htmlFor="endpoint-base-url">Base URL</Label>
-              <Input
-                id="endpoint-base-url"
-                value={values.baseUrl}
-                onChange={(event) => setValues((current) => ({ ...current, baseUrl: event.target.value }))}
-                placeholder="https://host.example"
-                aria-describedby={errors.baseUrl ? 'endpoint-base-url-error' : undefined}
-                aria-invalid={Boolean(errors.baseUrl)}
-                disabled={loading}
-                autoComplete="off"
-              />
-              <FieldError id="endpoint-base-url-error" message={errors.baseUrl} />
-            </div>
-          </div>
-
-          <div>
-            <Label htmlFor="endpoint-api-key">Upstream API key</Label>
-            <Input
-              id="endpoint-api-key"
-              type="password"
-              value={values.apiKey}
-              onChange={(event) => setValues((current) => ({ ...current, apiKey: event.target.value }))}
-              aria-describedby={errors.apiKey ? 'endpoint-api-key-error' : 'endpoint-api-key-help'}
-              aria-invalid={Boolean(errors.apiKey)}
-              disabled={loading}
-              autoComplete="off"
-            />
-            <p id="endpoint-api-key-help" className="mt-1 text-muted-foreground text-xs">
-              The ordinary LLM key the upstream issued you. Stored encrypted and never shown again — afterwards this
-              screen can only show its first characters.
-            </p>
-            <FieldError id="endpoint-api-key-error" message={errors.apiKey} />
-          </div>
-
-          <fieldset className="space-y-3">
-            <legend className="font-medium text-sm">Models and prices</legend>
-            <p className="text-muted-foreground text-xs">
-              Prices are per 1M tokens in USD and are frozen per generation, like any built-in model.
-            </p>
-            <FieldError id="endpoint-models-error" message={errors.models} />
-
-            {values.models.map((model, index) => (
-              // The row index is the identity here: these rows have no id until
-              // they are submitted, and reordering is not offered.
-              // biome-ignore lint/suspicious/noArrayIndexKey: see above
-              <div key={index} className="space-y-3 rounded-lg border p-3" data-testid={`model-row-${index}`}>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <Label htmlFor={`model-${index}-id`}>Model id on this router</Label>
-                    <Input
-                      id={`model-${index}-id`}
-                      value={model.id}
-                      onChange={(event) => setModel(index, { id: event.target.value })}
-                      aria-invalid={Boolean(errors[`models.${index}.id`])}
-                      disabled={loading}
-                      autoComplete="off"
-                    />
-                    <FieldError id={`model-${index}-id-error`} message={errors[`models.${index}.id`]} />
-                  </div>
-                  <div>
-                    <Label htmlFor={`model-${index}-upstream`}>Model id upstream</Label>
-                    <Input
-                      id={`model-${index}-upstream`}
-                      value={model.upstreamModel}
-                      onChange={(event) => setModel(index, { upstreamModel: event.target.value })}
-                      aria-invalid={Boolean(errors[`models.${index}.upstreamModel`])}
-                      disabled={loading}
-                      autoComplete="off"
-                    />
-                    <FieldError
-                      id={`model-${index}-upstream-error`}
-                      message={errors[`models.${index}.upstreamModel`]}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor={`model-${index}-name`}>Display name</Label>
-                    <Input
-                      id={`model-${index}-name`}
-                      value={model.name}
-                      onChange={(event) => setModel(index, { name: event.target.value })}
-                      aria-invalid={Boolean(errors[`models.${index}.name`])}
-                      disabled={loading}
-                      autoComplete="off"
-                    />
-                    <FieldError id={`model-${index}-name-error`} message={errors[`models.${index}.name`]} />
-                  </div>
-                  <div>
-                    <Label htmlFor={`model-${index}-context`}>Context length</Label>
-                    <Input
-                      id={`model-${index}-context`}
-                      inputMode="numeric"
-                      value={model.contextLength}
-                      onChange={(event) => setModel(index, { contextLength: event.target.value })}
-                      aria-invalid={Boolean(errors[`models.${index}.contextLength`])}
-                      disabled={loading}
-                      autoComplete="off"
-                    />
-                    <FieldError id={`model-${index}-context-error`} message={errors[`models.${index}.contextLength`]} />
-                  </div>
-                  <div>
-                    <Label htmlFor={`model-${index}-prompt-price`}>Prompt, USD / 1M</Label>
-                    <Input
-                      id={`model-${index}-prompt-price`}
-                      inputMode="decimal"
-                      value={model.promptPer1m}
-                      onChange={(event) => setModel(index, { promptPer1m: event.target.value })}
-                      aria-invalid={Boolean(errors[`models.${index}.promptPer1m`])}
-                      disabled={loading}
-                      autoComplete="off"
-                    />
-                    <FieldError
-                      id={`model-${index}-prompt-price-error`}
-                      message={errors[`models.${index}.promptPer1m`]}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor={`model-${index}-completion-price`}>Completion, USD / 1M</Label>
-                    <Input
-                      id={`model-${index}-completion-price`}
-                      inputMode="decimal"
-                      value={model.completionPer1m}
-                      onChange={(event) => setModel(index, { completionPer1m: event.target.value })}
-                      aria-invalid={Boolean(errors[`models.${index}.completionPer1m`])}
-                      disabled={loading}
-                      autoComplete="off"
-                    />
-                    <FieldError
-                      id={`model-${index}-completion-price-error`}
-                      message={errors[`models.${index}.completionPer1m`]}
-                    />
-                  </div>
-                </div>
-
-                {values.models.length > 1 ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
+        {registered ? (
+          <>
+            <DiscoveryPanel endpointId={registered.id} endpointName={registered.name} onDone={finish} />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => finish(registered.id)}>
+                Pick models later
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <form id="register-endpoint-form" className="grid gap-5" onSubmit={(event) => void submit(event)}>
+              {mode === 'typed' ? null : (
+                <FormField
+                  id="endpoint-source"
+                  label="Endpoint URL or connection link"
+                  help={SOURCE_HELP}
+                  error={sourceError}
+                >
+                  <Input
+                    id="endpoint-source"
+                    value={source}
+                    onChange={(event) => onSourceChange(event.target.value)}
+                    onBlur={() => setSourceTouched(true)}
+                    placeholder="https://model.example/v1"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby={describedBy('endpoint-source', { error: sourceError, help: true })}
+                    aria-invalid={Boolean(sourceError)}
                     disabled={loading}
-                    onClick={() =>
-                      setValues((current) => ({
-                        ...current,
-                        models: current.models.filter((_, at) => at !== index),
-                      }))
-                    }
-                  >
-                    <Trash2 aria-hidden="true" />
-                    Remove model
-                  </Button>
-                ) : null}
-              </div>
-            ))}
+                  />
+                </FormField>
+              )}
 
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={loading}
-              onClick={() => setValues((current) => ({ ...current, models: [...current.models, { ...EMPTY_MODEL }] }))}
-            >
-              <Plus aria-hidden="true" />
-              Add another model
-            </Button>
-          </fieldset>
+              {linkAccepted ? (
+                <p role="status" className="text-success text-xs">
+                  Filled in from the connection link. Set the prices and confirm.
+                </p>
+              ) : null}
 
-          {failure ? (
-            <p role="alert" className="text-destructive text-sm">
-              {failure}
-            </p>
-          ) : null}
-        </form>
+              {mode === 'discover' ? (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {nameField}
+                    <FormField id="endpoint-base-url" label="Base URL">
+                      <Input id="endpoint-base-url" value={values.baseUrl} readOnly className="font-mono text-xs" />
+                    </FormField>
+                  </div>
+                  {keyField}
+                  <p className="flex gap-2 rounded-lg border bg-muted/30 p-3 text-muted-foreground text-xs">
+                    <ShieldCheck className="size-4 shrink-0 text-foreground" aria-hidden="true" />
+                    <span>
+                      Next, this router attests the endpoint — and only once that verdict is in does it ask the upstream
+                      which models it serves. Even that request goes through the attested, certificate-pinned egress.
+                    </span>
+                  </p>
+                  <div>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto px-0"
+                      onClick={() => setMode('typed')}
+                      disabled={loading}
+                    >
+                      Enter the models by hand instead
+                    </Button>
+                  </div>
+                </>
+              ) : null}
 
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            Cancel
-          </Button>
-          <Button type="submit" form="register-endpoint-form" variant="brand" disabled={loading}>
-            {loading ? 'Registering…' : 'Register endpoint'}
-          </Button>
-        </DialogFooter>
+              {mode === 'typed' ? (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {nameField}
+                    <FormField id="endpoint-base-url" label="Base URL" error={errors.baseUrl}>
+                      <Input
+                        id="endpoint-base-url"
+                        value={values.baseUrl}
+                        onChange={(event) => setValues((current) => ({ ...current, baseUrl: event.target.value }))}
+                        placeholder="https://host.example"
+                        aria-describedby={describedBy('endpoint-base-url', { error: errors.baseUrl })}
+                        aria-invalid={Boolean(errors.baseUrl)}
+                        disabled={loading}
+                        autoComplete="off"
+                      />
+                    </FormField>
+                  </div>
+                  {keyField}
+
+                  <fieldset className="grid gap-3">
+                    <legend className="mb-1 font-medium text-sm">Models and prices</legend>
+                    <p className="text-muted-foreground text-xs">
+                      Prices are per 1M tokens in USD and are frozen per generation, like any built-in model.
+                    </p>
+                    <FieldError id="endpoint-models-error" message={errors.models} />
+
+                    {values.models.map((model, index) => (
+                      // The row index is the identity here: these rows have no id until
+                      // they are submitted, and reordering is not offered.
+                      // biome-ignore lint/suspicious/noArrayIndexKey: see above
+                      <div key={index} className="grid gap-3 rounded-lg border p-4" data-testid={`model-row-${index}`}>
+                        <ModelFields
+                          index={index}
+                          model={model}
+                          errors={errors}
+                          disabled={loading}
+                          onChange={(patch) => setModel(index, patch)}
+                        />
+                        {values.models.length > 1 ? (
+                          <div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={loading}
+                              onClick={() =>
+                                setValues((current) => ({
+                                  ...current,
+                                  models: current.models.filter((_, at) => at !== index),
+                                }))
+                              }
+                            >
+                              <Trash2 aria-hidden="true" />
+                              Remove model
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+
+                    <div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={loading}
+                        onClick={() =>
+                          setValues((current) => ({ ...current, models: [...current.models, { ...EMPTY_MODEL }] }))
+                        }
+                      >
+                        <Plus aria-hidden="true" />
+                        Add another model
+                      </Button>
+                    </div>
+                  </fieldset>
+                </>
+              ) : null}
+
+              {failure ? (
+                <p role="alert" className="text-destructive text-sm">
+                  {failure}
+                </p>
+              ) : null}
+            </form>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+                Cancel
+              </Button>
+              {mode === 'discover' ? (
+                <Button type="submit" form="register-endpoint-form" variant="brand" disabled={loading}>
+                  {loading ? 'Registering…' : 'Verify and discover models'}
+                </Button>
+              ) : mode === 'typed' ? (
+                <Button type="submit" form="register-endpoint-form" variant="brand" disabled={loading}>
+                  {loading ? 'Registering…' : 'Register endpoint'}
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
