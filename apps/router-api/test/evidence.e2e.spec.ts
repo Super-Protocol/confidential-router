@@ -227,6 +227,7 @@ async function registerUpstream(input: {
       lastReason: null,
       measurementSeen: null,
       measurementSource: null,
+      measurementInRegistry: null,
       evidenceDigestSeen: input.evidenceDigestSeen,
       // The approved deployment (SUP-252): the relay hands out only its publication.
       pinnedEvidenceDigest: input.evidenceDigestSeen,

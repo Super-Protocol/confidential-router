@@ -47,7 +47,8 @@ function renderScreen({
   mocks?: MockLink.MockedResponse[];
 } = {}) {
   return renderWithSession(<ExternalEndpointsScreen />, {
-    mocks: [sessionMock(), isAdminMock(admin), ...mocks],
+    // A test's own trust list comes first and wins; otherwise the list is not empty.
+    mocks: [sessionMock(), isAdminMock(admin), ...mocks, measurementsMock()],
   });
 }
 
@@ -137,6 +138,59 @@ describe('ExternalEndpointsScreen', () => {
   });
 
   describe('the drawer', () => {
+    /**
+     * SUP-251: an operator facing a denial needs the measurement in the form the
+     * trust list takes, and the registry signal beside it — without the signal
+     * turning into a way round the list.
+     */
+    describe('the measurement a denial saw', () => {
+      const signedDenial = {
+        ...DENIED_ENDPOINT,
+        lastStage: 'untrusted-root',
+        measurementSource: null,
+        measurementInRegistry: true,
+      };
+
+      it('offers the whole measurement for copying, and a registry badge that admits nothing', async () => {
+        const user = userEvent.setup();
+        renderScreen({ mocks: [endpointsMock([signedDenial])] });
+        const drawer = await openDrawer('gemma-2-2b');
+        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+
+        await user.click(within(verdict).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }));
+        await expect(navigator.clipboard.readText()).resolves.toBe(MEASUREMENT_ROGUE);
+
+        expect(within(verdict).getByText('Registry-signed')).toBeInTheDocument();
+        expect(verdict).toHaveTextContent('A registry signature admits nothing on its own.');
+        // The way forward is the trust list itself, never a shortcut beside the badge.
+        expect(within(verdict).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
+        expect(within(drawer).queryByRole('button', { name: /trust/i })).not.toBeInTheDocument();
+      });
+
+      it('shows no registry badge for a measurement the registry does not sign', async () => {
+        renderScreen({ mocks: [endpointsMock([{ ...signedDenial, measurementInRegistry: false }])] });
+        const drawer = await openDrawer('gemma-2-2b');
+        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+
+        expect(
+          within(verdict).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
+        ).toBeInTheDocument();
+        expect(within(verdict).queryByText('Registry-signed')).not.toBeInTheDocument();
+      });
+
+      it('offers neither when no measurement was derived', async () => {
+        renderScreen({
+          mocks: [endpointsMock([{ ...signedDenial, measurementSeen: null, measurementInRegistry: null }])],
+        });
+        const drawer = await openDrawer('gemma-2-2b');
+        const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+
+        expect(within(verdict).queryByRole('button', { name: /^Copy the measurement/ })).not.toBeInTheDocument();
+        expect(within(verdict).queryByText('Registry-signed')).not.toBeInTheDocument();
+        expect(within(verdict).queryByRole('link', { name: 'trust list' })).not.toBeInTheDocument();
+      });
+    });
+
     it('renders the verdict, the stage and the pinned certificate', async () => {
       renderScreen();
       const drawer = await openDrawer('gemma-2-2b');
@@ -456,6 +510,63 @@ describe('ExternalEndpointsScreen', () => {
         expect(within(factors).getByRole('button', { name: 'Pin this digest' })).toBeInTheDocument();
         // Nothing is listed before the verdict: the order is the selling point.
         expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      });
+    });
+
+    describe('what the panel says while nothing can be checked (SUP-249 QA)', () => {
+      const NEW = { ...PENDING_ENDPOINT, id: 'ext-new', name: 'llama-example', models: [] };
+      const register: MockLink.MockedResponse = {
+        request: {
+          query: REGISTER_EXTERNAL_ENDPOINT,
+          variables: {
+            input: { name: 'llama-example', baseUrl: 'https://llama.example', apiKey: 'sk-bare', models: [] },
+          },
+        },
+        result: { data: { registerExternalEndpoint: NEW } },
+      };
+
+      async function start() {
+        await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
+        await userEvent.click(await screen.findByLabelText(/Endpoint URL or connection link/));
+        await userEvent.paste('https://llama.example/v1');
+        await userEvent.type(screen.getByLabelText('Upstream API key'), 'sk-bare');
+        await userEvent.click(screen.getByRole('button', { name: 'Verify and discover models' }));
+        return screen.findByRole('list', { name: 'Verification stages' });
+      }
+
+      it('says the trust list is empty instead of claiming evidence is being fetched', async () => {
+        renderScreen({ mocks: [endpointsMock(), measurementsMock([]), register, verdictMock('ext-new', 'PENDING')] });
+
+        const stages = await start();
+
+        expect(await within(stages).findByRole('alert')).toHaveTextContent(/The trust list is empty/);
+        expect(within(stages).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
+        expect(within(stages).queryByText(/Fetching its evidence/)).not.toBeInTheDocument();
+      });
+
+      it('does not send the admin to the trust list for a failure it cannot fix', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            register,
+            verdictMock('ext-new', 'DENIED_BY_THIS_ROUTER', {
+              lastStage: 'fetch',
+              lastReason: 'dial tcp: lookup llama.example: no such host',
+              measurementSeen: null,
+            }),
+          ],
+        });
+
+        const stages = await start();
+
+        expect(await within(stages).findByRole('alert')).toHaveTextContent(/no such host.*The next check tries again/);
+        expect(within(stages).queryByRole('link', { name: 'trust list' })).not.toBeInTheDocument();
+      });
+
+      it('marks a pending row as unchecked while the trust list is empty', async () => {
+        renderScreen({ mocks: [endpointsMock(), measurementsMock([])] });
+
+        expect(await screen.findByText(/Not checked: the/)).toBeInTheDocument();
       });
     });
 

@@ -1,6 +1,7 @@
 # router-ui-e2e
 
-Playwright, in two halves.
+Playwright, in two halves — plus two configs of their own, for the suites that
+need their own servers on their own origins.
 
 ```bash
 pnpm nx run @confidential-router/router-ui-e2e:e2e
@@ -59,6 +60,48 @@ serving any origin (SUP-100). CI runs it in the job that builds the images.
 make images                                              # or ROUTER_UI_IMAGE=ghcr.io/…
 pnpm nx run @confidential-router/router-ui-e2e:e2e-image
 ```
+
+## The secure-origin suite
+
+`playwright.secure.config.ts` is the only suite that runs the console on a
+**secure context**, and therefore the only place tier 1 is exercised at all.
+Everything else here serves a *named* http origin on purpose (see "Two
+hostnames"), browsers withhold `crypto.subtle` from one, and the console's
+evidence gate is Web Crypto from end to end — so on those origins the chat can
+only ever show its refusal.
+
+```bash
+pnpm nx run @confidential-router/router-ui-e2e:e2e-secure
+```
+
+Both halves of it are a real verification of a real document:
+
+- **This router's own bundle.** Fetched from `tools/mock-evidence-host`, signed a
+  second earlier over a real PKI, with a live redeployment in the middle so the
+  image comparison has something to turn red about.
+- **An external upstream's bundle, relayed** (ADR-008 §7). The stack is started
+  with `CR_DEMO_EXTERNAL=1`, which stands up a second deployment — the upstream,
+  plus the real `gatekeeper-sidecar` that attests it — and registers it through
+  the admin API until a verdict has named a publication. The browser then reads
+  that publication through `GET /v1/evidence/{endpoint}`, verifies it here, and
+  draws its measurements and deployment graph. That is the per-user mitigation
+  for the one thing pinning this router cannot cover: the trust list is database
+  state, not part of the canonical snapshot (ADR-008 §1).
+
+Two consequences worth knowing before running it:
+
+- **It needs a Go toolchain**, because the sidecar it drives is the shipped
+  binary. `e2e-secure` builds it; CI's Playwright job installs Go for the same
+  reason.
+- **The operator and the reader are different people.** The browser's session is
+  an ordinary member; a second address in `auth.adminEmails` registers the
+  upstream. Ruling 3 on SUP-221 opened these reads to any signed-in member, and
+  a session that happened to be an admin could not tell that apart from an
+  admin-only surface.
+
+`readHandoff()` waits for the handoff file rather than reading it once: Playwright
+holds the tests until the router's `/health` answers, and that is true well
+before `serve.ts` has signed anyone in or verified an upstream.
 
 ## Recording the flows
 

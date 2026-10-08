@@ -24,6 +24,7 @@ function endpoint(overrides: Partial<ExternalEndpoint> = {}): ExternalEndpoint {
     lastReason: null,
     measurementSeen: null,
     measurementSource: null,
+    measurementInRegistry: null,
     evidenceDigestSeen: null,
     pinnedCertFingerprint: null,
     observedCertFingerprint: null,
@@ -157,6 +158,7 @@ describe('projectVerdict', () => {
       lastReason: null,
       measurementSeen: MEASUREMENT,
       measurementSource: 'operator-pinned',
+      measurementInRegistry: false,
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
       observedCertFingerprint: FINGERPRINT,
@@ -176,6 +178,30 @@ describe('projectVerdict', () => {
     expect(patch.lastStage).toBe('policy');
     expect(patch.lastReason).toContain('denied');
     expect(patch.pinnedCertFingerprint).toBeNull();
+  });
+
+  it('carries the registry signal on a denial, without it admitting anything', () => {
+    // SUP-251: the dossier shows "Registry-signed" beside a denied endpoint's
+    // measurement. `measurementSource` is empty on a denial — it names only the
+    // anchor that admitted — so `inRegistry` is the one place the signal lives.
+    const signed = denied();
+    signed.report = { ...signed.report, attestedRoot: { measurement: OTHER_MEASUREMENT, inRegistry: true } };
+
+    const { patch } = projectVerdict(endpoint(), signed, NOW);
+
+    expect(patch.status).toBe('denied');
+    expect(patch.measurementInRegistry).toBe(true);
+    expect(patch.measurementSource).toBeNull();
+  });
+
+  it('reads an unreported registry flag as false, and states nothing without a measurement', () => {
+    const unflagged = denied();
+    unflagged.report = { ...unflagged.report, attestedRoot: { measurement: OTHER_MEASUREMENT } };
+    expect(projectVerdict(endpoint(), unflagged, NOW).patch.measurementInRegistry).toBe(false);
+
+    const noMeasurement = denied();
+    noMeasurement.report = { ...noMeasurement.report, stage: 'untrusted-root', attestedRoot: undefined };
+    expect(projectVerdict(endpoint(), noMeasurement, NOW).patch.measurementInRegistry).toBeNull();
   });
 
   it('falls back to now when the report carries no timestamp', () => {
@@ -228,6 +254,7 @@ describe('projectVerdict', () => {
       lastReason: null,
       measurementSeen: MEASUREMENT,
       measurementSource: 'operator-pinned',
+      measurementInRegistry: false,
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
       observedCertFingerprint: FINGERPRINT,
@@ -254,6 +281,7 @@ describe('projectVerdict', () => {
       lastCheckedAt: new Date('2026-10-06T11:49:58.000Z'),
       measurementSeen: MEASUREMENT,
       measurementSource: 'operator-pinned',
+      measurementInRegistry: false,
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
     });

@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from '@apollo/client/react';
 import { Badge } from '@confidential-router/ui/components/badge';
 import { Button } from '@confidential-router/ui/components/button';
+import { CopyButton } from '@confidential-router/ui/components/copy-button';
 import { CheckCircle2, CircleAlert, CircleDashed, XCircle } from 'lucide-react';
 import * as React from 'react';
 import type { ExternalEndpointEvidenceFieldsFragment, ExternalEndpointFieldsFragment } from '../../generated/graphql';
@@ -24,6 +25,7 @@ export type TrustFactorsEndpoint = Pick<
   | 'name'
   | 'measurementSeen'
   | 'measurementSource'
+  | 'measurementInRegistry'
   | 'evidenceDigestSeen'
   | 'evidenceDigestSeenHex'
   | 'pinnedEvidenceDigest'
@@ -120,7 +122,9 @@ export function TrustFactors({ endpoint, isAdmin }: TrustFactorsProps) {
 
   const digestState = digestFactorState(endpoint);
   const busy = adding.loading || pinning.loading;
-  const registrySigned = endpoint.measurementSource === 'REGISTRY';
+  // SUP-251's signal, reported on denials too — `measurementSource` only names the
+  // anchor that admitted, so it is empty exactly when an approval is pending.
+  const registrySigned = Boolean(endpoint.measurementSeen && endpoint.measurementInRegistry);
 
   return (
     <section aria-label="Trust factors" className="space-y-3" data-testid="trust-factors">
@@ -150,6 +154,8 @@ export function TrustFactors({ endpoint, isAdmin }: TrustFactorsProps) {
             <span className="font-mono text-xs" title={endpoint.measurementSeen}>
               {shortenDigest(endpoint.measurementSeen, 8)}
             </span>
+            {/* Bare hex: the form the trust list stores, so it pastes straight in (SUP-251). */}
+            <CopyButton value={endpoint.measurementSeen} label={`Copy the measurement ${endpoint.name} presented`} />
             {/*
              * Informational: a registry signature never admits on its own — the
              * trust list is the sole authority (ADR-008 §3). The badge is here so

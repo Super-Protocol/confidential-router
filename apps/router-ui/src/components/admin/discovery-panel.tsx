@@ -107,6 +107,16 @@ function Stage({ state, title, children }: { state: StageState; title: string; c
 }
 
 /**
+ * Whether a denial is one the trust list can answer. A refusal at `fetch` (DNS,
+ * TCP, TLS), at the certificate chain or at the TLS binding is about the
+ * upstream or the network, and sending the admin to the trust list for it would
+ * be advice that cannot work.
+ */
+function isTrustRefusal(stage: string | null | undefined): boolean {
+  return stage === 'policy' || stage === 'untrusted-root' || !stage;
+}
+
+/**
  * Attest, then list (SUP-249).
  *
  * The endpoint already exists, registered with no models. This panel watches the
@@ -224,7 +234,13 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
   const factorRefusal = FACTOR_REFUSALS.has(endpoint?.lastStage ?? '');
   const awaitingApproval = status === 'PENDING' && endpoint?.lastStage === 'digest-not-pinned';
   const attestState: StageState =
-    status === 'VERIFIED_BY_THIS_ROUTER' ? 'done' : status === 'DENIED_BY_THIS_ROUTER' ? 'failed' : 'running';
+    status === 'VERIFIED_BY_THIS_ROUTER'
+      ? 'done'
+      : status === 'DENIED_BY_THIS_ROUTER'
+        ? 'failed'
+        : awaitingApproval
+          ? 'waiting'
+          : 'running';
   const listState: StageState = !verified ? 'waiting' : discovery.error ? 'failed' : discovered ? 'done' : 'running';
 
   return (
@@ -252,7 +268,10 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
           {/*
            * Two-factor trust (SUP-252): a fresh endpoint is never admitted until an
            * admin approves what the first check saw, so the approval lives in the
-           * stage that waits for it.
+           * stage that waits for it. The check runs whether or not anything is on
+           * the trust list yet — the egress renders `measurement-and-digest`,
+           * which starts with neither factor approved — so an empty list is
+           * answered here by "Add to trust list", not by a wait.
            */}
           {endpoint &&
           !verified &&
@@ -263,11 +282,18 @@ export function DiscoveryPanel({ endpointId, endpointName, onDone }: DiscoveryPa
           {status === 'DENIED_BY_THIS_ROUTER' && !factorRefusal ? (
             <p role="alert" className="text-destructive text-xs">
               {endpoint?.lastStage ? `${endpoint.lastStage}: ` : ''}
-              {endpoint?.lastReason ?? 'refused'}. If this cloud should be trusted, add its measurement on the{' '}
-              <Link href="/admin/trust" className="underline underline-offset-2">
-                trust list
-              </Link>{' '}
-              — the next check picks it up, and this panel keeps watching.
+              {endpoint?.lastReason ?? 'refused'}.{' '}
+              {isTrustRefusal(endpoint?.lastStage) ? (
+                <>
+                  If this cloud should be trusted, add its measurement on the{' '}
+                  <Link href="/admin/trust" className="underline underline-offset-2">
+                    trust list
+                  </Link>{' '}
+                  — the next check picks it up, and this panel keeps watching.
+                </>
+              ) : (
+                'The next check tries again, and this panel keeps watching.'
+              )}
             </p>
           ) : null}
         </Stage>

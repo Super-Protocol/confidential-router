@@ -434,6 +434,31 @@ describe('the trust list', () => {
     await expect(service.addMeasurement('not-a-measurement', null, null)).rejects.toThrow(BadRequestException);
   });
 
+  it('refuses an evidence digest or certificate fingerprint it has seen, however it is spelled', async () => {
+    // SUP-251: both are SHA-256 and pass the shape check, and the console copies
+    // them as `sha256:<hex>` — but trusting one admits nothing, silently.
+    const digestHex = 'd'.repeat(64);
+    const leafHex = 'e'.repeat(64);
+    const canonical = (hex: string) => `sha256/${Buffer.from(hex, 'hex').toString('base64url')}`;
+    const view = await register();
+    await dataSource
+      .getRepository(ExternalEndpoint)
+      .update(
+        { id: view.endpoint.id },
+        { evidenceDigestSeen: canonical(digestHex), pinnedCertFingerprint: canonical(leafHex) },
+      );
+
+    await expect(service.addMeasurement(`sha256:${digestHex}`, null, 'user-1')).rejects.toThrow(/an evidence digest/);
+    await expect(service.addMeasurement(leafHex.toUpperCase(), null, 'user-1')).rejects.toThrow(
+      /a certificate fingerprint/,
+    );
+    expect(await dataSource.getRepository(TrustedMeasurement).count()).toBe(0);
+    // A measurement the router has seen as a measurement is still accepted.
+    await expect(service.addMeasurement(MEASUREMENT, null, 'user-1')).resolves.toMatchObject({
+      measurement: MEASUREMENT,
+    });
+  });
+
   it('rewrites the note, and a blank note clears it', async () => {
     const added = await service.addMeasurement(MEASUREMENT, 'first', 'user-1');
 

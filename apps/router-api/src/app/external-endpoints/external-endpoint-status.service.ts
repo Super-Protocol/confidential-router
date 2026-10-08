@@ -81,6 +81,7 @@ export class ExternalEndpointStatusService {
         lastReason: null,
         measurementSeen: null,
         measurementSource: null,
+        measurementInRegistry: null,
         evidenceDigestSeen: null,
         pinnedCertFingerprint: null,
         observedCertFingerprint: null,

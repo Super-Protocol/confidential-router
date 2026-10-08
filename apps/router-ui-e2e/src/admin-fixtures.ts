@@ -56,6 +56,7 @@ const VERIFIED_ENDPOINT = {
   lastReason: null,
   measurementSeen: TRUSTED_MEASUREMENT,
   measurementSource: 'REGISTRY',
+  measurementInRegistry: true as boolean | null,
   evidenceDigestSeen: 'sha256/AAAABBBBCCCCDDDDEEEEFFFF',
   evidenceDigestSeenHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
   // Two-factor trust (SUP-252): the approved deployment is the one answering.
@@ -144,6 +145,7 @@ const PENDING_ENDPOINT = {
   lastReason: null,
   measurementSeen: null,
   measurementSource: null,
+  measurementInRegistry: null,
   evidenceDigestSeen: null,
   evidenceDigestSeenHex: null,
   pinnedEvidenceDigest: null,

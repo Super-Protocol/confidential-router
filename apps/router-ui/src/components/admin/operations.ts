@@ -52,6 +52,7 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
     lastReason
     measurementSeen
     measurementSource
+    measurementInRegistry
     evidenceDigestSeen
     evidenceDigestSeenHex
     pinnedEvidenceDigest
@@ -135,6 +136,7 @@ export const EXTERNAL_ENDPOINT_VERDICT_QUERY = graphql(`
       lastReason
       measurementSeen
       measurementSource
+      measurementInRegistry
       evidenceDigestSeen
       evidenceDigestSeenHex
       pinnedEvidenceDigest

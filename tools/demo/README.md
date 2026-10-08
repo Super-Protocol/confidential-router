@@ -101,6 +101,21 @@ Whatever a browser cannot discover over HTTP — the session cookie, the workspa
 id, the plaintext key, the trusted root — is written to
 `test-output/demo-stack.json`. `docs/quickstart.md` drives it by hand.
 
+`CR_DEMO_EXTERNAL=1` additionally stands up an upstream in another deployment,
+the real egress sidecar that attests it, and a registered external model, and
+waits until a browser could actually inspect it — which is three waits in a row:
+the verdict, the digest that verdict named, and the evidence poller's pass over
+it. The handoff then carries an `external` block. It is a flag rather than the
+default because it costs two more processes and puts a second model in
+`/v1/models` and in the chat picker; only `playwright.secure.config.ts` asks for
+it, and every other suite's stack is unchanged.
+
+The handoff file is deleted before anything starts as well as on the way out. It
+is what a browser-driven suite waits on — Playwright's own readiness probe is the
+router's `/health`, which is true long before this script has finished — so a
+leftover file from a crashed run would satisfy that wait instantly with every
+value in it wrong.
+
 ## Timing
 
 The whole story runs in a few seconds on a laptop. The acceptance criterion for

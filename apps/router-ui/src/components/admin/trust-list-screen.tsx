@@ -41,17 +41,39 @@ const MEASUREMENT_PATTERN = /^[0-9a-f]{64}$/;
 
 /**
  * Normalises what an operator actually pastes: a measurement copied out of a
- * verification report arrives with a `0x` prefix, upper case, or wrapped in
- * whitespace, and none of those is a different value.
+ * verification report or the gatekeeper arrives with a `sha256:` or `0x`
+ * prefix, upper case, or wrapped in whitespace, and none of those is a different
+ * value. The same spellings router-api folds (`external-endpoints/measurement.ts`).
  */
 export function normaliseMeasurement(input: string): string {
-  return input.trim().toLowerCase().replace(/^0x/, '').replace(/\s+/g, '');
+  return input
+    .replace(/\s+/g, '')
+    .toLowerCase()
+    .replace(/^(sha256:|0x)/, '');
 }
 
+/**
+ * Shape check, with the mistakes worth naming named (SUP-251): an entry that is
+ * not a launch measurement can never match a cloud, so it admits nothing and the
+ * endpoint stays denied at `untrusted-root` while the list looks right.
+ *
+ * Shape cannot catch everything — an evidence digest in `sha256:<hex>` form is
+ * also 64 hex — so router-api additionally refuses any digest it has seen.
+ */
 export function measurementError(input: string): string | null {
-  const value = normaliseMeasurement(input);
-  if (value === '') return 'A measurement is required.';
-  if (!MEASUREMENT_PATTERN.test(value)) return 'A measurement is 64 hexadecimal characters.';
+  const raw = input.trim();
+  if (raw === '') return 'A launch measurement is required.';
+  if (/^sha256\//i.test(raw)) {
+    return 'That is an evidence digest or certificate fingerprint (sha256/…), not a launch measurement.';
+  }
+  const value = normaliseMeasurement(raw);
+  if (/^[0-9a-f]+$/.test(value) && value.length === 96) {
+    return 'That is a 96-character SHA-384 TEE register, not the launch measurement the router derives (64 hex).';
+  }
+  if (/^[0-9a-f]+$/.test(value) && value.length !== 64) {
+    return `A launch measurement is exactly 64 hex characters; this is ${value.length}.`;
+  }
+  if (!MEASUREMENT_PATTERN.test(value)) return 'A launch measurement is 64 hexadecimal characters (0–9, a–f).';
   return null;
 }
 
@@ -112,7 +134,7 @@ function AddMeasurementDialog({ open, onOpenChange }: { open: boolean; onOpenCha
 
         <form id="add-measurement-form" className="space-y-4" onSubmit={(event) => void submit(event)}>
           <div>
-            <Label htmlFor="measurement">Launch measurement</Label>
+            <Label htmlFor="measurement">Cloud launch measurement (64 hex)</Label>
             <Input
               id="measurement"
               value={measurement}
@@ -120,6 +142,9 @@ function AddMeasurementDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                 setMeasurement(event.target.value);
                 setFieldError(null);
               }}
+              // Judged on leaving the field too, so a pasted evidence digest is
+              // named before the operator reaches the note, not after submitting.
+              onBlur={() => setFieldError(measurement.trim() === '' ? null : measurementError(measurement))}
               placeholder="64 hexadecimal characters"
               className="font-mono"
               aria-describedby={fieldError ? 'measurement-error' : 'measurement-help'}
@@ -129,8 +154,9 @@ function AddMeasurementDialog({ open, onOpenChange }: { open: boolean; onOpenCha
               spellCheck={false}
             />
             <p id="measurement-help" className="mt-1 text-muted-foreground text-xs">
-              The normalised mrEnclave of the upstream cloud's root — the value a verification report prints. A leading{' '}
-              <span className="font-mono">0x</span> and upper case are accepted.
+              The launch measurement the router derived from a cloud's root CA attestation — copy it from an endpoint's
+              “Measurement seen”. Not an evidence digest or a certificate fingerprint. A{' '}
+              <span className="font-mono">sha256:</span> or <span className="font-mono">0x</span> prefix is accepted.
             </p>
             {fieldError ? (
               <p id="measurement-error" role="alert" className="mt-1 text-destructive text-xs">

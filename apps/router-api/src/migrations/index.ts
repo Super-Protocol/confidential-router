@@ -8,6 +8,7 @@ import { EndpointDeclaredImages1759300000000 } from './1759300000000-EndpointDec
 import { ExternalEndpoints1759400000000 } from './1759400000000-ExternalEndpoints.js';
 import { ExternalGenerationEndpoint1759500000000 } from './1759500000000-ExternalGenerationEndpoint.js';
 import { ExternalEndpointEvidence1759600000000 } from './1759600000000-ExternalEndpointEvidence.js';
+import { ExternalEndpointRegistrySignal1759700000000 } from './1759700000000-ExternalEndpointRegistrySignal.js';
 import { ExternalEndpointPinnedDigest1759800000000 } from './1759800000000-ExternalEndpointPinnedDigest.js';
 
 /**
@@ -27,5 +28,6 @@ export const MIGRATIONS = [
   ExternalEndpoints1759400000000,
   ExternalGenerationEndpoint1759500000000,
   ExternalEndpointEvidence1759600000000,
+  ExternalEndpointRegistrySignal1759700000000,
   ExternalEndpointPinnedDigest1759800000000,
 ];

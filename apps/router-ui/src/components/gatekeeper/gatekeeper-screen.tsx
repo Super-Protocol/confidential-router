@@ -1,7 +1,6 @@
 'use client';
 
 import { useQuery } from '@apollo/client/react';
-import { CodeBlock } from '@confidential-router/ui/components/code-block';
 import { EmptyState } from '@confidential-router/ui/components/empty-state';
 import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
@@ -12,7 +11,6 @@ import { ComingLater, DownloadTable, ReleaseMeta } from './downloads';
 import { FailModeExplainer } from './fail-mode-explainer';
 import { GATEKEEPER_RELEASE_QUERY } from './operations';
 import { GatekeeperSetupBlock } from './setup-block';
-import { UNSIGNED_MEASUREMENT_COMMAND, UNSIGNED_MEASUREMENT_NOTE } from './setup-commands';
 import { VerificationSteps } from './verification-steps';
 
 /**
@@ -94,8 +92,9 @@ export function GatekeeperScreen() {
               Set it up
             </h2>
             <p className="text-muted-foreground text-sm">
-              Six commands, already carrying this deployment's own API origin — paste them as they are. Nothing is
-              registered with the router at any point.
+              Five commands, already carrying this deployment's own API origin — paste them as they are. Nothing is
+              registered with the router at any point, and there is no certificate to trust: the gatekeeper checks this
+              cloud against the Super Protocol registry of signed measurements.
             </p>
           </div>
 
@@ -104,12 +103,6 @@ export function GatekeeperScreen() {
             two screens cannot drift (SUP-193).
           */}
           <GatekeeperSetupBlock />
-
-          <div className="rounded-lg border border-dashed p-4">
-            <p className="font-medium text-sm">If step 5 is denied for the whole cloud</p>
-            <p className="mt-1 mb-3 text-muted-foreground text-xs leading-relaxed">{UNSIGNED_MEASUREMENT_NOTE}</p>
-            <CodeBlock code={UNSIGNED_MEASUREMENT_COMMAND} copyLabel="Copy: accept this cloud's measurement" />
-          </div>
         </section>
       </div>
     </>

@@ -91,6 +91,15 @@ export class ExternalEndpoint {
   @Column({ type: 'varchar', length: 32, nullable: true })
   measurementSource!: string | null;
 
+  /**
+   * Whether the sidecar found {@link measurementSeen} signed in the Super Protocol
+   * registry (`attestedRoot.inRegistry`), reported on a denial too. Informational
+   * only: it never admits — the admin trust list is the sole authority (ADR-008 §3).
+   * Null when no measurement was derived.
+   */
+  @Column({ type: 'boolean', nullable: true })
+  measurementInRegistry!: boolean | null;
+
   /** Canonical `sha256/<base64url>` digest of the upstream deployment snapshot. */
   @Column({ type: 'varchar', length: 128, nullable: true })
   evidenceDigestSeen!: string | null;

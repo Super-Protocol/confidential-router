@@ -248,6 +248,15 @@ export class ExternalEndpointModel {
   })
   measurementSource!: string | null;
 
+  @Field(() => Boolean, {
+    nullable: true,
+    description:
+      'Whether the sidecar found the measurement it saw signed in the Super Protocol registry, reported on a ' +
+      'denial too. Informational only: it never admits — the admin trust list is the sole authority. Null when ' +
+      'no measurement was derived.',
+  })
+  measurementInRegistry!: boolean | null;
+
   @Field(() => String, { nullable: true, description: 'Canonical digest of the upstream deployment snapshot.' })
   evidenceDigestSeen!: string | null;
 

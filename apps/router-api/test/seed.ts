@@ -220,6 +220,7 @@ export async function seedExternalEndpoint(
     lastReason: null,
     measurementSeen: null,
     measurementSource: null,
+    measurementInRegistry: null,
     evidenceDigestSeen: null,
     pinnedEvidenceDigest: options.pinnedEvidenceDigest ?? null,
     pinnedCertFingerprint: null,

@@ -195,7 +195,15 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	if !result.OK {
 		report.Stage = string(result.Stage)
 		report.Reason = result.Reason
-		if report.AttestedRoot != nil && report.AttestedRoot.Reason != "" &&
+		if report.ByMeasurement() && result.Stage == attestation.StageUntrustedRoot {
+			// A cloud-measurement endpoint never trusts a root by certificate,
+			// so the store's "<root fingerprint> not in trusted store" answers a
+			// question this endpoint does not ask — and its bare hash reads as
+			// the value to put on the list, which it is not (SUP-251). The
+			// attested-root check is the only anchor here; its answer is the
+			// reason.
+			report.Reason = measurementRootDenial(report.AttestedRoot)
+		} else if report.AttestedRoot != nil && report.AttestedRoot.Reason != "" &&
 			result.Stage == attestation.StageUntrustedRoot {
 			// The manual store said "not listed"; say why the other anchor did
 			// not save it either, or the denial reads as though the attested
@@ -362,6 +370,28 @@ func cloudFactorDetail(report *status.Report) string {
 		return fmt.Sprintf("measurement %s is %s", report.AttestedRoot.Measurement, listed)
 	default:
 		return ""
+	}
+}
+
+// measurementRootDenial says why a `cloud-measurement` endpoint's root was not
+// admitted, in terms of the one thing such an endpoint is trusted by: the
+// launch measurement its root CA's TEE evidence attests.
+//
+// The two failures it separates call for different people. No measurement
+// means the evidence itself was unusable — an unrecognised format, a bad
+// signature, a key it does not commit to — and no list edit can fix that. A
+// measurement that was derived but not admitted is the admin's decision, and
+// naming the value is what lets them make it.
+func measurementRootDenial(root *status.AttestedRoot) string {
+	switch {
+	case root == nil:
+		return "could not extract a launch measurement from the upstream's root CA: " +
+			"the root certificate could not be checked for TEE evidence"
+	case root.Measurement == "":
+		return "could not extract a launch measurement from the upstream's root CA: " + root.Reason
+	default:
+		return "the upstream's root CA attests launch measurement " + root.Measurement +
+			", which is not admitted: " + root.Reason
 	}
 }
 

@@ -48,6 +48,7 @@ function discoveryOperations(calls: string[]) {
           lastReason: null,
           measurementSeen: status === 'PENDING' ? null : TRUSTED_MEASUREMENT,
           measurementSource: status === 'PENDING' ? null : 'REGISTRY',
+          measurementInRegistry: status === 'PENDING' ? null : true,
           evidenceDigestSeen: status === 'PENDING' ? null : 'sha256/AAAABBBBCCCCDDDDEEEEFFFF',
           evidenceDigestSeenHex:
             status === 'PENDING' ? null : '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
@@ -184,6 +185,7 @@ test.describe('the admin section', () => {
         lastReason: both ? null : 'refused by a trust factor',
         measurementSeen: ROGUE,
         measurementSource: 'REGISTRY',
+        measurementInRegistry: true,
         evidenceDigestSeen: published,
         evidenceDigestSeenHex: redeployed ? REDEPLOYED_HEX : APPROVED_HEX,
         pinnedEvidenceDigest: pinned,
