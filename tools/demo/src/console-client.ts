@@ -14,8 +14,18 @@
  */
 import type { RouterProcess } from './router-process.js';
 
-/** The console mailer's line: `Magic link for <email>: <url>`. */
-const MAGIC_LINK_LINE = /Magic link for [^:]+: (\S+?)(?:\\n|"|\s|$)/;
+/**
+ * The console mailer's line, for one address: `Magic link for <email>: <url>`.
+ *
+ * Keyed on the address rather than matching any of them, because the router's
+ * log is append-only and `waitForLog` answers from what is already in it. A
+ * stack that signs in a second person — a separate admin operator, say — would
+ * otherwise be handed the *first* person's link and silently end up with one
+ * session twice.
+ */
+function magicLinkLine(email: string): RegExp {
+  return new RegExp(`Magic link for ${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: (\\S+?)(?:\\\\n|"|\\s|$)`);
+}
 
 export interface ConsoleSession {
   readonly cookie: string;
@@ -51,7 +61,7 @@ export async function signIn(router: RouterProcess, email: string, origin: strin
     throw new Error(`magic-link request failed: ${requested.status} ${await requested.text()}`);
   }
 
-  const [, url] = await router.waitForLog(MAGIC_LINK_LINE);
+  const [, url] = await router.waitForLog(magicLinkLine(email));
   // The verify endpoint answers with a redirect and a Set-Cookie; following the
   // redirect would drop us on the console, which is not running here.
   const verified = await fetch(url, { redirect: 'manual' });

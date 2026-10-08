@@ -21,7 +21,9 @@
       },
       "dependsOn": [
         "@confidential-router/router-ui:build",
-        "@confidential-router/router-api:build"
+        "@confidential-router/router-api:build",
+        "gatekeeper:build",
+        "gatekeeper:build-teststand"
       ],
       "cache": false
     },

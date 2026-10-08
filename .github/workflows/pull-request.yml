@@ -195,6 +195,15 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # The secure-origin suite stands up the real egress sidecar beside the
+      # router, so this job builds Go now (ADR-008 §7, `tools/demo/serve.ts`
+      # under `CR_DEMO_EXTERNAL`).
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: apps/gatekeeper/go.sum
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -220,7 +229,10 @@ jobs:
       # Unconditional, and a separate target, because it is the only suite that
       # runs the console on a secure context — which is the only way tier 1's
       # verifier runs in a browser at all. `nx affected` would skip it on the
-      # changes most likely to break it, since the gate lives in a library.
+      # changes most likely to break it, since the gate lives in a library. It
+      # also covers the browser's own tier-1 run over a *relayed external*
+      # bundle, which needs the real egress sidecar to have reached a verdict
+      # first — hence the Go toolchain above.
       - name: Run the secure-origin e2e suite (tier 1, against the live stack)
         run: pnpm nx run @confidential-router/router-ui-e2e:e2e-secure --outputStyle=static
 

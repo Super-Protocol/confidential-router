@@ -29,12 +29,12 @@
  *   unchanged and apply here too: the upstream is an ordinary mock evidence host.
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MockEvidenceHost, startMockEvidenceHost } from '@confidential-router/mock-evidence-host';
 import { type MockLiteLLM, startMockLiteLLM } from '@confidential-router/mock-litellm';
-import type { ConsoleSession } from './console-client.js';
+import { type ConsoleSession, signIn } from './console-client.js';
 import { delay, REPO_ROOT } from './router-process.js';
 import { freePort, type RouterStack, type RouterStackOptions, startRouterStack } from './stack.js';
 
@@ -80,6 +80,14 @@ const STAND_WATCH_INTERVAL = '200ms';
  * and router-api's status poll.
  */
 const STATUS_TIMEOUT_MS = 30_000;
+
+/**
+ * How long the relay may take to have something to relay.
+ *
+ * Longer than a status flip because it is two waits in a row: the verdict, and
+ * then the evidence poller's own pass over the digest that verdict named.
+ */
+const RELAY_TIMEOUT_MS = 60_000;
 
 export interface ExternalUpstreamOptions {
   /** Milliseconds between streamed chunks; raise it to keep a generation alive. */
@@ -178,8 +186,21 @@ export async function startEgressSidecar(options: EgressSidecarOptions): Promise
   const fixturePath = join(directory, 'attested-root.json');
   let measurement = options.measurement ?? STAND_MEASUREMENT;
 
-  const writeFixture = (verdict: Record<string, unknown>): void =>
-    writeFileSync(fixturePath, `${JSON.stringify(verdict, null, 2)}\n`, 'utf8');
+  /*
+   * Written to a temporary file and renamed, because the reader is another
+   * process on its own schedule: `writeFileSync` truncates before it writes, so
+   * a plain write is briefly observable as half a document. The gatekeeper's
+   * verifier reads the fixture on every attestation — once every
+   * {@link STAND_REATTEST_INTERVAL} — and a parse failure there is a denial at
+   * `untrusted-root`, which is a *different* verdict from the one a rotation is
+   * supposed to produce. A rename is atomic, so the window does not exist; it is
+   * the same discipline `pkg/sidecar` asks of whoever renders its config.
+   */
+  const writeFixture = (verdict: Record<string, unknown>): void => {
+    const temporary = `${fixturePath}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(verdict, null, 2)}\n`, 'utf8');
+    renameSync(temporary, fixturePath);
+  };
   /*
    * `measurementSource: registry` and `inRegistry: true` deliberately: ruling 2
    * on SUP-221 makes the admin list the sole authority, so the stand reports the
@@ -353,6 +374,8 @@ export interface RegisteredExternalEndpoint {
   apiKeyPrefix: string | null;
   measurementSeen: string | null;
   measurementSource: string | null;
+  /** The upstream publication the admitting verdict observed — the relay's key (ADR-008 §7). */
+  evidenceDigestSeen: string | null;
   lastStage: string | null;
   lastReason: string | null;
   models: { id: string; name: string }[];
@@ -366,6 +389,7 @@ const ENDPOINT_FIELDS = `
   apiKeyPrefix
   measurementSeen
   measurementSource
+  evidenceDigestSeen
   lastStage
   lastReason
   models { id name }
@@ -452,6 +476,42 @@ export async function removeTrustedMeasurement(session: ConsoleSession, id: stri
 }
 
 /**
+ * Polls the raw-bundle relay until it hands back an upstream's publication.
+ *
+ * `GET /v1/evidence/:endpoint` answers 503 `evidence_not_fetched` until two
+ * things have happened in order: a verdict named a digest
+ * (`ExternalEndpoint.evidenceDigestSeen`), and the external evidence poller
+ * fetched the publication carrying it and bound it to the leaf the verdict
+ * pinned (ADR-008 §7). A verified endpoint is therefore *not* yet an
+ * inspectable one, and a browser-driven suite that opened the panel in between
+ * would be asserting against a spinner.
+ *
+ * Returns the bundle, which is the document the browser is about to verify —
+ * `jws`, `certChain` and the producer-asserted `tlsLeaf`, exactly as the
+ * upstream published them.
+ */
+export async function waitForRelayedBundle(apiBaseUrl: string, endpointName: string): Promise<Record<string, unknown>> {
+  const url = `${apiBaseUrl}/v1/evidence/${encodeURIComponent(endpointName)}`;
+  const deadline = Date.now() + RELAY_TIMEOUT_MS;
+  let last = '';
+  for (;;) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+      if (response.ok) {
+        return (await response.json()) as Record<string, unknown>;
+      }
+      last = `${response.status} ${(await response.text()).slice(0, 200)}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : String(error);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`${url} never relayed a bundle within ${RELAY_TIMEOUT_MS}ms (last: ${last})`);
+    }
+    await delay(250);
+  }
+}
+
+/**
  * Polls `externalEndpoint(id)` until its status is one of `wanted`.
  *
  * Polling, not a subscription or a log grep: the status an admin sees is the
@@ -491,6 +551,19 @@ export interface ExternalStandOptions {
   chunkGapMs?: number;
   /** Mirror every process's log to stderr. */
   verbose?: boolean;
+  /**
+   * Put a *second* address in `auth.adminEmails` and sign it in separately, so
+   * the operator who registers an upstream and the member who reads about one
+   * are different people.
+   *
+   * Omitted — the default — makes the stack's own session the admin, which is
+   * what a suite driving the control plane wants: one session, and generations
+   * metered to the workspace it is reading. A browser-driven suite wants the
+   * opposite, because the surface it is testing is what ruling 3 opened to any
+   * signed-in member, and a session that happened to be an admin would prove
+   * the wrong thing (ADR-008 §7).
+   */
+  adminEmail?: string;
   /** Extra `RouterStackOptions`, merged over the stand's own. */
   stack?: Omit<RouterStackOptions, 'adminEmails' | 'externalEndpoints' | 'extraTrustedRootsPem'>;
 }
@@ -503,8 +576,11 @@ export interface ExternalStand {
   /** The attesting egress, as the two real binaries. */
   readonly sidecar: EgressSidecar;
   /**
-   * The console session, which is an admin: `auth.adminEmails` carries its
-   * address, so the control plane's `AdminGuard` admits it (ADR-008 §7).
+   * The session the control plane's `AdminGuard` admits (ADR-008 §7).
+   *
+   * The same session as `stack.session` unless {@link
+   * ExternalStandOptions.adminEmail} asked for a separate operator, in which
+   * case `stack.session` is an ordinary member and this is the admin.
    */
   readonly admin: ConsoleSession;
   stop(): Promise<void>;
@@ -535,11 +611,12 @@ export async function startExternalStand(options: ExternalStandOptions = {}): Pr
     const seam = await externalSeam();
     started.push(async () => seam.cleanup());
 
-    const email = `admin-${Date.now().toString(36)}@confidential-router.local`;
+    const sessionEmail = options.stack?.email ?? `member-${Date.now().toString(36)}@confidential-router.local`;
+    const adminEmail = options.adminEmail ?? sessionEmail;
     const stack = await startRouterStack({
       ...options.stack,
-      email,
-      adminEmails: [email],
+      email: sessionEmail,
+      adminEmails: [adminEmail],
       externalEndpoints: seam.config,
       extraTrustedRootsPem: [upstream.evidenceHost.trustedRootPem],
       echoRouterLog: options.verbose,
@@ -547,10 +624,15 @@ export async function startExternalStand(options: ExternalStandOptions = {}): Pr
     });
     started.push(() => stack.stop());
 
+    // A second sign-in only when the two are different people. It gets no
+    // credits and no key: an operator registering an upstream spends nothing.
+    const admin =
+      adminEmail === sessionEmail ? stack.session : await signIn(stack.router, adminEmail, stack.session.origin);
+
     const sidecar = await startEgressSidecar({ configFile: seam.configFile, echoLog: options.verbose });
     started.push(() => sidecar.stop());
 
-    return { stack, upstream, sidecar, admin: stack.session, stop: unwind };
+    return { stack, upstream, sidecar, admin, stop: unwind };
   } catch (error) {
     await unwind();
     throw error;
