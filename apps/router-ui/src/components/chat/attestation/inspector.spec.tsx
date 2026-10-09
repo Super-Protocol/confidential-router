@@ -105,14 +105,16 @@ describe('the measurements panel', () => {
     expect(fieldValue('VMPL / report version')).toHaveTextContent('0 / v5');
   });
 
-  it('renders fingerprints in hex, the spelling the rest of the console uses', () => {
+  it('renders fingerprints in hex only, the spelling the rest of the console uses', () => {
     // SUP-115: every user-facing surface prints `sha256:<hex>`. The canonical
-    // base64url form is kept beside it, because that is what the bundle carries.
+    // base64url form is what the bundle carries, and it stays there: a second
+    // spelling beside the first was the leak SUP-255 closed.
     open();
     const digest = fieldValue('Evidence digest');
 
-    expect(digest).toHaveTextContent('sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs');
     expect(digest.querySelector('.font-mono')?.textContent).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(digest).not.toHaveTextContent('sha256/');
+    expect(fieldValue('Certificate fingerprint')).not.toHaveTextContent('sha256/');
   });
 
   it('offers a copy button per value rather than one for the panel', async () => {

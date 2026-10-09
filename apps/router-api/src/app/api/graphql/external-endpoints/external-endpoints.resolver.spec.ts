@@ -340,6 +340,9 @@ describe('the evidence summary (SUP-221 ruling 1)', () => {
     expect(endpoint.latestEvidence?.snapshotId).toBe('snap-now');
     expect(endpoint.events.map((entry) => entry.evidence?.snapshotId)).toEqual(['snap-now', 'snap-before']);
     expect(endpoint.events[1].evidence?.containerImages).toEqual(['ghcr.io/example/vllm@sha256:snap-before']);
+    // Every digest a screen renders travels in both spellings, so the timeline
+    // never has to show the canonical wire form (SUP-115, SUP-255).
+    expect(endpoint.events.map((entry) => entry.evidenceDigestHex)).toEqual(['01'.repeat(32), '02'.repeat(32)]);
   });
 
   it('asks only for the digests the page will render', async () => {

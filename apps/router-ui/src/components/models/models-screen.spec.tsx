@@ -125,14 +125,15 @@ describe('ModelsScreen, external models', () => {
     });
   }
 
-  it('badges the external row and leaves the built-in rows unbadged', async () => {
+  it('shows no "External" tag on any row — the serving topology is not the user’s concern', async () => {
     renderWithApollo(<ModelsScreen />, { mocks: [mixed()] });
     await screen.findByRole('table', { name: 'Model catalogue' });
 
-    expect(within(externalRow()).getByText('External')).toBeInTheDocument();
-    // One badge in the whole table: a label on the common case is a label nobody
-    // reads, and the information is "this one is different".
-    expect(screen.getAllByText('External')).toHaveLength(1);
+    // The row is still distinguishable by its attestation cell, which carries
+    // the external vocabulary; an origin tag beside the name told a user where
+    // the weights live, which is the admin section's business (SUP-255).
+    expect(screen.queryByText('External', { exact: true })).not.toBeInTheDocument();
+    expect(within(externalRow()).getByText('Verified by this router')).toBeInTheDocument();
   });
 
   it('carries the external vocabulary, and the own-endpoint vocabulary carries on beside it', async () => {
@@ -188,6 +189,7 @@ describe('ModelsScreen, external models', () => {
             status: 'DENIED_BY_THIS_ROUTER',
             measurementSeen: null,
             evidenceDigestSeen: null,
+            evidenceDigestSeenHex: null,
           }),
         }),
       ],

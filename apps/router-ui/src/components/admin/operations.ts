@@ -86,6 +86,7 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
       reason
       measurement
       evidenceDigest
+      evidenceDigestHex
       evidence {
         ...ExternalEndpointEvidenceFields
       }

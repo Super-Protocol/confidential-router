@@ -22,5 +22,6 @@ export const EXTERNAL_UPSTREAM_FIELDS = graphql(`
     lastCheckedAt
     measurementSeen
     evidenceDigestSeen
+    evidenceDigestSeenHex
   }
 `);

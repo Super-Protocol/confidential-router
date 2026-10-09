@@ -149,15 +149,26 @@ test.describe('Models, with an external endpoint', () => {
       .getByRole('row', { name: /Llama 3\.3 70B \(partner\)/ });
   }
 
-  test('badges the external row and nothing else', async ({ page, baseURL }) => {
+  test('tags no row as external — the serving topology is not shown to a user', async ({ page, baseURL }) => {
     await mockClipboard(page);
     await signIn(page, baseURL as string, mixed);
     await page.goto('/models');
 
-    await expect(externalRow(page).getByText('External')).toBeVisible();
-    // One badge in the whole table: the information is "this one is different",
-    // which an absent badge on everything else is what makes legible.
-    await expect(page.getByText('External', { exact: true })).toHaveCount(1);
+    await expect(externalRow(page)).toBeVisible();
+    await expect(page.getByText('External', { exact: true })).toHaveCount(0);
+  });
+
+  test('spells the upstream’s evidence digest in hex, never in the base64 wire form', async ({ page, baseURL }) => {
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, mixed);
+    await page.goto('/models');
+
+    await page.getByRole('button', { name: `Attestation of ${UPSTREAM_HOST}: Verified by this router` }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText(/^sha256:41de2c07/)).toBeVisible();
+    // The canonical `sha256/<base64url>` form is the wire format and stays
+    // there (SUP-115); this dialog is where it leaked in 0.15.0 (SUP-255).
+    await expect(dialog).not.toContainText(/sha256\//);
   });
 
   test('renders both vocabularies in one table, neither borrowing the other’s words', async ({ page, baseURL }) => {

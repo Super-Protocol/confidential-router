@@ -8,7 +8,6 @@ describe('navigation', () => {
       'Models',
       'Chat',
       'API Keys',
-      'Gatekeeper',
       'Activity',
       'Logs',
       'External endpoints',

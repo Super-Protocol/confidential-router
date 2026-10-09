@@ -42,4 +42,45 @@ describe('wiringSnippet', () => {
   it('honours a base URL other than the default listen address', () => {
     expect(wiringSnippet('node', { baseUrl: 'http://127.0.0.1:9000/v1' })).toContain('http://127.0.0.1:9000/v1');
   });
+
+  // SUP-255: two more clients, both configured by a file rather than a call, so
+  // what matters is that the file parses and names the gatekeeper where each
+  // tool looks for it.
+  it('writes VS Code a Custom Endpoint entry with the full chat-completions URL', () => {
+    const parsed = JSON.parse(wiringSnippet('vscode', { apiKey: 'sk-tee-v1-4f7a', model: 'gpt-oss:tdx' }));
+
+    expect(parsed).toEqual([
+      {
+        name: 'Confidential Router',
+        vendor: 'customendpoint',
+        apiKey: 'sk-tee-v1-4f7a',
+        models: [
+          {
+            id: 'gpt-oss:tdx',
+            name: 'gpt-oss:tdx',
+            url: `${GATEKEEPER_BASE_URL}/chat/completions`,
+            toolCalling: true,
+            vision: false,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('writes OpenCode an openai-compatible provider block keyed by the model id', () => {
+    const parsed = JSON.parse(wiringSnippet('opencode', { apiKey: 'sk-tee-v1-4f7a', model: 'gpt-oss:tdx' }));
+
+    expect(parsed.provider['confidential-router']).toEqual({
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Confidential Router',
+      options: { baseURL: GATEKEEPER_BASE_URL, apiKey: 'sk-tee-v1-4f7a' },
+      models: { 'gpt-oss:tdx': { name: 'gpt-oss:tdx' } },
+    });
+  });
+
+  it('tells the reader where each file-shaped snippet goes', () => {
+    for (const id of ['vscode', 'opencode'] as const) {
+      expect(SNIPPET_LANGUAGES.find((language) => language.id === id)?.hint).toBeTruthy();
+    }
+  });
 });

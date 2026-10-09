@@ -1,3 +1,4 @@
+import { evidenceDigestHex } from '@confidential-router/types';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -71,6 +72,8 @@ export interface ExternalCatalogueUpstream {
   lastCheckedAt: Date | null;
   measurementSeen: string | null;
   evidenceDigestSeen: string | null;
+  /** {@link evidenceDigestSeen} as hex — the one spelling a user-facing screen shows (SUP-115). */
+  evidenceDigestSeenHex: string | null;
 }
 
 /**
@@ -267,6 +270,22 @@ function catalogueEntryOf(row: Model, endpoint: ExternalEndpoint): ExternalCatal
       lastCheckedAt: endpoint.lastCheckedAt,
       measurementSeen: endpoint.measurementSeen,
       evidenceDigestSeen: endpoint.evidenceDigestSeen,
+      evidenceDigestSeenHex: digestHexOrNull(endpoint.evidenceDigestSeen),
     },
   };
+}
+
+/**
+ * The hex spelling of a stored canonical digest, or null when there is none or
+ * the stored value is not one the parser accepts. Null rather than a throw: the
+ * value is the sidecar's report, and one row it cannot spell must not take the
+ * whole catalogue down with it.
+ */
+function digestHexOrNull(digest: string | null): string | null {
+  if (!digest) return null;
+  try {
+    return evidenceDigestHex(digest);
+  } catch {
+    return null;
+  }
 }

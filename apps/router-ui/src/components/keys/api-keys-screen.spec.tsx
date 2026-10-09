@@ -135,6 +135,55 @@ describe('APIKeysScreen', () => {
     expect(snippet).toHaveTextContent('http://127.0.0.1:8787/v1');
   });
 
+  // SUP-255: the standalone Gatekeeper screen folded into this page, in the
+  // order a reader needs it — why, then the gatekeeper, then the client.
+  describe('How to connect', () => {
+    it('explains the connection, installs the gatekeeper and wires a client, in that order', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      const card = screen.getByRole('heading', { name: 'How to connect' }).closest('[id="how-to-connect"]');
+      expect(card).not.toBeNull();
+      const headings = within(card as HTMLElement)
+        .getAllByRole('heading', { level: 3 })
+        .map((heading) => heading.textContent);
+      expect(headings).toEqual([
+        '1.How the connection works, and why there is a gatekeeper',
+        '2.Install the gatekeeper and point it at this router',
+        '3.Point your client at it',
+      ]);
+      // The diagram and the shared setup block are the same components the
+      // old screen and the chat panel use, not copies.
+      expect(within(card as HTMLElement).getByRole('figure')).toBeInTheDocument();
+      expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
+    });
+
+    it('offers curl, Python, Node, VS Code and OpenCode examples with the key prefix filled in', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent);
+      for (const label of ['curl', 'Python', 'Node', 'VS Code', 'OpenCode']) {
+        expect(tabs).toContain(label);
+      }
+      await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('sk-tee-v1-4f…');
+      await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
+      expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
+    });
+
+    it('links the documentation site, which does not exist yet and is linked anyway', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      expect(screen.getByRole('link', { name: 'Details in the documentation' })).toHaveAttribute(
+        'href',
+        'https://docs.router.superprotocol.com/',
+      );
+    });
+  });
+
   describe('the create flow', () => {
     const created: MockedApiKey = { ...LIVE_KEY, id: 'key-3', name: 'ci-agent', prefix: 'sk-tee-v1-aa' };
     const SECRET = 'sk-tee-v1-aabbccddeeff00112233445566778899';

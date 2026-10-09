@@ -72,6 +72,7 @@ function externalEntry(overrides: Partial<ExternalCatalogueEntry> = {}): Externa
       lastCheckedAt: new Date('2026-10-06T12:00:00.000Z'),
       measurementSeen: 'a'.repeat(64),
       evidenceDigestSeen: 'sha256/upstream',
+      evidenceDigestSeenHex: null,
     },
     ...overrides,
   };
