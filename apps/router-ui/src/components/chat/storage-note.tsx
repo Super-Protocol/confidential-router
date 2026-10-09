@@ -1,7 +1,6 @@
 'use client';
 
-import { Popover, PopoverContent, PopoverTrigger } from '@confidential-router/ui/components/popover';
-import { Info } from 'lucide-react';
+import { InfoPopover } from '../info-popover';
 import type { HistoryCopy } from './verification/tiers';
 
 export interface StorageNoteProps {
@@ -36,36 +35,28 @@ export interface StorageNoteProps {
  */
 export function StorageNote({ copy, onRevealDelete }: StorageNoteProps) {
   return (
-    <div className="flex max-w-prose items-baseline gap-1.5">
+    <div className="flex items-center gap-1.5">
       <p className="text-foreground text-xs">{copy.summary}</p>
-      <Popover>
-        <PopoverTrigger
-          aria-label="What this means for your conversations"
-          className="shrink-0 rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        >
-          <Info className="size-3.5" aria-hidden="true" />
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-80 space-y-2 text-muted-foreground text-xs">
-          <p>
-            {copy.detail}
-            {onRevealDelete ? (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  onClick={onRevealDelete}
-                  className="rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                >
-                  Show the delete control
-                </button>
-                .
-              </>
-            ) : null}
-          </p>
-          {copy.maintenanceCaveat === null ? null : <p className="text-foreground">{copy.maintenanceCaveat}</p>}
-          <p>{copy.transport}</p>
-        </PopoverContent>
-      </Popover>
+      <InfoPopover label="What this means for your conversations">
+        <p>
+          {copy.detail}
+          {onRevealDelete ? (
+            <>
+              {' '}
+              <button
+                type="button"
+                onClick={onRevealDelete}
+                className="rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                Show the delete control
+              </button>
+              .
+            </>
+          ) : null}
+        </p>
+        {copy.maintenanceCaveat === null ? null : <p className="text-foreground">{copy.maintenanceCaveat}</p>}
+        <p>{copy.transport}</p>
+      </InfoPopover>
     </div>
   );
 }

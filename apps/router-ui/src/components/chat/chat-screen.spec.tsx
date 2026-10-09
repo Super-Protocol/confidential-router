@@ -107,6 +107,14 @@ const REFUSED_ROOT_GATE = {
   ],
 };
 
+/**
+ * The pill opens the caveat; the full report is one press further (SUP-262).
+ */
+async function openVerificationPanel(): Promise<void> {
+  await userEvent.click(screen.getByRole('button', { name: /what this means$/i }));
+  await userEvent.click(await screen.findByRole('button', { name: /what has been verified/i }));
+}
+
 function settings(overrides: Record<string, unknown> = {}) {
   return {
     __typename: 'ChatSettings' as const,
@@ -416,7 +424,29 @@ describe('the evidence gate', () => {
     render();
 
     expect(await screen.findByText('Verified by this page')).toBeInTheDocument();
-    expect(screen.getByText(/self-reported/i)).toBeInTheDocument();
+    /*
+     * The caveat is behind the pill since SUP-262, not beside it — but it is
+     * still the tier's own sentence, one press away, and the pill's accessible
+     * name says there is something to read. The honesty rule ("a label never
+     * travels alone") is now a placement rule, the same one `storage-note.tsx`
+     * established: the toolbar shows the claim, the reader opens the limit.
+     */
+    expect(screen.queryByText(/self-reported/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Verified by this page. What this means' }));
+    expect(await screen.findByText(/self-reported/i)).toBeInTheDocument();
+    expect(screen.getByText(/can refuse an endpoint this page unlocked/i)).toBeInTheDocument();
+  });
+
+  it('keeps the pill’s tone the tier’s: a self-report is never green', async () => {
+    // "Verified by this page" is deliberately weaker than "Verified by this
+    // router" (Models) and the extension's verdict; the colour is how a reader
+    // tells them apart at a glance, so the move behind a trigger must not
+    // flatten it (SUP-262 direction 3).
+    render();
+
+    const pill = await screen.findByText('Verified by this page');
+    expect(pill.closest('[data-slot="badge"]')?.className).toMatch(/bg-warning/);
+    expect(pill.closest('[data-slot="badge"]')?.className).not.toMatch(/bg-success/);
   });
 
   it('upgrades the badge when the extension verifies independently', async () => {
@@ -430,7 +460,7 @@ describe('the evidence gate', () => {
     render();
     await screen.findByText('Verified by this page');
 
-    await userEvent.click(screen.getByRole('button', { name: /what has been verified/i }));
+    await openVerificationPanel();
 
     expect(await screen.findByText('Evidence signature')).toBeInTheDocument();
     expect(screen.getByText('Root vouched for by Super Protocol')).toBeInTheDocument();
@@ -454,7 +484,7 @@ describe('the evidence gate', () => {
     render();
     await screen.findByText('Verified by this page');
 
-    await userEvent.click(screen.getByRole('button', { name: /what has been verified/i }));
+    await openVerificationPanel();
 
     expect(await screen.findByText(/may end in a refusal rather than a confirmation/i)).toBeInTheDocument();
   });
@@ -794,9 +824,13 @@ describe('a model in another deployment', () => {
 
     const note = await screen.findByText(/This model runs in another deployment/);
     expect(note).toHaveTextContent(verifiedUpstream().hostname);
-    // The badge is about this router; the note is what stops a reader reading it
-    // as a statement about where the prompt ends up.
-    expect(note).toHaveTextContent(/the badge above is about this router/i);
+    // The badge is about this router; the sentence that stops a reader reading
+    // it as a statement about where the prompt ends up is behind the ⓘ on the
+    // same line (SUP-262) — still there, still in the same words.
+    expect(screen.queryByText(/the badge above is about this router/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'What this means for your messages' }));
+    expect(await screen.findByText(/the badge above is about this router/i)).toBeInTheDocument();
+    expect(screen.getByText(/proxies over a channel it pinned/i)).toBeInTheDocument();
   });
 
   it('puts neither an origin tag nor a verdict in the picker row', async () => {

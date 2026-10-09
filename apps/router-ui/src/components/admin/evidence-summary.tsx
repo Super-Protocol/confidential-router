@@ -1,7 +1,8 @@
-import { Boxes, Container, Info } from 'lucide-react';
+import { Boxes, Container } from 'lucide-react';
 import type { ExternalEndpointEvidenceFieldsFragment } from '../../generated/graphql';
 import { formatTimestamp } from '../../lib/format';
 import { DigestValue } from '../evidence/digest-value';
+import { InfoPopover } from '../info-popover';
 
 export interface EvidenceSummaryProps {
   evidence: ExternalEndpointEvidenceFieldsFragment;
@@ -31,21 +32,21 @@ export function EvidenceSummary({ evidence, heading = 'Evidence summary', bare =
       className={bare ? 'space-y-3' : 'space-y-3 rounded-lg border bg-muted/30 p-4'}
       data-testid="evidence-summary"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h4 className="font-medium text-sm">{heading}</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <h4 className="font-medium text-sm">{heading}</h4>
+          <InfoPopover label="What this summary is for">
+            <p>
+              What this snapshot digest stands for. The digest is what an admin pins as the deployment trust factor, so
+              this is what a pin approves — read it before approving.
+            </p>
+          </InfoPopover>
+        </div>
         <p className="text-muted-foreground text-xs">
           Published {formatTimestamp(evidence.issuedAt)} · seen {formatTimestamp(evidence.fetchedAt)}
           {evidence.quoteFormat ? ` · ${evidence.quoteFormat}` : ''}
         </p>
       </div>
-
-      <p className="flex items-start gap-1.5 text-muted-foreground text-xs">
-        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-        <span>
-          What this snapshot digest stands for. The digest is what an admin pins as the deployment trust factor, so this
-          is what a pin approves — read it before approving.
-        </span>
-      </p>
 
       <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
         <dt className="text-muted-foreground">Snapshot digest</dt>

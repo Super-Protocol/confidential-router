@@ -140,6 +140,9 @@ test.describe('Chat', () => {
   test('reports the same thing in the verification panel, per check', async ({ page, baseURL }) => {
     await openChat(page, baseURL as string);
 
+    // The pill opens the tier's caveat; the full report is one press further
+    // (SUP-262). Both are read from the toolbar's one row.
+    await page.getByRole('button', { name: /what this means$/i }).click();
     await page.getByRole('button', { name: /what has been verified/i }).click();
 
     const dialog = page.getByRole('dialog');

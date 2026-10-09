@@ -10,6 +10,7 @@ import type { ExternalEndpointEvidenceFieldsFragment, ExternalEndpointFieldsFrag
 import { shortenDigest } from '../../lib/format';
 import { errorMessageOf } from '../../lib/graphql-error';
 import { DigestValue } from '../evidence/digest-value';
+import { InfoPopover } from '../info-popover';
 import { diffEvidence, isEmptyDiff } from './evidence-diff';
 import {
   ADD_TRUSTED_MEASUREMENT,
@@ -128,12 +129,14 @@ export function TrustFactors({ endpoint, isAdmin }: TrustFactorsProps) {
 
   return (
     <section aria-label="Trust factors" className="space-y-3" data-testid="trust-factors">
-      <div>
+      <div className="flex items-center gap-1.5">
         <h3 className="font-medium text-sm">Trust — both factors required</h3>
-        <p className="text-muted-foreground text-xs">
-          The cloud, by its launch measurement on the trust list, and this deployment, by the evidence digest pinned for
-          it. Either one alone admits nothing.
-        </p>
+        <InfoPopover label="How the two factors admit an endpoint">
+          <p>
+            The cloud, by its launch measurement on the trust list, and this deployment, by the evidence digest pinned
+            for it. Either one alone admits nothing.
+          </p>
+        </InfoPopover>
       </div>
 
       <div className="space-y-2 rounded-lg border p-3" data-testid="trust-factor-measurement">
