@@ -173,6 +173,22 @@ describe('APIKeysScreen', () => {
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
     });
 
+    it('keeps each step’s lead to one line, with the rest behind a ⓘ', async () => {
+      // A paragraph between a step's heading and the tabs it introduces was the
+      // gap SUP-262 closed; the words did not change, only where they are read.
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      expect(screen.getByText(/Five commands, already carrying this deployment/)).toBeInTheDocument();
+      expect(screen.queryByText(/there is no certificate to trust/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'About these commands' }));
+      expect(await screen.findByText(/there is no certificate to trust/)).toBeInTheDocument();
+
+      expect(screen.queryByText(/Keys are stored hashed/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
+      expect(await screen.findByText(/Keys are stored hashed/)).toBeInTheDocument();
+    });
+
     it('links the documentation site, which does not exist yet and is linked anyway', async () => {
       renderScreen();
       await screen.findByText('production-agent');

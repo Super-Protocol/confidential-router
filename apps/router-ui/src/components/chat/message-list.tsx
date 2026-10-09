@@ -36,7 +36,7 @@ export function MessageList({ messages, pending }: MessageListProps) {
   }, [messages, pending?.content]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 px-1 pt-1">
       {messages.map((message) => (
         <Bubble key={message.id} mine={message.role === 'USER'} content={message.content} error={message.error} />
       ))}
@@ -58,8 +58,8 @@ function Bubble({
   streaming?: boolean;
 }) {
   return (
-    <div className={cn('flex flex-col gap-1', mine ? 'items-end' : 'items-start')}>
-      <span className="px-1 text-muted-foreground text-xs">{mine ? 'You' : 'Model'}</span>
+    <div className={cn('flex flex-col gap-0.5', mine ? 'items-end' : 'items-start')}>
+      <span className="px-1.5 text-[11px] text-muted-foreground">{mine ? 'You' : 'Model'}</span>
       <div
         className={cn(
           'max-w-[min(42rem,90%)] whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm',

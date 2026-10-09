@@ -252,7 +252,21 @@ describe('ExternalEndpointsScreen', () => {
       renderScreen();
       const drawer = await openDrawer('qwen3-coder');
 
-      expect(within(drawer).getAllByText(/this is what a pin approves/)[0]).toBeInTheDocument();
+      // Behind the ⓘ on the summary's heading since SUP-262, in the same words;
+      // the popover is portalled, so it is read from the document, not the drawer.
+      expect(within(drawer).queryByText(/this is what a pin approves/)).not.toBeInTheDocument();
+      await userEvent.click(within(drawer).getAllByRole('button', { name: 'What this summary is for' })[0]);
+      expect(await screen.findByText(/this is what a pin approves/)).toBeInTheDocument();
+    });
+
+    it('keeps the two-factor explainer one press from its heading', async () => {
+      renderScreen();
+      const drawer = await openDrawer('qwen3-coder');
+
+      expect(within(drawer).getByText('Trust — both factors required')).toBeInTheDocument();
+      expect(within(drawer).queryByText(/Either one alone admits nothing/)).not.toBeInTheDocument();
+      await userEvent.click(within(drawer).getByRole('button', { name: 'How the two factors admit an endpoint' }));
+      expect(await screen.findByText(/Either one alone admits nothing/)).toBeInTheDocument();
     });
 
     it('shows the digest a change brought in, not only the one in force', async () => {

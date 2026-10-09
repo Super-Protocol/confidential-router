@@ -5,6 +5,7 @@ import { BookOpen } from 'lucide-react';
 import type * as React from 'react';
 import { DataFlowDiagram } from '../gatekeeper/data-flow-diagram';
 import { GatekeeperSetupBlock } from '../gatekeeper/setup-block';
+import { InfoPopover } from '../info-popover';
 import { WiringSnippet } from './wiring-snippet';
 
 /**
@@ -55,25 +56,40 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
           <DataFlowDiagram />
         </Step>
 
-        <Step number={2} title="Install the gatekeeper and point it at this router">
-          <p className="max-w-prose text-muted-foreground text-sm leading-relaxed">
-            Five commands, already carrying this deployment’s own API origin — paste them as they are. Nothing is
-            registered with the router at any point, and there is no certificate to trust: the gatekeeper checks this
-            cloud against the registry of signed measurements.
-          </p>
+        {/*
+          Steps 2 and 3 are the ones with controls in them, so their explainers
+          are one line each with the rest behind a ⓘ (SUP-262): a paragraph
+          between a heading and the tabs it introduces is exactly the gap a
+          reader's eye falls into. Step 1 is the explainer, and keeps its prose.
+        */}
+        <Step
+          number={2}
+          title="Install the gatekeeper and point it at this router"
+          lead="Five commands, already carrying this deployment’s own API origin — paste them as they are."
+          more={
+            <p>
+              Nothing is registered with the router at any point, and there is no certificate to trust: the gatekeeper
+              checks this cloud against the registry of signed measurements.
+            </p>
+          }
+          moreLabel="About these commands"
+        >
           <GatekeeperSetupBlock />
         </Step>
 
-        <Step number={3} title="Point your client at it">
-          <p className="max-w-prose text-muted-foreground text-sm leading-relaxed">
-            Any OpenAI-compatible client works. Swap the base URL for the gatekeeper’s local address and nothing else
-            changes.
-          </p>
+        <Step
+          number={3}
+          title="Point your client at it"
+          lead="Any OpenAI-compatible client works. Swap the base URL for the gatekeeper’s local address and nothing else changes."
+          more={
+            <p>
+              Keys are stored hashed, so the snippet carries only the visible prefix. Paste the full key you copied when
+              it was created.
+            </p>
+          }
+          moreLabel="About the key in this snippet"
+        >
           <WiringSnippet apiKey={apiKey} model={model} />
-          <p className="text-muted-foreground text-xs">
-            Keys are stored hashed, so the snippet carries only the visible prefix. Paste the full key you copied when
-            it was created.
-          </p>
         </Step>
 
         <p className="flex items-center gap-2 text-sm">
@@ -92,13 +108,36 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
   );
 }
 
-function Step({ number, title, children }: { number: number; title: string; children: React.ReactNode }) {
+function Step({
+  number,
+  title,
+  lead,
+  more,
+  moreLabel,
+  children,
+}: {
+  number: number;
+  title: string;
+  /** One line under the heading. Anything longer goes in `more`. */
+  lead?: string;
+  /** The rest of the explanation, behind a ⓘ at the end of the lead. */
+  more?: React.ReactNode;
+  /** The ⓘ's accessible name; required with `more`. */
+  moreLabel?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section aria-labelledby={`how-to-connect-step-${number}`} className="space-y-3">
       <h3 id={`how-to-connect-step-${number}`} className="font-semibold text-base">
         <span className="mr-2 font-mono text-muted-foreground">{number}.</span>
         {title}
       </h3>
+      {lead ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-sm">
+          <p>{lead}</p>
+          {more && moreLabel ? <InfoPopover label={moreLabel}>{more}</InfoPopover> : null}
+        </div>
+      ) : null}
       {children}
     </section>
   );

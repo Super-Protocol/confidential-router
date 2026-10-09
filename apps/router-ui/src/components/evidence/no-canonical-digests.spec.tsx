@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { evidenceSnapshot, publishedEndpoint, verifiedUpstream } from '../../test-fixtures';
 import { renderWithApollo } from '../../test-utils';
 import { EVIDENCE, REDEPLOYED_ENDPOINT, VERIFIED_ENDPOINT } from '../admin/admin-mocks';
+import { EndpointDrawer } from '../admin/endpoint-drawer';
 import { EndpointTimeline } from '../admin/endpoint-timeline';
 import { EvidenceSummary } from '../admin/evidence-summary';
 import { ExternalAttestationBadge } from '../external/external-attestation-badge';
@@ -42,6 +43,23 @@ describe('no surface shows a canonical sha256/<base64url> digest', () => {
     await screen.findByRole('dialog');
 
     expect(visibleText()).toContain(`sha256:${upstream.evidenceDigestSeenHex?.slice(0, 8)}`);
+    expect(visibleText()).not.toMatch(CANONICAL);
+  });
+
+  it('the dossier’s pinned certificate, which the API sends without a hex twin (SUP-262)', async () => {
+    // Stored as the canonical form on a live router, and printed as
+    // `sha256:sha256/…` by 0.16.0 — the one digest surface the 0.15.0 sweep
+    // missed because its fixture already held hex.
+    // 32 bytes of 0xab, as the router stores a pin: base64url, not hex.
+    const pinned = `sha256/${'q6ur'.repeat(10)}q6s`;
+    const endpoint = { ...VERIFIED_ENDPOINT, pinnedCertFingerprint: pinned };
+    expect(pinned).toMatch(CANONICAL);
+    renderWithApollo(<EndpointDrawer endpoint={endpoint} onOpenChange={() => undefined} isAdmin={false} />, {
+      mocks: [],
+    });
+    await screen.findAllByText('Pinned certificate');
+
+    expect(visibleText()).toContain(`sha256:${'ab'.repeat(32)}`);
     expect(visibleText()).not.toMatch(CANONICAL);
   });
 

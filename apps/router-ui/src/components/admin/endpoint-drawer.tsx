@@ -11,6 +11,7 @@ import {
 import type * as React from 'react';
 import type { ExternalEndpointFieldsFragment } from '../../generated/graphql';
 import { formatContextLength, formatPricePer1m, formatTimestamp } from '../../lib/format';
+import { fingerprintHex } from '../chat/attestation/hex';
 import { DigestValue } from '../evidence/digest-value';
 import { measurementSourceLabel, statusPresentation } from './endpoint-status';
 import { EndpointTimeline } from './endpoint-timeline';
@@ -96,8 +97,16 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
               {source ? <Field label="Measurement anchor">{source}</Field> : null}
               <Field label="Pinned certificate">
                 {endpoint.pinnedCertFingerprint ? (
+                  /*
+                    The API sends this one without a hex twin, in whatever form
+                    the pin was stored — on a live router that is the canonical
+                    `sha256/<base64url>`, which the 0.16.0 dossier printed as
+                    `sha256:sha256/…` (SUP-262). Converted here, as the chat
+                    inspector does for the bundle it fetched; a bare hex value
+                    passes through.
+                  */
                   <DigestValue
-                    hex={endpoint.pinnedCertFingerprint}
+                    hex={fingerprintHex(endpoint.pinnedCertFingerprint) ?? endpoint.pinnedCertFingerprint}
                     canonical={endpoint.pinnedCertFingerprint}
                     keep={8}
                   />
