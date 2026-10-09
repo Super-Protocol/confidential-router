@@ -64,4 +64,17 @@ export class UserProfileService {
   async rename(headers: IncomingHttpHeaders, name: string): Promise<SessionUser> {
     return this.auth.updateProfile(headers, { name: name.trim() });
   }
+
+  /** Whether the request's own account has a password to sign in with. */
+  async hasPassword(headers: IncomingHttpHeaders): Promise<boolean> {
+    return this.auth.hasPassword(headers);
+  }
+
+  /**
+   * Sets a first password on the request's own account. Headers rather than an
+   * id, for the reason `rename` gives.
+   */
+  async setPassword(headers: IncomingHttpHeaders, password: string): Promise<void> {
+    await this.auth.setPassword(headers, password);
+  }
 }

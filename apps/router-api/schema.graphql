@@ -1220,6 +1220,11 @@ type Mutation {
   Switches an endpoint off, or back on. Off removes it from the sidecar config entirely; on returns it to PENDING so it re-attests before it serves. Restricted to auth.adminEmails.
   """
   setExternalEndpointEnabled(id: ID!, input: SetExternalEndpointEnabledInput!): ExternalEndpoint!
+
+  """
+  Sets a first password on the viewer’s account. Refused when the account already has one.
+  """
+  setPassword(input: SetPasswordInput!): User!
   updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
 
   """
@@ -1472,6 +1477,13 @@ input SetExternalEndpointEnabledInput {
   enabled: Boolean!
 }
 
+input SetPasswordInput {
+  """
+  The password to sign in with. `auth.password.minLength` is enforced by the router, not here.
+  """
+  password: String!
+}
+
 """Which sign-in paths this deployment offers."""
 type SignInOptions {
   """
@@ -1579,6 +1591,11 @@ type User {
   """When the account was created — “member since” on the Profile screen."""
   createdAt: DateTime!
   email: String!
+
+  """
+  Whether the viewer can sign in with a password. False for an account made by the bootstrap token, a magic link or OAuth until `setPassword` gives it one.
+  """
+  hasPassword: Boolean!
   id: ID!
 
   """
