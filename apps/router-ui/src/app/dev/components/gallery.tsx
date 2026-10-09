@@ -92,7 +92,7 @@ export function ComponentGallery() {
     <div className="mx-auto max-w-4xl px-6 py-10">
       <PageHeader
         title="Components"
-        description="Every primitive in @confidential-router/ui. Switch theme and accent to review both modes and all four accents."
+        description="Every primitive in @confidential-router/ui. Switch the theme to review both modes."
         actions={<ThemeToggle />}
       />
 

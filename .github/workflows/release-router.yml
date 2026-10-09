@@ -217,6 +217,10 @@ jobs:
           curl -fsS http://localhost:3001/login > login.html
           grep -qi '<html' login.html
           grep -qF '__ROUTER_UI_PUBLIC_CONFIG__={"apiOrigin":"http://localhost:3000"' login.html
+          # The favicon lives in `public/`, which the standalone build leaves out
+          # unless the image copies it (SUP-263).
+          curl -fsSI http://localhost:3001/favicon.png | grep -qi '^content-type: image/png'
+          curl -fsSI http://localhost:3001/favicon.ico > /dev/null
 
       # End to end through the demo profile: the publisher signs a bundle, the
       # poller fetches it, and the router hands it back unchanged. The poll
