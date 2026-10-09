@@ -35,7 +35,7 @@ type Query {
 
 # ---------- models & endpoints ----------
 type Endpoint {
-  id: ID!, name: String!, hostname: String!, tee: String!            # tee = operator-declared label from router config
+  id: ID!, name: String!, hostname: String!, tee: String!            # tee = operator-declared label from router config; surfaces show latestEvidence.tee
   latestEvidence: EvidenceSnapshot                                   # what the platform currently publishes (may be null)
   evidenceState: EvidenceState!                                      # PUBLISHED | STALE | NOT_PUBLISHED (freshness only)
   tokensRouted30d: Int!
@@ -47,6 +47,7 @@ type EvidenceSnapshot {
   evidenceDigest: String!, evidenceDigestHex: String!                 # canonical wire form + the hex the console shows
   certFingerprint: String!, certFingerprintHex: String!
   quoteFormat: String                                                # rootCaTeeQuote.format, e.g. intel-tdx-quote-v5
+  tee: String                                                        # TEE the root cert's TeeEvidence branch names, e.g. "AMD SEV-SNP (Azure)"; read, never verified (SUP-270)
   containerImages: [String!]!
   chain: [CertSummary!]!                                             # subject / issuer / notAfter / sha256 per cert
   measurements: [Measurement!]!                                      # MRTD / RTMR* / GPU when present in the snapshot
