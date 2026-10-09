@@ -30,6 +30,7 @@ function build(
     preferences?: Partial<PreferencesService>;
     profiles?: Partial<UserProfileService>;
     adminEmails?: string;
+    env?: Record<string, string>;
   } = {},
 ) {
   return new ViewerResolver(
@@ -39,7 +40,10 @@ function build(
     } as unknown as WorkspaceScopeService,
     { get: vi.fn(), ...overrides.preferences } as unknown as PreferencesService,
     { require: vi.fn(), rename: vi.fn(), ...overrides.profiles } as unknown as UserProfileService,
-    testConfig(overrides.adminEmails === undefined ? {} : { CR_API_AUTH__ADMIN_EMAILS: overrides.adminEmails }),
+    testConfig({
+      ...(overrides.adminEmails === undefined ? {} : { CR_API_AUTH__ADMIN_EMAILS: overrides.adminEmails }),
+      ...overrides.env,
+    }),
   );
 }
 
@@ -133,5 +137,31 @@ describe('ViewerResolver.updateProfile', () => {
     expect(rename).toHaveBeenCalledWith(headers, 'Renamed');
     expect(viewer.name).toBe('Renamed');
     expect(viewer.workspaces).toHaveLength(2);
+  });
+});
+
+describe('ViewerResolver.setPassword', () => {
+  const headers: IncomingHttpHeaders = { cookie: 'cr_session=abc' };
+
+  it('sets the password with the caller’s own headers, and answers with the viewer', async () => {
+    const setPassword = vi.fn().mockResolvedValue(undefined);
+
+    const viewer = await build({
+      profiles: { setPassword },
+      env: { CR_API_AUTH__PASSWORD__ENABLED: 'true' },
+    }).setPassword(USER, { headers } as AuthenticatedRequest, { password: 'correct-horse-battery' });
+
+    expect(setPassword).toHaveBeenCalledWith(headers, 'correct-horse-battery');
+    expect(viewer.id).toBe(USER.id);
+  });
+
+  it('refuses before touching the account when password sign-in is off', async () => {
+    const setPassword = vi.fn();
+    const resolver = build({ profiles: { setPassword }, env: { CR_API_AUTH__PASSWORD__ENABLED: 'false' } });
+
+    await expect(
+      resolver.setPassword(USER, { headers } as AuthenticatedRequest, { password: 'correct-horse-battery' }),
+    ).rejects.toThrow(/not enabled/);
+    expect(setPassword).not.toHaveBeenCalled();
   });
 });

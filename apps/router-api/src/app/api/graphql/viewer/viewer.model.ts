@@ -1,5 +1,5 @@
 import { Field, ID, InputType, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { IsString, Length, Matches } from 'class-validator';
+import { IsString, Length, Matches, MaxLength } from 'class-validator';
 import type { WorkspaceRole } from '../../../db/entities/workspace-member.entity.js';
 
 /** Runtime twin of `WorkspaceRole`; the values are what the membership table holds. */
@@ -68,4 +68,16 @@ export class UpdateProfileInput {
   // into the empty name this field exists to prevent.
   @Matches(/\S/, { message: 'name must not be blank.' })
   name!: string;
+}
+
+@InputType('SetPasswordInput')
+export class SetPasswordInput {
+  @Field(() => String, {
+    description: 'The password to sign in with. `auth.password.minLength` is enforced by the router, not here.',
+  })
+  @IsString()
+  // Better Auth's own ceiling; the minimum is deployment configuration and is
+  // checked where it lives.
+  @MaxLength(128)
+  password!: string;
 }

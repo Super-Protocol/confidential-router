@@ -1,4 +1,4 @@
-import { Inject, UseGuards } from '@nestjs/common';
+import { BadRequestException, Inject, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { Args, GraphQLISODateTime, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import {
@@ -14,7 +14,7 @@ import { routerConfig } from '../../../config.js';
 import { PreferencesService } from '../../../preferences/index.js';
 import { GqlRequest } from '../common/gql-request.decorator.js';
 import { preferencesModel, UserPreferencesModel } from '../preferences/preferences.model.js';
-import { UpdateProfileInput, ViewerModel } from './viewer.model.js';
+import { SetPasswordInput, UpdateProfileInput, ViewerModel } from './viewer.model.js';
 
 /**
  * The viewer: who is signed in, where they may act, and what they have set.
@@ -69,6 +69,43 @@ export class ViewerResolver {
     @Args('input') input: UpdateProfileInput,
   ): Promise<ViewerModel> {
     return this.viewerModel(await this.profiles.rename(request.headers, input.name));
+  }
+
+  /**
+   * Resolved on demand, from the request's own session: only Profile asks, and
+   * it is a read of the auth tables every other page load has no use for.
+   */
+  @ResolveField(() => Boolean, {
+    description:
+      'Whether the viewer can sign in with a password. False for an account made by the bootstrap token, a ' +
+      'magic link or OAuth until `setPassword` gives it one.',
+  })
+  async hasPassword(@GqlRequest() request: AuthenticatedRequest): Promise<boolean> {
+    return this.profiles.hasPassword(request.headers);
+  }
+
+  /**
+   * The way back in for an account that has none but this session (SUP-267):
+   * on a marketplace install with no mailer the bootstrapped admin otherwise
+   * loses the deployment when the cookie expires. Refused once a password
+   * exists — changing one needs the old one, at `/auth/change-password`.
+   */
+  @Mutation(() => ViewerModel, {
+    description: 'Sets a first password on the viewer’s account. Refused when the account already has one.',
+  })
+  async setPassword(
+    @CurrentUser() user: SessionUser,
+    @GqlRequest() request: AuthenticatedRequest,
+    @Args('input') input: SetPasswordInput,
+  ): Promise<ViewerModel> {
+    // Better Auth's `setPassword` does not look at whether the provider is on,
+    // and a password nobody can sign in with is worse than none: it reads as a
+    // way in that is not there.
+    if (!this.config.auth.password.enabled) {
+      throw new BadRequestException('Password sign-in is not enabled on this deployment.');
+    }
+    await this.profiles.setPassword(request.headers, input.password);
+    return this.viewerModel(user);
   }
 
   private async viewerModel(user: SessionUser): Promise<ViewerModel> {
