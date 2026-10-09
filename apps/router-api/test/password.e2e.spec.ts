@@ -226,3 +226,101 @@ describe('a mailer-less deployment, end to end', () => {
     expect(await options(current)).toMatchObject({ bootstrap: false, password: true });
   });
 });
+
+describe('setting a first password on an account that has none (SUP-267)', () => {
+  const token = 'bootstrap-token-32-characters-ok';
+  const ADMIN = 'admin@example.test';
+  const HAS_PASSWORD_QUERY = '{ me { hasPassword } }';
+  const SET_PASSWORD = 'mutation ($input: SetPasswordInput!) { setPassword(input: $input) { email hasPassword } }';
+
+  function graphql(current: Harness, cookies: string[], body: { query: string; variables?: Record<string, unknown> }) {
+    return request(current.app.getHttpServer()).post('/graphql').set('Cookie', cookies).send(body);
+  }
+
+  async function bootstrapped(env: Record<string, string> = {}) {
+    const current = await passwordHarness({
+      CR_API_AUTH__BOOTSTRAP_TOKEN: token,
+      CR_API_AUTH__BOOTSTRAP_EMAIL: ADMIN,
+      ...env,
+    });
+    const admin = await request(current.app.getHttpServer()).post('/auth/bootstrap').send({ token }).expect(200);
+    return { current, cookies: sessionCookiesOf(admin) };
+  }
+
+  it('lets the bootstrapped admin sign in with a password once they have set one', async () => {
+    const { current, cookies } = await bootstrapped();
+
+    // The bootstrap token creates an account with no credential at all: before
+    // this, the session it answered with was the only way back in.
+    const before = await graphql(current, cookies, { query: HAS_PASSWORD_QUERY }).expect(200);
+    expect(before.body.data.me.hasPassword).toBe(false);
+    await signIn(current, { email: ADMIN, password: PASSWORD }).expect(401);
+
+    const set = await graphql(current, cookies, {
+      query: SET_PASSWORD,
+      variables: { input: { password: PASSWORD } },
+    }).expect(200);
+    expect(set.body.errors).toBeUndefined();
+    expect(set.body.data.setPassword).toEqual({ email: ADMIN, hasPassword: true });
+
+    const signedIn = await signIn(current, { email: ADMIN, password: PASSWORD }).expect(200);
+    const viewer = await me(current, sessionCookiesOf(signedIn)).expect(200);
+    expect(viewer.body.data.me.email).toBe(ADMIN);
+  });
+
+  it('refuses to replace a password that is already set — that needs the old one', async () => {
+    const { current, cookies } = await bootstrapped();
+    await graphql(current, cookies, { query: SET_PASSWORD, variables: { input: { password: PASSWORD } } }).expect(200);
+
+    const again = await graphql(current, cookies, {
+      query: SET_PASSWORD,
+      variables: { input: { password: 'another-long-password' } },
+    });
+    expect(again.body.errors?.[0]?.message).toMatch(/already/i);
+
+    // The first one still works, and the attempted replacement does not.
+    await signIn(current, { email: ADMIN, password: PASSWORD }).expect(200);
+    await signIn(current, { email: ADMIN, password: 'another-long-password' }).expect(401);
+  });
+
+  it('reports a password-signed-up account as already having one', async () => {
+    const current = await passwordHarness();
+    const created = await signUp(current, { email: EMAIL, password: PASSWORD, name: 'Some One' }).expect(200);
+
+    const viewer = await graphql(current, sessionCookiesOf(created), { query: HAS_PASSWORD_QUERY }).expect(200);
+    expect(viewer.body.data.me.hasPassword).toBe(true);
+  });
+
+  it('holds a first password to the deployment’s minimum length', async () => {
+    const { current, cookies } = await bootstrapped({ CR_API_AUTH__PASSWORD__MIN_LENGTH: '32' });
+
+    const short = await graphql(current, cookies, {
+      query: SET_PASSWORD,
+      variables: { input: { password: PASSWORD } },
+    });
+    expect(short.body.errors?.[0]?.message).toMatch(/short/i);
+
+    const viewer = await graphql(current, cookies, { query: HAS_PASSWORD_QUERY }).expect(200);
+    expect(viewer.body.data.me.hasPassword).toBe(false);
+  });
+
+  it('refuses on a deployment that did not enable password sign-in', async () => {
+    const { current, cookies } = await bootstrapped({ CR_API_AUTH__PASSWORD__ENABLED: 'false' });
+
+    const refused = await graphql(current, cookies, {
+      query: SET_PASSWORD,
+      variables: { input: { password: PASSWORD } },
+    });
+    expect(refused.body.errors?.[0]?.message).toMatch(/not enabled/i);
+
+    const viewer = await graphql(current, cookies, { query: HAS_PASSWORD_QUERY }).expect(200);
+    expect(viewer.body.data.me.hasPassword).toBe(false);
+  });
+
+  it('needs a session', async () => {
+    const current = await passwordHarness();
+
+    const anonymous = await graphql(current, [], { query: SET_PASSWORD, variables: { input: { password: PASSWORD } } });
+    expect(anonymous.body.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
+  });
+});

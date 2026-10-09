@@ -1,7 +1,8 @@
 import { graphql } from '../../generated';
 
 /**
- * The whole screen in one round trip: who the viewer is, what the workspace
+ * The whole screen in one round trip: who the viewer is — and whether they can
+ * sign in again without this session — what the workspace
  * spent over the last week, which models it went on, and the days a generation
  * came back with published evidence.
  */
@@ -13,6 +14,11 @@ export const PROFILE_QUERY = graphql(`
       email
       avatarUrl
       createdAt
+      hasPassword
+    }
+    signInOptions {
+      password
+      passwordMinLength
     }
     activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {
       bucket
@@ -44,6 +50,24 @@ export const UPDATE_PROFILE = graphql(`
       email
       avatarUrl
       createdAt
+    }
+  }
+`);
+
+/**
+ * A first password for an account that has none (SUP-267). The whole `User`
+ * comes back for the reason `UPDATE_PROFILE` gives; `hasPassword` flipping in
+ * the cache is what takes the card off the screen.
+ */
+export const SET_PASSWORD = graphql(`
+  mutation SetPassword($input: SetPasswordInput!) {
+    setPassword(input: $input) {
+      id
+      name
+      email
+      avatarUrl
+      createdAt
+      hasPassword
     }
   }
 `);

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lastUtcDays } from '../../lib/date-range';
 import { renderWithSession, TEST_VIEWER, TEST_WORKSPACES } from '../../test-utils';
 import { typedSessionMock } from '../typed-session';
-import { PROFILE_QUERY, UPDATE_PROFILE } from './operations';
+import { PROFILE_QUERY, SET_PASSWORD, UPDATE_PROFILE } from './operations';
 import { HEATMAP_DAYS, SPEND_DAYS } from './profile-data';
 import { ProfileScreen } from './profile-screen';
 
@@ -31,7 +31,13 @@ const ME = {
   email: TEST_VIEWER.email,
   avatarUrl: null,
   createdAt: '2026-04-02T08:00:00.000Z',
+  hasPassword: true,
 };
+
+/** The account the bootstrap token creates: no credential at all (SUP-267). */
+const NO_PASSWORD = { ...ME, hasPassword: false };
+
+const SIGN_IN_OPTIONS = { __typename: 'SignInOptions' as const, password: true, passwordMinLength: 12 };
 
 function series() {
   return Array.from({ length: SPEND_DAYS }, (_, index) => ({
@@ -53,6 +59,7 @@ function profileMock(overrides: Record<string, unknown> = {}): MockLink.MockedRe
     result: {
       data: {
         me: ME,
+        signInOptions: SIGN_IN_OPTIONS,
         activitySeries: series(),
         usageByModel: [
           {
@@ -182,5 +189,75 @@ describe('ProfileScreen', () => {
     });
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The profile could not be loaded');
+  });
+
+  describe('an account with no password (SUP-267)', () => {
+    const PASSWORD = 'correct-horse-battery';
+
+    it('offers to set one, and says why', async () => {
+      renderWithSession(<ProfileScreen />, { mocks: [typedSessionMock(), profileMock({ me: NO_PASSWORD })] });
+
+      expect(await screen.findByText('Set a password')).toBeInTheDocument();
+      expect(screen.getByText(/this browser session is your only way in/)).toBeInTheDocument();
+      expect(screen.getByText(/At least 12 characters/)).toBeInTheDocument();
+    });
+
+    it('sets it, and takes the card away once the account has one', async () => {
+      renderWithSession(<ProfileScreen />, {
+        mocks: [
+          typedSessionMock(),
+          profileMock({ me: NO_PASSWORD }),
+          {
+            request: { query: SET_PASSWORD, variables: { input: { password: PASSWORD } } },
+            result: { data: { setPassword: ME } },
+          },
+        ],
+      });
+
+      await userEvent.type(await screen.findByLabelText('New password'), PASSWORD);
+      await userEvent.type(screen.getByLabelText('Confirm password'), PASSWORD);
+      await userEvent.click(screen.getByRole('button', { name: 'Set password' }));
+
+      await waitFor(() => expect(toasts.success).toHaveBeenCalledWith(expect.stringMatching(/^Password set\./)));
+      await waitFor(() => expect(screen.queryByText('Set a password')).not.toBeInTheDocument());
+    });
+
+    it('keeps the button inert below the deployment’s minimum', async () => {
+      renderWithSession(<ProfileScreen />, { mocks: [typedSessionMock(), profileMock({ me: NO_PASSWORD })] });
+
+      await userEvent.type(await screen.findByLabelText('New password'), 'short');
+      await userEvent.type(screen.getByLabelText('Confirm password'), 'short');
+      expect(screen.getByRole('button', { name: 'Set password' })).toBeDisabled();
+    });
+
+    it('refuses two passwords that differ instead of sending either', async () => {
+      renderWithSession(<ProfileScreen />, { mocks: [typedSessionMock(), profileMock({ me: NO_PASSWORD })] });
+
+      await userEvent.type(await screen.findByLabelText('New password'), PASSWORD);
+      await userEvent.type(screen.getByLabelText('Confirm password'), `${PASSWORD}!`);
+      await userEvent.click(screen.getByRole('button', { name: 'Set password' }));
+
+      expect(await screen.findByText('The two passwords do not match.')).toBeInTheDocument();
+      expect(toasts.success).not.toHaveBeenCalled();
+    });
+
+    it('is not offered on a deployment that does not sign in with passwords', async () => {
+      renderWithSession(<ProfileScreen />, {
+        mocks: [
+          typedSessionMock(),
+          profileMock({ me: NO_PASSWORD, signInOptions: { ...SIGN_IN_OPTIONS, password: false } }),
+        ],
+      });
+
+      await screen.findByText('Dev Eloper');
+      expect(screen.queryByText('Set a password')).not.toBeInTheDocument();
+    });
+  });
+
+  it('offers no password card to an account that already has one', async () => {
+    renderWithSession(<ProfileScreen />, { mocks: [typedSessionMock(), profileMock()] });
+
+    await screen.findByText('Dev Eloper');
+    expect(screen.queryByText('Set a password')).not.toBeInTheDocument();
   });
 });
