@@ -46,6 +46,7 @@ import { InviteWithdrawalModel } from './invites.model.js';
 export class InviteAdminResolver {
   private readonly logger = new Logger(InviteAdminResolver.name);
 
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     private readonly admin: InviteAdminService,
     private readonly stats: InviteStatsService,
