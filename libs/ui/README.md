@@ -15,9 +15,9 @@ swarm-cloud's `libs/ui/src/styles/globals.css` and reconciled with the
   `<html>`.
 - Cards sit one step off the page background in dark mode (`0.185` vs `0.145`)
   so a surface reads without a shadow.
-- `--brand*` is the accent, separate from `--primary`. Four curated accents —
-  `indigo` (default), `emerald`, `lime`, `violet` — are selected with
-  `data-accent` on `<html>`; see `ThemeProvider` / `accentScript`.
+- `--brand*` is the accent, separate from `--primary`. There is one accent,
+  indigo, fixed in the tokens (the prototype's alternatives were design
+  exploration, not a product setting).
 - `--brand-emphasis` is the accent tone that is legible *as text* on
   `--brand-muted`; `--brand` itself is a fill colour. Using the fill colour for
   text is the usual way an accent fails contrast.
