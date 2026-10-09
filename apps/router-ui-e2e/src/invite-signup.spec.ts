@@ -31,6 +31,7 @@ const SIGN_IN_OPTIONS = {
     magicLink: false,
     password: true,
     passwordMinLength: 12,
+    passwordReset: false,
     inviteRequired: false,
   },
 };

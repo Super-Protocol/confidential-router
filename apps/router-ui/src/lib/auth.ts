@@ -163,6 +163,27 @@ export async function signInWithBootstrapToken(token: string): Promise<void> {
   await postToAuth('/bootstrap', { token });
 }
 
+/**
+ * Asks the router to mail a password reset link (SUP-269).
+ *
+ * Resolves the same way whether or not the address has an account — the router
+ * answers identically either way, so the console can only ever say "if there
+ * is an account, a link is on its way". No `redirectTo` is sent: the router
+ * builds the link on this console's own `/reset-password` and ignores one.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await postToAuth('/request-password-reset', { email });
+}
+
+/**
+ * Sets a new password with the token from a reset mail. Signs nothing in: the
+ * router revokes every session the account had, and the viewer signs in with
+ * the new password afterwards.
+ */
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await postToAuth('/reset-password', { token, newPassword });
+}
+
 export async function signOut(): Promise<void> {
   try {
     await postToAuth('/sign-out', {});

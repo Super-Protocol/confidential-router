@@ -61,7 +61,12 @@ function routeFetch(handlers: { invite?: unknown; signUp?: Response }): void {
 
 /** A marketplace deployment: passwords are the only self-service way in. */
 function optionsMock(
-  overrides: Partial<{ password: boolean; passwordMinLength: number; inviteRequired: boolean }> = {},
+  overrides: Partial<{
+    password: boolean;
+    passwordMinLength: number;
+    passwordReset: boolean;
+    inviteRequired: boolean;
+  }> = {},
 ) {
   return {
     request: { query: SIGN_IN_OPTIONS_QUERY },
@@ -75,6 +80,7 @@ function optionsMock(
           magicLink: false,
           password: true,
           passwordMinLength: 12,
+          passwordReset: false,
           inviteRequired: false,
           ...overrides,
         },
@@ -147,6 +153,17 @@ describe('SignUpForm', () => {
 
     await userEvent.type(screen.getByLabelText('Password'), 'defg');
     expect(screen.getByRole('button', { name: 'Create account' })).toBeEnabled();
+  });
+
+  it('warns that a password cannot be reset only where that is true (SUP-269)', async () => {
+    routeFetch({});
+    const { unmount } = renderForm([optionsMock({ passwordReset: false })]);
+    expect(await screen.findByText(/There is no password reset on this deployment/)).toBeInTheDocument();
+    unmount();
+
+    renderForm([optionsMock({ passwordReset: true })]);
+    expect(await screen.findByText('At least 12 characters.')).toBeInTheDocument();
+    expect(screen.queryByText(/There is no password reset/)).not.toBeInTheDocument();
   });
 
   it('points a taken address at sign-in instead of restating the error', async () => {

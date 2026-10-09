@@ -1506,7 +1506,7 @@ type SignInOptions {
   magicLink: Boolean!
 
   """
-  Email and password sign-in and sign-up are enabled. There is no email verification and no password reset: this path exists for deployments with no mail delivery at all.
+  Email and password sign-in and sign-up are enabled. There is no email verification; password reset is offered only where `passwordReset` says so.
   """
   password: Boolean!
 
@@ -1514,6 +1514,11 @@ type SignInOptions {
   The shortest password this deployment accepts, so the sign-up form can state the rule instead of discovering it. Meaningless while `password` is false.
   """
   passwordMinLength: Int!
+
+  """
+  A forgotten password can be reset by mail: passwords are enabled and the deployment has a mailer. While false the reset endpoints answer 404 and the console offers no "Forgot password?" link.
+  """
+  passwordReset: Boolean!
 }
 
 enum SortDirection {

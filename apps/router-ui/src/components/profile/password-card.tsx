@@ -13,6 +13,8 @@ import { SET_PASSWORD } from './operations';
 export interface PasswordCardProps {
   /** `auth.password.minLength`, read back from the router so the rule shown is the one enforced. */
   minLength: number;
+  /** A forgotten password can be reset by mail here (SUP-269), so the hint need not warn that it cannot. */
+  resettable?: boolean;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface PasswordCardProps {
  * the account has no password and the deployment signs in with one; once set,
  * changing it is not this card's job.
  */
-export function PasswordCard({ minLength }: PasswordCardProps) {
+export function PasswordCard({ minLength, resettable = false }: PasswordCardProps) {
   const [password, setPassword] = React.useState('');
   const [confirmation, setConfirmation] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
@@ -88,7 +90,9 @@ export function PasswordCard({ minLength }: PasswordCardProps) {
             </p>
           ) : (
             <p id="profile-password-hint" className="text-muted-foreground text-xs">
-              At least {minLength} characters. There is no password reset on this deployment, so keep it somewhere safe.
+              {resettable
+                ? `At least ${minLength} characters.`
+                : `At least ${minLength} characters. There is no password reset on this deployment, so keep it somewhere safe.`}
             </p>
           )}
           <Button type="submit" disabled={loading || password.length < minLength || confirmation.length === 0}>

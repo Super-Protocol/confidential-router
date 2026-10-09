@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { isPublicPath } from './lib/public-paths';
+import { isOpenPath, isPublicPath } from './lib/public-paths';
 import { SIGNED_IN_COOKIE_NAME } from './lib/signed-in-cookie';
 
 /**
@@ -29,7 +29,7 @@ export default function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (signedIn && isPublic) {
+  if (signedIn && isPublic && !isOpenPath(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
     url.search = '';

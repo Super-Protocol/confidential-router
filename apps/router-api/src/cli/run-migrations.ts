@@ -34,8 +34,11 @@ async function main(): Promise<void> {
         config,
         // Migrations never send anything; a mailer that refuses to be used makes
         // that explicit instead of quietly instantiating a real one.
-        mailer: {
-          send: async () => {
+        mail: {
+          sendMagicLink: async () => {
+            throw new Error('The migration runner must not send email.');
+          },
+          requestPasswordReset: () => {
             throw new Error('The migration runner must not send email.');
           },
         },

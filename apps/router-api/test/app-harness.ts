@@ -9,17 +9,46 @@ import { dump } from 'js-yaml';
 import request from 'supertest';
 import { ANALYTICS_SINK } from '../src/app/analytics/index.js';
 import { AppModule } from '../src/app/app.module.js';
-import { MAGIC_LINK_MAILER, type MagicLinkMailer, type MagicLinkMessage } from '../src/app/auth/index.js';
 import { configureApp } from '../src/app/bootstrap.js';
 import { routerConfig } from '../src/app/config.js';
+import {
+  MAIL_TRANSPORT,
+  type MailKind,
+  type MailMessage,
+  MailService,
+  type MailTransport,
+} from '../src/app/mail/index.js';
 import { RecordingAnalyticsSink } from './analytics-recorder.js';
 
-/** Captures magic links instead of mailing them, so a test can follow one. */
-export class CapturingMailer implements MagicLinkMailer {
-  readonly sent: MagicLinkMessage[] = [];
+/** A captured magic link, in the shape the suites have always read it. */
+export interface MagicLinkMessage {
+  email: string;
+  url: string;
+}
 
-  async send(message: MagicLinkMessage): Promise<void> {
-    this.sent.push(message);
+/**
+ * Captures every outgoing mail instead of delivering it, so a test can follow
+ * the link in it. Rendering, the throttles and the decision whether to send at
+ * all run for real — only the hop out of the process is replaced.
+ */
+export class CapturingMailer implements MailTransport {
+  readonly provider = 'console' as const;
+  readonly messages: MailMessage[] = [];
+
+  async send(message: MailMessage): Promise<void> {
+    this.messages.push(message);
+  }
+
+  async verify(): Promise<void> {}
+
+  /** Every message of one kind, oldest first. */
+  ofKind(kind: MailKind): MailMessage[] {
+    return this.messages.filter((message) => message.kind === kind);
+  }
+
+  /** Magic links only, as before SUP-269 — a welcome mail landing after one must not shadow it. */
+  get sent(): MagicLinkMessage[] {
+    return this.ofKind('magic-link').map((message) => ({ email: message.to, url: message.link ?? '' }));
   }
 
   get last(): MagicLinkMessage {
@@ -34,6 +63,8 @@ export class CapturingMailer implements MagicLinkMailer {
 export interface Harness {
   app: INestApplication;
   mailer: CapturingMailer;
+  /** Waits for every fire-and-forget mail (reset, welcome) started so far. */
+  settleMail(): Promise<void>;
   /** Every product event the application captured. See `RecordingAnalyticsSink`. */
   events: RecordingAnalyticsSink;
   close(): Promise<void>;
@@ -48,6 +79,11 @@ export interface HarnessOptions {
    * variable can express.
    */
   config?: Record<string, unknown>;
+  /**
+   * Keep the configured mail transport instead of capturing mail — for the
+   * suite that speaks real SMTP to a server of its own (SUP-269).
+   */
+  realMailTransport?: boolean;
 }
 
 /**
@@ -87,12 +123,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
   const mailer = new CapturingMailer();
   const events = new RecordingAnalyticsSink();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(MAGIC_LINK_MAILER)
-    .useValue(mailer)
-    .overrideProvider(ANALYTICS_SINK)
-    .useValue(events)
-    .compile();
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  if (!options.realMailTransport) {
+    builder.overrideProvider(MAIL_TRANSPORT).useValue(mailer);
+  }
+  const moduleRef = await builder.overrideProvider(ANALYTICS_SINK).useValue(events).compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, bufferLogs: true });
   configureApp(app, app.get<ConfigType<typeof routerConfig>>(routerConfig.KEY));
@@ -102,6 +137,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     app,
     mailer,
     events,
+    settleMail: () => app.get(MailService).settle(),
     close: async () => {
       await app.close();
       for (const [key, value] of previous) {

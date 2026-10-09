@@ -4,6 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { User } from '../db/entities/user.entity.js';
+import { magicLinkEnabled, passwordResetEnabled } from '../mail/mail-settings.js';
 
 /** Which sign-in paths this deployment actually offers, right now. */
 export interface SignInOptions {
@@ -16,6 +17,12 @@ export interface SignInOptions {
   password: boolean;
   /** `auth.password.minLength`, so the sign-up form states the real rule. */
   passwordMinLength: number;
+  /**
+   * A forgotten password can be reset by mail: passwords are on *and* a mailer
+   * is configured (SUP-269). False hides the console's "Forgot password?" link,
+   * because the routes behind it are a 404.
+   */
+  passwordReset: boolean;
   /**
    * Registration is by invitation (`auth.requireInviteForSignUp`, SUP-173).
    *
@@ -53,9 +60,10 @@ export class SignInOptionsService {
       bootstrap: await this.bootstrapAvailable(),
       github: auth.github !== undefined,
       google: auth.google !== undefined,
-      magicLink: auth.magicLink.mailer !== 'none',
+      magicLink: magicLinkEnabled(this.config),
       password: auth.password.enabled,
       passwordMinLength: auth.password.minLength,
+      passwordReset: passwordResetEnabled(this.config),
       inviteRequired: auth.requireInviteForSignUp,
     };
   }

@@ -120,16 +120,21 @@ auth:
   secret: ${CR_API_AUTH_SECRET}
   github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
+  # Magic-link sign-in is on while `mail` below has a provider; `enabled: false`
+  # keeps the sign-in screen password-only on a deployment that has one.
   magicLink:
-    mailer: resend                 # `none` on a deployment with no mail provider at all
-    from: no-reply@tee.swarm.cloud
-    resendApiKey: ${CR_API_RESEND_KEY}
-  # Email and password, for a deployment with no mail delivery at all. Off here
-  # because this example has a mailer; the marketplace listing turns it on.
-  # No verification mail, no reset mail — see docs/router.md.
+    enabled: true
+  # Email and password. Off here because this example signs in by magic link;
+  # the marketplace listing turns it on. No verification mail; with a mailer,
+  # a forgotten password is reset by mail — see docs/router.md.
   password:
     enabled: false
     minLength: 12
+  # Only offered while `password.enabled` is true and `mail` has a provider.
+  passwordReset:
+    tokenTtl: 1h                   # single-use either way
+    requestsPerMinute: 5           # per source address
+    mailsPerAddressPerHour: 3      # per recipient, silently — the answer never changes
   # First sign-in where there is no mailer and no OAuth app: while this is set
   # and no user exists, POST /auth/bootstrap trades it for the first account.
   # See docs/router.md, "First sign-in on a fresh deployment".
@@ -140,6 +145,22 @@ auth:
   # because Better Auth owns the user table (ADR-004).
   adminEmails:
     - admin@tee.swarm.cloud
+
+# Outbound mail: sign-in links, password reset, the welcome mail (SUP-269).
+# `none` sends nothing and hides every flow that needs mail. The sender domain
+# needs SPF and DKIM records for any of it to reach an inbox.
+mail:
+  provider: smtp                   # none | console (not in production) | resend | smtp
+  from: no-reply@tee.swarm.cloud
+  fromName: Confidential Router
+  # consoleUrl defaults to the first entry of server.validClientOrigins.
+  smtp:
+    host: smtp.example.com
+    port: 587
+    security: starttls             # starttls | tls (port 465) | none
+    user: no-reply@tee.swarm.cloud
+    password: ${CR_API_SMTP_PASSWORD}
+  # resendApiKey: ${CR_API_RESEND_KEY}   # with `provider: resend` instead
 
 billing:
   # `auto` is Stripe when the block below is set. The manual provider it otherwise

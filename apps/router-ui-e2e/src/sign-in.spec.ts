@@ -25,6 +25,7 @@ type Offers = Partial<{
   magicLink: boolean;
   password: boolean;
   passwordMinLength: number;
+  passwordReset: boolean;
   inviteRequired: boolean;
 }>;
 
@@ -40,6 +41,7 @@ async function deployment(page: Page, offers: Offers = {}, operations: GraphQLFi
         magicLink: true,
         password: false,
         passwordMinLength: 12,
+        passwordReset: false,
         inviteRequired: false,
         ...offers,
       },
@@ -73,6 +75,7 @@ const SIGN_IN_OPTIONS = {
     magicLink: false,
     password: true,
     passwordMinLength: 12,
+    passwordReset: false,
   },
 };
 

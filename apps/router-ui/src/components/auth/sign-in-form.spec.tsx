@@ -34,6 +34,7 @@ type Offers = Partial<{
   magicLink: boolean;
   password: boolean;
   passwordMinLength: number;
+  passwordReset: boolean;
   inviteRequired: boolean;
 }>;
 
@@ -54,6 +55,7 @@ function optionsMock(overrides: Offers = {}) {
           magicLink: true,
           password: false,
           passwordMinLength: 12,
+          passwordReset: false,
           inviteRequired: false,
           ...overrides,
         },
@@ -319,6 +321,18 @@ describe('SignInForm, the password path', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(document.cookie).toContain(`${SIGNED_IN_COOKIE_NAME}=1`));
+  });
+
+  it('offers "Forgot password?" only where the router can mail a reset link (SUP-269)', async () => {
+    const { unmount } = renderForm([optionsMock({ ...MAILER_LESS, password: true, passwordReset: true })]);
+
+    const link = await screen.findByRole('link', { name: 'Forgot password?' });
+    expect(link).toHaveAttribute('href', '/forgot-password');
+    unmount();
+
+    renderForm([optionsMock(MAILER_LESS)]);
+    await screen.findByLabelText('Password');
+    expect(screen.queryByRole('link', { name: 'Forgot password?' })).not.toBeInTheDocument();
   });
 
   it('never puts the password in the URL', async () => {

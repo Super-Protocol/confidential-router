@@ -92,7 +92,10 @@ export function ProfileScreen() {
         />
 
         {data.signInOptions.password && !data.me.hasPassword ? (
-          <PasswordCard minLength={data.signInOptions.passwordMinLength} />
+          <PasswordCard
+            minLength={data.signInOptions.passwordMinLength}
+            resettable={data.signInOptions.passwordReset}
+          />
         ) : null}
 
         <div className="grid gap-4 lg:grid-cols-2">

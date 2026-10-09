@@ -8,6 +8,27 @@ export class HealthCheckDto {
   error?: string;
 }
 
+export class MailHealthDto {
+  @ApiProperty({ enum: ['none', 'console', 'resend', 'smtp'] })
+  provider!: 'none' | 'console' | 'resend' | 'smtp';
+
+  @ApiProperty({
+    enum: ['disabled', 'unverified', 'ok', 'failing'],
+    description: 'From the boot-time check or the most recent send, whichever is later.',
+  })
+  state!: 'disabled' | 'unverified' | 'ok' | 'failing';
+
+  @ApiProperty({
+    required: false,
+    enum: ['unreachable', 'auth_failed', 'rejected', 'error'],
+    description: 'Present only while failing. `unreachable`: the mail server could not be connected to at all.',
+  })
+  reason?: 'unreachable' | 'auth_failed' | 'rejected' | 'error';
+
+  @ApiProperty({ required: false, description: 'When `state` was last established.' })
+  since?: string;
+}
+
 export class HealthResponseDto {
   @ApiProperty({ enum: ['ok', 'error'] })
   status!: 'ok' | 'error';
@@ -20,4 +41,7 @@ export class HealthResponseDto {
 
   @ApiProperty({ type: () => HealthCheckDto })
   database!: HealthCheckDto;
+
+  @ApiProperty({ type: () => MailHealthDto, description: 'Reported only; never makes the status `error`.' })
+  mail!: MailHealthDto;
 }

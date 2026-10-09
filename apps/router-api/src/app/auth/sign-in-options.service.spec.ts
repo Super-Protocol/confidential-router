@@ -6,10 +6,12 @@ import { SignInOptionsService } from './sign-in-options.service.js';
 
 type RouterConfigType = ConfigType<typeof routerConfig>;
 
-function build(auth: Partial<RouterConfigType['auth']>, hasUser = false) {
+function build(auth: Partial<RouterConfigType['auth']>, hasUser = false, mail: Partial<RouterConfigType['mail']> = {}) {
   const exists = vi.fn().mockResolvedValue(hasUser);
   const dataSource = { getRepository: () => ({ exists }) } as unknown as DataSource;
   const config = {
+    server: { publicBaseUrl: 'http://localhost:3000', validClientOrigins: ['http://localhost:4200'] },
+    mail: { fromName: 'Confidential Router', ...mail },
     auth: { magicLink: { mailer: 'console' }, password: { enabled: false, minLength: 12 }, ...auth },
   } as RouterConfigType;
 
@@ -26,6 +28,34 @@ describe('SignInOptionsService', () => {
   it('reports magic link as unavailable when the mailer is switched off', async () => {
     await expect(build({ magicLink: { mailer: 'none' } as never }).service.get()).resolves.toMatchObject({
       magicLink: false,
+    });
+  });
+
+  it('keeps magic link off when the deployment says so, even with a mailer (SUP-269)', async () => {
+    const options = await build({ magicLink: { mailer: 'none', enabled: false } as never }, false, {
+      provider: 'smtp',
+    }).service.get();
+
+    expect(options).toMatchObject({ magicLink: false });
+  });
+
+  it('offers magic link from the `mail` section alone', async () => {
+    const options = await build({ magicLink: { mailer: 'none' } as never }, false, { provider: 'smtp' }).service.get();
+
+    expect(options).toMatchObject({ magicLink: true });
+  });
+
+  it('offers password reset only with both passwords and a mailer (SUP-269)', async () => {
+    const passwords = { password: { enabled: true, minLength: 12 } };
+
+    await expect(build(passwords, false, { provider: 'smtp' }).service.get()).resolves.toMatchObject({
+      passwordReset: true,
+    });
+    await expect(build(passwords, false, { provider: 'none' }).service.get()).resolves.toMatchObject({
+      passwordReset: false,
+    });
+    await expect(build({}, false, { provider: 'smtp' }).service.get()).resolves.toMatchObject({
+      passwordReset: false,
     });
   });
 

@@ -12,6 +12,7 @@ import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import { STRIPE_WEBHOOK_PATH } from './billing/index.js';
 import type { routerConfig } from './config.js';
 import { TYPEFORM_WEBHOOK_PATH } from './feedback/index.js';
+import { PASSWORD_RESET_REQUEST_PATH, PasswordResetThrottle } from './mail/password-reset-throttle.js';
 
 /**
  * Mounted as a prefix (`/auth`), not a wildcard pattern (`/auth/{*path}`).
@@ -83,6 +84,9 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
     },
   });
 
+  // Per-source-address budget on reset requests (SUP-269), ahead of Better Auth
+  // so a refused request never reaches the handler that looks the address up.
+  app.use(`${AUTH_BASE_PATH}${PASSWORD_RESET_REQUEST_PATH}`, app.get(PasswordResetThrottle).middleware);
   // Order matters: raw stream to Better Auth, parsed bodies to everything else.
   app.use(AUTH_HANDLER_ROUTE, toNodeHandler(app.get(AuthService).handler));
   // The payment webhook is authenticated by a signature over the exact bytes

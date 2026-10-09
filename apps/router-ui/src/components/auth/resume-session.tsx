@@ -4,6 +4,7 @@ import { useQuery } from '@apollo/client/react';
 import * as React from 'react';
 import { graphql } from '../../generated';
 import { completeSignIn } from '../../lib/auth';
+import { isOpenPath } from '../../lib/public-paths';
 
 /** The cheapest question the API answers: is this browser's session live? */
 export const SIGNED_IN_QUERY = graphql(`
@@ -33,7 +34,9 @@ export function ResumeSession() {
   const { data } = useQuery(SIGNED_IN_QUERY, { fetchPolicy: 'network-only' });
 
   React.useEffect(() => {
-    if (data?.me) completeSignIn();
+    // Not from a reset link: the token in it is the reason the viewer is here,
+    // signed in or not (SUP-269).
+    if (data?.me && !isOpenPath(globalThis.location?.pathname ?? '')) completeSignIn();
   }, [data]);
 
   return null;

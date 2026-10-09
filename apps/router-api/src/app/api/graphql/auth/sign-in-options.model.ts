@@ -20,10 +20,17 @@ export class SignInOptionsModel {
 
   @Field({
     description:
-      'Email and password sign-in and sign-up are enabled. There is no email verification and no ' +
-      'password reset: this path exists for deployments with no mail delivery at all.',
+      'Email and password sign-in and sign-up are enabled. There is no email verification; password reset ' +
+      'is offered only where `passwordReset` says so.',
   })
   password!: boolean;
+
+  @Field({
+    description:
+      'A forgotten password can be reset by mail: passwords are enabled and the deployment has a mailer. ' +
+      'While false the reset endpoints answer 404 and the console offers no "Forgot password?" link.',
+  })
+  passwordReset!: boolean;
 
   @Field(() => Int, {
     description:

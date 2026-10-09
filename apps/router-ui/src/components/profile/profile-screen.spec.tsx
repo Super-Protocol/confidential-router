@@ -37,7 +37,12 @@ const ME = {
 /** The account the bootstrap token creates: no credential at all (SUP-267). */
 const NO_PASSWORD = { ...ME, hasPassword: false };
 
-const SIGN_IN_OPTIONS = { __typename: 'SignInOptions' as const, password: true, passwordMinLength: 12 };
+const SIGN_IN_OPTIONS = {
+  __typename: 'SignInOptions' as const,
+  password: true,
+  passwordMinLength: 12,
+  passwordReset: false,
+};
 
 function series() {
   return Array.from({ length: SPEND_DAYS }, (_, index) => ({

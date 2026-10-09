@@ -13,9 +13,9 @@ import { type Auth, type BetterAuthOptions, betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { fromNodeHeaders } from 'better-auth/node';
 import { routerConfig } from '../config.js';
+import { MailService } from '../mail/mail.service.js';
 import { buildAuthOptions, createAuthDatabase } from './auth.options.js';
 import { runAuthMigrations } from './auth-schema.js';
-import { MAGIC_LINK_MAILER, type MagicLinkMailer } from './magic-link-mailer.js';
 import { SignUpGate } from './sign-up-gate.service.js';
 import { SignUpProvisioning } from './sign-up-provisioning.service.js';
 
@@ -44,7 +44,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     @Inject(routerConfig.KEY) config: ConfigType<typeof routerConfig>,
-    @Inject(MAGIC_LINK_MAILER) mailer: MagicLinkMailer,
+    mail: MailService,
     provisioning: SignUpProvisioning,
     gate: SignUpGate,
   ) {
@@ -52,7 +52,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     this.migrationsRun = config.database.migrationsRun;
     this.options = buildAuthOptions({
       config,
-      mailer,
+      mail,
       database: this.database,
       onUserCreated: (user, invite, method) => provisioning.onUserCreated(user, invite, method),
       onBeforeUserCreated: (invite, bootstrap) => gate.admit(invite, bootstrap),

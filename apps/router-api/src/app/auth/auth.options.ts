@@ -4,8 +4,8 @@ import Database from 'better-sqlite3';
 import { Pool } from 'pg';
 import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
+import { magicLinkEnabled, passwordResetEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
-import type { MagicLinkMailer } from './magic-link-mailer.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
 /** Session cookie name fixed by ADR-004 §4. */
@@ -26,20 +26,33 @@ export const AUTH_BASE_PATH = '/auth';
 export const PASSWORD_PATHS = ['/sign-up/email', '/sign-in/email', '/change-password', '/verify-password'];
 
 /**
- * Password reset, off on every deployment.
+ * Password reset, off unless the deployment has both a password to reset and a
+ * mailer to deliver the link (SUP-269, `passwordResetEnabled`).
  *
- * It is a mail round trip, and password sign-in exists here precisely for the
- * deployment that has no mail — so it could only ever answer "reset password
- * isn't enabled". `/reset-password/:token` is not in the list because a path
- * parameter cannot be matched by an exact-path check; it is unreachable anyway,
- * since `/request-password-reset` is the only thing that mints a token it would
- * accept.
+ * Off, it could only ever answer "reset password isn't enabled", so it is a 404
+ * instead, like every other path this deployment does not offer.
+ * `/reset-password/:token` is not in the list because a path parameter cannot
+ * be matched by an exact-path check; it is unreachable anyway, since
+ * `/request-password-reset` is the only thing that mints a token it would
+ * accept. The console never uses it even when reset is on: the mailed link
+ * goes straight to the console's own reset page.
  */
 export const PASSWORD_RESET_PATHS = ['/request-password-reset', '/reset-password'];
 
+/**
+ * What the auth flows need from the mail service — narrower than
+ * `MailService`, so this file stays a function of its inputs.
+ */
+export interface AuthMail {
+  /** Awaited: the requester is waiting for the link, and a failure is theirs to see. */
+  sendMagicLink(email: string, url: string): Promise<void>;
+  /** Fire-and-forget: see `MailService.requestPasswordReset` for why it must not be awaited. */
+  requestPasswordReset(email: string, token: string): void;
+}
+
 export interface AuthOptionsDeps {
   config: RouterConfig;
-  mailer: MagicLinkMailer;
+  mail: AuthMail;
   /** Injected so tests can close the handle they own. */
   database: BetterAuthOptions['database'];
   /**
@@ -93,12 +106,13 @@ export function createAuthDatabase(config: RouterConfig): BetterAuthOptions['dat
 
 export function buildAuthOptions({
   config,
-  mailer,
+  mail,
   database,
   onUserCreated,
   onBeforeUserCreated,
 }: AuthOptionsDeps): BetterAuthOptions {
   const { auth, server } = config;
+  const resetOffered = passwordResetEnabled(config);
 
   return {
     appName: 'confidential-router',
@@ -123,8 +137,23 @@ export function buildAuthOptions({
       // Signing up answers with the session cookie, rather than asking for the
       // password that was just chosen a second time.
       autoSignIn: true,
+      // Better Auth answers `/request-password-reset` identically whether or
+      // not the address has an account, and only calls this for one that does.
+      // The link it builds is ignored: it points at the API's own redirect
+      // endpoint and carries a client-chosen `redirectTo`, where the mailed link
+      // should go straight to the console and depend on nothing the requester
+      // sent.
+      sendResetPassword: resetOffered
+        ? async ({ user, token }) => {
+            mail.requestPasswordReset(user.email, token);
+          }
+        : undefined,
+      resetPasswordTokenExpiresIn: Math.floor(auth.passwordReset.tokenTtl / 1000),
+      // A reset is what someone does when they think the password is known to
+      // somebody else, so every session that password opened ends with it.
+      revokeSessionsOnPasswordReset: true,
     },
-    disabledPaths: auth.password.enabled ? PASSWORD_RESET_PATHS : [...PASSWORD_PATHS, ...PASSWORD_RESET_PATHS],
+    disabledPaths: [...(auth.password.enabled ? [] : PASSWORD_PATHS), ...(resetOffered ? [] : PASSWORD_RESET_PATHS)],
     socialProviders: {
       ...(auth.github ? { github: { clientId: auth.github.clientId, clientSecret: auth.github.clientSecret } } : {}),
       ...(auth.google ? { google: { clientId: auth.google.clientId, clientSecret: auth.google.clientSecret } } : {}),
@@ -166,7 +195,7 @@ export function buildAuthOptions({
           },
         }
       : undefined,
-    plugins: authPlugins(auth, mailer),
+    plugins: authPlugins(config, mail),
   };
 }
 
@@ -179,14 +208,15 @@ export function buildAuthOptions({
  * that configured no token, and no `/auth/sign-in/magic-link` to request a mail
  * from on one that has no mailer.
  */
-function authPlugins(auth: RouterConfig['auth'], mailer: MagicLinkMailer): BetterAuthPlugin[] {
+function authPlugins(config: RouterConfig, mail: AuthMail): BetterAuthPlugin[] {
+  const { auth } = config;
   const plugins: BetterAuthPlugin[] = [];
 
-  if (auth.magicLink.mailer !== 'none') {
+  if (magicLinkEnabled(config)) {
     plugins.push(
       magicLink({
-        sendMagicLink: async ({ email, url, token }) => {
-          await mailer.send({ email, url, token });
+        sendMagicLink: async ({ email, url }) => {
+          await mail.sendMagicLink(email, url);
         },
       }),
     );

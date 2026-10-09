@@ -163,15 +163,52 @@ const AuthSchema = z.strictObject({
   magicLink: z
     .strictObject({
       /**
+       * Whether the console offers a one-time sign-in link. Unset means "while
+       * this deployment can send mail at all", which is what every deployment
+       * has done so far; `false` keeps the sign-in screen password-only on a
+       * deployment that configured a mailer for password reset and the welcome
+       * mail alone (SUP-269).
+       */
+      enabled: booleanish().optional(),
+      /**
+       * The mail provider, from before `mail` had a section of its own. Still
+       * read when `mail.provider` is unset, so a chart that predates SUP-269
+       * renders a config this image boots on unchanged.
+       *
        * `none` disables magic-link sign-in altogether. It exists for the
        * deployment that has no mail provider at all — a marketplace install,
        * say — which would otherwise be unable to boot in production, because
        * `console` is refused there and `resend` needs a key.
        */
       mailer: z.enum(['none', 'console', 'smtp', 'resend']).prefault('console'),
+      /** Legacy twin of `mail.from`, read the same way `mailer` is. */
       from: z.email().prefault('no-reply@confidential-router.local'),
+      /** Never implemented and never read; accepted so an old config still parses. */
       smtpUrl: z.string().optional(),
+      /** Legacy twin of `mail.resendApiKey`. */
       resendApiKey: z.string().optional(),
+    })
+    .prefault({}),
+  /**
+   * Password reset by mail (SUP-269). Only offered while email-and-password
+   * sign-in is on *and* the deployment can send mail — see `passwordResetEnabled`.
+   */
+  passwordReset: z
+    .strictObject({
+      /** How long a reset link stays usable. It is single-use either way. */
+      tokenTtl: durationMs('1h'),
+      /**
+       * Reset requests one source address may make per minute. A request never
+       * says whether the address it named has an account, so this budget is
+       * what stands between the endpoint and someone using it to mail-bomb.
+       */
+      requestsPerMinute: integerish().pipe(z.number().int().positive()).prefault(5),
+      /**
+       * Reset mails one recipient can be sent per hour, whoever asks. Beyond it
+       * the request is answered exactly as before and nothing is sent — a
+       * refusal that differed would say the address has an account.
+       */
+      mailsPerAddressPerHour: integerish().pipe(z.number().int().positive()).prefault(3),
     })
     .prefault({}),
   /**
@@ -182,9 +219,10 @@ const AuthSchema = z.strictObject({
    * a mailer-less deployment everyone after the first has no way in — and this
    * is the only sign-in path that needs nothing outside the cluster.
    *
-   * There is no email verification and no password reset, deliberately: both
-   * are a mail round trip, and a deployment with a mailer would be using the
-   * magic link instead.
+   * There is no email verification, deliberately: it is a mail round trip
+   * nobody on a mailer-less deployment could complete. Password reset is the
+   * same round trip, so it is offered only once `mail` can deliver one
+   * (SUP-269) and is hidden otherwise.
    */
   password: z
     .strictObject({
@@ -234,6 +272,56 @@ const AuthSchema = z.strictObject({
    */
   adminEmails: stringArrayish().prefault([]),
 });
+
+/**
+ * Outbound mail (SUP-269): sign-in links, password reset, the welcome mail.
+ *
+ * Every key is optional because the section is new and `auth.magicLink` already
+ * carries a provider: `resolveMailSettings` reads this first and falls back to
+ * that, so a deployment that has said nothing here behaves exactly as it did.
+ */
+const MailSchema = z
+  .strictObject({
+    /**
+     * `none` sends nothing and hides every flow that would need it; `console`
+     * writes each message to the log and is refused in production; `resend` is
+     * the Resend HTTP API; `smtp` is any mail server.
+     */
+    provider: z.enum(['none', 'console', 'resend', 'smtp']).optional(),
+    /** The sender address. Its domain needs SPF and DKIM for mail to land in an inbox. */
+    from: z.email().optional(),
+    /** The display name in front of `from`. */
+    fromName: z.string().trim().min(1).max(100).prefault('Confidential Router'),
+    /**
+     * The console's own origin, which every link in a mail points at. Defaults
+     * to the first entry of `server.validClientOrigins` — the console a chart
+     * renders there — so it only needs setting when that list says `*`.
+     */
+    consoleUrl: z.url().optional(),
+    resendApiKey: optionalSecret(1),
+    smtp: z
+      .strictObject({
+        host: z.string().trim().min(1),
+        /** Defaults by `security`: 587 for STARTTLS, 465 for implicit TLS, 25 for none. */
+        port: integerish().pipe(z.number().int().min(1).max(65535)).optional(),
+        /**
+         * `starttls` upgrades a plain connection and refuses to continue if the
+         * server cannot; `tls` is TLS from the first byte (port 465); `none` is
+         * cleartext, for a relay inside the operator's own network.
+         */
+        security: z.enum(['starttls', 'tls', 'none']).prefault('starttls'),
+        /** Blank means no authentication. */
+        user: z
+          .string()
+          .trim()
+          .optional()
+          .transform((value) => (value ? value : undefined)),
+        password: optionalSecret(1),
+        connectTimeout: durationMs('10s'),
+      })
+      .optional(),
+  })
+  .prefault({});
 
 const BillingSchema = z
   .strictObject({
@@ -636,6 +724,7 @@ export const RouterConfigSchema = z.strictObject({
   externalEndpoints: ExternalEndpointsSchema,
   rateLimits: RateLimitsSchema,
   auth: AuthSchema,
+  mail: MailSchema,
   billing: BillingSchema,
   invites: InvitesSchema,
   analytics: AnalyticsSchema,
@@ -650,4 +739,5 @@ export const RouterConfigSchema = z.strictObject({
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
+export type MailConfig = RouterConfig['mail'];
 export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];

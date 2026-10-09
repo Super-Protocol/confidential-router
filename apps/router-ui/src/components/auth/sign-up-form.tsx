@@ -288,8 +288,9 @@ export function SignUpForm() {
               rather than hard-coded: a deployment that raised it would
               otherwise be advertising a floor it refuses. */}
           <p id="password-hint" className="text-muted-foreground text-xs">
-            At least {minLength} characters. There is no password reset on this deployment, so use something you will
-            not lose.
+            {data?.signInOptions.passwordReset
+              ? `At least ${minLength} characters.`
+              : `At least ${minLength} characters. There is no password reset on this deployment, so use something you will not lose.`}
           </p>
           <Button
             type="submit"

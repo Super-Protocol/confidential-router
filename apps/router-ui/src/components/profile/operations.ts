@@ -19,6 +19,7 @@ export const PROFILE_QUERY = graphql(`
     signInOptions {
       password
       passwordMinLength
+      passwordReset
     }
     activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {
       bucket

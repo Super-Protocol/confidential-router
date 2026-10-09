@@ -286,7 +286,7 @@ test.describe('Profile', () => {
       createdAt: '2026-04-02T08:00:00.000Z',
       hasPassword: true,
     },
-    signInOptions: { __typename: 'SignInOptions', password: true, passwordMinLength: 12 },
+    signInOptions: { __typename: 'SignInOptions', password: true, passwordMinLength: 12, passwordReset: false },
     activitySeries: Array.from({ length: 7 }, (_, index) => ({
       __typename: 'ActivityPoint',
       bucket: new Date(Date.now() - (6 - index) * 86_400_000).toISOString(),

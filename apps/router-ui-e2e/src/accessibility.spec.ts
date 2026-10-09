@@ -49,6 +49,7 @@ async function signInOptions(
         magicLink: false,
         password: false,
         passwordMinLength: 12,
+        passwordReset: false,
         inviteRequired: false,
         ...offers,
       },

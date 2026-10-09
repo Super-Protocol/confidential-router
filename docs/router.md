@@ -184,17 +184,19 @@ auth:
   github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
   magicLink:
-    mailer: resend                       # `console` outside production
-    from: no-reply@tee.swarm.cloud
-    resendApiKey: ${CR_API_RESEND_KEY}
+    enabled: true                        # default: while `mail` has a provider
+
+mail:
+  provider: smtp                         # none | console | resend | smtp
+  from: no-reply@tee.swarm.cloud
+  smtp: { host: smtp.example.com, port: 587, security: starttls, user: …, password: ${CR_API_SMTP_PASSWORD} }
 ```
 
-`mailer: console` writes the sign-in URL to the log instead of sending it, which
-is what makes a headless demo possible. The service refuses to boot with it in
-production, because a sign-in link in a log file is a sign-in link anybody with
-the log can use. `mailer: none` switches magic-link sign-in off altogether —
-`/auth/sign-in/magic-link` is not mounted — which is what lets a deployment with
-no mail provider boot in production at all.
+Magic-link sign-in is on wherever [mail](#mail) can be sent, unless
+`magicLink.enabled: false` keeps the sign-in screen password-only. With
+`mail.provider: none` it is off altogether — `/auth/sign-in/magic-link` is not
+mounted — which is what lets a deployment with no mail provider boot in
+production at all.
 
 Every new user gets a personal workspace on first sign-in. `/v1` takes no
 cookies and no query parameters — a `Bearer sk-tee-v1-…` key, and nothing else.
@@ -206,6 +208,70 @@ a session — for which of these paths this deployment actually offers, and rend
 only those, `password` and `passwordMinLength` among them. A "Continue with
 GitHub" button on a deployment with no GitHub app can only end in an error.
 
+## Mail
+
+Every transactional mail — the sign-in link, the password reset link, the
+welcome mail after a sign-up — is rendered from one template set
+(`apps/router-api/src/app/mail/templates.ts`: Super Protocol logo, inline CSS,
+a dark-mode block, and a plain-text part with the same content) and sent through
+one provider (SUP-269):
+
+| `mail.provider` | Sends through | Notes |
+|---|---|---|
+| `none` | nothing | Magic link and password reset are not offered; no welcome mail. |
+| `console` | the log | Development only: refused in production, because a link in a log is a link anyone with the log can use. |
+| `resend` | the Resend HTTP API | Needs `mail.resendApiKey`. |
+| `smtp` | any SMTP server | `mail.smtp`: `host`, `port`, `security` (`starttls` — the default, upgrade required; `tls` — port 465; `none`), `user`, `password`. |
+
+Links in a mail point at the console — `mail.consoleUrl`, by default the first
+entry of `server.validClientOrigins` — never at the API.
+
+`mail` is new; before it the provider lived in `auth.magicLink`
+(`mailer`, `from`, `resendApiKey`). Those keys are still read whenever
+`mail.provider` is unset, so an older config boots unchanged.
+
+**Deliverability is the operator's.** Mail from `mail.from` reaches an inbox only
+if that domain publishes SPF and DKIM records that cover the provider sending it
+(and ideally DMARC). That is DNS this deployment cannot write.
+
+**Reachability is reported, not assumed.** With `smtp`, the API connects and
+authenticates once at boot without sending anything, and `/health` carries the
+outcome as `mail: { provider, state, reason }` — `ok`, or `failing` with
+`unreachable` (no connection at all), `auth_failed` or `rejected`. Every later
+send updates it. It never makes `/health` itself fail: a lost welcome mail is
+not an outage. The log line says which host and port, and never the password.
+On a Swarm cluster space, outbound connections to public addresses are open and
+private ranges are not, so the SMTP host has to resolve to a public address;
+some clouds also block outbound port 25, which is what 587 and 465 are for.
+
+## Password reset
+
+Offered only where both halves exist: `auth.password.enabled` and a
+`mail.provider` other than `none`. Anywhere else `/auth/request-password-reset`
+and `/auth/reset-password` are 404 and `signInOptions.passwordReset` is false,
+so the console shows no "Forgot password?" link.
+
+```yaml
+auth:
+  passwordReset:
+    tokenTtl: 1h                  # single-use either way
+    requestsPerMinute: 5          # per source address; beyond it, 429
+    mailsPerAddressPerHour: 3     # per recipient; beyond it, nothing is sent
+```
+
+1. `POST /auth/request-password-reset {"email": …}` answers
+   `200 {"status": true, …}` whether or not the address has an account. The mail
+   is sent in the background, so the answer takes the same time either way.
+2. The mail links to `<console>/reset-password?token=…`. Any `redirectTo` in the
+   request is ignored: the link depends on nothing the requester sent.
+3. The console posts `POST /auth/reset-password {"token": …, "newPassword": …}`.
+   The token is consumed — a second use is `400 INVALID_TOKEN`, as is an expired
+   one — and every session the account had is revoked.
+
+It works on an invite-only deployment, because resetting is signing in, not
+signing up; and it gives an account that never had a password (the bootstrapped
+administrator, a magic-link account) its first one.
+
 ## First sign-in on a fresh deployment
 
 A deployment can be brought up with no mailer and no OAuth app — a marketplace
@@ -216,8 +282,8 @@ account. `auth.bootstrapToken` is the way in:
 auth:
   bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}   # at least 16 characters; blank counts as unset
   bootstrapEmail: admin@example.com           # default: admin@confidential-router.local
-  magicLink:
-    mailer: none                              # no mail on this deployment
+mail:
+  provider: none                              # no mail on this deployment
 ```
 
 While that token is set **and** the `user` table is still empty, the console's
@@ -277,8 +343,8 @@ auth:
   password:
     enabled: true      # default false; the marketplace listing turns it on
     minLength: 12      # the router's rule, reported to the console
-  magicLink:
-    mailer: none       # no mail on this deployment, and none needed
+mail:
+  provider: none       # no mail on this deployment, and none needed
 ```
 
 With it on, `POST /auth/sign-up/email` creates the account, its personal
@@ -299,10 +365,10 @@ What this path deliberately does **not** have:
 - **No email verification.** The address is never proven, because proving it is
   a mail round trip and the whole premise here is that there is no mail. Treat
   addresses on such a deployment as self-asserted labels, not as identities.
-- **No password reset.** `/auth/request-password-reset` and
-  `/auth/reset-password` are 404 on every deployment, enabled or not, for the
-  same reason. A forgotten password on a mailer-less deployment is a new
-  account, and the sign-up form says so.
+- **No password reset without mail.** `/auth/request-password-reset` and
+  `/auth/reset-password` are 404 on a deployment with no mailer, for the same
+  reason. A forgotten password there is a new account. Configure
+  [mail](#mail) and [password reset](#password-reset) turns on by itself.
 - **No open door where it is off.** `enabled: false` is the default, and then
   `/auth/sign-up/email`, `/auth/sign-in/email`, `/auth/change-password` and
   `/auth/verify-password` are all 404 — not "provider disabled", because an

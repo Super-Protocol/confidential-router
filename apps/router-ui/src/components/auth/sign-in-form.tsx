@@ -41,6 +41,9 @@ const OFFER_EVERYTHING = {
   magicLink: true,
   password: true,
   passwordMinLength: 0,
+  // Off: a reset request on an API that cannot be reached can only fail, and
+  // "Forgot password?" is a footnote, not a way in.
+  passwordReset: false,
 };
 
 /**
@@ -264,7 +267,19 @@ export function SignInForm() {
                 />
                 {showsPassword ? (
                   <>
-                    <Label htmlFor="password">Password</Label>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="password">Password</Label>
+                      {/* Only where the router can mail a link (SUP-269); on a
+                          mailer-less deployment the routes behind it are 404. */}
+                      {options.passwordReset ? (
+                        <Link
+                          href="/forgot-password"
+                          className="text-muted-foreground text-xs underline-offset-4 hover:text-foreground hover:underline"
+                        >
+                          Forgot password?
+                        </Link>
+                      ) : null}
+                    </div>
                     <Input
                       id="password"
                       name="password"

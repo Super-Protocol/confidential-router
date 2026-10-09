@@ -17,6 +17,7 @@ export const SIGN_IN_OPTIONS_QUERY = graphql(`
       magicLink
       password
       passwordMinLength
+      passwordReset
       inviteRequired
     }
   }
