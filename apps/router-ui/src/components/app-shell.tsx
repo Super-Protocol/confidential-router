@@ -84,7 +84,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </SheetContent>
           </Sheet>
 
-          {/* The wordmark is 24px tall inside the 52px header, so it adds no height. */}
+          {/* The wordmark is 20px tall inside the 52px header, so it adds no height. */}
           <Link
             href="/"
             aria-label="Super Protocol — console home"

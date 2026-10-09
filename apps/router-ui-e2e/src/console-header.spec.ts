@@ -3,9 +3,9 @@ import { CONSOLE_OPERATIONS } from './evidence-fixtures';
 import { signIn } from './fixtures';
 
 /**
- * SUP-263: the header leads with the Super Protocol logo, and the appearance
- * menu offers the theme only — the mockup's accent switcher is gone, along with
- * whatever accent a viewer had saved while it existed.
+ * SUP-263: the header leads with the Super Protocol logo, the tab carries its
+ * favicon, and the appearance menu offers the theme only — the mockup's accent
+ * switcher is gone, along with whatever accent a viewer had saved while it existed.
  */
 
 /** The production build compiles oklch tokens to `lab()`, so compare computed values, not source literals. */
@@ -72,5 +72,24 @@ test.describe('console header', () => {
     await fresh.goto('/');
     await expect(fresh.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
     expect(await brandOf(page)).toBe(await brandOf(fresh));
+  });
+
+  test('the tab carries the Super Protocol favicon, PNG plus an .ico fallback', async ({ page, request }) => {
+    // Signed out on purpose: the sign-in page is the first tab a visitor sees.
+    await page.goto('/login');
+    await expect(page.locator('link[rel="icon"][href="/favicon.png"]')).toHaveAttribute('type', 'image/png');
+    await expect(page.locator('link[rel="icon"][href="/favicon.ico"]')).toHaveCount(1);
+
+    const png = await request.get('/favicon.png');
+    expect(png.status()).toBe(200);
+    expect(png.headers()['content-type']).toContain('image/png');
+    const body = await png.body();
+    // 64×64, the landing's own size (IHDR width and height).
+    expect([body.readUInt32BE(16), body.readUInt32BE(20)]).toEqual([64, 64]);
+
+    const ico = await request.get('/favicon.ico');
+    expect(ico.status()).toBe(200);
+    // The .ico wraps the very same PNG.
+    expect((await ico.body()).subarray(22).equals(body)).toBe(true);
   });
 });
