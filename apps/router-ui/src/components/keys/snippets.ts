@@ -37,7 +37,7 @@ export interface SnippetOptions {
   model?: string;
 }
 
-export type SnippetLanguage = 'curl' | 'python' | 'node';
+export type SnippetLanguage = 'curl' | 'python' | 'node' | 'vscode' | 'opencode';
 
 interface ResolvedOptions {
   baseUrl: string;
@@ -100,16 +100,86 @@ function nodeSnippet(options: SnippetOptions): string {
   ].join('\n');
 }
 
+/**
+ * VS Code's chat, through its Custom Endpoint provider: one entry of
+ * `chatLanguageModels.json`, which the model picker's gear icon ▸ Add Models ▸
+ * Custom Endpoint opens. `url` is the full chat-completions address, not a base
+ * URL — that is how the provider is specified.
+ */
+function vscodeSnippet(options: SnippetOptions): string {
+  const { baseUrl, apiKey, model } = resolve(options);
+  return JSON.stringify(
+    [
+      {
+        name: 'Confidential Router',
+        vendor: 'customendpoint',
+        apiKey,
+        models: [{ id: model, name: model, url: `${baseUrl}/chat/completions`, toolCalling: true, vision: false }],
+      },
+    ],
+    null,
+    2,
+  );
+}
+
+/**
+ * OpenCode, as a provider block of `opencode.json` — in the project, or in
+ * `~/.config/opencode/` for every project. `@ai-sdk/openai-compatible` is its
+ * adapter for any `/v1/chat/completions` server, which the gatekeeper is.
+ */
+function opencodeSnippet(options: SnippetOptions): string {
+  const { baseUrl, apiKey, model } = resolve(options);
+  return JSON.stringify(
+    {
+      $schema: 'https://opencode.ai/config.json',
+      provider: {
+        'confidential-router': {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'Confidential Router',
+          options: { baseURL: baseUrl, apiKey },
+          models: { [model]: { name: model } },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
 const BUILDERS: Record<SnippetLanguage, (options: SnippetOptions) => string> = {
   curl: curlSnippet,
   python: pythonSnippet,
   node: nodeSnippet,
+  vscode: vscodeSnippet,
+  opencode: opencodeSnippet,
 };
 
-export const SNIPPET_LANGUAGES: { id: SnippetLanguage; label: string }[] = [
+export interface SnippetLanguageEntry {
+  id: SnippetLanguage;
+  label: string;
+  /** One line under the code: where the snippet goes, for the two that are files rather than commands. */
+  hint?: string;
+}
+
+export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
   { id: 'curl', label: 'curl' },
   { id: 'python', label: 'Python' },
   { id: 'node', label: 'Node' },
+  {
+    id: 'vscode',
+    label: 'VS Code',
+    hint:
+      'In the chat model picker open the gear icon ▸ Add Models ▸ Custom Endpoint, then paste this into the ' +
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
+      'chatLanguageModels.json it opens. Keep the key out of the file with "apiKey": "${input:routerKey}" and VS Code asks for it once.',
+  },
+  {
+    id: 'opencode',
+    label: 'OpenCode',
+    hint:
+      'Save as opencode.json in your project, or in ~/.config/opencode/ for every project; "{env:ROUTER_KEY}" in ' +
+      'place of the key reads it from the environment instead. Then pick the model in OpenCode.',
+  },
 ];
 
 export function wiringSnippet(language: SnippetLanguage, options: SnippetOptions = {}): string {

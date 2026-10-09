@@ -22,7 +22,6 @@ import { formatContextLength, formatPricePer1m } from '../../lib/format';
 import { EvidenceBadge } from '../evidence/evidence-badge';
 import { ExternalAttestationBadge } from '../external/external-attestation-badge';
 import { EXTERNAL_AVAILABILITY } from '../external/external-vocabulary';
-import { ModelOriginBadge } from '../external/model-origin-badge';
 
 const ALL_TEES = 'all';
 
@@ -198,10 +197,7 @@ export function ModelsScreen() {
               {visible.map((model) => (
                 <TableRow key={model.id}>
                   <TableCell className="px-4">
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-medium text-sm">{model.name}</span>
-                      <ModelOriginBadge origin={model.origin} />
-                    </span>
+                    <span className="block font-medium text-sm">{model.name}</span>
                     <span className="block font-mono text-muted-foreground text-xs">{model.slug}</span>
                   </TableCell>
                   <TableCell className="font-mono text-xs">

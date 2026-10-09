@@ -136,9 +136,9 @@ export function VerificationPanel({
               </p>
             ) : null}
             {/*
-              The same block `/gatekeeper` shows, from the same data: a reader who
-              finds the commands here and again on that page must not find two
-              different sequences (SUP-193).
+              The same block the API Keys page's "How to connect" shows, from the
+              same data: a reader who finds the commands here and again there must
+              not find two different sequences (SUP-193).
             */}
             <GatekeeperSetupBlock upstream={`https://${hostname}`} evidenceDigestHex={evidenceDigestHex} />
           </Tier>

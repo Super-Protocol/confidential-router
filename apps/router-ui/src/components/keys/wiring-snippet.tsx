@@ -31,6 +31,7 @@ export function WiringSnippet({ id, ...options }: WiringSnippetProps) {
             copyLabel={`Copy the ${language.label} snippet`}
             data-testid={`wiring-snippet-${language.id}`}
           />
+          {language.hint ? <p className="mt-2 text-muted-foreground text-xs leading-relaxed">{language.hint}</p> : null}
         </TabsContent>
       ))}
     </Tabs>

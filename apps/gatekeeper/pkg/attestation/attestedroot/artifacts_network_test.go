@@ -1,9 +1,13 @@
 package attestedroot
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -67,5 +71,53 @@ func TestRegistryAgainstTheRealMirror(t *testing.T) {
 	measurement, _ := registryFixture(t)
 	if err := (&HTTPRegistry{}).Verify(ctx, measurement, EvidenceSevSnpQemu); err != nil {
 		t.Fatalf("the live registry rejected a measurement it publishes: %v", err)
+	}
+}
+
+// TestAzureRegistryEntryAgainstTheRealMirror does the same for the SUP-251
+// folder: the committed sev-snp-azure entry for the apps-448 cloud is what
+// the live registry serves, byte for byte, and the live lookup admits that
+// measurement under the Azure SEV-SNP type. A fixture that drifted from the
+// published file, or a registry that moved the folder, fails here.
+func TestAzureRegistryEntryAgainstTheRealMirror(t *testing.T) {
+	if os.Getenv("GATEKEEPER_NETWORK_TESTS") == "" {
+		t.Skip("set GATEKEEPER_NETWORK_TESTS=1 to exercise the live registry")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	relative := "sev-snp-azure/pre-release/mrenclave-" + apps448Measurement + ".json"
+	want, err := os.ReadFile(filepath.Join(registryLayoutDir, filepath.FromSlash(relative)))
+	if err != nil {
+		t.Fatalf("reading the committed entry: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, DefaultRegistryBaseURL+"/"+relative, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("fetching the live entry: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d", req.URL, resp.StatusCode)
+	}
+	got, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("the live entry differs from the committed fixture:\n--- live\n%s\n--- fixture\n%s", got, want)
+	}
+
+	measurement, err := hex.DecodeString(apps448Measurement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&HTTPRegistry{}).Verify(ctx, measurement, EvidenceSevSnpAzure); err != nil {
+		t.Fatalf("the live registry rejected the apps-448 Azure measurement: %v", err)
 	}
 }

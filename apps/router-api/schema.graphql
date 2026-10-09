@@ -617,6 +617,11 @@ type ExternalEndpointEvent {
   """
   evidence: ExternalEndpointEvidence
   evidenceDigest: String
+
+  """
+  evidenceDigest as 64 hex characters — the spelling every screen shows (SUP-115).
+  """
+  evidenceDigestHex: String
   id: ID!
   kind: ExternalEndpointEventKind!
   measurement: String
@@ -742,6 +747,11 @@ type ExternalUpstream {
   Canonical digest of the upstream deployment snapshot the verdict admitted.
   """
   evidenceDigestSeen: String
+
+  """
+  evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115). Null when there is no digest, or when the stored value is not one the parser accepts.
+  """
+  evidenceDigestSeenHex: String
 
   """The upstream’s own hostname — what its evidence is bound to."""
   hostname: String!

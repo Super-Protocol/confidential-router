@@ -15,6 +15,7 @@
       "!**/schema.graphql",
       "!**/__fixtures__",
       "!apps/gatekeeper/pkg/attestation/attestedroot/internal/azurecvm",
+      "!apps/gatekeeper/pkg/attestation/attestedroot/testdata",
       "!**/coverage",
       "!**/test-output",
       "!**/playwright-report",

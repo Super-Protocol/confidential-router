@@ -11,6 +11,7 @@ import {
 import * as React from 'react';
 import type { ExternalUpstreamFieldsFragment } from '../../generated/graphql';
 import { formatTimestamp, shortenDigest } from '../../lib/format';
+import { DigestValue } from '../evidence/digest-value';
 import { externalStatusPresentation } from './external-vocabulary';
 
 export interface ExternalAttestationBadgeProps {
@@ -81,8 +82,22 @@ function ExternalAttestationDialog({
             {upstream.measurementSeen ? shortenDigest(`sha256:${upstream.measurementSeen}`, 8) : '—'}
           </dd>
           <dt className="text-muted-foreground">Evidence digest</dt>
-          <dd className="min-w-0 break-all font-mono" title={upstream.evidenceDigestSeen ?? undefined}>
-            {upstream.evidenceDigestSeen ? shortenDigest(upstream.evidenceDigestSeen, 8) : '—'}
+          <dd className="min-w-0 break-all font-mono">
+            {/*
+              Hex, like every digest the console shows (SUP-115). The canonical
+              `sha256/<base64url>` form stays on the wire and nowhere a reader
+              sees it — this row is where it once leaked (SUP-255).
+            */}
+            {upstream.evidenceDigestSeen ? (
+              <DigestValue
+                hex={upstream.evidenceDigestSeenHex ?? ''}
+                canonical={upstream.evidenceDigestSeen}
+                copyLabel={`Copy the evidence digest ${upstream.hostname} published`}
+                keep={8}
+              />
+            ) : (
+              '—'
+            )}
           </dd>
         </dl>
 

@@ -249,6 +249,9 @@ test.describe('the admin section', () => {
     await expect(measurement.getByText('Registry-signed')).toBeVisible();
     await expect(digest.getByText('Not pinned')).toBeVisible();
     await page.getByRole('dialog').screenshot({ path: testInfo.outputPath('1-awaiting-approval.png') });
+    // Every digest in the dossier is hex; the canonical `sha256/<base64url>`
+    // wire form never reaches a reader (SUP-115, SUP-255).
+    await expect(page.getByRole('dialog')).not.toContainText(/sha256\//);
 
     // One click each.
     await measurement.getByRole('button', { name: 'Add to trust list' }).click();

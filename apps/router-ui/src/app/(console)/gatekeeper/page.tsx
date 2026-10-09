@@ -1,8 +1,10 @@
-import type { Metadata } from 'next';
-import { GatekeeperScreen } from '../../../components/gatekeeper/gatekeeper-screen';
+import { permanentRedirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Gatekeeper' };
-
+/**
+ * The Gatekeeper screen folded into "How to connect" on the API Keys page
+ * (SUP-255). The route stays as a redirect so a bookmark, an old landing-page
+ * link or a support answer that names it still lands somewhere useful.
+ */
 export default function GatekeeperPage() {
-  return <GatekeeperScreen />;
+  permanentRedirect('/keys#how-to-connect');
 }

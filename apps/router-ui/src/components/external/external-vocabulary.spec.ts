@@ -3,11 +3,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EVIDENCE_PRESENTATION } from '../evidence/evidence-state';
-import {
-  EXTERNAL_STATUS_PRESENTATION,
-  EXTERNAL_VERDICT_LABELS,
-  MODEL_ORIGIN_PRESENTATION,
-} from './external-vocabulary';
+import { EXTERNAL_STATUS_PRESENTATION, EXTERNAL_VERDICT_LABELS } from './external-vocabulary';
 
 /**
  * The two vocabularies, held apart.
@@ -81,16 +77,11 @@ describe('the own-endpoint vocabulary', () => {
   });
 });
 
-describe('the origin badge', () => {
-  it('labels an external model and leaves a config one unlabelled', () => {
-    expect(MODEL_ORIGIN_PRESENTATION.EXTERNAL?.label).toBe('External');
-    expect(MODEL_ORIGIN_PRESENTATION.CONFIG).toBeNull();
-  });
-
-  it('carries no verdict — it says where the model runs and nothing more', () => {
-    const presentation = MODEL_ORIGIN_PRESENTATION.EXTERNAL;
-
-    expect(presentation?.label.toLowerCase()).not.toMatch(/verif|deni|publish|trust/);
+describe('the verified state', () => {
+  it('is green — a pass reads as a pass, and the qualifier stays in the words (SUP-255)', () => {
+    expect(EXTERNAL_STATUS_PRESENTATION.VERIFIED_BY_THIS_ROUTER.variant).toBe('success');
+    expect(EXTERNAL_STATUS_PRESENTATION.DENIED_BY_THIS_ROUTER.variant).toBe('destructive');
+    expect(EXTERNAL_STATUS_PRESENTATION.PENDING.variant).toBe('secondary');
   });
 });
 

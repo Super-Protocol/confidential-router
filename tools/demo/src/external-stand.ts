@@ -17,7 +17,10 @@
  * real verification pipeline decides. The one substitution is the attested-root
  * *hardware* leg, which no mock can produce — see
  * `apps/gatekeeper/cmd/gatekeeper-teststand`, the build-tagged binary this
- * module runs and the reason it exists.
+ * module runs and the reason it exists. The registry leg of that check is not
+ * substituted: the stand serves a committed cut of the real sp-vm signatures
+ * tree ({@link REGISTRY_FIXTURE_DIR}) and the teststand looks the measurement
+ * up there with the shipped client, so `inRegistry` is a fetch, not a claim.
  *
  * What the stand can make happen, because these are the beats worth testing:
  *
@@ -39,6 +42,7 @@ import { join } from 'node:path';
 import { type MockEvidenceHost, startMockEvidenceHost } from '@confidential-router/mock-evidence-host';
 import { type MockLiteLLM, startMockLiteLLM } from '@confidential-router/mock-litellm';
 import { type ConsoleSession, signIn } from './console-client.js';
+import { startRegistryServer } from './registry-server.js';
 import { delay, REPO_ROOT } from './router-process.js';
 import { freePort, type RouterStack, type RouterStackOptions, startRouterStack } from './stack.js';
 
@@ -49,17 +53,45 @@ export const TESTSTAND_BIN = join(REPO_ROOT, 'apps', 'gatekeeper', 'bin-teststan
 
 /** Where {@link TESTSTAND_BIN} reads the attested-root verdict from. */
 const FIXTURE_ENV = 'GATEKEEPER_TESTSTAND_ATTESTED_ROOT';
+/** Where {@link TESTSTAND_BIN} looks the verdict's measurement up, for real. */
+const REGISTRY_ENV = 'GATEKEEPER_TESTSTAND_REGISTRY_BASE_URL';
+/**
+ * The committed cut of `Super-Protocol/sp-vm/signatures` the attestedroot
+ * package tests against (its testdata/README.md lists what is in it). Served
+ * by the stand as the registry, so the folders SUP-251 added are what the
+ * gatekeeper under test actually probes.
+ */
+export const REGISTRY_FIXTURE_DIR = join(
+  REPO_ROOT,
+  'apps',
+  'gatekeeper',
+  'pkg',
+  'attestation',
+  'attestedroot',
+  'testdata',
+  'registry',
+);
 
 /**
  * The measurement the stand's upstream cloud reports before anything rotates.
  *
  * A fixed value rather than a random one: it is what an admin pastes into the
  * trust list, and a failure that prints it is easier to read when the same
- * string turns up in the config, the verdict and the assertion.
+ * string turns up in the config, the verdict and the assertion. It is the
+ * build-449 Azure SEV-SNP image of the apps-448 demo cloud, signed in the
+ * registry fixture under `sev-snp-azure/pre-release` — the measurement SUP-255's
+ * acceptance criterion names — so the `REGISTRY` the dossier shows for it is
+ * the result of the teststand's real lookup.
  */
-export const STAND_MEASUREMENT = '842c5f2e1d0b4a9c7e6f3d8b5a2c9e0f1b4d7a6c3e8f5b2d9a0c7e4f1b6d3a8c';
+export const STAND_MEASUREMENT = '74c75a0ba5f36e55548a14aa0dae0d0c9de9cd6ad041a4f6c553c996e2c579a7';
+/** The evidence type that measurement is signed under; it selects the registry folders. */
+export const STAND_EVIDENCE_TYPE = 'AMD SEV-SNP (Azure)';
 
-/** What `rotateMeasurement()` moves to: a different cloud image, equally well-formed. */
+/**
+ * What `rotateMeasurement()` moves to: a different cloud image, equally
+ * well-formed — and signed nowhere, so the registry lookup reports it unknown,
+ * which is what a cloud redeployed on an unsigned image looks like.
+ */
 export const ROTATED_MEASUREMENT = 'bb6962eb20d616eb0f19479cf7fbccda50ee5682eab75b2104915d305a826aab';
 
 /**
@@ -208,15 +240,18 @@ export async function startEgressSidecar(options: EgressSidecarOptions): Promise
     renameSync(temporary, fixturePath);
   };
   /*
-   * `measurementSource: registry` and `inRegistry: true` deliberately: ruling 2
-   * on SUP-221 makes the admin list the sole authority, so the stand reports the
-   * strongest anchor there is and still expects a denial for a measurement
-   * nobody listed. A fixture that said "nothing vouches for this" could not tell
-   * the two apart.
+   * No `measurementSource` / `inRegistry` in the fixture: the teststand derives
+   * both from a real lookup against the registry served below. The stand's
+   * starting measurement is one the registry signs, so the verdict reports the
+   * strongest anchor there is — and, ruling 2 on SUP-221 making the admin list
+   * the sole authority, still expects a denial for it until it is listed. A
+   * rotated measurement is one the registry does not sign, and reads as such.
    */
   const admit = (value: string): void =>
-    writeFixture({ attested: true, measurement: value, measurementSource: 'registry', inRegistry: true });
+    writeFixture({ attested: true, measurement: value, evidenceType: STAND_EVIDENCE_TYPE });
   admit(measurement);
+
+  const registry = await startRegistryServer(REGISTRY_FIXTURE_DIR);
 
   const child = spawn(
     SIDECAR_BIN,
@@ -226,6 +261,7 @@ export async function startEgressSidecar(options: EgressSidecarOptions): Promise
       env: {
         ...process.env,
         [FIXTURE_ENV]: fixturePath,
+        [REGISTRY_ENV]: registry.url,
         CR_GATEKEEPER_CONFIG: options.configFile,
         CR_GATEKEEPER_REATTEST_INTERVAL: STAND_REATTEST_INTERVAL,
         CR_GATEKEEPER_VERDICT_CACHE_TTL: STAND_VERDICT_CACHE_TTL,
@@ -260,6 +296,7 @@ export async function startEgressSidecar(options: EgressSidecarOptions): Promise
         child.kill('SIGKILL');
       }
     }
+    await registry.close();
     rmSync(directory, { recursive: true, force: true });
   };
 

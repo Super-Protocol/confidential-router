@@ -353,6 +353,12 @@ export class ExternalEndpointEventModel {
   @Field(() => String, { nullable: true })
   evidenceDigest!: string | null;
 
+  @Field(() => String, {
+    nullable: true,
+    description: 'evidenceDigest as 64 hex characters — the spelling every screen shows (SUP-115).',
+  })
+  evidenceDigestHex!: string | null;
+
   @Field(() => ExternalEndpointEvidenceModel, {
     nullable: true,
     description:

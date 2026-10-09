@@ -108,6 +108,7 @@ export const VERIFIED_ENDPOINT = {
       reason: null,
       measurement: MEASUREMENT_TRUSTED,
       evidenceDigest: 'sha256/AAAABBBBCCCCDDDD',
+      evidenceDigestHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
       evidence: EVIDENCE_AFTER_CHANGE,
     },
     {
@@ -119,6 +120,7 @@ export const VERIFIED_ENDPOINT = {
       reason: null,
       measurement: MEASUREMENT_TRUSTED,
       evidenceDigest: 'sha256/AAAABBBBCCCCDDDD',
+      evidenceDigestHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
       evidence: null,
     },
     {
@@ -130,6 +132,7 @@ export const VERIFIED_ENDPOINT = {
       reason: null,
       measurement: null,
       evidenceDigest: null,
+      evidenceDigestHex: null,
       evidence: EVIDENCE,
     },
   ],
@@ -160,6 +163,7 @@ export const DENIED_ENDPOINT = {
       reason: 'measurement not on the trust list',
       measurement: MEASUREMENT_ROGUE,
       evidenceDigest: null,
+      evidenceDigestHex: null,
       evidence: null,
     },
   ],

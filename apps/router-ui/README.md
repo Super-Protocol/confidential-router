@@ -47,7 +47,7 @@ sign-in screen.
 | Route                                       | Owner   | State |
 | ------------------------------------------- | ------- | ----- |
 | `/`, `/models`                              | SUP-78  | built |
-| `/keys`, `/gatekeeper`                      | SUP-79  | built |
+| `/keys` (with “How to connect”; `/gatekeeper` redirects there) | SUP-79  | built |
 | `/activity`, `/logs`                        | SUP-80  | built |
 | `/credits`, `/profile`, `/preferences`      | SUP-81  | built |
 | `/chat`                                     | SUP-180 | built |

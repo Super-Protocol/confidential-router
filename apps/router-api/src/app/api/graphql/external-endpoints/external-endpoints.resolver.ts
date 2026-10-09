@@ -518,6 +518,7 @@ function eventModel(
     reason: row.reason,
     measurement: row.measurement,
     evidenceDigest: row.evidenceDigest,
+    evidenceDigestHex: hexOf(row.evidenceDigest),
     evidence,
   };
 }

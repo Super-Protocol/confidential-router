@@ -1,4 +1,4 @@
-import type { ExternalEndpointStatus, ModelOrigin } from '../../generated/graphql';
+import type { ExternalEndpointStatus } from '../../generated/graphql';
 
 /**
  * Every word the console says about an external upstream, in one file — and
@@ -68,14 +68,13 @@ export const EXTERNAL_STATUS_PRESENTATION: Record<ExternalEndpointStatus, Extern
   VERIFIED_BY_THIS_ROUTER: {
     label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
     /*
-     * Warning rather than success, and the asymmetry is the point: this is the
-     * strongest thing the screen can say about an upstream and it is still a
-     * self-report by the party you are already trusting with the prompt. Our own
-     * endpoints get `success` for *Published* because that claim is weaker and
-     * fully checkable — "the platform published a bundle", which the reader can
-     * fetch and verify themselves.
+     * Green: this is the good state, and a reader scanning a table should see it
+     * as one (SUP-255). The label still carries the qualifier — the colour says
+     * "all checks passed", the words say who ran them — and the dialog's note
+     * says what a self-report by the router is and is not. Amber is kept for
+     * states that need the reader's attention, not for a pass.
      */
-    variant: 'warning',
+    variant: 'success',
     headline: 'This router verified this upstream',
     note: 'This router fetched the upstream’s signed evidence, checked it, found the cloud’s measurement on its trust list and the deployment’s evidence digest equal to the one its operator approved, and pinned the TLS certificate the evidence names. That is a verdict reached by this deployment, not by you — inspect the relayed evidence to see what was approved.',
   },
@@ -104,25 +103,15 @@ export function externalStatusPresentation(status: ExternalEndpointStatus): Exte
 }
 
 /**
- * The origin badge: where a listed model runs.
+ * There is deliberately no origin badge in this vocabulary.
  *
- * `CONFIG` has no badge, and that is a decision rather than an omission. A label
- * on every row of the common case is a label nobody reads, and the information a
- * reader needs is *this one is different* — which is what an absent badge on
- * everything else makes legible. The word "External" also has to be the loud one:
- * it is the row whose attestation story is not the one the rest of the console
- * tells.
+ * The Models page and the chat picker used to tag an external row "External".
+ * That is the serving topology — which deployment answers — and a user of the
+ * router has no use for it: every model is reached through this router, every
+ * message is billed the same way, and what the user is owed is the verdict
+ * badge beside the row, not where the weights live. The distinction stays in the
+ * admin section, which is about endpoints rather than models (SUP-255).
  */
-export const MODEL_ORIGIN_PRESENTATION: Record<ModelOrigin, { label: string; description: string } | null> = {
-  CONFIG: null,
-  EXTERNAL: {
-    label: 'External',
-    description:
-      'This model runs in another deployment. Your connection still terminates at this router, which proxies to ' +
-      'the upstream over a channel it attested and pinned itself — so pinning this router does not transitively ' +
-      'verify the upstream, and the evidence relay is how you check it yourself.',
-  },
-};
 
 /** Availability, in words, for a reader who is shown no verdict at all. */
 export const EXTERNAL_AVAILABILITY = {

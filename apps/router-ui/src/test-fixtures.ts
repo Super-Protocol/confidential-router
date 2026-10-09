@@ -329,6 +329,7 @@ export function verifiedUpstream(
     lastCheckedAt: '2026-10-06T11:58:00.000Z',
     measurementSeen: 'a'.repeat(64),
     evidenceDigestSeen: 'sha256/Qd4sB7nR1wYvT9xQmL2aZc3Ef5JhUpGi7NrXoVeSbAo',
+    evidenceDigestSeenHex: '41de2c0789d1db062f4fac5098bd1a65cf447f52615291a2dcdad7a157926c0a',
     ...overrides,
   });
 }

@@ -2,7 +2,7 @@
  * The sequence that takes a reader from nothing to a verifying proxy, with
  * every value this deployment already knows filled in.
  *
- * Kept as data rather than markup so the two screens that show it — `/gatekeeper`
+ * Kept as data rather than markup so the two screens that show it — the API Keys page
  * and the chat's "what has been verified" panel — and the tests that pin the
  * text all read one set of strings. A command a user pastes is part of the
  * product's contract with the gatekeeper CLI (`apps/gatekeeper/pkg/cli`).
@@ -42,7 +42,7 @@ export interface SetupStep {
 export interface SetupInput {
   /**
    * The origin the gatekeeper fronts, scheme included — `publicConfig().apiOrigin`
-   * on the Gatekeeper page, and the endpoint the chat has just verified in the
+   * on the API Keys page, and the endpoint the chat has just verified in the
    * panel. Both are this deployment's own API origin whenever the console and
    * the endpoint are the same deployment, which is the only case either screen
    * can speak for.
@@ -74,7 +74,7 @@ export interface SetupInput {
  *
  * `--from-upstream` rather than a placeholder pin is the substantive difference
  * between the two callers: the chat panel knows which digest the evidence it
- * just checked carried, and the Gatekeeper page is reached before any endpoint
+ * just checked carried, and the API Keys page is reached before any endpoint
  * is chosen. Both commands are complete as printed; one pins what the console
  * read, the other pins what the gatekeeper reads for itself and shows you.
  */
