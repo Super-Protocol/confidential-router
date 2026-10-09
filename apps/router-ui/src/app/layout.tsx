@@ -1,6 +1,5 @@
 import '@confidential-router/ui/styles/globals.css';
 
-import { accentScript } from '@confidential-router/ui/components/theme-provider';
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { Providers } from '../components/providers';
@@ -44,8 +43,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: the deployment's own configuration, escaped by publicConfigScript, and it has to run before anything reads it */}
         <script dangerouslySetInnerHTML={{ __html: config }} />
-        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a static, self-authored blocking script is the only way to set the accent before first paint */}
-        <script dangerouslySetInnerHTML={{ __html: accentScript }} />
       </head>
       <body className={`${fontSans.variable} ${fontMono.variable} font-sans antialiased`}>
         <Providers>{children}</Providers>

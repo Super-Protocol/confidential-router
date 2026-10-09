@@ -10,6 +10,7 @@ import { BrandMark } from './brand-mark';
 import { AppBreadcrumbs } from './breadcrumbs';
 import { FeedbackPrompt } from './feedback/feedback-prompt';
 import { SidebarNav } from './sidebar-nav';
+import { SuperProtocolLogo } from './super-protocol-logo';
 import { ThemeToggle } from './theme-toggle';
 import { UserMenu } from './user-menu';
 
@@ -82,6 +83,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </SheetContent>
           </Sheet>
+
+          {/* The wordmark is 24px tall inside the 52px header, so it adds no height. */}
+          <Link
+            href="/"
+            aria-label="Super Protocol — console home"
+            className="flex shrink-0 items-center rounded-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            <SuperProtocolLogo className="h-5 w-[89px]" />
+          </Link>
+          <span aria-hidden="true" className="hidden h-5 w-px shrink-0 bg-border sm:block" />
 
           <AppBreadcrumbs />
 
