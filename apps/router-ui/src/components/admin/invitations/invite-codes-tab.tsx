@@ -245,16 +245,18 @@ export function InviteCodesTab({ campaigns }: { campaigns: string[] }) {
                         <span className="block text-muted-foreground text-xs">until {formatDate(code.expiresAt)}</span>
                       ) : null}
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs">
+                    <TableCell className="max-w-48 text-muted-foreground text-xs">
                       <span className="block">{formatDate(code.createdAt)}</span>
-                      <span className="block">{code.issuedByEmail ?? 'CLI'}</span>
+                      <span className="block truncate" title={code.issuedByEmail ?? undefined}>
+                        {code.issuedByEmail ?? 'CLI'}
+                      </span>
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="max-w-64 text-xs">
                       {code.redeemers.length === 0 ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
                         code.redeemers.map((redeemer) => (
-                          <span key={redeemer.userId} className="block">
+                          <span key={redeemer.userId} className="block truncate">
                             {redeemer.email ?? <span className="text-muted-foreground">deleted account</span>}
                             <span className="text-muted-foreground"> · {formatDate(redeemer.redeemedAt)}</span>
                           </span>

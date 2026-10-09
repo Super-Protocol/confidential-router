@@ -182,6 +182,7 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
               format={formatCount}
               legend={false}
               axis="sparse"
+              maxTicks={4}
               data-testid="chart-issued"
             />
           </CardContent>
@@ -201,6 +202,7 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
               format={formatCount}
               legend={false}
               axis="sparse"
+              maxTicks={4}
               data-testid="chart-redeemed"
             />
           </CardContent>
