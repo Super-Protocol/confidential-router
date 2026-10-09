@@ -210,7 +210,9 @@ export function IssueCodesDialog({ open, onOpenChange }: { open: boolean; onOpen
             >
               {issued.codes.map((invite) => (
                 <li key={invite.id} className="flex items-center gap-3 px-3 py-1.5">
-                  <span className="shrink-0 font-mono">{invite.code}</span>
+                  <span className="shrink-0 font-mono" data-testid="issued-code">
+                    {invite.code}
+                  </span>
                   <span className="min-w-0 flex-1 truncate text-muted-foreground" title={invite.url}>
                     {invite.url}
                   </span>

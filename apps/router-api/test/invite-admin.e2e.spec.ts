@@ -164,10 +164,11 @@ describe('issuing from the console', () => {
 
   it('never writes a code to the log — issuing or withdrawing', async () => {
     const lines: string[] = [];
+    const capture = (message: unknown): void => {
+      lines.push(String(message));
+    };
     for (const level of ['log', 'warn', 'error', 'debug', 'verbose'] as const) {
-      vi.spyOn(Logger.prototype, level).mockImplementation(function (this: Logger, message: unknown) {
-        lines.push(String(message));
-      });
+      vi.spyOn(Logger.prototype, level).mockImplementation(capture as never);
     }
 
     const [first, second, third] = await issue(3);

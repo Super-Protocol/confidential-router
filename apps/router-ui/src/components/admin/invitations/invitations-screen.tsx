@@ -84,7 +84,16 @@ function AdminInvitations() {
         }
       />
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          setTab(next);
+          // The codes and sign-ups tabs fetch on every open; the statistics live
+          // up here, so coming back to them asks again rather than showing the
+          // numbers from before whatever just happened.
+          if (next === 'statistics') void statistics.refetch();
+        }}
+      >
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="statistics">Statistics</TabsTrigger>
