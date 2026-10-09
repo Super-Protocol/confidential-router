@@ -50,6 +50,22 @@ describe('AppShell', () => {
     expect(within(trail).getByText('Models')).toBeInTheDocument();
   });
 
+  it('leads the header with the Super Protocol logo, linking to the console home', () => {
+    pathname.current = '/models';
+    renderWithSession(<AppShell>content</AppShell>);
+
+    const banner = screen.getByRole('banner');
+    const home = within(banner).getByRole('link', { name: 'Super Protocol — console home' });
+    expect(home).toHaveAttribute('href', '/');
+    // Mono: the wordmark takes the text colour, so it is black on light and white on dark.
+    expect(home).toHaveClass('text-foreground');
+    expect(home.querySelector('svg')).toHaveClass('fill-current');
+
+    const trail = within(banner).getByRole('navigation', { name: 'breadcrumb' });
+    // Leading position: the logo comes before the workspace breadcrumb.
+    expect(home.compareDocumentPosition(trail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('switches the active workspace', async () => {
     renderWithSession(<AppShell>content</AppShell>);
 

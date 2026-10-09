@@ -79,3 +79,17 @@ test('both containers serve the same bundle, so neither was rebuilt for its orig
   expect(alpha).not.toHaveLength(0);
   expect(alpha).toEqual(beta);
 });
+
+// SUP-263: `output: 'standalone'` leaves `public/` out of its tree, so the
+// favicon only reaches a browser if the Dockerfile copies it. Asserted on the
+// image, without a session — the proxy must let it through to the sign-in page.
+test('the image serves the Super Protocol favicon, PNG and the .ico fallback', async ({ page }) => {
+  const png = await page.request.get(consoleUrl(DEPLOYMENTS.alpha, '/favicon.png'));
+  expect(png.status()).toBe(200);
+  expect(png.headers()['content-type']).toContain('image/png');
+
+  const ico = await page.request.get(consoleUrl(DEPLOYMENTS.alpha, '/favicon.ico'));
+  expect(ico.status()).toBe(200);
+  // ICONDIR: reserved 0, type 1 (icon).
+  expect([...(await ico.body()).subarray(0, 4)]).toEqual([0, 0, 1, 0]);
+});
