@@ -230,15 +230,21 @@ export function ModelsScreen() {
               ))}
             </TableBody>
           </Table>
+          {/*
+            Inside the border, as the key table does its count: a line under a
+            table is a footer; the same line a gap below it was a footnote adrift
+            in the page (SUP-262).
+          */}
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t px-4 py-2.5 text-muted-foreground text-xs">
+            <p>
+              {visible.length === models.length
+                ? servedFrom(models.length - externalCount, endpointCount, externalCount)
+                : `${visible.length} of ${models.length} models.`}
+            </p>
+            <p>Prices are in USD per 1M tokens and are billed from credits.</p>
+          </div>
         </div>
       )}
-
-      <p className="text-muted-foreground text-xs">
-        {visible.length === models.length
-          ? servedFrom(models.length - externalCount, endpointCount, externalCount)
-          : `${visible.length} of ${models.length} models.`}{' '}
-        Prices are in USD per 1M tokens and are billed from credits.
-      </p>
     </div>
   );
 }

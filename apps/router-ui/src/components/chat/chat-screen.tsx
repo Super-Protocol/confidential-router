@@ -8,6 +8,7 @@ import { MessagesSquare, ShieldQuestionMark } from 'lucide-react';
 import * as React from 'react';
 import type { ChatScreenQuery } from '../../generated/graphql';
 import { ExternalInspectButton } from '../external/external-inspect-button';
+import { InfoPopover } from '../info-popover';
 import { useSession } from '../session/session-provider';
 import { InspectAttestationButton } from './attestation/inspect-button';
 import { type PendingMessage, promptMessages } from './chat-history';
@@ -426,7 +427,13 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start gap-3">
+      {/*
+        One toolbar row, and only controls on it: the picker, the verification
+        pill, and the inspect buttons pushed to the far end (SUP-262). Everything
+        that used to be prose between them — the tier caveat, the external-model
+        note — now sits behind a trigger whose accessible name says it is there.
+      */}
+      <div className="flex flex-wrap items-center gap-2" data-testid="chat-toolbar">
         <ModelPicker
           models={models}
           value={model?.id ?? ''}
@@ -441,47 +448,44 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
           disabled={streaming}
         />
         {endpoint ? (
-          <div className="flex min-w-64 flex-1 flex-wrap items-start gap-x-3 gap-y-2">
-            <div className="min-w-48 flex-1">
-              <VerificationBadge
-                verification={verification}
-                hostname={endpoint.hostname}
-                evidenceDigestHex={endpoint.latestEvidence?.evidenceDigestHex ?? null}
-                extensionUrl={EXTENSION_URL}
-              />
-            </div>
-            {/*
+          <VerificationBadge
+            verification={verification}
+            hostname={endpoint.hostname}
+            evidenceDigestHex={endpoint.latestEvidence?.evidenceDigestHex ?? null}
+            extensionUrl={EXTENSION_URL}
+          />
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          {endpoint ? (
+            /*
               Beside the badge, not inside its panel: the badge answers "has this
               been verified, and by whom", and this opens the much longer answer
               to "what does the document actually say". Its chunk is fetched on
               the first press, so the chat screen's own bundle is unchanged for
               everyone who never asks.
-            */}
+            */
             <InspectAttestationButton
               verification={verification}
               hostname={endpoint.hostname}
               teeLabel={endpoint.tee ?? null}
               declaredImages={endpoint.declaredImages ?? null}
             />
-          </div>
-        ) : null}
+          ) : null}
 
-        {/*
-          And for an external model, the second check — the upstream's own
-          evidence, relayed and verified in this page. A separate button because
-          it is a separate claim about a separate channel; folding it into the
-          badge above would be the blend ADR-008 §1 forbids.
+          {/*
+            And for an external model, the second check — the upstream's own
+            evidence, relayed and verified in this page. A separate button because
+            it is a separate claim about a separate channel; folding it into the
+            badge above would be the blend ADR-008 §1 forbids.
 
-          Outside the block above on purpose: it needs the upstream and nothing
-          else. A deployment this router cannot name its own endpoint on has no
-          badge to show and a locked composer — and is exactly where being able to
-          inspect the upstream yourself is worth most.
-        */}
-        {upstream ? (
-          <div className="flex items-start">
-            <ExternalInspectButton upstream={upstream} />
-          </div>
-        ) : null}
+            Not gated on `endpoint` on purpose: it needs the upstream and nothing
+            else. A deployment this router cannot name its own endpoint on has no
+            badge to show and a locked composer — and is exactly where being able
+            to inspect the upstream yourself is worth most.
+          */}
+          {upstream ? <ExternalInspectButton upstream={upstream} /> : null}
+        </div>
       </div>
 
       {upstream ? <ExternalModelNote hostname={upstream.hostname} /> : null}
@@ -509,7 +513,6 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
           <ThreadList
             threads={threads}
             activeThreadId={activeThreadId}
-            maxThreads={settings.maxThreads}
             activeRowRef={activeRow}
             onSelect={setActiveThreadId}
             onCreate={() => {
@@ -562,10 +565,21 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
         </div>
       </div>
 
-      <StorageNote
-        copy={historyCopy}
-        onRevealDelete={activeRowRendered ? () => activeRow.current?.focus() : undefined}
-      />
+      {/*
+        One footer line for the two facts about keeping conversations: where
+        they are kept, and how many. They used to sit in the sidebar's gutter,
+        one under the list and one under the grid, which read as two stray notes
+        rather than one footer (SUP-262).
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <StorageNote
+          copy={historyCopy}
+          onRevealDelete={activeRowRendered ? () => activeRow.current?.focus() : undefined}
+        />
+        <p className="text-muted-foreground text-xs">
+          {threads.length} of {settings.maxThreads} conversations kept. The oldest is dropped past that.
+        </p>
+      </div>
     </div>
   );
 }
@@ -578,13 +592,26 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
  * anyone opens a panel and it changes what the badge beside it means — that badge
  * is about this router, which is the right subject for the composer's gate and
  * the wrong one to read as a statement about where the prompt ends up.
+ *
+ * The line names the deployment; the sentence about what that means for the
+ * badge and for the prompt is behind the ⓘ (SUP-262). Three lines of mixed mono
+ * and prose under the toolbar was the second thing Denis pointed at.
  */
 function ExternalModelNote({ hostname }: { hostname: string }) {
   return (
-    <p className="max-w-prose text-muted-foreground text-xs">
-      This model runs in another deployment, <span className="break-all font-mono">{hostname}</span>. Your messages go
-      to this router, which attested that upstream itself and proxies over a channel it pinned — so the badge above is
-      about this router, and “Inspect upstream attestation” is where you check the other end.
-    </p>
+    <div
+      className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs"
+      data-testid="external-model-note"
+    >
+      <p>
+        This model runs in another deployment, <span className="break-all font-mono">{hostname}</span>.
+      </p>
+      <InfoPopover label="What this means for your messages">
+        <p>
+          Your messages go to this router, which attested that upstream itself and proxies over a channel it pinned — so
+          the badge above is about this router, and “Inspect upstream attestation” is where you check the other end.
+        </p>
+      </InfoPopover>
+    </div>
   );
 }
