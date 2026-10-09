@@ -11,6 +11,7 @@ import { CreditsResolver } from './credits/credits.resolver.js';
 import { ExternalEndpointsResolver } from './external-endpoints/external-endpoints.resolver.js';
 import { FeedbackResolver } from './feedback/feedback.resolver.js';
 import { GatekeeperResolver } from './gatekeeper/gatekeeper.resolver.js';
+import { InviteAdminResolver } from './invites/invite-admin.resolver.js';
 import { InvitesResolver } from './invites/invites.resolver.js';
 import { PreferencesResolver } from './preferences/preferences.resolver.js';
 import { JsonScalar } from './scalars/json.scalar.js';
@@ -35,6 +36,7 @@ export const CONSOLE_RESOLVERS = [
   ExternalEndpointsResolver,
   FeedbackResolver,
   GatekeeperResolver,
+  InviteAdminResolver,
   InvitesResolver,
   PreferencesResolver,
   SignInOptionsResolver,
