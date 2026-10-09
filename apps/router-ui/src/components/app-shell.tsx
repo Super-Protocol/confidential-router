@@ -87,9 +87,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="ml-auto flex items-center gap-1.5">
             <Button variant="outline" size="sm" asChild className="hidden sm:inline-flex">
-              <Link href="/gatekeeper">
+              <Link href="/keys#how-to-connect">
                 <BrandMark className="size-3.5 text-brand-emphasis" />
-                Verify with Gatekeeper
+                Connect a client
               </Link>
             </Button>
             <ThemeToggle />

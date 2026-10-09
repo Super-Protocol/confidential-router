@@ -613,6 +613,10 @@ type ExternalEndpointEvent {
   measurement: String
   evidenceDigest: String
   """
+  `evidenceDigest` as 64 hex characters — the spelling every screen shows (SUP-115).
+  """
+  evidenceDigestHex: String
+  """
   The evidence summary in force at this event, so ruling 1's "at registration and
   on every change" is literally what the timeline renders. Null when no snapshot
   was stored for it.
@@ -933,6 +937,11 @@ type ExternalUpstream {
   lastCheckedAt: DateTime
   measurementSeen: String
   evidenceDigestSeen: String
+  """
+  `evidenceDigestSeen` as 64 hex characters — the spelling every screen shows and
+  copies (SUP-115); null when there is no digest or it does not parse.
+  """
+  evidenceDigestSeenHex: String
 }
 
 extend type Model {

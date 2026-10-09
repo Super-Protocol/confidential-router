@@ -89,6 +89,7 @@ const VERIFIED_ENDPOINT = {
       reason: null,
       measurement: TRUSTED_MEASUREMENT,
       evidenceDigest: 'sha256/AAAABBBBCCCCDDDDEEEEFFFF',
+      evidenceDigestHex: '1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff',
       evidence: EVIDENCE,
     },
     {
@@ -100,6 +101,7 @@ const VERIFIED_ENDPOINT = {
       reason: null,
       measurement: null,
       evidenceDigest: null,
+      evidenceDigestHex: null,
       evidence: EVIDENCE,
     },
   ],

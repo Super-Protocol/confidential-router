@@ -61,4 +61,12 @@ export class ExternalUpstreamModel {
     description: 'Canonical digest of the upstream deployment snapshot the verdict admitted.',
   })
   evidenceDigestSeen!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115). Null when ' +
+      'there is no digest, or when the stored value is not one the parser accepts.',
+  })
+  evidenceDigestSeenHex!: string | null;
 }

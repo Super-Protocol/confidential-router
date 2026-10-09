@@ -94,6 +94,21 @@ describe('refresh', () => {
     });
   });
 
+  it('spells the catalogue upstream’s digest in hex beside the canonical form', async () => {
+    // A real pair: the canonical `sha256/<base64url>` wire form and its hex,
+    // which is the only spelling a console screen may show (SUP-115, SUP-255).
+    const canonical = `sha256/${Buffer.from('ab'.repeat(32), 'hex').toString('base64url')}`;
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { evidenceDigestSeen: canonical });
+
+    await catalog.refresh();
+
+    expect(catalog.listCatalogue()[0]?.upstream).toMatchObject({
+      evidenceDigestSeen: canonical,
+      evidenceDigestSeenHex: 'ab'.repeat(32),
+    });
+  });
+
   it('never picks up a config model, however the two share a table', async () => {
     // `CatalogService` owns config rows and says why it may resolve them once at
     // boot. This map exists so that assumption stays narrowly true, not so that
@@ -303,6 +318,9 @@ describe('listCatalogue', () => {
       hostname: `${endpoint.name}.example`,
       measurementSeen: 'b'.repeat(64),
       evidenceDigestSeen: 'sha256/upstream',
+      // Not a digest the parser accepts, so the hex twin is null rather than a
+      // refusal that would take the whole catalogue down.
+      evidenceDigestSeenHex: null,
     });
     // Smaller than `ExternalCatalogEndpoint` on purpose: the catalogue has no
     // use for a base URL, a listen port or a sealed key, and the surfaces it

@@ -35,7 +35,15 @@
 // container entrypoint under test is the shipped one.
 //
 //	GATEKEEPER_TESTSTAND_ATTESTED_ROOT=/path/to/verdict.json \
+//	  GATEKEEPER_TESTSTAND_REGISTRY_BASE_URL=http://127.0.0.1:port \
 //	  gatekeeper-teststand --config /path/to/config.yaml run --headless
+//
+// The registry leg is the one part of the measurement check that *can* be
+// real on a stand, so it is: with a registry base URL set (the variable, or
+// `attestedRoots.registryBaseUrl` in the config), the fixture's measurement is
+// looked up through the shipped [attestedroot.HTTPRegistry] — the same paths,
+// folder map and pinned key as production — and `inRegistry` /
+// `measurementSource` are what that lookup found, not what the fixture says.
 package main
 
 import (
@@ -45,7 +53,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation/attestedroot"
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/cli"
@@ -61,6 +71,14 @@ import (
 // product bug.
 const FixtureEnv = "GATEKEEPER_TESTSTAND_ATTESTED_ROOT"
 
+// RegistryEnv names the signed-measurement registry the fixture's measurement
+// is looked up in for real. Optional: without it (and without
+// `attestedRoots.registryBaseUrl`) the fixture's own `inRegistry` and
+// `measurementSource` are reported as written. It is an environment variable
+// rather than only the config key because router-api renders the stand's
+// config and does not emit that key.
+const RegistryEnv = "GATEKEEPER_TESTSTAND_REGISTRY_BASE_URL"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -72,6 +90,7 @@ func run(args []string, stdout, stderr *os.File) int {
 			FixtureEnv)
 		return cli.ExitUsage
 	}
+	registryURL := os.Getenv(RegistryEnv)
 
 	ctx := context.Background()
 	env := cli.Env{Stdin: os.Stdin, Stdout: stdout, Stderr: stderr}
@@ -85,7 +104,7 @@ func run(args []string, stdout, stderr *os.File) int {
 		Overrides: config.Overrides{ConfigPath: configPathOf(args)},
 	})
 	if err == nil {
-		supervisor, buildErr := proxy.New(ctx, proxy.Options{Config: cfg, Verifier: standVerifier(fixture)})
+		supervisor, buildErr := proxy.New(ctx, proxy.Options{Config: cfg, Verifier: standVerifier(fixture, registryURL)})
 		if buildErr != nil {
 			fmt.Fprintf(stderr, "gatekeeper-teststand: %v\n", buildErr)
 			return cli.ExitConfig
@@ -119,13 +138,26 @@ func configPathOf(args []string) string {
 // a SIGHUP rebuilds it against the reloaded configuration — which is the whole
 // mechanism behind "an admin's trust-list edit takes effect on the next check"
 // (ADR-008 §5).
-func standVerifier(fixture string) proxy.VerifierFunc {
+//
+// registryURL is [RegistryEnv]; empty defers to the config's own
+// `attestedRoots.registryBaseUrl`, and both empty leaves the registry leg to
+// the fixture.
+func standVerifier(fixture, registryURL string) proxy.VerifierFunc {
 	return func(ctx context.Context, cfg *config.Config) (status.Verifier, error) {
 		built, err := verifier.New(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
-		return built.WithAttestedRoots(fileAttestedRoots{path: fixture}), nil
+		roots := fileAttestedRoots{path: fixture}
+		if base := orElse(registryURL, cfg.AttestedRootsRegistryBaseURL()); base != "" {
+			// The shipped registry client, so the stand proves the real probe
+			// order and the pinned key, not a stand-in. The timeout is the
+			// stand's: a hung mirror must surface as a denial within one
+			// re-attestation interval, not stall the loop.
+			roots.registry = &attestedroot.HTTPRegistry{BaseURL: base, Client: &http.Client{Timeout: 10 * time.Second}}
+			roots.registryURL = base
+		}
+		return built.WithAttestedRoots(roots), nil
 	}
 }
 
@@ -145,7 +177,9 @@ type standVerdict struct {
 	// MeasurementSource and InRegistry are reported, never admitting: ruling 2
 	// on SUP-221 makes the admin list the sole authority, and a stand that
 	// could not say "the registry does sign this, and it still does not get in"
-	// could not exercise that.
+	// could not exercise that. They are read as written only when no registry
+	// is configured; with one, the real lookup decides both and these are
+	// ignored, so a stand cannot claim a signature the registry does not hold.
 	MeasurementSource string `json:"measurementSource,omitempty"`
 	InRegistry        bool   `json:"inRegistry,omitempty"`
 	// NetworkType is the platform's own trusted/untrusted split. The live Swarm
@@ -164,9 +198,14 @@ type standVerdict struct {
 // re-attestation, which is the rotate-measurement beat.
 type fileAttestedRoots struct {
 	path string
+	// registry, when set, is consulted for the fixture's measurement instead
+	// of trusting the fixture's inRegistry/measurementSource. registryURL is
+	// only for the log line.
+	registry    attestedroot.Registry
+	registryURL string
 }
 
-func (f fileAttestedRoots) Verify(_ context.Context, cert *x509.Certificate) (*attestedroot.Result, error) {
+func (f fileAttestedRoots) Verify(ctx context.Context, cert *x509.Certificate) (*attestedroot.Result, error) {
 	if cert == nil {
 		return nil, errors.New("gatekeeper-teststand: no certificate to verify")
 	}
@@ -198,14 +237,61 @@ func (f fileAttestedRoots) Verify(_ context.Context, cert *x509.Certificate) (*a
 		// MeasurementUnknown stays false even for a measurement the admin did
 		// not list: it means "the registry was reached and holds nothing for
 		// this image", which is a statement about the registry and not about
-		// the list (see Result.NeedsMeasurementAnchor).
+		// the list (see Result.NeedsMeasurementAnchor). Only a real lookup
+		// (consultRegistry, below) is entitled to set it.
 	}
 	// The substitution is named in the verdict's own logs, which `/verdicts`,
 	// `gatekeeper verify` and the dashboard all print. A report read out of the
 	// stand therefore never claims a hardware check that did not happen.
 	result.Logs = []string{fmt.Sprintf(
 		"teststand: attested-root verdict read from %s — no hardware report was verified", f.path)}
+	if f.registry != nil && result.Attested && len(result.Measurement) > 0 {
+		f.consultRegistry(ctx, result, evidenceTypeOf(document.EvidenceType))
+	}
 	return result, nil
+}
+
+// consultRegistry replaces the fixture's word on the registry leg with a real
+// lookup, mirroring [attestedroot.Verifier.AdmitMeasurement] for the one
+// difference the stand has: the admin list is applied by the verifier that
+// wraps this result, not here, so a miss is reported rather than denied —
+// which is exactly the "rotated to an image nobody signed" beat. An outage is
+// still a denial: the real check fails closed there, and so must the stand.
+func (f fileAttestedRoots) consultRegistry(ctx context.Context, result *attestedroot.Result, evidence attestedroot.EvidenceType) {
+	err := f.registry.Verify(ctx, result.Measurement, evidence)
+	switch {
+	case err == nil:
+		result.InRegistry = true
+		result.MeasurementSource = attestedroot.SourceRegistry
+		result.MeasurementUnknown = false
+		result.Logs = append(result.Logs, fmt.Sprintf("teststand: measurement %s is signed in the registry at %s (%s)",
+			result.MeasurementHex(), f.registryURL, evidence))
+	case errors.Is(err, attestedroot.ErrNotInRegistry):
+		result.InRegistry = false
+		result.MeasurementSource = ""
+		result.MeasurementUnknown = true
+		result.Logs = append(result.Logs, fmt.Sprintf("teststand: measurement %s is not in the registry at %s (%s)",
+			result.MeasurementHex(), f.registryURL, evidence))
+	default:
+		result.Attested = false
+		result.InRegistry = false
+		result.MeasurementSource = ""
+		result.Reason = fmt.Sprintf("the trusted registry could not be consulted: %v", err)
+		result.Logs = append(result.Logs, "teststand: denied: "+result.Reason)
+	}
+}
+
+// evidenceTypeOf maps the fixture's display name back to the type that picks
+// the registry folders. The fixture spells the type the way the UI does
+// (`attestedroot.EvidenceType.String`), and anything else — including the
+// stand's historical default label — is the QEMU SEV-SNP folder.
+func evidenceTypeOf(name string) attestedroot.EvidenceType {
+	for t := attestedroot.EvidenceSevSnpQemu; t <= attestedroot.EvidenceSevSnpAzure; t++ {
+		if t.String() == name {
+			return t
+		}
+	}
+	return attestedroot.EvidenceSevSnpQemu
 }
 
 func denied(format string, args ...any) *attestedroot.Result {

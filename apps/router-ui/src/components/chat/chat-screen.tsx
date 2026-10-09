@@ -488,16 +488,19 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
 
       {endpoint === null && model ? (
         /*
-          A deployment with several endpoints and none the router can identify as
-          its own (`EvidenceService.ownEndpoint` refuses to guess), reached here
-          only by picking an external model. The composer stays shut because
+          A deployment with no endpoint the router can identify as its own
+          (`EvidenceService.ownEndpoint` refuses to guess), reached here only by
+          picking an external model. The composer stays shut because
           `verification.unlocked` is false, and this says why rather than leaving
-          the badge row blank.
+          the badge row blank. Addressed to nobody in particular on purpose: the
+          marketplace listing publishes the router's own endpoint on every
+          deployment since SUP-255, so a reader who sees this is on an older or
+          hand-rolled one, and nothing they can type here changes that.
         */
         <p className="max-w-prose text-destructive text-sm">
           This router cannot tell which of its endpoints your browser is connected to, so this page has nothing to
-          verify and the composer stays locked. Name the endpoint in the router configuration, or use a model served
-          from one of them.
+          verify and the composer stays locked. That is a fault in how this router was deployed — it does not publish
+          its own API endpoint — and only its operator can fix it, by redeploying from a listing that does.
         </p>
       ) : null}
 

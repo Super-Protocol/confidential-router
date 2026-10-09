@@ -22,7 +22,8 @@ export interface GatekeeperSetupBlockProps {
 /**
  * The pre-filled Gatekeeper setup sequence — one component, two screens.
  *
- * `/gatekeeper` and the chat's tier-3 "verify it yourself" panel used to build
+ * The API Keys page's "How to connect" (the former `/gatekeeper` screen,
+ * SUP-255) and the chat's tier-3 "verify it yourself" panel used to build
  * the same commands from the same data through two different pieces of markup,
  * one of them with the placeholders still in. That is the shape of drift
  * SUP-153/165 cost us on the model catalogue, so the block itself is shared and

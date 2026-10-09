@@ -799,11 +799,13 @@ describe('a model in another deployment', () => {
     expect(note).toHaveTextContent(/the badge above is about this router/i);
   });
 
-  it('badges the picker row as external, and puts no verdict in it', async () => {
+  it('puts neither an origin tag nor a verdict in the picker row', async () => {
     render(externalMocks());
 
     const picker = await screen.findByRole('combobox', { name: 'Model' });
-    expect(screen.getByText('External')).toBeInTheDocument();
+    // No "External" tag: where a model runs is the serving topology, which a
+    // user of the router is not shown (SUP-255).
+    expect(screen.queryByText('External', { exact: true })).not.toBeInTheDocument();
     // The picker carries origin and price and neither vocabulary: admission is
     // the API's (`chatModelIds`), and a row that said "verified by this router"
     // beside a trigger that also shows the router's own badge would be the two

@@ -136,12 +136,7 @@ export function Measurements({
           value={prefixedHex(evidence.evidenceDigest)}
           mono
           copyValue={prefixedHex(evidence.evidenceDigest) ?? undefined}
-          note={
-            <>
-              SHA-256 of the canonical deployment snapshot — the value to pin in a gatekeeper, and the digest the graph
-              below is covered by. Canonical form: <code className="break-all">{evidence.evidenceDigest}</code>
-            </>
-          }
+          note="SHA-256 of the canonical deployment snapshot — the value to pin in a gatekeeper, and the digest the graph below is covered by."
         />
         <Field
           label="Registry measurement"
@@ -236,12 +231,7 @@ export function Measurements({
           value={prefixedHex(evidence.certFingerprint)}
           mono
           copyValue={prefixedHex(evidence.certFingerprint) ?? undefined}
-          note={
-            <>
-              The TLS leaf the evidence signs. Canonical form:{' '}
-              <code className="break-all">{evidence.certFingerprint}</code>
-            </>
-          }
+          note="The TLS leaf the evidence signs."
         />
         <Field
           label="Channel binding"
