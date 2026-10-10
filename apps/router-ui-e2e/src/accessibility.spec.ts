@@ -31,11 +31,12 @@ async function signInOptions(
   page: import('@playwright/test').Page,
   offers: Partial<{
     bootstrap: boolean;
+    adminRecovery: boolean;
     github: boolean;
     google: boolean;
+    emailCode: boolean;
+    emailCodeLength: number;
     magicLink: boolean;
-    password: boolean;
-    passwordMinLength: number;
     inviteRequired: boolean;
   }>,
 ): Promise<void> {
@@ -44,11 +45,12 @@ async function signInOptions(
       signInOptions: {
         __typename: 'SignInOptions',
         bootstrap: false,
+        adminRecovery: false,
         github: true,
         google: true,
+        emailCode: false,
+        emailCodeLength: 6,
         magicLink: false,
-        password: false,
-        passwordMinLength: 12,
         inviteRequired: false,
         ...offers,
       },
@@ -71,10 +73,40 @@ test.describe('accessibility', () => {
   }
 
   test('the sign-in screen has no serious axe violations', async ({ page }) => {
-    await signInOptions(page, { magicLink: true });
+    // Everything the card can show at once: both providers, both mail paths
+    // and the administrator's token.
+    await signInOptions(page, { emailCode: true, magicLink: true, adminRecovery: true });
 
     await page.goto('/login');
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Email me a code' })).toBeVisible();
+
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
+
+  test('the code step has no serious axe violations', async ({ page }) => {
+    // Where every sign-in by mail ends up, and every sign-up too (SUP-269).
+    await signInOptions(page, { emailCode: true });
+    await page.route('**/auth/email-otp/send-verification-otp', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' }),
+    );
+
+    await page.goto('/login');
+    await page.getByLabel('Email').fill('developer@example.com');
+    await page.getByRole('button', { name: 'Email me a code' }).click();
+    await expect(page.getByLabel('Code')).toBeVisible();
+
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
+
+  test('the administrator sign-in screen has no serious axe violations', async ({ page }) => {
+    await signInOptions(page, { adminRecovery: true });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Administrator: use the first-sign-in token' }).click();
+    await expect(page.getByLabel('First-sign-in token')).toBeVisible();
 
     const violations = await auditPage(page);
     expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
@@ -93,9 +125,8 @@ test.describe('accessibility', () => {
   });
 
   test('the sign-up screen has no serious axe violations', async ({ page }) => {
-    // The screen everyone after the first account uses on a mailer-less
-    // deployment, and the only one in the console with two labelled secrets.
-    await signInOptions(page, { github: false, google: false, password: true });
+    // The screen an invitation link opens, and the one "Create one" leads to.
+    await signInOptions(page, { github: false, google: false, emailCode: true });
 
     await page.goto('/signup');
     await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();

@@ -19,6 +19,14 @@ card; a wallet flow and a second database are friction with no upside.
    password provider is the only sign-in path that needs nothing outside the cluster. It ships without
    email verification and without password reset, because both are the mail round trip this exists to
    avoid; the routes are 404 wherever they are not offered. SIWE is still out.)*
+   *(Amended 2026-10-10, SUP-269, by the owner's decision: **password sign-in is removed** and the
+   SUP-112 amendment above is withdrawn. Accounts sign in — and are created — with a **one-time code
+   mailed to the address** (Better Auth email-OTP), beside OAuth; the magic link remains available and is
+   off on the marketplace listing. No password hash is stored, and the ones stored under SUP-112 are
+   deleted on upgrade. The bootstrap token (SUP-95) still creates the first account and, from this
+   amendment on, also signs back into that one account, as the administrator's break-glass when no code
+   can be mailed. A deployment with no mailer and no OAuth app is therefore bootstrap-token-only.
+   Sessions are rolling and ninety days by default.)*
 2. **One database.** Sessions, accounts and verification tokens live in the router's **PostgreSQL**
    (SQLite in dev). No auth-service, no MongoDB.
 3. **Library:** [Better Auth](https://www.better-auth.com/) (already used in-house in swarm-cloud's

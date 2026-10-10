@@ -8,8 +8,9 @@
  *
  * Run by the `cross-app` Playwright project only — see `playwright.config.ts`.
  */
-import { expect, test } from '@playwright/test';
-import { readHandoff, type StackHandoff, useAdminSession, useSession } from './stack';
+import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { SESSION_COOKIE_NAME, SIGNED_IN_COOKIE_NAME } from './fixtures';
+import { readHandoff, readMailedCode, type StackHandoff, useAdminSession, useSession } from './stack';
 
 let handoff: StackHandoff;
 
@@ -101,6 +102,123 @@ test.describe('the console, against a live router-api', () => {
 });
 
 /**
+ * Signing in, against the real API (SUP-269) — the acceptance criterion of the
+ * issue, and the one flow here that starts with no session at all.
+ *
+ * There is no password anywhere: an address is mailed a one-time code, and
+ * handing it back opens a session, creating the account if the address had
+ * none. The stack's mailer writes the mail to the router's log, which
+ * `readMailedCode` reads the way a person reads their inbox.
+ *
+ * Serial, because it is one story told in three steps and each needs what the
+ * step before left behind: the code that was used, and the browser state it
+ * bought. Every browser here is its own context — the `page` fixture carries
+ * the handoff's session (`beforeEach` above), which is exactly what these must
+ * not start with.
+ */
+test.describe
+  .serial('signing in by emailed code, against a live router-api', () => {
+    const email = `code-e2e-${Date.now().toString(36)}@example.com`;
+    /** The code the first case signed in with — spent from then on. */
+    let usedCode: string;
+    /** What that browser held once it was signed in: its cookies, on both hosts. */
+    let signedInState: Awaited<ReturnType<BrowserContext['storageState']>>;
+
+    const DAY_SECONDS = 86_400;
+
+    /** `/login`, an address, and "Email me a code" — ending on the code step. */
+    async function askForCode(page: Page): Promise<void> {
+      await page.goto('/login');
+      await page.getByLabel('Email').fill(email);
+      await page.getByRole('button', { name: 'Email me a code' }).click();
+      await expect(page.getByRole('heading', { name: 'Enter your code' })).toBeVisible();
+    }
+
+    test('signs a fresh browser in with the code mailed to its address', async ({ browser, baseURL }) => {
+      const context = await browser.newContext({ baseURL });
+      const page = await context.newPage();
+      expect(await context.cookies()).toEqual([]);
+
+      // No session, so the console sends the browser to the sign-in screen.
+      await page.goto('/');
+      await expect(page).toHaveURL(/\/login$/);
+
+      await askForCode(page);
+      await expect(page.getByText(`We sent a 6-digit code to ${email}.`, { exact: false })).toBeVisible();
+
+      usedCode = await readMailedCode(handoff, email);
+      await page.getByLabel('Code').fill(usedCode);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+
+      // The address had no account: the same request created it, with the
+      // personal workspace every account gets, and the shell renders for it.
+      await expect(page).not.toHaveURL(/\/login/);
+      await expect(page.getByRole('navigation', { name: 'Console' })).toBeVisible();
+      await expect(page.getByRole('button', { name: `Account: ${email}` })).toBeVisible();
+      await expect(page.getByRole('button', { name: `Workspace: ${email}` })).toBeVisible();
+
+      signedInState = await context.storageState();
+      await context.close();
+    });
+
+    test('keeps that browser signed in across a restart, for about ninety days', async ({ browser, baseURL }) => {
+      // A session cookie with no expiry dies with the browser, and a restart is
+      // what `storageState` into a new context is: nothing survives it that was
+      // not written to disk.
+      const session = signedInState.cookies.find((cookie) => cookie.name === SESSION_COOKIE_NAME);
+      expect(session, 'the API left no session cookie').toBeDefined();
+      expect(new URL(handoff.apiOrigin).hostname).toContain((session?.domain ?? '').replace(/^\./, ''));
+      // `auth.sessionMaxAge` is 90 days. Bounded on both sides: persistent, and
+      // not for ever either.
+      const lifetime = (session?.expires ?? -1) - Date.now() / 1000;
+      expect(lifetime).toBeGreaterThan(80 * DAY_SECONDS);
+      expect(lifetime).toBeLessThan(100 * DAY_SECONDS);
+
+      const context = await browser.newContext({ baseURL, storageState: signedInState });
+      const page = await context.newPage();
+
+      await page.goto('/');
+
+      // No bounce to the sign-in screen, and it is the same account.
+      await expect(page).not.toHaveURL(/\/login/);
+      await expect(page.getByRole('button', { name: `Account: ${email}` })).toBeVisible();
+      await context.close();
+    });
+
+    test('refuses the same code a second time', async ({ browser, baseURL }) => {
+      const context = await browser.newContext({ baseURL });
+      const page = await context.newPage();
+      // The code step is only reachable by asking for a code, and a real request
+      // would mail a new one — which replaces the old, so the refusal below would
+      // prove nothing about reuse. The request is answered here instead; the
+      // attempt that follows goes to the real router.
+      await page.route('**/auth/email-otp/send-verification-otp', (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' }),
+      );
+
+      await askForCode(page);
+      await page.getByLabel('Code').fill(usedCode);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+
+      // The router forgets a code the moment it is used, so a second attempt is
+      // answered as a wrong code (`INVALID_OTP`) rather than as an expired one —
+      // which is also why that sentence offers a new code and not only a retry.
+      await expect(page.locator('#email-code-error')).toContainText(
+        'That code is not right. Check the mail and try again, or send a new one.',
+      );
+      await expect(page).toHaveURL(/\/login$/);
+      const named = (await context.cookies()).map((cookie) => cookie.name);
+      expect(named).not.toContain(SESSION_COOKIE_NAME);
+      expect(named).not.toContain(SIGNED_IN_COOKIE_NAME);
+
+      // And the console is still closed to it.
+      await page.goto('/keys');
+      await expect(page).toHaveURL(/\/login\?next=%2Fkeys$/);
+      await context.close();
+    });
+  });
+
+/**
  * The Invitations section against the real API (SUP-268): an operator issues a
  * code in the browser, somebody signs up with it, and the redemption is then
  * visible from both sides — the code's row and the account's — and in the
@@ -128,10 +246,17 @@ test.describe('the Invitations section, against a live router-api', () => {
     expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     await dialog.getByRole('button', { name: 'Done' }).click();
 
-    // Somebody redeems it, the way the console's own sign-up form does.
-    const created = await request.post(`${handoff.apiBaseUrl}/auth/sign-up/email`, {
+    // Somebody redeems it, the way the console's own sign-up form does: a code
+    // is mailed to the address, and handing it back is what creates the account
+    // — with the invitation on the same request (SUP-269).
+    const mailed = await request.post(`${handoff.apiBaseUrl}/auth/email-otp/send-verification-otp`, {
       headers: { origin: handoff.consoleOrigin },
-      data: { email, password: 'correct-horse-battery', name: 'Invited', inviteCode: code },
+      data: { email, type: 'sign-in' },
+    });
+    expect(mailed.status(), await mailed.text()).toBe(200);
+    const created = await request.post(`${handoff.apiBaseUrl}/auth/sign-in/email-otp`, {
+      headers: { origin: handoff.consoleOrigin },
+      data: { email, otp: await readMailedCode(handoff, email), name: 'Invited', inviteCode: code },
     });
     expect(created.status(), await created.text()).toBe(200);
 

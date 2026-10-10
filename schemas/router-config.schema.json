@@ -362,44 +362,78 @@
         "magicLink": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mailer"],
           "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether a one-time sign-in link is offered beside the one-time code. Unset means: while the deployment has a mailer."
+            },
             "mailer": {
               "type": "string",
               "enum": ["none", "console", "smtp", "resend"],
-              "description": "`none` disables magic-link sign-in, for a deployment with no mail provider."
+              "description": "Legacy home of the mail provider, read when `mail.provider` is unset. `none` disables magic-link sign-in, for a deployment with no mail provider."
             },
             "from": {
               "type": "string",
-              "format": "email"
+              "format": "email",
+              "description": "Legacy twin of `mail.from`."
             },
             "smtpUrl": {
-              "type": "string"
+              "type": "string",
+              "description": "Never implemented; accepted so an old config still parses. Use `mail.smtp`."
             },
             "resendApiKey": {
-              "type": "string"
+              "type": "string",
+              "description": "Legacy twin of `mail.resendApiKey`."
             }
           }
         },
         "sessionMaxAge": {
           "$ref": "#/$defs/duration",
-          "default": "720h",
-          "description": "Rolling session lifetime (ADR-004 \u00a74)."
+          "default": "2160h",
+          "description": "Rolling session lifetime (ADR-004 \u00a74): how long a session lives without being used. Ninety days by default."
         },
         "password": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Email and password sign-in, for a deployment with no mail delivery at all. No email verification and no password reset: both need a mailer.",
+          "deprecated": true,
+          "description": "Deprecated and ignored (SUP-269): password sign-in was removed and no hash is stored. Accepted so a configuration written for an older version still loads; remove it.",
           "properties": {
             "enabled": {
-              "type": "boolean",
-              "default": false
+              "type": "boolean"
             },
             "minLength": {
+              "type": "integer"
+            }
+          }
+        },
+        "emailCode": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Sign-in by a one-time code mailed to the address (SUP-269). On while `mail` has a provider; with none its routes are not mounted.",
+          "properties": {
+            "ttl": {
+              "$ref": "#/$defs/duration",
+              "default": "10m",
+              "description": "How long a code stays usable. Single-use either way."
+            },
+            "attempts": {
               "type": "integer",
-              "minimum": 8,
-              "maximum": 128,
-              "default": 12
+              "minimum": 1,
+              "maximum": 10,
+              "default": 3,
+              "description": "Wrong guesses a code survives before it is void."
+            },
+            "requestsPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 10,
+              "description": "Requests one source address may make per minute, counted separately for asking for a code and for trying one; beyond it, 429."
+            },
+            "mailsPerAddressPerHour": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 10,
+              "description": "Codes one recipient is mailed per hour, whoever asks. Beyond it the request is answered as usual and nothing is sent."
             }
           }
         },
@@ -426,6 +460,72 @@
           },
           "default": [],
           "description": "Addresses allowed to read the operator-only parts of the console schema (invitation-campaign aggregates). Empty means nobody: the user table belongs to Better Auth, so there is no role column to put this on."
+        }
+      }
+    },
+    "mail": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Outbound mail: sign-in links, password reset, the welcome mail (SUP-269). Every key falls back to `auth.magicLink` while `provider` is unset.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["none", "console", "resend", "smtp"],
+          "description": "`none` sends nothing and hides the flows that need mail; `console` logs each message and is refused in production."
+        },
+        "from": {
+          "type": "string",
+          "format": "email",
+          "description": "Sender address. Its domain needs SPF and DKIM for mail to reach an inbox."
+        },
+        "fromName": {
+          "type": "string",
+          "default": "Confidential Router",
+          "description": "Display name in front of `from`."
+        },
+        "consoleUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Origin every link in a mail points at. Defaults to the first non-wildcard entry of `server.validClientOrigins`."
+        },
+        "resendApiKey": {
+          "type": "string",
+          "description": "Needed with `provider: resend`. Blank counts as unset."
+        },
+        "smtp": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["host"],
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Defaults to 587 for starttls, 465 for tls, 25 for none."
+            },
+            "security": {
+              "type": "string",
+              "enum": ["starttls", "tls", "none"],
+              "default": "starttls",
+              "description": "`starttls` requires the upgrade; `tls` is implicit TLS; `none` is cleartext."
+            },
+            "user": {
+              "type": "string",
+              "description": "Blank means no authentication."
+            },
+            "password": {
+              "type": "string",
+              "description": "Blank counts as unset."
+            },
+            "connectTimeout": {
+              "$ref": "#/$defs/duration",
+              "default": "10s"
+            }
+          }
         }
       }
     },

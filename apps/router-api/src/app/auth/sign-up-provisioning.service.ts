@@ -4,6 +4,7 @@ import type { InviteRedemptionOutcome } from '../invites/invites.service.js';
 import { InvitesService } from '../invites/invites.service.js';
 import type { SignUpInvite } from '../invites/sign-up-invite.js';
 import { SignUpGrantService } from '../invites/signup-grant.service.js';
+import { MailService } from '../mail/mail.service.js';
 import type { SignUpMethod } from './sign-up-method.js';
 import { WorkspaceProvisioningService } from './workspace-provisioning.service.js';
 
@@ -26,7 +27,8 @@ export interface CreatedUser {
  * Everything that has to happen the moment an account comes into existence, in
  * order: the personal workspace, then the grants into it — the operator's
  * sign-up credit (SUP-249) and the invitation's, which stack — then the two
- * analytics events that report what happened.
+ * analytics events that report what happened, and last the welcome mail, which
+ * names the credit the grants produced (SUP-269).
  *
  * It exists so `AuthService` stays the narrow boundary ADR-004 §3 asks for — one
  * callback into the application, not a growing list of things to remember on
@@ -39,7 +41,8 @@ export interface CreatedUser {
  * inserted, leaving an account nobody can sign in to explain. Provisioning is
  * idempotent and retried on the next sign-in; the grant reports its own failure
  * and is not retried, because a mailing-list mistake must not cost the visitor
- * their account (SUP-142); `AnalyticsService.capture` never rejects at all. An
+ * their account (SUP-142); `AnalyticsService.capture` never rejects at all, and
+ * neither does `MailService.sendWelcome`, which does not even wait for the send. An
  * invite-only deployment refuses that mistake a step earlier instead, in
  * `SignUpGate`, which is why the requirement lives there and not here (SUP-173).
  */
@@ -53,6 +56,7 @@ export class SignUpProvisioning {
     private readonly invites: InvitesService,
     private readonly signUpGrant: SignUpGrantService,
     private readonly analytics: AnalyticsService,
+    private readonly mail: MailService,
   ) {}
 
   async onUserCreated(user: CreatedUser, invite: SignUpInvite, method: SignUpMethod): Promise<void> {
@@ -61,7 +65,7 @@ export class SignUpProvisioning {
     // Independent of the invitation: a sign-up with a code gets both credits
     // (signup 20 + invite 100 = 120), one without gets the sign-up credit alone.
     // Its own ledger entry and key, so neither grant can shadow the other.
-    await this.signUpGrant.grantOnSignUp({ userId: user.id, workspaceId: workspace.id });
+    const signUpGrant = await this.signUpGrant.grantOnSignUp({ userId: user.id, workspaceId: workspace.id });
 
     const outcome = await this.invites.redeemOnSignUp({
       userId: user.id,
@@ -75,6 +79,14 @@ export class SignUpProvisioning {
     }
 
     await this.report({ user, invite, method, outcome });
+
+    // Only what this sign-up was actually granted: a replayed hook finds both
+    // grants already spent and reports none, and a mail promising credit that
+    // never landed would be worse than one that names none.
+    const startingCreditMicros =
+      (signUpGrant.status === 'granted' ? signUpGrant.grantMicros : 0) +
+      (outcome.status === 'granted' ? outcome.grantMicros : 0);
+    this.mail.sendWelcome({ email: user.email, name: user.name, startingCreditMicros });
   }
 
   /**

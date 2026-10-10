@@ -157,45 +157,82 @@ const AuthSchema = z.strictObject({
    * in production, so a deployment cannot silently run on a guessable secret.
    */
   secret: z.string().min(32, 'must be at least 32 characters'),
-  sessionMaxAge: durationMs('720h'),
+  /**
+   * How long a session lives without being used. Rolling: a session in use is
+   * extended, so this is "signed out after this long away", not a hard cap.
+   * Ninety days, because sign-in is a code mailed to an inbox (SUP-269) and
+   * asking for one every few weeks would be a cost with no security in it.
+   */
+  sessionMaxAge: durationMs('2160h'),
   github: OAuthClientSchema.optional(),
   google: OAuthClientSchema.optional(),
   magicLink: z
     .strictObject({
       /**
+       * Whether a one-time sign-in *link* is offered beside the one-time code.
+       * Unset means "while this deployment can send mail at all", which is what
+       * every deployment has done so far; `false` leaves the emailed code as
+       * the only mail sign-in, which is what the marketplace listing ships
+       * (SUP-269).
+       */
+      enabled: booleanish().optional(),
+      /**
+       * The mail provider, from before `mail` had a section of its own. Still
+       * read when `mail.provider` is unset, so a chart that predates SUP-269
+       * renders a config this image boots on unchanged.
+       *
        * `none` disables magic-link sign-in altogether. It exists for the
        * deployment that has no mail provider at all — a marketplace install,
        * say — which would otherwise be unable to boot in production, because
        * `console` is refused there and `resend` needs a key.
        */
       mailer: z.enum(['none', 'console', 'smtp', 'resend']).prefault('console'),
+      /** Legacy twin of `mail.from`, read the same way `mailer` is. */
       from: z.email().prefault('no-reply@confidential-router.local'),
+      /** Never implemented and never read; accepted so an old config still parses. */
       smtpUrl: z.string().optional(),
+      /** Legacy twin of `mail.resendApiKey`. */
       resendApiKey: z.string().optional(),
     })
     .prefault({}),
   /**
-   * Email and password, for the deployment that has no mail delivery at all.
-   *
-   * Off by default: ADR-004 §1 chose OAuth and magic link, and both are better
-   * than a password. But a bootstrap token creates exactly *one* account, so on
-   * a mailer-less deployment everyone after the first has no way in — and this
-   * is the only sign-in path that needs nothing outside the cluster.
-   *
-   * There is no email verification and no password reset, deliberately: both
-   * are a mail round trip, and a deployment with a mailer would be using the
-   * magic link instead.
+   * Sign-in by a one-time code mailed to the address (SUP-269) — the one way in
+   * besides OAuth and the bootstrap token. On wherever the deployment can send
+   * mail; with `mail.provider: none` it is off and the routes are not mounted.
+   */
+  emailCode: z
+    .strictObject({
+      /** How long a code stays usable. It is single-use either way. */
+      ttl: durationMs('10m'),
+      /** Wrong guesses a code survives before it is void and a new one has to be asked for. */
+      attempts: integerish().pipe(z.number().int().min(1).max(10)).prefault(3),
+      /**
+       * Requests one source address may make per minute, counted separately
+       * for asking for a code and for trying one. A request never says whether
+       * the address has an account, so this budget is what stands between the
+       * endpoint and someone using it to mail-bomb or to guess.
+       */
+      requestsPerMinute: integerish().pipe(z.number().int().positive()).prefault(10),
+      /**
+       * Codes one recipient can be mailed per hour, whoever asks. Beyond it the
+       * request is answered exactly as before and nothing is sent — a refusal
+       * that differed would be a way to silence somebody else's sign-in.
+       */
+      mailsPerAddressPerHour: integerish().pipe(z.number().int().positive()).prefault(10),
+    })
+    .prefault({}),
+  /**
+   * Deprecated and ignored (SUP-269): password sign-in is gone, and with it
+   * every stored hash. The key is still accepted — and `loadRouterConfig` says
+   * so once at boot — because every chart before 0.12 renders it, and a strict
+   * schema that refused it would turn an image upgrade into a crash loop.
    */
   password: z
     .strictObject({
-      enabled: booleanish().prefault(false),
-      /**
-       * Better Auth hashes with scrypt, so length is the rule worth having;
-       * composition rules buy less than the characters they cost.
-       */
-      minLength: integerish().pipe(z.number().int().min(8).max(128)).prefault(12),
+      enabled: booleanish().optional(),
+      minLength: integerish().optional(),
     })
-    .prefault({}),
+    .optional(),
   /**
    * Invite-only registration: no account is created without a code that is
    * valid and unredeemed at that moment (SUP-173).
@@ -234,6 +271,56 @@ const AuthSchema = z.strictObject({
    */
   adminEmails: stringArrayish().prefault([]),
 });
+
+/**
+ * Outbound mail (SUP-269): sign-in links, password reset, the welcome mail.
+ *
+ * Every key is optional because the section is new and `auth.magicLink` already
+ * carries a provider: `resolveMailSettings` reads this first and falls back to
+ * that, so a deployment that has said nothing here behaves exactly as it did.
+ */
+const MailSchema = z
+  .strictObject({
+    /**
+     * `none` sends nothing and hides every flow that would need it; `console`
+     * writes each message to the log and is refused in production; `resend` is
+     * the Resend HTTP API; `smtp` is any mail server.
+     */
+    provider: z.enum(['none', 'console', 'resend', 'smtp']).optional(),
+    /** The sender address. Its domain needs SPF and DKIM for mail to land in an inbox. */
+    from: z.email().optional(),
+    /** The display name in front of `from`. */
+    fromName: z.string().trim().min(1).max(100).prefault('Confidential Router'),
+    /**
+     * The console's own origin, which every link in a mail points at. Defaults
+     * to the first entry of `server.validClientOrigins` — the console a chart
+     * renders there — so it only needs setting when that list says `*`.
+     */
+    consoleUrl: z.url().optional(),
+    resendApiKey: optionalSecret(1),
+    smtp: z
+      .strictObject({
+        host: z.string().trim().min(1),
+        /** Defaults by `security`: 587 for STARTTLS, 465 for implicit TLS, 25 for none. */
+        port: integerish().pipe(z.number().int().min(1).max(65535)).optional(),
+        /**
+         * `starttls` upgrades a plain connection and refuses to continue if the
+         * server cannot; `tls` is TLS from the first byte (port 465); `none` is
+         * cleartext, for a relay inside the operator's own network.
+         */
+        security: z.enum(['starttls', 'tls', 'none']).prefault('starttls'),
+        /** Blank means no authentication. */
+        user: z
+          .string()
+          .trim()
+          .optional()
+          .transform((value) => (value ? value : undefined)),
+        password: optionalSecret(1),
+        connectTimeout: durationMs('10s'),
+      })
+      .optional(),
+  })
+  .prefault({});
 
 const BillingSchema = z
   .strictObject({
@@ -636,6 +723,7 @@ export const RouterConfigSchema = z.strictObject({
   externalEndpoints: ExternalEndpointsSchema,
   rateLimits: RateLimitsSchema,
   auth: AuthSchema,
+  mail: MailSchema,
   billing: BillingSchema,
   invites: InvitesSchema,
   analytics: AnalyticsSchema,
@@ -650,4 +738,5 @@ export const RouterConfigSchema = z.strictObject({
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
+export type MailConfig = RouterConfig['mail'];
 export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];

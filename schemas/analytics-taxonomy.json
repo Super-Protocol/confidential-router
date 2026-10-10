@@ -234,7 +234,7 @@
           "type": "string",
           "required": true,
           "description": "Which of ADR-004's three paths created the account.",
-          "enum": ["password", "magic_link", "github", "google"],
+          "enum": ["password", "email_code", "magic_link", "github", "google"],
           "example": "github"
         }
       }

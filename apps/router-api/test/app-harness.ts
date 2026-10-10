@@ -9,17 +9,46 @@ import { dump } from 'js-yaml';
 import request from 'supertest';
 import { ANALYTICS_SINK } from '../src/app/analytics/index.js';
 import { AppModule } from '../src/app/app.module.js';
-import { MAGIC_LINK_MAILER, type MagicLinkMailer, type MagicLinkMessage } from '../src/app/auth/index.js';
 import { configureApp } from '../src/app/bootstrap.js';
 import { routerConfig } from '../src/app/config.js';
+import {
+  MAIL_TRANSPORT,
+  type MailKind,
+  type MailMessage,
+  MailService,
+  type MailTransport,
+} from '../src/app/mail/index.js';
 import { RecordingAnalyticsSink } from './analytics-recorder.js';
 
-/** Captures magic links instead of mailing them, so a test can follow one. */
-export class CapturingMailer implements MagicLinkMailer {
-  readonly sent: MagicLinkMessage[] = [];
+/** A captured magic link, in the shape the suites have always read it. */
+export interface MagicLinkMessage {
+  email: string;
+  url: string;
+}
 
-  async send(message: MagicLinkMessage): Promise<void> {
-    this.sent.push(message);
+/**
+ * Captures every outgoing mail instead of delivering it, so a test can follow
+ * the link in it. Rendering, the throttles and the decision whether to send at
+ * all run for real — only the hop out of the process is replaced.
+ */
+export class CapturingMailer implements MailTransport {
+  readonly provider = 'console' as const;
+  readonly messages: MailMessage[] = [];
+
+  async send(message: MailMessage): Promise<void> {
+    this.messages.push(message);
+  }
+
+  async verify(): Promise<void> {}
+
+  /** Every message of one kind, oldest first. */
+  ofKind(kind: MailKind): MailMessage[] {
+    return this.messages.filter((message) => message.kind === kind);
+  }
+
+  /** Magic links only, as before SUP-269 — a welcome mail landing after one must not shadow it. */
+  get sent(): MagicLinkMessage[] {
+    return this.ofKind('magic-link').map((message) => ({ email: message.to, url: message.link ?? '' }));
   }
 
   get last(): MagicLinkMessage {
@@ -34,6 +63,8 @@ export class CapturingMailer implements MagicLinkMailer {
 export interface Harness {
   app: INestApplication;
   mailer: CapturingMailer;
+  /** Waits for every fire-and-forget mail (reset, welcome) started so far. */
+  settleMail(): Promise<void>;
   /** Every product event the application captured. See `RecordingAnalyticsSink`. */
   events: RecordingAnalyticsSink;
   close(): Promise<void>;
@@ -48,6 +79,11 @@ export interface HarnessOptions {
    * variable can express.
    */
   config?: Record<string, unknown>;
+  /**
+   * Keep the configured mail transport instead of capturing mail — for the
+   * suite that speaks real SMTP to a server of its own (SUP-269).
+   */
+  realMailTransport?: boolean;
 }
 
 /**
@@ -77,6 +113,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     CR_API_AUTH__BASE_URL: 'http://localhost:3000',
     CR_API_LOG__LEVEL: 'silent',
     CR_API_SWAGGER__ENABLED: 'false',
+    // Every request of a suite comes from one loopback address, and several
+    // suites create accounts by the dozen; the production budgets are pinned by
+    // the cases in `email-code.e2e.spec.ts` that set them back.
+    CR_API_AUTH__EMAIL_CODE__REQUESTS_PER_MINUTE: '10000',
+    CR_API_AUTH__EMAIL_CODE__MAILS_PER_ADDRESS_PER_HOUR: '10000',
     ...options.env,
   };
   const previous = new Map<string, string | undefined>();
@@ -87,12 +128,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
   const mailer = new CapturingMailer();
   const events = new RecordingAnalyticsSink();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(MAGIC_LINK_MAILER)
-    .useValue(mailer)
-    .overrideProvider(ANALYTICS_SINK)
-    .useValue(events)
-    .compile();
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  if (!options.realMailTransport) {
+    builder.overrideProvider(MAIL_TRANSPORT).useValue(mailer);
+  }
+  const moduleRef = await builder.overrideProvider(ANALYTICS_SINK).useValue(events).compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, bufferLogs: true });
   configureApp(app, app.get<ConfigType<typeof routerConfig>>(routerConfig.KEY));
@@ -102,6 +142,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     app,
     mailer,
     events,
+    settleMail: () => app.get(MailService).settle(),
     close: async () => {
       await app.close();
       for (const [key, value] of previous) {
@@ -128,6 +169,64 @@ export async function signIn(harness: Harness, email: string): Promise<string[]>
   const verify = await request(server).get(pathOf(harness.mailer.last.url));
   const cookies = verify.headers['set-cookie'];
   return Array.isArray(cookies) ? cookies : [cookies].filter(Boolean);
+}
+
+/** The code in the last sign-in mail sent to `email`. */
+export function lastCodeFor(harness: Harness, email: string): string {
+  const mail = harness.mailer
+    .ofKind('sign-in-code')
+    .filter((message) => message.to === email.toLowerCase())
+    .at(-1);
+  if (!mail?.code) {
+    throw new Error(`No sign-in code was mailed to ${email}.`);
+  }
+  return mail.code;
+}
+
+/**
+ * A complete sign-in by emailed code (SUP-269): ask for one, read it out of the
+ * captured mail, trade it for a session. Creates the account when the address
+ * has none — `extra` rides the second request's body, which is where a sign-up
+ * carries its name and its invitation code.
+ */
+export async function signInWithCode(
+  harness: Harness,
+  email: string,
+  extra: Record<string, unknown> = {},
+): Promise<request.Response> {
+  const server = harness.app.getHttpServer();
+  await request(server).post('/auth/email-otp/send-verification-otp').send({ email, type: 'sign-in' }).expect(200);
+  return request(server)
+    .post('/auth/sign-in/email-otp')
+    .send({ email, otp: lastCodeFor(harness, email), ...extra });
+}
+
+/** A response still on its way, with supertest's `.expect(status)` so call sites read the same. */
+export type PendingResponse = Promise<request.Response> & { expect(status: number): Promise<request.Response> };
+
+/**
+ * `signInWithCode` for suites that create accounts in passing: takes the body a
+ * sign-up sends (`email`, `name`, `inviteCode`, …) and an optional query string,
+ * and answers like a supertest call — awaitable, with `.expect(status)`.
+ */
+export function signUpWithCode(harness: Harness, body: Record<string, unknown>, query = ''): PendingResponse {
+  const { email, ...extra } = body;
+  const pending = (async () => {
+    const server = harness.app.getHttpServer();
+    await request(server).post('/auth/email-otp/send-verification-otp').send({ email, type: 'sign-in' }).expect(200);
+    return request(server)
+      .post(`/auth/sign-in/email-otp${query}`)
+      .send({ email, otp: lastCodeFor(harness, String(email)), ...extra });
+  })();
+  return Object.assign(pending, {
+    expect: async (status: number) => {
+      const response = await pending;
+      if (response.status !== status) {
+        throw new Error(`expected ${status}, got ${response.status}: ${JSON.stringify(response.body)}`);
+      }
+      return response;
+    },
+  });
 }
 
 /**

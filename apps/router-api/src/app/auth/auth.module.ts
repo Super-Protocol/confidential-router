@@ -1,15 +1,13 @@
 import { Module } from '@nestjs/common';
-import { ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AnalyticsModule } from '../analytics/index.js';
-import { routerConfig } from '../config.js';
 import { User } from '../db/entities/user.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InvitesModule } from '../invites/invites.module.js';
+import { MailModule } from '../mail/mail.module.js';
 import { AdminGuard } from './admin.guard.js';
 import { AuthService } from './auth.service.js';
-import { createMagicLinkMailer, MAGIC_LINK_MAILER } from './magic-link-mailer.js';
 import { OptionalSessionGuard } from './optional-session.guard.js';
 import { SessionGuard } from './session.guard.js';
 import { SignInOptionsService } from './sign-in-options.service.js';
@@ -23,13 +21,9 @@ import { WorkspaceScopeService } from './workspace-scope.service.js';
   // `InvitesModule` for the grant the sign-up hook applies, `AnalyticsModule` for
   // the two events it reports; both dependencies run this way only, and neither
   // invites nor analytics knows about sessions.
-  imports: [TypeOrmModule.forFeature([User, Workspace, WorkspaceMember]), InvitesModule, AnalyticsModule],
+  // `MailModule` for the sign-in, reset and welcome mail (SUP-269).
+  imports: [TypeOrmModule.forFeature([User, Workspace, WorkspaceMember]), InvitesModule, AnalyticsModule, MailModule],
   providers: [
-    {
-      provide: MAGIC_LINK_MAILER,
-      inject: [routerConfig.KEY],
-      useFactory: (config: ConfigType<typeof routerConfig>) => createMagicLinkMailer(config.auth),
-    },
     AdminGuard,
     AuthService,
     OptionalSessionGuard,

@@ -2,7 +2,7 @@ import request from 'supertest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { LedgerService } from '../src/app/billing/index.js';
 import { generateInvites } from '../src/app/invites/index.js';
-import { createHarness, type Harness, pathOf } from './app-harness.js';
+import { createHarness, type Harness, pathOf, signUpWithCode } from './app-harness.js';
 import { dataSourceOf, expectData, graphql } from './console.js';
 import { bearer, routerConfigFor } from './gateway-fixture.js';
 import { MockLiteLlm } from './mock-litellm.js';
@@ -29,7 +29,6 @@ import { MockLiteLlm } from './mock-litellm.js';
 
 const GRANT_MICROS = 100_000_000;
 const CAMPAIGN = 'launch-2026-10-devs';
-const PASSWORD = 'correct-horse-battery';
 const CHAT = { model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'Hello there' }] };
 
 const upstream = new MockLiteLlm();
@@ -39,7 +38,7 @@ beforeAll(async () => {
   const baseUrl = await upstream.start();
   harness = await createHarness({
     config: routerConfigFor(baseUrl),
-    env: { CR_API_AUTH__PASSWORD__ENABLED: 'true', CR_API_AUTH__ADMIN_EMAILS: 'ops@example.com' },
+    env: { CR_API_AUTH__ADMIN_EMAILS: 'ops@example.com' },
   });
 }, 60_000);
 
@@ -80,10 +79,11 @@ function cookiesOf(response: request.Response): string[] {
 
 /** One account, created the way the console creates one. */
 async function signUp(email: string, inviteCode?: string): Promise<{ cookies: string[]; workspaceId: string }> {
-  const created = await request(server())
-    .post('/auth/sign-up/email')
-    .send({ email, password: PASSWORD, name: 'Funnel', ...(inviteCode ? { inviteCode } : {}) })
-    .expect(200);
+  const created = await signUpWithCode(harness, {
+    email,
+    name: 'Funnel',
+    ...(inviteCode ? { inviteCode } : {}),
+  }).expect(200);
   const cookies = cookiesOf(created);
   const me = await graphql({ harness, cookies, email, workspaceId: '' }, '{ me { workspaces { id } } }');
   return { cookies, workspaceId: me.data.me.workspaces[0].id };
@@ -169,7 +169,7 @@ describe('POST /v1/analytics/events', () => {
 describe('the ingest rate limit', () => {
   it('refuses a caller past its minute budget on a budget of its own', async () => {
     const limited = await createHarness({
-      env: { CR_API_AUTH__PASSWORD__ENABLED: 'true', CR_API_ANALYTICS__INGEST_PER_MINUTE: '2' },
+      env: { CR_API_ANALYTICS__INGEST_PER_MINUTE: '2' },
     });
     try {
       const event = { event: 'signup_started', properties: { entry: 'direct', has_invite: false } };
@@ -196,10 +196,10 @@ describe('the sign-up events', () => {
 
     expect(harness.events.one('signup_completed')).toMatchObject({
       anonymous: false,
-      properties: { has_invite: true, campaign: CAMPAIGN, method: 'password' },
+      properties: { has_invite: true, campaign: CAMPAIGN, method: 'email_code' },
       // The first identified event of the account's life, so also where the two
       // allowed person properties are set. No email, no name (ADR-006 §4).
-      person: { campaign: CAMPAIGN, signup_method: 'password' },
+      person: { campaign: CAMPAIGN, signup_method: 'email_code' },
     });
     expect(harness.events.one('invite_redeemed')).toMatchObject({
       properties: { outcome: 'granted', campaign: CAMPAIGN, grant_micros: GRANT_MICROS },

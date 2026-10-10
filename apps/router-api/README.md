@@ -220,7 +220,7 @@ build if a field named `verified`, `trusted` or `valid` ever appears.
 ## Authentication
 
 Better Auth (ADR-004), mounted at `/auth/*`, sharing the one database. OAuth
-(GitHub, Google) and email magic link; no passwords, no wallet, no second store.
+(GitHub, Google) and a one-time code mailed to the address (SUP-269); no passwords, no wallet, no second store.
 Better Auth owns `user`, `session`, `account` and `verification` and migrates them
 itself; this service's TypeORM migration owns the other ten tables and takes no
 database-level foreign key on `user`, so the two stay independent.
@@ -305,7 +305,7 @@ touch a grant already made.
 
 `auth.requireInviteForSignUp` turns the campaign into an invite-only deployment
 (SUP-173): `SignUpGate` runs in `user.create.before` and refuses every sign-up
-path — password, magic link, OAuth callback — that does not carry a usable code,
+path — emailed code, magic link, OAuth callback — that does not carry a usable code,
 before the `user` row exists. It answers one of three typed codes,
 `invite_required` / `invite_already_claimed` / `invite_expired_or_unknown`, in a
 403 body or as `?error=` on the error callback depending on whether the path can

@@ -169,9 +169,9 @@ export interface InviteCookieTarget {
  *
  * A deployment that puts the console and the API on unrelated registrable domains
  * lands in the second case: OAuth sign-up then carries no code, and the visitor is
- * told so by the post-sign-up screen rather than silently losing $100. Password
- * and magic-link sign-up are unaffected either way — they carry the code in the
- * request itself.
+ * told so by the post-sign-up screen rather than silently losing $100. Sign-up
+ * by mailed code or magic link is unaffected either way — both carry the code in
+ * the request itself.
  */
 export function inviteCookieScope(consoleHost: string, apiHost: string): string | null {
   const from = consoleHost.toLowerCase();

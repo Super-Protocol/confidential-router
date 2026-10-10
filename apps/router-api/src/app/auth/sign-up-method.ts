@@ -9,8 +9,14 @@
 
 import { BOOTSTRAP_PATH } from './bootstrap-admin.plugin.js';
 
-/** The taxonomy's closed set. No fifth value: adding one is a change to the contract. */
-export type SignUpMethod = 'password' | 'magic_link' | 'github' | 'google';
+/**
+ * The taxonomy's closed set; adding a value is a change to the contract.
+ *
+ * `email_code` joined it with SUP-269, which is also when `password` stopped
+ * being a sign-up path: it stays in the set for the accounts already reported
+ * under it, and as the label the bootstrap fallback below has always used.
+ */
+export type SignUpMethod = 'password' | 'email_code' | 'magic_link' | 'github' | 'google';
 
 /** The slice of Better Auth's endpoint context this reads. */
 export interface SignUpMethodContext {
@@ -59,6 +65,9 @@ export function signUpMethodOf(context: SignUpMethodContext | null | undefined):
   }
   if (path.includes('/magic-link')) {
     return 'magic_link';
+  }
+  if (path.endsWith('/sign-in/email-otp')) {
+    return 'email_code';
   }
   return 'password';
 }

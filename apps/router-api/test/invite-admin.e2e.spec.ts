@@ -3,7 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { normaliseInviteCode } from '../src/app/invites/index.js';
-import { createHarness, type Harness } from './app-harness.js';
+import { createHarness, type Harness, signUpWithCode } from './app-harness.js';
 import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
 /**
@@ -19,7 +19,6 @@ import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } fro
 
 const BOOTSTRAP_TOKEN = 'bootstrap-token-'.padEnd(40, 'x');
 const OPERATOR = 'admin@confidential-router.local';
-const PASSWORD = 'correct-horse-battery';
 const LANDING = 'https://router.superprotocol.com';
 const GRANT_MICROS = '25000000';
 
@@ -69,7 +68,6 @@ let operator: ConsoleSession;
 beforeEach(async () => {
   harness = await createHarness({
     env: {
-      CR_API_AUTH__PASSWORD__ENABLED: 'true',
       CR_API_AUTH__BOOTSTRAP_TOKEN: BOOTSTRAP_TOKEN,
       CR_API_AUTH__ADMIN_EMAILS: OPERATOR,
       CR_API_INVITES__LANDING_BASE_URL: LANDING,
@@ -97,10 +95,9 @@ async function sessionOf(response: request.Response): Promise<ConsoleSession> {
 }
 
 function signUp(email: string, inviteCode?: string) {
-  return request(server())
-    .post('/auth/sign-up/email')
-    .send({ email, password: PASSWORD, name: email.split('@')[0], ...(inviteCode ? { inviteCode } : {}) })
-    .expect(200);
+  return signUpWithCode(harness, { email, name: email.split('@')[0], ...(inviteCode ? { inviteCode } : {}) }).expect(
+    200,
+  );
 }
 
 async function issue(count: number, campaign = 'launch-2026-10'): Promise<{ id: string; code: string; url: string }[]> {

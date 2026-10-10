@@ -12,6 +12,7 @@ import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import { STRIPE_WEBHOOK_PATH } from './billing/index.js';
 import type { routerConfig } from './config.js';
 import { TYPEFORM_WEBHOOK_PATH } from './feedback/index.js';
+import { EMAIL_CODE_SEND_PATH, EMAIL_CODE_SIGN_IN_PATH, EmailCodeThrottle } from './mail/email-code-throttle.js';
 
 /**
  * Mounted as a prefix (`/auth`), not a wildcard pattern (`/auth/{*path}`).
@@ -83,6 +84,11 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
     },
   });
 
+  // Per-source-address budgets on asking for a sign-in code and on trying one
+  // (SUP-269), ahead of Better Auth so a refused request never reaches it.
+  const emailCode = app.get(EmailCodeThrottle);
+  app.use(`${AUTH_BASE_PATH}${EMAIL_CODE_SEND_PATH}`, emailCode.send);
+  app.use(`${AUTH_BASE_PATH}${EMAIL_CODE_SIGN_IN_PATH}`, emailCode.signIn);
   // Order matters: raw stream to Better Auth, parsed bodies to everything else.
   app.use(AUTH_HANDLER_ROUTE, toNodeHandler(app.get(AuthService).handler));
   // The payment webhook is authenticated by a signature over the exact bytes

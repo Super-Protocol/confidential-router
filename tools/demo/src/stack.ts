@@ -49,6 +49,8 @@ export interface RouterStackOptions {
   backendFailures?: Record<string, UpstreamFailure>;
   /** Mirror the router's log to stderr — what `--verbose` gives the demo. */
   echoRouterLog?: boolean;
+  /** Also write the router's log here — see `RouterProcessOptions.logFile`. */
+  routerLogFile?: string;
   /** Expose the evidence host's deny-path controls over HTTPS. */
   controlApi?: boolean;
   /** Sign this address in; each stack gets its own by default. */
@@ -231,6 +233,7 @@ export async function startRouterStack(options: RouterStackOptions = {}): Promis
       port: routerPort,
       extraCaFile: trustedRootFile,
       echoLog: options.echoRouterLog,
+      logFile: options.routerLogFile,
       env: {
         CR_API_SERVER__PUBLIC_BASE_URL: `http://127.0.0.1:${routerPort}`,
         CR_API_AUTH__BASE_URL: `http://127.0.0.1:${routerPort}`,

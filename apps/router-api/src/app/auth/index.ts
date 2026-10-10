@@ -5,7 +5,6 @@ export * from './auth.options.js';
 export * from './auth.service.js';
 export * from './bootstrap-admin.plugin.js';
 export * from './current-user.decorator.js';
-export * from './magic-link-mailer.js';
 export * from './optional-session.guard.js';
 export * from './request-of.js';
 export * from './session.guard.js';

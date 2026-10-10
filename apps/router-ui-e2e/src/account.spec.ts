@@ -284,9 +284,7 @@ test.describe('Profile', () => {
       email: 'developer@example.com',
       avatarUrl: null,
       createdAt: '2026-04-02T08:00:00.000Z',
-      hasPassword: true,
     },
-    signInOptions: { __typename: 'SignInOptions', password: true, passwordMinLength: 12 },
     activitySeries: Array.from({ length: 7 }, (_, index) => ({
       __typename: 'ActivityPoint',
       bucket: new Date(Date.now() - (6 - index) * 86_400_000).toISOString(),
@@ -318,29 +316,5 @@ test.describe('Profile', () => {
     await expect(page.getByRole('img', { name: /Days with published evidence/ })).toBeVisible();
 
     expect(await seriousViolations(page)).toEqual([]);
-  });
-
-  test('lets an account with no password set one, and then stops offering it (SUP-267)', async ({ page, baseURL }) => {
-    const sent: unknown[] = [];
-    await signIn(page, baseURL as string);
-    await mockConsole(page, {
-      Profile: () => ({ ...PROFILE, me: { ...PROFILE.me, hasPassword: false } }),
-      SetPassword: (variables) => {
-        sent.push(variables);
-        return { setPassword: { ...PROFILE.me, hasPassword: true } };
-      },
-    });
-
-    await page.goto('/profile');
-
-    await expect(page.getByText('Set a password')).toBeVisible();
-    expect(await seriousViolations(page)).toEqual([]);
-
-    await page.getByLabel('New password').fill('correct-horse-battery');
-    await page.getByLabel('Confirm password').fill('correct-horse-battery');
-    await page.getByRole('button', { name: 'Set password' }).click();
-
-    await expect(page.getByText('Set a password')).toBeHidden();
-    expect(sent).toEqual([{ input: { password: 'correct-horse-battery' } }]);
   });
 });

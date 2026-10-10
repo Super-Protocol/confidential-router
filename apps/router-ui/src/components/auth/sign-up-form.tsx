@@ -8,23 +8,13 @@ import { Label } from '@confidential-router/ui/components/label';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import Link from 'next/link';
 import * as React from 'react';
-import { AuthRequestError, completeSignIn, signUpWithPassword } from '../../lib/auth';
+import { AuthRequestError, completeSignIn, requestSignInCode, signInWithCode } from '../../lib/auth';
 import { captureConsoleEvent } from '../../lib/console-analytics';
 import { inviteContextOf, normaliseInviteCode, rememberInvite } from '../../lib/invite';
 import { type InviteRefusalCode, inviteRefusalOf, isInviteRefusalCode } from '../../lib/invite-refusal';
+import { codeFailureOf, codeRequestMessageOf, EmailCodeStep } from './email-code-step';
 import { InviteNotice, useInviteLookup } from './invite-notice';
-import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
-
-/**
- * Sign-up failures the router can produce, in the viewer's terms. The 422 is
- * Better Auth's "this address is taken", which on a screen whose only job is to
- * create an account deserves a way forward rather than a restatement.
- */
-const SIGN_UP_MESSAGES = {
-  404: 'This deployment does not offer password sign-up.',
-  422: 'An account already exists for that address. Sign in instead.',
-};
 
 /**
  * Where a viewer who signed up with an invitation lands.
@@ -37,19 +27,31 @@ const SIGN_UP_MESSAGES = {
 export const INVITE_WELCOME_PATH = '/credits?welcome=invite';
 
 /**
- * Creating an account on a deployment that cannot send mail.
+ * Creating an account, which is signing in for the first time.
  *
- * No verification round trip and no reset link: the address is never proven,
- * because proving it needs a mailer and the whole point of this path is not
- * having one. It exists so that a deployment whose bootstrap token created one
- * administrator can be used by a second person (SUP-112), and it is the path the
- * launch campaign's invitations lead to (SUP-140).
+ * There is no password and no separate registration request: the address is
+ * proven by a code mailed to it, and the router creates the account when an
+ * address it has not seen hands a good code back (SUP-269). So this screen is
+ * the sign-in screen's code path with two additions — a name for the account
+ * about to exist, and the invitation, which is redeemed inside that same
+ * creation and nowhere else (SUP-140, SUP-142).
+ *
+ * It follows that an address which already has an account is simply signed in
+ * from here; nothing says "taken", because the router does not say whether an
+ * address is registered to anyone asking for a code.
  */
 export function SignUpForm() {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [pending, setPending] = React.useState(false);
+  /**
+   * The code step, as on the sign-in screen: a code has been asked for and the
+   * card is waiting for it. `attempt` is the step's `key`, bumped whenever the
+   * code on screen is dead, so the field empties with it.
+   */
+  const [codeSent, setCodeSent] = React.useState(false);
+  const [codeResent, setCodeResent] = React.useState(false);
+  const [attempt, setAttempt] = React.useState(0);
+  const [pending, setPending] = React.useState<'request' | 'resend' | 'verify' | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   /**
    * A refusal from the router, either carried back by a magic-link or OAuth
@@ -81,14 +83,14 @@ export function SignUpForm() {
   // Unlike the sign-in screen, a failed query is not a reason to offer this:
   // there is nothing to fall back to, and a form that can only 404 is worse
   // than a sentence saying where to go instead.
-  const offered = data?.signInOptions.password ?? false;
+  const offered = data?.signInOptions.emailCode ?? false;
   /**
    * No answer at all, as opposed to an answer of "no". Said as what it is: on a
-   * deployment whose API is not up yet, "does not offer password sign-up" sent
-   * people looking for a setting that was on all along (SUP-248).
+   * deployment whose API is not up yet, "does not offer sign-up" sent people
+   * looking for a setting that was on all along (SUP-248).
    */
   const unreachable = data === undefined && optionsError !== undefined;
-  const minLength = data?.signInOptions.passwordMinLength ?? 0;
+  const codeLength = data?.signInOptions.emailCodeLength ?? 0;
   /**
    * Invite-only registration (SUP-173). Defaults to false while the answer is on
    * its way, which never renders: the form is behind `settled` below, and the
@@ -107,10 +109,17 @@ export function SignUpForm() {
    * distinction and answers it as a typed 403 from `user.create.before` — ahead
    * of the insert, so a refused submit creates no account, no session and no
    * grant. Holding the button here is what made a spent link and a typo read
-   * identically in a browser; submitting is the only way the visitor reads the
-   * one refusal they can act on alone. It leaks nothing new either: that POST
-   * already answers the three codes to any caller, and it costs an email and a
-   * password per guess, where the lookup this protects is a free GET.
+   * identically in a browser; going through with it is the only way the visitor
+   * reads the one refusal they can act on alone. It leaks nothing new either:
+   * that POST already answers the three codes to any caller, and it costs a
+   * mailed code per guess, where the lookup this protects is a free GET.
+   *
+   * What is held is the request for a *mailed* code, not the sign-up itself,
+   * because a mailed code is spent by being checked: a sign-up the router
+   * refuses for want of an invitation has burned it. So the invitation is
+   * settled before a code is asked for wherever it can be, and `unavailable`
+   * is the one case where the visitor pays a mailed code to learn which refusal
+   * theirs is — the form goes back to the invitation when they do.
    *
    * `checking` and `unknown` stay held, because neither is an answer: one is
    * about to arrive and the other can be asked for again, and "wait" is honest
@@ -145,29 +154,54 @@ export function SignUpForm() {
     if (code) rememberInvite(code);
   }, [code]);
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  /** Asks for a code — the first one, or a replacement from the code step. */
+  const requestCode = async (kind: 'request' | 'resend') => {
     setError(null);
     setRefusal(null);
-    setPending(true);
+    setPending(kind);
     try {
-      // Sent whatever the lookup said: its answer is a snapshot, and the only
-      // thing that decides is the redemption inside account creation.
-      await signUpWithPassword({ email, password, name, inviteCode: code });
+      await requestSignInCode(email);
+      if (kind === 'resend') {
+        // The code on screen may still be good, but the one in the newest mail
+        // is the one the visitor is about to read — so the field starts over.
+        setAttempt((current) => current + 1);
+      }
+      setCodeResent(kind === 'resend');
+      setCodeSent(true);
+    } catch (caught) {
+      setError(codeRequestMessageOf(caught));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleCode = async (mailed: string) => {
+    setError(null);
+    setPending('verify');
+    try {
+      // The invitation is sent whatever the lookup said: its answer is a
+      // snapshot, and the only thing that decides is the redemption inside
+      // account creation.
+      await signInWithCode({ email, code: mailed, name, inviteCode: code });
       completeSignIn(code ? INVITE_WELCOME_PATH : undefined);
     } catch (caught) {
-      // An invite-only refusal is about the code, not about the form, so it is
-      // rendered where the code is rather than under the password field. The two
-      // that can race past the live lookup — the last seat taken between the
-      // check and the submit, a code withdrawn in between — only ever arrive here.
-      const code = caught instanceof AuthRequestError ? caught.code : undefined;
-      if (isInviteRefusalCode(code)) {
-        setRefusal(code);
-        setError(null);
+      // An invite-only refusal is about the invitation, not about the mailed
+      // code, so it is rendered where the invitation is — back on the form. The
+      // mailed code went with it: checking it spent it, so the code step has
+      // nothing left to offer. The two refusals that can race past the live
+      // lookup — the last seat taken between the check and the submit, a code
+      // withdrawn in between — only ever arrive here.
+      const refused = caught instanceof AuthRequestError ? caught.code : undefined;
+      if (isInviteRefusalCode(refused)) {
+        setRefusal(refused);
+        setCodeSent(false);
       } else {
-        setError(messageOf(caught, SIGN_UP_MESSAGES));
+        const failure = codeFailureOf(caught);
+        setError(failure.message);
+        if (failure.spent) setAttempt((current) => current + 1);
       }
-      setPending(false);
+      setCodeResent(false);
+      setPending(null);
     }
   };
 
@@ -210,8 +244,8 @@ export function SignUpForm() {
         <CardHeader>
           <h1 className="font-semibold leading-none">Sign up</h1>
           <CardDescription>
-            This deployment does not offer password sign-up. Ask whoever runs it for an invitation, or use one of the
-            sign-in methods it does offer.
+            Registration by email is not available on this deployment: it cannot send mail, and an account is created by
+            a code mailed to its address. Use one of the sign-in methods it does offer, or ask whoever runs it.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -223,6 +257,27 @@ export function SignUpForm() {
     );
   }
 
+  if (codeSent) {
+    return (
+      <EmailCodeStep
+        key={attempt}
+        email={email}
+        length={codeLength}
+        submitLabel="Create account"
+        submittingLabel="Creating…"
+        pending={pending === 'request' ? null : pending}
+        error={error}
+        resent={codeResent}
+        onSubmit={(mailed) => void handleCode(mailed)}
+        onResend={() => void requestCode('resend')}
+        onChangeAddress={() => {
+          setError(null);
+          setCodeSent(false);
+        }}
+      />
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -230,7 +285,7 @@ export function SignUpForm() {
         <CardDescription>
           {inviteRequired
             ? 'Registration is by invitation: an account is created only for a code that has not been used yet. Your prompts are metered, never stored.'
-            : 'Your prompts are metered, never stored. There is no confirmation mail on this deployment — the account works from the moment you create it.'}
+            : 'Your prompts are metered, never stored. There is no password: we mail a one-time code to your address, and the account works from the moment you enter it.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -248,7 +303,13 @@ export function SignUpForm() {
           }}
         />
 
-        <form className="flex flex-col gap-2" onSubmit={(event) => void handleSubmit(event)}>
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void requestCode('request');
+          }}
+        >
           <Label htmlFor="name">Name (optional)</Label>
           <Input
             id="name"
@@ -272,32 +333,13 @@ export function SignUpForm() {
             aria-describedby={error ? 'sign-up-error' : undefined}
             aria-invalid={error !== null || undefined}
           />
-          <Label htmlFor="password">Password</Label>
-          <Input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            aria-describedby={error ? 'sign-up-error' : 'password-hint'}
-            aria-invalid={error !== null || undefined}
-          />
-          {/* The rule is the router's (`auth.password.minLength`), reported
-              rather than hard-coded: a deployment that raised it would
-              otherwise be advertising a floor it refuses. */}
-          <p id="password-hint" className="text-muted-foreground text-xs">
-            At least {minLength} characters. There is no password reset on this deployment, so use something you will
-            not lose.
-          </p>
           <Button
             type="submit"
             variant="brand"
             className="w-full"
-            disabled={pending || blockedOnInvite || email.length === 0 || password.length < minLength}
+            disabled={pending !== null || blockedOnInvite || email.length === 0}
           >
-            {pending ? 'Creating…' : 'Create account'}
+            {pending === 'request' ? 'Sending…' : 'Email me a code'}
           </Button>
           {/* Why the button is dead, said next to it: a disabled control with no
               explanation is the failure this issue was opened about. */}

@@ -176,7 +176,7 @@ The first identified event: `distinct_id` is the account's UUID. No email, no na
 | --- | --- | --- | --- | --- |
 | `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
 | `campaign` *(shared)* | string | no | — | [As above](#shared-properties). |
-| `method` | string | yes | `password` `magic_link` `github` `google` | Which of ADR-004's three paths created the account. |
+| `method` | string | yes | `password` `email_code` `magic_link` `github` `google` | Which sign-in path created the account. `email_code` (SUP-269) is the emailed one-time code; `password` is no longer a sign-up path and remains for accounts already reported under it and for the bootstrap account. |
 
 ### `invite_redeemed`
 
