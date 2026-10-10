@@ -10,6 +10,7 @@ import {
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
+  Ticket,
   UserRound,
 } from 'lucide-react';
 
@@ -106,6 +107,13 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/admin/trust',
         icon: ShieldCheck,
         summary: 'The launch measurements this deployment accepts for an external upstream.',
+        adminOnly: true,
+      },
+      {
+        label: 'Invitations',
+        href: '/admin/invitations',
+        icon: Ticket,
+        summary: 'Invitation codes, who redeemed which, and how sign-ups are going.',
         adminOnly: true,
       },
     ],

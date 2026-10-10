@@ -1,5 +1,5 @@
 import { Column, Entity, Index, OneToMany, PrimaryColumn, type Relation } from 'typeorm';
-import { bigIntColumn, idPrimaryColumn, timestampColumn } from '../columns.js';
+import { bigIntColumn, idColumn, idPrimaryColumn, timestampColumn } from '../columns.js';
 import { InviteRedemption } from './invite-redemption.entity.js';
 
 /**
@@ -55,6 +55,14 @@ export class InviteCode {
 
   @Column({ type: 'varchar', length: 512, nullable: true })
   note!: string | null;
+
+  /**
+   * The operator who minted the code from the console. Null for a code the CLI
+   * minted — whoever ran it is on the shell, not on the row. No foreign key, for
+   * the reason `InviteRedemption.userId` has none (ADR-004 §3).
+   */
+  @Column(idColumn({ nullable: true }))
+  issuedByUserId!: string | null;
 
   @Column(timestampColumn())
   createdAt!: Date;

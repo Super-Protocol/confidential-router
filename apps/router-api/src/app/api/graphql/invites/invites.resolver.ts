@@ -4,7 +4,13 @@ import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { AdminGuard, CurrentUser, SessionGuard, type SessionUser } from '../../../auth/index.js';
 import { routerConfig } from '../../../config.js';
 import type { InviteRedemption } from '../../../db/entities/invite-redemption.entity.js';
-import { type InviteLookup, InviteStatsService, InvitesService, normaliseInviteCode } from '../../../invites/index.js';
+import {
+  type InviteLookup,
+  InviteStatsService,
+  InvitesService,
+  maskInviteCode,
+  normaliseInviteCode,
+} from '../../../invites/index.js';
 import {
   describeRestoration,
   describeWithdrawal,
@@ -154,7 +160,7 @@ export class InvitesResolver {
     const result = await this.targeted(() =>
       this.withdrawals.withdraw({ ...input, unspentOnly: input.unspentOnly === true }),
     );
-    this.logger.warn(`Invitation codes withdrawn by ${user.email} — ${describeWithdrawal(result)}`);
+    this.logger.warn(`Invitation codes withdrawn by ${user.email} — ${describeWithdrawal(loggable(result, input))}`);
     return result;
   }
 
@@ -168,7 +174,7 @@ export class InvitesResolver {
     @Args('input') input: RestoreInviteCodesInputModel,
   ): Promise<InviteRestorationModel> {
     const result = await this.targeted(() => this.withdrawals.restore(input));
-    this.logger.warn(`Invitation codes restored by ${user.email} — ${describeRestoration(result)}`);
+    this.logger.warn(`Invitation codes restored by ${user.email} — ${describeRestoration(loggable(result, input))}`);
     return result;
   }
 
@@ -194,6 +200,15 @@ export class InvitesResolver {
       throw new InviteRateLimitedError();
     }
   }
+}
+
+/**
+ * The result with a code target masked, for the audit line: the log names which
+ * code an operator acted on without becoming a place a live code can be read
+ * from (SUP-268). A campaign target is a tag, not a secret, and stays as it is.
+ */
+function loggable<T extends { target: string }>(result: T, input: { code?: string }): T {
+  return input.code?.trim() ? { ...result, target: maskInviteCode(normaliseInviteCode(input.code)) } : result;
 }
 
 function grantOf(redemption: InviteRedemption): InviteGrantModel {

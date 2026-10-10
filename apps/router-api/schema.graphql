@@ -49,6 +49,64 @@ input AddTrustedMeasurementInput {
   note: String
 }
 
+"""One invitation code, as an operator sees it."""
+type AdminInviteCode {
+  campaign: String!
+
+  """Display form, `ABCD-EFGH-JKMN`. The console masks it until asked."""
+  code: String!
+
+  """When the code was issued."""
+  createdAt: DateTime!
+  expiresAt: DateTime
+
+  """Micro-USD one redemption grants."""
+  grantMicros: String!
+  id: ID!
+
+  """The operator who issued it; null for a CLI-issued code."""
+  issuedByEmail: String
+  maxRedemptions: Int!
+  note: String
+
+  """Accounts that redeemed it, oldest first."""
+  redeemers: [InviteCodeRedeemer!]!
+  redemptionCount: Int!
+  status: InviteCodeStatus!
+
+  """The invitation link, on `invites.landingBaseUrl`."""
+  url: String!
+  withdrawnAt: DateTime
+}
+
+type AdminInviteCodePage {
+  nodes: [AdminInviteCode!]!
+
+  """Codes matching the filter, across every page."""
+  totalCount: Int!
+}
+
+"""One account, and how it came to exist."""
+type AdminSignUp {
+  campaign: String
+  createdAt: DateTime!
+  email: String!
+
+  """Its display form. The console masks it until asked."""
+  inviteCode: String
+
+  """The code redeemed. Set exactly when `origin` is INVITE."""
+  inviteCodeId: ID
+  origin: SignUpOrigin!
+  redeemedAt: DateTime
+  userId: ID!
+}
+
+type AdminSignUpPage {
+  nodes: [AdminSignUp!]!
+  totalCount: Int!
+}
+
 """A /v1 credential. The secret itself is returned only at creation."""
 type ApiKey {
   createdAt: DateTime!
@@ -957,6 +1015,35 @@ type InviteCampaignStats {
   redemptionRate: Float!
 }
 
+type InviteCodeRedeemer {
+  """Null when the account no longer exists."""
+  email: String
+  redeemedAt: DateTime!
+  userId: ID!
+}
+
+"""
+Where an invitation code stands. A withdrawn code reads as withdrawn whatever else is true of it.
+"""
+enum InviteCodeStatus {
+  ACTIVE
+  EXPIRED
+  REDEEMED
+  WITHDRAWN
+}
+
+"""One UTC day of invitation activity."""
+type InviteDay {
+  codesIssued: Int!
+  codesRedeemed: Int!
+
+  """`YYYY-MM-DD`, UTC."""
+  date: String!
+  signUpsBootstrap: Int!
+  signUpsInvited: Int!
+  signUpsOpen: Int!
+}
+
 """The invitation credit an account received, if it received one."""
 type InviteGrant {
   """Campaign the code belonged to."""
@@ -1006,6 +1093,37 @@ type InviteRestoration {
   target: String!
 }
 
+"""Everything the Invitations statistics tab draws, in one round trip."""
+type InviteStatistics {
+  """Per-campaign breakdown, most recently issued first."""
+  campaigns: [InviteCampaignStats!]!
+
+  """Every day of the window, oldest first; empty days are zeros."""
+  daily: [InviteDay!]!
+  totals: InviteTotals!
+}
+
+"""Deployment-wide invitation numbers."""
+type InviteTotals {
+  """Micro-USD granted through invitations."""
+  grantedMicros: String!
+
+  """Codes ever issued."""
+  issued: Int!
+
+  """Redemptions — one per invited account."""
+  redeemed: Int!
+
+  """`redeemed / issued`; 0 when nothing was issued."""
+  redemptionRate: Float!
+
+  """Accounts on the deployment, however they arrived."""
+  signUps: Int!
+
+  """Codes an operator withdrew."""
+  withdrawn: Int!
+}
+
 """How many invitation codes an operator withdrew. Operators only."""
 type InviteWithdrawal {
   """
@@ -1028,6 +1146,41 @@ type InviteWithdrawal {
 
   """Codes this call withdrew. No further sign-up can redeem them."""
   withdrawn: Int!
+}
+
+input IssueInviteCodesInput {
+  """Campaign tag: a lowercase slug, e.g. `launch-2026-10-devs`."""
+  campaign: String!
+
+  """How many codes, 1–1000."""
+  count: Int!
+
+  """When the codes stop working. Null: never."""
+  expiresAt: DateTime
+
+  """Micro-USD each redemption grants, as an integer string."""
+  grantMicros: String!
+
+  """Accounts that may redeem each code."""
+  maxRedemptions: Int! = 1
+  note: String
+}
+
+type IssuedInviteCode {
+  """Display form, `ABCD-EFGH-JKMN`."""
+  code: String!
+  id: ID!
+  url: String!
+}
+
+"""A freshly issued batch. The console shows it once."""
+type IssuedInviteCodes {
+  campaign: String!
+  codes: [IssuedInviteCode!]!
+  expiresAt: DateTime
+
+  """Micro-USD each code grants."""
+  grantMicros: String!
 }
 
 """Arbitrary JSON, serialised as-is."""
@@ -1181,6 +1334,9 @@ type Mutation {
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
 
+  """Issues invitation codes. Restricted to auth.adminEmails."""
+  issueInviteCodes(input: IssueInviteCodesInput!): IssuedInviteCodes!
+
   """
   Approves one deployment: pins the evidence digest this endpoint must publish, the second trust factor beside the cloud measurement. Replaces any earlier pin — approving a redeploy is this call with the new digest. Takes effect on the next check, which the sidecar runs at once. Restricted to auth.adminEmails.
   """
@@ -1242,6 +1398,11 @@ type Mutation {
   Rewrites the note beside an entry. The measurement itself is immutable. Restricted to auth.adminEmails.
   """
   updateTrustedMeasurement(input: UpdateTrustedMeasurementInput!): TrustedMeasurement!
+
+  """
+  Withdraws one unredeemed invitation code. Restricted to auth.adminEmails.
+  """
+  withdrawInviteCode(id: ID!): InviteWithdrawal!
 }
 
 type PageInfo {
@@ -1292,6 +1453,16 @@ type Query {
     to: DateTime!
     workspaceId: ID!
   ): ActivitySummary!
+
+  """
+  Invitation codes, newest first, with who redeemed each. Restricted to auth.adminEmails.
+  """
+  adminInviteCodes(campaign: String, limit: Int! = 50, offset: Int! = 0, status: InviteCodeStatus): AdminInviteCodePage!
+
+  """
+  Accounts, newest first, with how each came to exist. Restricted to auth.adminEmails.
+  """
+  adminSignUps(limit: Int! = 50, offset: Int! = 0, origin: SignUpOrigin): AdminSignUpPage!
 
   """Every key in the workspace, newest first."""
   apiKeys(workspaceId: ID!): [ApiKey!]!
@@ -1376,6 +1547,14 @@ type Query {
     """The code the sign-up carried, if any."""
     code: String
   ): InviteGrantStatus!
+
+  """
+  Invitation totals, a daily series and the per-campaign breakdown. Restricted to auth.adminEmails.
+  """
+  inviteStatistics(
+    """Days of daily series, ending today (UTC)."""
+    days: Int! = 30
+  ): InviteStatistics!
 
   """The signed-in user, or an error when anonymous."""
   me: User!
@@ -1514,6 +1693,13 @@ type SignInOptions {
   The shortest password this deployment accepts, so the sign-up form can state the rule instead of discovering it. Meaningless while `password` is false.
   """
   passwordMinLength: Int!
+}
+
+"""How an account came to exist."""
+enum SignUpOrigin {
+  BOOTSTRAP
+  INVITE
+  OPEN
 }
 
 enum SortDirection {

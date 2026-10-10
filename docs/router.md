@@ -421,17 +421,25 @@ spends it.
 
 ```yaml
 invites:
-  landingBaseUrl: https://router.superprotocol.com   # only the generation CLI reads this
+  landingBaseUrl: https://router.superprotocol.com   # where generated links point (CLI and console)
   lookupsPerMinute: 30                               # per source address on the public lookup
 auth:
-  adminEmails: [ops@example.com]                     # who may read the campaign aggregates
+  adminEmails: [ops@example.com]                     # who may issue, withdraw and see invitations
 ```
 
 Nothing switches the feature on: with no codes generated it is inert.
 
-**Generating a campaign.** There is no API for minting codes, deliberately — an
-endpoint that creates credit is a thing to be attacked, and a CLI behind an
-operator's database access is not.
+**Generating a campaign.** Two surfaces, one generator. The CLI is for a large
+mailing; the console's **Administration → Invitations** section (SUP-268) is for
+the deployment that is published and invite-only, where there is no shell to run
+the CLI in. The console mints behind `auth.adminEmails`, at most 1,000 codes and
+$10,000 per code per call (a fat-finger guard, not a policy), and records the
+operator on each row (`invite_codes.issuedByUserId`; null means the CLI). It shows
+the batch once with copy-all and the same `code,url` CSV the CLI writes, lists
+every code — masked until revealed — with who redeemed it, lists every account
+with its origin (invitation / bootstrap / open sign-up), and charts sign-ups and
+redemptions from this database. No code value is ever logged: the audit lines name
+the operator, the campaign and the row id.
 
 ```bash
 node apps/router-api/dist/cli/invites.js generate \

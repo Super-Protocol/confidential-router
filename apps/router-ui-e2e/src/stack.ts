@@ -25,6 +25,9 @@ export interface StackHandoff {
   apiOrigin: string;
   consoleOrigin: string;
   sessionCookie: string;
+  /** The operator in `auth.adminEmails`; deliberately not {@link email}. */
+  adminSessionCookie: string;
+  adminEmail: string;
   workspaceId: string;
   email: string;
   apiKeySecret: string;
@@ -114,12 +117,25 @@ export function requireExternal(handoff: StackHandoff): ExternalHandoff {
  * serves (`origins.ts`).
  */
 export async function useSession(page: Page, baseURL: string, handoff: StackHandoff): Promise<void> {
-  const [name, value] = handoff.sessionCookie.split('=');
+  await useCookie(page, baseURL, { cookie: handoff.sessionCookie, apiOrigin: handoff.apiOrigin });
+}
+
+/** The same, as the stack's operator — the one in `auth.adminEmails` (SUP-268). */
+export async function useAdminSession(page: Page, baseURL: string, handoff: StackHandoff): Promise<void> {
+  await useCookie(page, baseURL, { cookie: handoff.adminSessionCookie, apiOrigin: handoff.apiOrigin });
+}
+
+async function useCookie(
+  page: Page,
+  baseURL: string,
+  { cookie, apiOrigin }: { cookie: string; apiOrigin: string },
+): Promise<void> {
+  const [name, value] = cookie.split('=');
   if (name !== SESSION_COOKIE_NAME) {
     throw new Error(`the handoff carries a "${name}" cookie, expected ${SESSION_COOKIE_NAME}`);
   }
   await page.context().addCookies([
-    { name, value, url: handoff.apiOrigin },
+    { name, value, url: apiOrigin },
     { name: SIGNED_IN_COOKIE_NAME, value: '1', url: baseURL },
   ]);
 }
