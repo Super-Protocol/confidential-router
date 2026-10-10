@@ -111,7 +111,14 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-268's issuer column is one additive column; the first undo drops only that.
+      // SUP-272's carried redemptions are one additive table; the first undo drops
+      // only that and leaves the codes it pointed at.
+      expect(await queryRunner.hasTable('invite_carried_redemptions')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('invite_carried_redemptions')).toBe(false);
+      expect(await queryRunner.hasTable('invite_redemptions')).toBe(true);
+
+      // SUP-268's issuer column is one additive column; the next undo drops only that.
       expect(await queryRunner.hasColumn('invite_codes', 'issuedByUserId')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('invite_codes', 'issuedByUserId')).toBe(false);

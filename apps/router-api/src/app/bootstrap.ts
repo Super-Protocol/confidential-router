@@ -7,6 +7,11 @@ import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
 import { Logger as PinoLogger } from 'nestjs-pino';
+import {
+  INVITE_CODES_CSV_CONTENT_TYPE,
+  INVITE_CODES_IMPORT_PATH,
+  MAX_INVITE_CODES_CSV_BYTES,
+} from './api/invite-codes/invite-codes-csv.controller.js';
 import { jsonErrorMiddleware } from './api/v1/openai-exception.filter.js';
 import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import { STRIPE_WEBHOOK_PATH } from './billing/index.js';
@@ -92,6 +97,11 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
   // Same rule for the feedback form's webhook: the provider signs the bytes it
   // sent, and a reparsed body is a different byte string.
   app.use(TYPEFORM_WEBHOOK_PATH, express.raw({ type: 'application/json', limit: '1mb' }));
+  // The invitation codes import is uploaded as the CSV file it is (SUP-272).
+  app.use(
+    INVITE_CODES_IMPORT_PATH,
+    express.text({ type: INVITE_CODES_CSV_CONTENT_TYPE, limit: MAX_INVITE_CODES_CSV_BYTES }),
+  );
   app.use(express.json({ limit: '1mb' }));
   // Body-parser failures are thrown in middleware and never reach a Nest
   // exception filter, so `/v1` gets its OpenAI-shaped `invalid_json` here.

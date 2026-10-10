@@ -208,7 +208,9 @@ type AdminInviteCode {
   maxRedemptions: Int!  redemptionCount: Int!  status: InviteCodeStatus!
   createdAt: DateTime!  expiresAt: DateTime  withdrawnAt: DateTime  note: String
   issuedByEmail: String                 # null: minted by the CLI
-  redeemers: [InviteCodeRedeemer!]!     # { userId, email, redeemedAt }, oldest first
+  redeemers: [InviteCodeRedeemer!]!     # { userId, email, redeemedAt, carried }, oldest first; `carried` is a
+                                        # redemption a CSV import brought from another deployment, and its
+                                        # `userId` is null until that address has an account here (SUP-272)
 }
 type AdminSignUp {
   userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
@@ -304,6 +306,10 @@ and small:
   content type:
   - `GET /activity/generations.csv?workspaceId=&from=&to=&modelIds=&apiKeyIds=&status=` — session
     cookie, same filters as `generations`, oldest first;
+  - `GET /admin/invite-codes/export.csv?campaign=&status=` — session cookie + `auth.adminEmails`; the
+    Codes tab as a file, same two filters (`status` lower-case), full code values. Its counterpart
+    `POST /admin/invite-codes/import[?apply=true&expect=<sha256>]` takes that file as a `text/csv` body
+    and answers a JSON report; see `router.md`, "Moving codes between deployments" (SUP-272);
   - `GET /exports/evidence.zip?token=…` — the link `exportEvidence` mints. Signed with `auth.secret` and
     valid for 15 minutes, because the point of the export is that it can be handed to an auditor who has
     no console session. Membership is re-checked when the link is followed.

@@ -31,11 +31,13 @@ import {
   TableHeader,
   TableRow,
 } from '@confidential-router/ui/components/table';
-import { Ticket } from 'lucide-react';
+import { Download, Ticket, Upload } from 'lucide-react';
 import * as React from 'react';
 import type { AdminInviteCodesQuery, InviteCodeStatus } from '../../../generated/graphql';
 import { formatDate, formatUsdShort } from '../../../lib/format';
 import { errorMessageOf } from '../../../lib/graphql-error';
+import { inviteCodesCsvUrl } from '../../../lib/invite-codes-csv';
+import { ImportCodesDialog } from './import-codes-dialog';
 import { maskCode, PAGE_SIZE, pageRange, STATUS_LABEL, STATUS_VARIANT } from './invitations';
 import { MaskedCode } from './masked-code';
 import { ADMIN_INVITE_CODES_QUERY, INVITE_STATISTICS_QUERY, WITHDRAW_INVITE_CODE } from './operations';
@@ -106,6 +108,7 @@ export function InviteCodesTab({ campaigns }: { campaigns: string[] }) {
   const [status, setStatus] = React.useState<InviteCodeStatus | typeof ALL>(ALL);
   const [offset, setOffset] = React.useState(0);
   const [withdrawingId, setWithdrawingId] = React.useState<string | null>(null);
+  const [importing, setImporting] = React.useState(false);
 
   const { data, loading, error, refetch } = useQuery(ADMIN_INVITE_CODES_QUERY, {
     variables: {
@@ -167,8 +170,29 @@ export function InviteCodesTab({ campaigns }: { campaigns: string[] }) {
           </SelectContent>
         </Select>
       </div>
+      {/* The export follows the two filters beside it: what the table shows is what the file holds. */}
+      <div className="ml-auto flex gap-2">
+        <Button asChild variant="outline" size="sm">
+          <a
+            href={inviteCodesCsvUrl({
+              campaign: campaign === ALL ? null : campaign,
+              status: status === ALL ? null : status,
+            })}
+            download
+            title="Every code these filters match, with its full value. Handle the file like the codes themselves."
+          >
+            <Download aria-hidden="true" />
+            Export CSV
+          </a>
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
+          <Upload aria-hidden="true" />
+          Import CSV
+        </Button>
+      </div>
     </div>
   );
+  const importDialog = <ImportCodesDialog open={importing} onOpenChange={setImporting} />;
 
   if (error && !data) {
     return (
@@ -180,6 +204,7 @@ export function InviteCodesTab({ campaigns }: { campaigns: string[] }) {
           detail="AdminInviteCodes"
           onRetry={() => void refetch()}
         />
+        {importDialog}
       </>
     );
   }
@@ -255,10 +280,26 @@ export function InviteCodesTab({ campaigns }: { campaigns: string[] }) {
                       {code.redeemers.length === 0 ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
-                        code.redeemers.map((redeemer) => (
-                          <span key={redeemer.userId} className="block truncate">
+                        code.redeemers.map((redeemer, index) => (
+                          <span
+                            // A carried redemption may have no account, so no id to key on.
+                            // biome-ignore lint/suspicious/noArrayIndexKey: the list is static per row.
+                            key={redeemer.userId ?? `carried-${index}`}
+                            className="block truncate"
+                            title={
+                              redeemer.carried
+                                ? redeemer.userId
+                                  ? 'Redeemed on a previous deployment; matched to an account here by email.'
+                                  : 'Redeemed on a previous deployment; no account with this address here.'
+                                : undefined
+                            }
+                          >
                             {redeemer.email ?? <span className="text-muted-foreground">deleted account</span>}
-                            <span className="text-muted-foreground"> · {formatDate(redeemer.redeemedAt)}</span>
+                            <span className="text-muted-foreground">
+                              {' '}
+                              · {formatDate(redeemer.redeemedAt)}
+                              {redeemer.carried ? ' · imported' : ''}
+                            </span>
                           </span>
                         ))
                       )}
@@ -309,6 +350,7 @@ export function InviteCodesTab({ campaigns }: { campaigns: string[] }) {
       )}
 
       <WithdrawDialog code={withdrawing} onOpenChange={(open) => !open && setWithdrawingId(null)} />
+      {importDialog}
     </>
   );
 }

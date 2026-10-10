@@ -59,14 +59,20 @@ registerEnumType(SignUpOriginEnum, { name: 'SignUpOrigin', description: 'How an 
 
 @ObjectType('InviteCodeRedeemer')
 export class InviteCodeRedeemerModel {
-  @Field(() => ID)
-  userId!: string;
+  @Field(() => ID, {
+    nullable: true,
+    description: 'Null for a redemption imported from another deployment whose address has no account here.',
+  })
+  userId!: string | null;
 
   @Field(() => String, { nullable: true, description: 'Null when the account no longer exists.' })
   email!: string | null;
 
   @Field(() => GraphQLISODateTime)
   redeemedAt!: Date;
+
+  @Field(() => Boolean, { description: 'Redeemed on another deployment and brought here by a codes CSV import.' })
+  carried!: boolean;
 }
 
 @ObjectType('AdminInviteCode', { description: 'One invitation code, as an operator sees it.' })
