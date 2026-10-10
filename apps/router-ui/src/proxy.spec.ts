@@ -57,23 +57,6 @@ describe('proxy', () => {
     expect(location.pathname).toBe('/');
   });
 
-  it('lets a signed-out browser reach the password reset screens (SUP-269)', () => {
-    expect(proxy(requestFor('/forgot-password')).headers.get('location')).toBeNull();
-    expect(proxy(requestFor('/reset-password?token=t')).headers.get('location')).toBeNull();
-  });
-
-  it('keeps a signed-in browser on a reset link, so its token is not thrown away', () => {
-    const response = proxy(requestFor('/reset-password?token=t', { session: true }));
-
-    expect(response.headers.get('location')).toBeNull();
-  });
-
-  it('sends a signed-in browser away from "forgot password", which it has no use for', () => {
-    const response = proxy(requestFor('/forgot-password', { session: true }));
-
-    expect(new URL(response.headers.get('location') as string).pathname).toBe('/');
-  });
-
   it('sends a signed-in browser away from the sign-in screen', () => {
     const response = proxy(requestFor('/login', { session: true }));
     const location = new URL(response.headers.get('location') as string);

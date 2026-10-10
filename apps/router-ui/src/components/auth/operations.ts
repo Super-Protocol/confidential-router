@@ -12,12 +12,12 @@ export const SIGN_IN_OPTIONS_QUERY = graphql(`
   query SignInOptions {
     signInOptions {
       bootstrap
+      adminRecovery
       github
       google
+      emailCode
+      emailCodeLength
       magicLink
-      password
-      passwordMinLength
-      passwordReset
       inviteRequired
     }
   }

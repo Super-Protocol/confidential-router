@@ -10,84 +10,97 @@ import { MailCheck, TriangleAlert } from 'lucide-react';
 import Link from 'next/link';
 import * as React from 'react';
 import {
+  AuthRequestError,
   completeSignIn,
+  requestSignInCode,
   type SocialProvider,
+  signInWithCode,
   signInWithMagicLink,
-  signInWithPassword,
   signInWithProvider,
 } from '../../lib/auth';
 import { readInviteCode, rememberInvite } from '../../lib/invite';
-import { INVITE_REFUSAL_COPY, type InviteRefusalCode, inviteRefusalOf } from '../../lib/invite-refusal';
-import { BootstrapForm } from './bootstrap-form';
+import {
+  INVITE_REFUSAL_COPY,
+  type InviteRefusalCode,
+  inviteRefusalOf,
+  isInviteRefusalCode,
+} from '../../lib/invite-refusal';
+import { BootstrapForm, type BootstrapMode } from './bootstrap-form';
+import { codeFailureOf, codeRequestMessageOf, EmailCodeStep } from './email-code-step';
 import { messageOf } from './messages';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 import { GitHubIcon, GoogleIcon } from './provider-icons';
 
-type Pending = SocialProvider | 'magic-link' | 'password' | null;
+type Pending = SocialProvider | 'magic-link' | 'code-request' | 'code-verify' | 'code-resend' | null;
 
 /**
  * What to offer when the API cannot be reached.
  *
  * Everything, deliberately: the query failing says nothing about how this
  * deployment is configured, and a sign-in screen that hides every path because
- * one request timed out leaves the viewer with no way to even try. `bootstrap`
- * stays off — it is the one path that is normally unavailable, and offering it
- * blindly would suggest a fresh deployment where there may be none.
+ * one request timed out leaves the viewer with no way to even try. The two
+ * token paths stay off — they are the ones that are normally unavailable, and
+ * offering either blindly would suggest a fresh deployment, or an administrator
+ * token, where there may be neither.
  */
 const OFFER_EVERYTHING = {
   bootstrap: false,
+  adminRecovery: false,
   github: true,
   google: true,
+  emailCode: true,
+  // The router's own constant; a guess here only decides when the button under
+  // the code field wakes up, and the router checks the code either way.
+  emailCodeLength: 6,
   magicLink: true,
-  password: true,
-  passwordMinLength: 0,
-  // Off: a reset request on an API that cannot be reached can only fail, and
-  // "Forgot password?" is a footnote, not a way in.
-  passwordReset: false,
-};
-
-/**
- * A password sign-in the router refused. 401 is the only one of these the
- * viewer can act on; the rest describe the deployment, not what was typed.
- */
-const SIGN_IN_MESSAGES = {
-  401: 'That email and password do not match an account here.',
-  404: 'Password sign-in is not enabled on this deployment.',
 };
 
 export function SignInForm() {
   const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
   const [pending, setPending] = React.useState<Pending>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [linkSent, setLinkSent] = React.useState(false);
-  const [bootstrapping, setBootstrapping] = React.useState(false);
+  /**
+   * The code step: a code has been asked for, and the card is waiting for it.
+   * `attempt` counts the codes that are dead — refused as spent, or replaced by
+   * a new one — and is the step's `key`, so its field empties with each.
+   */
+  const [codeSent, setCodeSent] = React.useState(false);
+  const [codeResent, setCodeResent] = React.useState(false);
+  const [attempt, setAttempt] = React.useState(0);
+  // Which of the token's two jobs the token form was opened for, if it is open.
+  const [tokenForm, setTokenForm] = React.useState<BootstrapMode | null>(null);
   // Which of the two email paths the card is showing. `null` until the answer
   // arrives, because the deployment decides which one is the default.
-  const [emailPath, setEmailPath] = React.useState<'password' | 'magic-link' | null>(null);
+  const [emailPath, setEmailPath] = React.useState<'code' | 'magic-link' | null>(null);
 
   /**
    * The invitation code this browser is carrying, if any.
    *
    * This is a sign-*in* screen, so usually there is none and nothing happens. But
-   * OAuth and a magic link both create the account on first use, and on a
-   * deployment that offers no password sign-up they are the only way an invited
-   * visitor can register at all — so the code has to travel from here too, or the
-   * grant is silently lost. `signInWithPassword` deliberately does not take it:
-   * an existing account cannot be topped up (SUP-142).
+   * every path here creates the account on first use — a mailed code, a magic
+   * link and OAuth alike — so an invited visitor who never opens `/signup` is
+   * registered from this screen, and the code has to travel from here too or the
+   * grant is silently lost. It is safe to send for an address that already has
+   * an account: redemption lives in account creation and nowhere else, so an
+   * existing account cannot be topped up (SUP-142).
    */
   const [inviteCode] = React.useState(() => readInviteCode(globalThis.location?.search ?? ''));
 
   /**
    * A sign-*up* this screen started and the router refused (SUP-173).
    *
-   * Both paths that create an account from here — a provider and a magic link —
-   * finish as a navigation, so an invite-only refusal comes back as `?error=` on
-   * this page rather than as a rejected promise. It is rendered here because
-   * this is where the button that caused it is: the way out of it is to press
-   * the same one again with a code that works.
+   * Two of the paths that create an account from here — a provider and a magic
+   * link — finish as a navigation, so an invite-only refusal comes back as
+   * `?error=` on this page rather than as a rejected promise; the third, a
+   * mailed code, is this screen's own request and is answered with a 403. All
+   * three are rendered here because this is where the button that caused it is:
+   * the way out of it is to press the same one again with an invitation that
+   * works.
    */
-  const [refusal] = React.useState<InviteRefusalCode | null>(() => inviteRefusalOf(globalThis.location?.search ?? ''));
+  const [refusal, setRefusal] = React.useState<InviteRefusalCode | null>(() =>
+    inviteRefusalOf(globalThis.location?.search ?? ''),
+  );
 
   // Kept for the round trip back. The OAuth callback reads the `cr_invite`
   // cookie, but a refusal lands the visitor back on this page with a URL the
@@ -99,10 +112,11 @@ export function SignInForm() {
 
   const { data, loading } = useQuery(SIGN_IN_OPTIONS_QUERY, { fetchPolicy: 'cache-and-network' });
   const options = data?.signInOptions ?? OFFER_EVERYTHING;
-  // A password is the sturdier of the two on a deployment that offers both: it
-  // signs the viewer in here rather than sending them to an inbox.
-  const path = emailPath ?? (options.password ? 'password' : 'magic-link');
-  const showsPassword = options.password && path === 'password';
+  // A code is the default on a deployment that offers both: it signs the viewer
+  // in on the device they are looking at, where a link signs in whichever
+  // browser happens to open the mail.
+  const path = emailPath ?? (options.emailCode ? 'code' : 'magic-link');
+  const showsCode = options.emailCode && path === 'code';
   const showsMagicLink = options.magicLink && path === 'magic-link';
 
   const handleProvider = async (provider: SocialProvider) => {
@@ -131,21 +145,76 @@ export function SignInForm() {
     }
   };
 
-  const handlePassword = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  /** Asks for a code — the first one, or a replacement from the code step. */
+  const requestCode = async (kind: 'code-request' | 'code-resend') => {
     setError(null);
-    setPending('password');
+    setPending(kind);
     try {
-      await signInWithPassword(email, password);
-      completeSignIn();
+      await requestSignInCode(email);
+      if (kind === 'code-resend') {
+        // The code on screen may still be good, but the one in the newest mail
+        // is the one the viewer is about to read — so the field starts over.
+        setAttempt((current) => current + 1);
+      }
+      setCodeResent(kind === 'code-resend');
+      setCodeSent(true);
     } catch (caught) {
-      setError(messageOf(caught, SIGN_IN_MESSAGES));
+      setError(codeRequestMessageOf(caught));
+    } finally {
       setPending(null);
     }
   };
 
-  if (bootstrapping) {
-    return <BootstrapForm onCancel={() => setBootstrapping(false)} />;
+  const handleCode = async (code: string) => {
+    setError(null);
+    setPending('code-verify');
+    try {
+      // The invitation rides along whether or not it will be used: the router
+      // creates the account here if the address has none, and that creation is
+      // the only place a code is redeemed.
+      await signInWithCode({ email, code, inviteCode });
+      completeSignIn();
+    } catch (caught) {
+      const refused = caught instanceof AuthRequestError ? caught.code : undefined;
+      if (isInviteRefusalCode(refused)) {
+        // An invite-only deployment would not create the account. The mailed
+        // code was spent by being checked, so there is nothing left to do on
+        // the code step: back to the card, where the refusal says where to go.
+        setRefusal(refused);
+        setCodeSent(false);
+      } else {
+        const failure = codeFailureOf(caught);
+        setError(failure.message);
+        if (failure.spent) setAttempt((current) => current + 1);
+      }
+      setCodeResent(false);
+      setPending(null);
+    }
+  };
+
+  if (tokenForm) {
+    return <BootstrapForm mode={tokenForm} onCancel={() => setTokenForm(null)} />;
+  }
+
+  if (codeSent) {
+    return (
+      <EmailCodeStep
+        key={attempt}
+        email={email}
+        length={options.emailCodeLength}
+        submitLabel="Sign in"
+        submittingLabel="Signing in…"
+        pending={pending === 'code-verify' ? 'verify' : pending === 'code-resend' ? 'resend' : null}
+        error={error}
+        resent={codeResent}
+        onSubmit={(code) => void handleCode(code)}
+        onResend={() => void requestCode('code-resend')}
+        onChangeAddress={() => {
+          setError(null);
+          setCodeSent(false);
+        }}
+      />
+    );
   }
 
   if (linkSent) {
@@ -178,18 +247,19 @@ export function SignInForm() {
     { id: 'github' as const, label: 'Continue with GitHub', icon: GitHubIcon, enabled: options.github },
     { id: 'google' as const, label: 'Continue with Google', icon: GoogleIcon, enabled: options.google },
   ].filter((provider) => provider.enabled);
-  const nothingOffered = providers.length === 0 && !options.magicLink && !options.password && !options.bootstrap;
+  const mailsSomething = options.emailCode || options.magicLink;
+  const nothingOffered = providers.length === 0 && !mailsSomething && !options.bootstrap && !options.adminRecovery;
 
   return (
     <Card>
       <CardHeader>
         <h1 className="font-semibold leading-none">Sign in</h1>
         <CardDescription>
-          {options.password
-            ? 'Use your email and password, or a provider.'
+          {options.emailCode
+            ? 'Sign in with a code mailed to your address, or a provider.'
             : options.magicLink
-              ? 'No passwords. Use a provider, or have a one-time link mailed to you.'
-              : 'No passwords, and no mailer on this deployment.'}
+              ? 'Use a provider, or have a one-time link mailed to you.'
+              : 'This deployment cannot send mail, so sign-in is by a provider or the administrator’s first-sign-in token.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -237,7 +307,7 @@ export function SignInForm() {
               </div>
             ) : null}
 
-            {providers.length > 0 && (options.magicLink || options.password) ? (
+            {providers.length > 0 && mailsSomething ? (
               <div className="flex items-center gap-3" aria-hidden="true">
                 <span className="h-px flex-1 bg-border" />
                 <span className="text-muted-foreground text-xs uppercase tracking-wide">or</span>
@@ -246,11 +316,18 @@ export function SignInForm() {
             ) : null}
 
             {/* One form for both email paths: they ask for the same address,
-                and only the password field and the verb differ. */}
-            {showsPassword || showsMagicLink ? (
+                and only the verb differs. */}
+            {showsCode || showsMagicLink ? (
               <form
                 className="flex flex-col gap-2"
-                onSubmit={(event) => void (showsPassword ? handlePassword(event) : handleMagicLink(event))}
+                onSubmit={(event) => {
+                  if (showsCode) {
+                    event.preventDefault();
+                    void requestCode('code-request');
+                  } else {
+                    void handleMagicLink(event);
+                  }
+                }}
               >
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -265,44 +342,16 @@ export function SignInForm() {
                   aria-describedby={error ? 'sign-in-error' : undefined}
                   aria-invalid={error !== null || undefined}
                 />
-                {showsPassword ? (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="password">Password</Label>
-                      {/* Only where the router can mail a link (SUP-269); on a
-                          mailer-less deployment the routes behind it are 404. */}
-                      {options.passwordReset ? (
-                        <Link
-                          href="/forgot-password"
-                          className="text-muted-foreground text-xs underline-offset-4 hover:text-foreground hover:underline"
-                        >
-                          Forgot password?
-                        </Link>
-                      ) : null}
-                    </div>
-                    <Input
-                      id="password"
-                      name="password"
-                      type="password"
-                      autoComplete="current-password"
-                      required
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      aria-describedby={error ? 'sign-in-error' : undefined}
-                      aria-invalid={error !== null || undefined}
-                    />
-                  </>
-                ) : null}
                 <Button
                   type="submit"
                   variant="brand"
                   className="w-full"
-                  disabled={pending !== null || email.length === 0 || (showsPassword && password.length === 0)}
+                  disabled={pending !== null || email.length === 0}
                 >
-                  {showsPassword
-                    ? pending === 'password'
-                      ? 'Signing in…'
-                      : 'Sign in'
+                  {showsCode
+                    ? pending === 'code-request'
+                      ? 'Sending…'
+                      : 'Email me a code'
                     : pending === 'magic-link'
                       ? 'Sending…'
                       : 'Email me a link'}
@@ -318,21 +367,23 @@ export function SignInForm() {
 
             {/* Only where both are configured. The address is kept across the
                 switch, because it is the same address either way. */}
-            {options.password && options.magicLink ? (
+            {options.emailCode && options.magicLink ? (
               <Button
                 variant="ghost"
                 className="w-full"
                 disabled={pending !== null}
                 onClick={() => {
                   setError(null);
-                  setEmailPath(path === 'password' ? 'magic-link' : 'password');
+                  setEmailPath(path === 'code' ? 'magic-link' : 'code');
                 }}
               >
-                {path === 'password' ? 'Email me a link instead' : 'Use a password instead'}
+                {path === 'code' ? 'Email me a link instead' : 'Use a code instead'}
               </Button>
             ) : null}
 
-            {options.password ? (
+            {/* Only where a code can be mailed: that is what creates an account
+                on the sign-up screen, which says so itself otherwise. */}
+            {options.emailCode ? (
               <p className="text-center text-muted-foreground text-sm">
                 No account yet?{' '}
                 {/* `from=login` is what makes `signup_started` able to tell a
@@ -349,18 +400,35 @@ export function SignInForm() {
                 it while the token is configured and no account exists. */}
             {options.bootstrap ? (
               <Button
-                variant={providers.length === 0 && !options.magicLink && !options.password ? 'brand' : 'outline'}
+                variant={providers.length === 0 && !mailsSomething ? 'brand' : 'outline'}
                 className="w-full"
-                onClick={() => setBootstrapping(true)}
+                onClick={() => setTokenForm('setup')}
               >
                 Have a bootstrap token?
               </Button>
             ) : null}
 
+            {/* The same token, once the account it created exists (SUP-269): it
+                signs that one account back in, which is what keeps a deployment
+                that cannot mail a code from losing its administrator with the
+                session cookie. Low-key wherever there is another way in — it is
+                nobody else's — and the router never reports it together with
+                `bootstrap`. */}
+            {options.adminRecovery ? (
+              <Button
+                variant={providers.length === 0 && !mailsSomething ? 'outline' : 'ghost'}
+                className="w-full text-muted-foreground"
+                disabled={pending !== null}
+                onClick={() => setTokenForm('recovery')}
+              >
+                Administrator: use the first-sign-in token
+              </Button>
+            ) : null}
+
             {nothingOffered ? (
               <p role="alert" className="text-muted-foreground text-sm">
-                This deployment has no sign-in method configured. Set an OAuth app, a mailer, a password provider, or a
-                bootstrap token in the router configuration.
+                This deployment has no sign-in method configured. Set an OAuth app, a mailer, or a bootstrap token in
+                the router configuration.
               </p>
             ) : null}
           </>

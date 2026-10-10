@@ -22,16 +22,27 @@ const GRANT_MICROS = '100000000';
 const SAMPLE_MODEL = 'google/gemma-2-2b-it:tee';
 const WORKSPACE_ID = SESSION_DATA.me.workspaces[0].id;
 
+/**
+ * The router's two email-code routes (SUP-269). The first mails a code to any
+ * address; the second trades it for a session and, for an address with no
+ * account, creates the account — so it is the sign-up, and the invitation rides
+ * its body.
+ */
+const SEND_CODE_ROUTE = '**/auth/email-otp/send-verification-otp';
+const SIGN_UP_ROUTE = '**/auth/sign-in/email-otp';
+/** The code every mocked mail "carries". */
+const MAILED_CODE = '482913';
+
 const SIGN_IN_OPTIONS = {
   signInOptions: {
     __typename: 'SignInOptions',
     bootstrap: false,
+    adminRecovery: false,
     github: false,
     google: false,
+    emailCode: true,
+    emailCodeLength: 6,
     magicLink: false,
-    password: true,
-    passwordMinLength: 12,
-    passwordReset: false,
     inviteRequired: false,
   },
 };
@@ -51,8 +62,10 @@ async function mockLookup(page: Page, answer: Record<string, unknown>): Promise<
 interface Recorded {
   /** Every body posted to the first-party analytics ingest, in order. */
   events: Array<Record<string, unknown>>;
-  /** Every body posted to `/auth/sign-up/email`. */
+  /** Every body posted to `/auth/sign-in/email-otp` — the request that creates the account. */
   signUps: Array<Record<string, unknown>>;
+  /** Every body posted to `/auth/email-otp/send-verification-otp`: one per mailed code. */
+  codeRequests: Array<Record<string, unknown>>;
 }
 
 function creditsFixtures(grantMicros: string, extra: GraphQLFixtures = {}): GraphQLFixtures {
@@ -141,12 +154,12 @@ function grantStatus(grant: boolean, reason: string | null): GraphQLFixtures {
  * the form before they saw it.
  *
  * So the session comes into existence when the sign-up says it did: `SignedIn` is
- * refused until `/auth/sign-up/email` has been answered, and only then does the
+ * refused until `/auth/sign-in/email-otp` has been answered, and only then does the
  * API's cookie appear. That is the real sequence, and it is the one thing a
  * component test cannot exercise.
  */
 async function mockInviteFlow(page: Page, operations: GraphQLFixtures): Promise<Recorded> {
-  const recorded: Recorded = { events: [], signUps: [] };
+  const recorded: Recorded = { events: [], signUps: [], codeRequests: [] };
   let created = false;
 
   await page.route('**/v1/analytics/events', async (route) => {
@@ -154,7 +167,12 @@ async function mockInviteFlow(page: Page, operations: GraphQLFixtures): Promise<
     await route.fulfill({ status: 202, body: '' });
   });
 
-  await page.route('**/auth/sign-up/email', async (route) => {
+  await page.route(SEND_CODE_ROUTE, async (route) => {
+    recorded.codeRequests.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+  });
+
+  await page.route(SIGN_UP_ROUTE, async (route) => {
     recorded.signUps.push(route.request().postDataJSON() as Record<string, unknown>);
     created = true;
     await page.context().addCookies([{ name: 'cr_session', value: 'e2e-session-token', url: API_ORIGIN }]);
@@ -173,9 +191,11 @@ async function mockInviteFlow(page: Page, operations: GraphQLFixtures): Promise<
   return recorded;
 }
 
+/** Both steps of the form: an address and a mailed code asked for, then the code handed back. */
 async function fillInAndSubmit(page: Page): Promise<void> {
   await page.getByLabel('Email').fill('invited@example.com');
-  await page.getByLabel('Password').fill('correct-horse-battery');
+  await page.getByRole('button', { name: 'Email me a code' }).click();
+  await page.getByLabel('Code').fill(MAILED_CODE);
   await page.getByRole('button', { name: 'Create account' }).click();
 }
 
@@ -206,7 +226,7 @@ test.describe('signing up from an invitation URL', () => {
     await expect(page.getByRole('row', { name: /Invitation credit/ })).toContainText(CAMPAIGN);
 
     // The code went out with the sign-up, normalised the way the API stores it.
-    expect(signUps[0]).toMatchObject({ email: 'invited@example.com', inviteCode: NORMALISED });
+    expect(signUps[0]).toMatchObject({ email: 'invited@example.com', otp: MAILED_CODE, inviteCode: NORMALISED });
     expect(events[0]).toMatchObject({
       event: 'signup_started',
       properties: { has_invite: true, campaign: CAMPAIGN, utm_campaign: CAMPAIGN, entry: 'landing_cta' },
@@ -304,7 +324,7 @@ test.describe('an invitation carried through OAuth', () => {
     });
     await mockGraphQL(page, {
       SignInOptions: {
-        signInOptions: { ...SIGN_IN_OPTIONS.signInOptions, github: true, password: false },
+        signInOptions: { ...SIGN_IN_OPTIONS.signInOptions, github: true },
       },
     });
 
@@ -338,9 +358,9 @@ test.describe('a deployment where registration is by invitation', () => {
     signInOptions: { ...SIGN_IN_OPTIONS.signInOptions, inviteRequired: true },
   };
 
-  test('says so, opens the code field, and will not submit until a code works', async ({ page }) => {
+  test('says so, opens the code field, and mails nothing until an invitation works', async ({ page }) => {
     await mockLookup(page, { valid: false, reason: 'unavailable' });
-    const { signUps } = await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
+    const { signUps, codeRequests } = await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
 
     await page.goto('/signup');
 
@@ -348,9 +368,12 @@ test.describe('a deployment where registration is by invitation', () => {
     await expect(page.getByLabel('Invitation code')).toBeVisible();
 
     await page.getByLabel('Email').fill('invited@example.com');
-    await page.getByLabel('Password').fill('correct-horse-battery');
-    await expect(page.getByRole('button', { name: 'Create account' })).toBeDisabled();
+    // Held before the mail, not after it: a mailed code is spent by being
+    // checked, so a refusal on the far side of it would cost the visitor a trip
+    // to their inbox for nothing.
+    await expect(page.getByRole('button', { name: 'Email me a code' })).toBeDisabled();
     await expect(page.getByTestId('sign-up-blocked-on-invite')).toContainText('working invitation code');
+    expect(codeRequests).toHaveLength(0);
     expect(signUps).toHaveLength(0);
   });
 
@@ -390,7 +413,7 @@ test.describe('a deployment where registration is by invitation', () => {
       // Registered after `mockInviteFlow`, so it wins: the router refuses instead
       // of creating the account, and this handler is what records the attempt.
       const attempts: Array<Record<string, unknown>> = [];
-      await page.route('**/auth/sign-up/email', (route) => {
+      await page.route(SIGN_UP_ROUTE, (route) => {
         attempts.push(route.request().postDataJSON() as Record<string, unknown>);
         return route.fulfill({
           status: 403,
@@ -409,8 +432,12 @@ test.describe('a deployment where registration is by invitation', () => {
       // The refusal the visitor read is the one answered to their own code.
       expect(attempts).toHaveLength(1);
       expect(attempts[0]).toMatchObject({ inviteCode: NORMALISED });
-      // Refused before the insert, so the visitor is still on the form.
+      // Refused before the insert, so the visitor is still on the form — and back
+      // on its first step, where the invitation is: the mailed code went with
+      // the refusal.
       await expect(page).toHaveURL(/\/signup/);
+      await expect(page.getByLabel('Invitation code')).toBeVisible();
+      await expect(page.getByLabel('Code', { exact: true })).toBeHidden();
     });
   }
 
@@ -435,7 +462,7 @@ test.describe('a deployment where registration is by invitation', () => {
     await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
     // The last seat went between the lookup and the submit — the one window the
     // pre-check cannot close.
-    await page.route('**/auth/sign-up/email', (route) =>
+    await page.route(SIGN_UP_ROUTE, (route) =>
       route.fulfill({
         status: 403,
         contentType: 'application/json',
@@ -458,7 +485,7 @@ test.describe('a deployment where registration is by invitation', () => {
    */
   test('carries an OAuth refusal back to the screen the visitor started on', async ({ page }) => {
     await mockInviteFlow(page, {
-      SignInOptions: { signInOptions: { ...INVITE_ONLY.signInOptions, github: true, password: false } },
+      SignInOptions: { signInOptions: { ...INVITE_ONLY.signInOptions, github: true } },
     });
 
     let errorCallback: string | undefined;

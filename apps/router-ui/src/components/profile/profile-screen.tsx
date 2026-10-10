@@ -10,7 +10,6 @@ import { PageHeader } from '../page-header';
 import { useSession } from '../session/session-provider';
 import { AccountCard } from './account-card';
 import { PROFILE_QUERY } from './operations';
-import { PasswordCard } from './password-card';
 import { HEATMAP_DAYS, SPEND_DAYS } from './profile-data';
 import { SignedDaysCard } from './signed-days-card';
 import { SpendCard } from './spend-card';
@@ -90,13 +89,6 @@ export function ProfileScreen() {
           avatarUrl={data.me.avatarUrl ?? null}
           createdAt={data.me.createdAt}
         />
-
-        {data.signInOptions.password && !data.me.hasPassword ? (
-          <PasswordCard
-            minLength={data.signInOptions.passwordMinLength}
-            resettable={data.signInOptions.passwordReset}
-          />
-        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-2">
           <SpendCard points={data.activitySeries} />
