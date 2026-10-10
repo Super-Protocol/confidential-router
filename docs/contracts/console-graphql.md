@@ -313,6 +313,15 @@ and small:
   - `GET /exports/evidence.zip?token=…` — the link `exportEvidence` mints. Signed with `auth.secret` and
     valid for 15 minutes, because the point of the export is that it can be handed to an auditor who has
     no console session. Membership is re-checked when the link is followed.
+  - `GET /admin/data/export` — the deployment export (SUP-271), a gzipped JSON document. Session cookie
+    **and** `auth.adminEmails`; deliberately *not* a signed link, because this file is not for handing on.
+    `Cache-Control: no-store`; `X-Export-Sha256` carries the bundle's content hash.
+  - `POST /admin/data/import[?apply=true&expect=<sha256>]` — the same file as the request body,
+    `Content-Type: application/gzip`. Without `apply` it is a dry run and writes nothing; with it,
+    `expect` must be the `contentSha256` the dry run reported. Answers an `ImportReport` (`applied`, `ok`,
+    `refusals[]`, per-section `inBundle` / `toCreate` / `alreadyPresent` / `conflicts[]`, `notes[]`) with
+    200 whether or not the bundle can be taken, and 400 for a file that is not a readable export. The
+    format and the rules are in `docs/router.md`, *Moving a deployment's data across a redeploy*.
 - **`updateProfile` and `deleteAccount`** are not implemented yet; they are account lifecycle rather than
   preferences.
 
