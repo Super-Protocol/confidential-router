@@ -119,8 +119,13 @@ export class InviteWithdrawalService {
   }
 }
 
-/** Which codes to act on. Exactly one of `code` and `campaign`. */
+/** Which codes to act on. Exactly one of `id`, `code` and `campaign`. */
 export interface InviteCodeSelector {
+  /**
+   * One code, by its row id — how the console names a code it listed, so the
+   * code's value does not have to travel back to the server (SUP-268).
+   */
+  id?: string | null;
   /** One code, in any spelling the invitation carried: case and separators are normalised. */
   code?: string | null;
   /** Every code of one campaign tag. */
@@ -170,8 +175,9 @@ export class InviteTargetError extends Error {
 }
 
 type Target =
-  | { code: string; campaign?: undefined; unspentOnly: boolean }
-  | { code?: undefined; campaign: string; unspentOnly: boolean };
+  | { id: string; code?: undefined; campaign?: undefined; unspentOnly: boolean }
+  | { id?: undefined; code: string; campaign?: undefined; unspentOnly: boolean }
+  | { id?: undefined; code?: undefined; campaign: string; unspentOnly: boolean };
 
 /**
  * One line the operator reads back — what the CLI prints, and what the mutation
@@ -212,12 +218,16 @@ export function describeRestoration(result: InviteRestoration): string {
  * database cannot distinguish from a campaign that was never generated.
  */
 function targetOf(request: InviteWithdrawalRequest): Target {
+  const id = request.id?.trim() ? request.id.trim() : null;
   const code = request.code?.trim() ? normaliseInviteCode(request.code) : null;
   const campaign = request.campaign?.trim() ? request.campaign.trim() : null;
   const unspentOnly = request.unspentOnly === true;
 
-  if (code !== null && campaign !== null) {
+  if ([id, code, campaign].filter((named) => named !== null).length > 1) {
     throw new InviteTargetError(ONE_TARGET);
+  }
+  if (id !== null) {
+    return { id, unspentOnly };
   }
   if (code !== null) {
     if (!looksLikeInviteCode(code)) {
@@ -235,8 +245,14 @@ function targetOf(request: InviteWithdrawalRequest): Target {
 
 const ONE_TARGET = 'Name exactly one of a code or a campaign — one leaked invitation, or a whole mailing.';
 
-/** What the operator sees echoed back: the normalised code, or the tag. */
+/**
+ * What the operator sees echoed back: the normalised code, the tag, or — for a
+ * code named by id — the id, since the caller chose not to send the code.
+ */
 function nameOf(target: Target): string {
+  if (target.id !== undefined) {
+    return `invitation ${target.id}`;
+  }
   return target.code === undefined ? target.campaign : formatInviteCode(target.code);
 }
 
@@ -249,10 +265,16 @@ function nameOf(target: Target): string {
  * count stops describing what was changed.
  */
 function targetSql(target: Target, quote: (name: string) => string): string {
+  if (target.id !== undefined) {
+    return `${quote('id')} = :id`;
+  }
   return target.code === undefined ? `${quote('campaign')} = :campaign` : `${quote('code')} = :code`;
 }
 
 function parametersOf(target: Target): Record<string, string> {
+  if (target.id !== undefined) {
+    return { id: target.id };
+  }
   return target.code === undefined ? { campaign: target.campaign } : { code: target.code };
 }
 

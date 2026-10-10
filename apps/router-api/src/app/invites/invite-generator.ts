@@ -14,9 +14,13 @@ export interface GenerateInvitesRequest {
   note: string | null;
   /** Origin the mailed links point at, e.g. `https://router.superprotocol.com`. */
   landingBaseUrl: string;
+  /** The console operator minting them; absent for the CLI. */
+  issuedByUserId?: string | null;
 }
 
 export interface GeneratedInvite {
+  /** `invite_codes.id` — what the console withdraws a code by, so the code itself never has to travel again. */
+  id: string;
   /** Display form, `ABCD-EFGH-JKMN`. */
   code: string;
   url: string;
@@ -34,9 +38,10 @@ export const INVITE_CSV_HEADER = ['code', 'url'] as const;
  * Mints `count` codes for one campaign and returns them in the order the CSV
  * will carry them.
  *
- * Written against a `DataSource` rather than as a Nest provider because its only
- * caller is the CLI, which has no application to boot: it needs the entities and
- * a connection, not guards, config injection or an HTTP server.
+ * Written against a `DataSource` rather than as a Nest provider because the CLI
+ * has no application to boot: it needs the entities and a connection, not guards,
+ * config injection or an HTTP server. The console's `issueInviteCodes` mutation
+ * calls the same function with the application's connection (SUP-268).
  *
  * Collisions are retried per batch rather than per code. At 30^12 a collision
  * inside a 5000-code campaign is a ~10^-10 event, so the retry is not a
@@ -73,14 +78,22 @@ async function insertBatch(
       expiresAt: request.expiresAt,
       disabledAt: null,
       note: request.note,
+      issuedByUserId: request.issuedByUserId ?? null,
       createdAt: now,
+    }));
+    // Built before the insert, not read back off `rows` after it: TypeORM's
+    // multi-row insert on SQLite writes primary keys back onto the objects it was
+    // given, and not always to the object each key came from. The database is
+    // right; the objects are not, and an id paired with the wrong code would
+    // withdraw the wrong invitation.
+    const minted = rows.map((row) => ({
+      id: row.id,
+      code: formatInviteCode(row.code),
+      url: inviteUrl({ landingBaseUrl: request.landingBaseUrl, campaign: row.campaign, code: row.code }),
     }));
     try {
       await manager.insert(InviteCode, rows);
-      return rows.map((row) => ({
-        code: formatInviteCode(row.code),
-        url: inviteUrl({ landingBaseUrl: request.landingBaseUrl, campaign: row.campaign, code: row.code }),
-      }));
+      return minted;
     } catch (error) {
       if (!isUniqueViolation(error) || attempt >= MAX_BATCH_ATTEMPTS) {
         throw error;

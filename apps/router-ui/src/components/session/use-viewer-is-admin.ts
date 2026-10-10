@@ -32,8 +32,19 @@ export const VIEWER_IS_ADMIN_QUERY = graphql(`
 `);
 
 export function useViewerIsAdmin(): boolean {
+  return useViewerAdminState().isAdmin;
+}
+
+/**
+ * The same answer, plus whether it is in yet — for a screen that is *only* for
+ * administrators (SUP-268) and must not flash "restricted" at an operator
+ * while the question is still in flight, nor fire its own queries for a member.
+ */
+export function useViewerAdminState(): { isAdmin: boolean; resolved: boolean } {
   // Not `cache-and-network`: admin membership is deployment configuration, not
   // state that moves while a tab is open.
-  const { data } = useQuery(VIEWER_IS_ADMIN_QUERY, { errorPolicy: 'ignore' });
-  return data?.me.isAdmin ?? false;
+  const { data, loading } = useQuery(VIEWER_IS_ADMIN_QUERY, { errorPolicy: 'ignore' });
+  // Once answered, stays answered: another observer refetching the same query
+  // must not flip an open admin screen back to its loading state and unmount it.
+  return { isAdmin: data?.me.isAdmin ?? false, resolved: data !== undefined || !loading };
 }

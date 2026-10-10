@@ -4,7 +4,9 @@ import {
   INVITE_CODE_ALPHABET,
   INVITE_CODE_LENGTH,
   inviteUrl,
+  isInviteCampaignTag,
   looksLikeInviteCode,
+  maskInviteCode,
   mintInviteCode,
   normaliseInviteCode,
 } from './invite-code.js';
@@ -121,5 +123,30 @@ describe('inviteUrl', () => {
     });
 
     expect(new URL(nested).pathname).toBe('/router/');
+  });
+});
+
+describe('maskInviteCode', () => {
+  it('keeps the first group and hides the rest, in the display shape', () => {
+    expect(maskInviteCode('ABCDEFGHJKMN')).toBe('ABCD-••••-••••');
+  });
+
+  it('never contains the hidden characters', () => {
+    const code = mintInviteCode();
+    expect(maskInviteCode(code)).not.toContain(code.slice(4));
+  });
+});
+
+describe('isInviteCampaignTag', () => {
+  it('accepts a lowercase slug', () => {
+    expect(isInviteCampaignTag('launch-2026-10-devs')).toBe(true);
+    expect(isInviteCampaignTag('a.b_c')).toBe(true);
+  });
+
+  it('refuses what would split a campaign into two rows', () => {
+    expect(isInviteCampaignTag('Launch')).toBe(false);
+    expect(isInviteCampaignTag('launch 2026')).toBe(false);
+    expect(isInviteCampaignTag('-launch')).toBe(false);
+    expect(isInviteCampaignTag('x'.repeat(65))).toBe(false);
   });
 });

@@ -176,10 +176,10 @@ input DisableInviteCodesInput { code: String, campaign: String, unspentOnly: Boo
 # Mutation.disableInviteCodes(input: DisableInviteCodesInput!): InviteWithdrawal!
 # Mutation.restoreInviteCodes(input: RestoreInviteCodesInput!): InviteRestoration!   # both session + admin
 #
-# There is deliberately no redeem mutation and no generate mutation: a code is
-# spent inside account creation and nowhere else, and minting is a CLI behind an
-# operator's database access, so there is nothing here a client could replay and
-# nothing here that creates credit.
+# There is deliberately no redeem mutation: a code is spent inside account
+# creation and nowhere else, so there is nothing here a client could replay.
+# Minting was CLI-only until SUP-268; the admin Invitations section below now
+# mints too, behind auth.adminEmails.
 #
 # The two operator mutations run the other way — they only ever *stop* credit —
 # and they exist because a deployment whose cluster space is published has no
@@ -197,6 +197,34 @@ input DisableInviteCodesInput { code: String, campaign: String, unspentOnly: Boo
 # to leak, and `ALREADY_REDEEMED` (this account has a grant already, from another
 # code) is only answerable where the account is known. It spends the same
 # `invites.lookupsPerMinute` budget as the public lookup, keyed by account.
+
+# ---------- the admin Invitations section (SUP-268) — all session + admin ----------
+
+enum InviteCodeStatus { ACTIVE, REDEEMED, EXPIRED, WITHDRAWN }   # WITHDRAWN wins; a spent code reads REDEEMED even once expired
+enum SignUpOrigin { INVITE, BOOTSTRAP, OPEN }
+type AdminInviteCode {
+  id: ID!  code: String!  url: String!  campaign: String!  grantMicros: String!
+  maxRedemptions: Int!  redemptionCount: Int!  status: InviteCodeStatus!
+  createdAt: DateTime!  expiresAt: DateTime  withdrawnAt: DateTime  note: String
+  issuedByEmail: String                 # null: minted by the CLI
+  redeemers: [InviteCodeRedeemer!]!     # { userId, email, redeemedAt }, oldest first
+}
+type AdminSignUp {
+  userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
+  inviteCodeId: ID  inviteCode: String  campaign: String  redeemedAt: DateTime   # set exactly when origin = INVITE
+}
+type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: [InviteCampaignStats!]! }
+# Query.adminInviteCodes(campaign, status, offset = 0, limit = 50 ≤ 200): AdminInviteCodePage!   { totalCount, nodes }
+# Query.adminSignUps(origin, offset = 0, limit = 50 ≤ 200): AdminSignUpPage!
+# Query.inviteStatistics(days = 30 ≤ 366): InviteStatistics!    # daily is every UTC day of the window, zeros included
+# Mutation.issueInviteCodes(input: { count ≤ 1000, grantMicros ≤ $10,000, campaign (slug), maxRedemptions = 1,
+#   expiresAt?, note? }): IssuedInviteCodes!                     # { campaign, grantMicros, expiresAt, codes { id code url } }
+# Mutation.withdrawInviteCode(id: ID!): InviteWithdrawal!        # unspent only, by row id — the code never travels back
+#
+# BOOTSTRAP is derived, not stored: `/auth/bootstrap` only ever creates the first
+# account, under `auth.bootstrapEmail`, so it is the earliest account iff it has
+# that address. Codes are answered in full (issuing them is the section's job);
+# the console masks them until revealed, and no resolver logs one.
 
 # ---------- the second grant, for feedback ----------
 

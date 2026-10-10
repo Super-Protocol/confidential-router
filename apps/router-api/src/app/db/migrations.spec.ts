@@ -111,8 +111,14 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-268's issuer column is one additive column; the first undo drops only that.
+      expect(await queryRunner.hasColumn('invite_codes', 'issuedByUserId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('invite_codes', 'issuedByUserId')).toBe(false);
+      expect(await queryRunner.hasColumn('invite_codes', 'note')).toBe(true);
+
       // SUP-252's two-factor trust added the pinned digest and the observed leaf;
-      // the first undo drops both and touches nothing else.
+      // the next undo drops both and touches nothing else.
       expect(await queryRunner.hasColumn('external_endpoints', 'pinnedEvidenceDigest')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('external_endpoints', 'pinnedEvidenceDigest')).toBe(false);

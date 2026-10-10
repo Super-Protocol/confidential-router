@@ -72,6 +72,29 @@ describe('generateInvites', () => {
     expect(await dataSource.getRepository(InviteCode).count()).toBe(600);
   });
 
+  it('pairs every returned id with the code stored under it', async () => {
+    // TypeORM's multi-row insert on SQLite rewrites the ids on the objects it was
+    // handed; reading them back off those objects mismatched ids and codes.
+    const generated = await generateInvites(dataSource, request({ count: 20 }));
+    const stored = new Map(
+      (await dataSource.getRepository(InviteCode).find()).map((row) => [row.id, row.code] as const),
+    );
+
+    for (const invite of generated) {
+      expect(stored.get(invite.id)).toBe(normaliseInviteCode(invite.code));
+    }
+  });
+
+  it('records the console operator who issued them, and nobody for the CLI', async () => {
+    await generateInvites(dataSource, request({ count: 1, campaign: 'console', issuedByUserId: 'user-1' }));
+    await generateInvites(dataSource, request({ count: 1, campaign: 'cli' }));
+
+    expect((await dataSource.getRepository(InviteCode).findOneBy({ campaign: 'console' }))?.issuedByUserId).toBe(
+      'user-1',
+    );
+    expect((await dataSource.getRepository(InviteCode).findOneBy({ campaign: 'cli' }))?.issuedByUserId).toBeNull();
+  });
+
   it('keeps two campaigns apart', async () => {
     await generateInvites(dataSource, request({ count: 3, campaign: 'launch-2026-10' }));
     await generateInvites(dataSource, request({ count: 4, campaign: 'launch-2026-11' }));

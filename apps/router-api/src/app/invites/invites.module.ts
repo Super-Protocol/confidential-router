@@ -5,6 +5,7 @@ import { BillingModule } from '../billing/index.js';
 import { Generation } from '../db/entities/generation.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
+import { InviteAdminService } from './invite-admin.service.js';
 import { InviteAttributionService } from './invite-attribution.service.js';
 import { InviteStatsService } from './invite-stats.service.js';
 import { InviteWithdrawalService } from './invite-withdrawal.service.js';
@@ -35,6 +36,7 @@ import { SignUpGrantService } from './signup-grant.service.js';
     InviteStatsService,
     InviteWithdrawalService,
     InviteAttributionService,
+    InviteAdminService,
   ],
   // `RATE_LIMITER` is exported so the console's `inviteGrantStatus` query spends
   // the same budget as the public lookup: both answer questions about a code, so
@@ -45,6 +47,7 @@ import { SignUpGrantService } from './signup-grant.service.js';
     InviteStatsService,
     InviteWithdrawalService,
     InviteAttributionService,
+    InviteAdminService,
     RATE_LIMITER,
   ],
 })

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 
 /** What a campaign-attributed event needs to know about a workspace. */
@@ -12,6 +12,19 @@ export interface InviteAttribution {
 }
 
 export const NO_INVITE_ATTRIBUTION: InviteAttribution = { hadInviteGrant: false };
+
+/** Which code an account was created with — the admin console's "came from" column. */
+export interface UserInviteAttribution {
+  userId: string;
+  inviteCodeId: string;
+  /** Normalised code. The console masks it until an operator asks to see it. */
+  code: string;
+  campaign: string;
+  redeemedAt: Date;
+}
+
+/** Ids per `IN`, under SQLite's 999 bound-parameter ceiling. */
+const USER_CHUNK = 500;
 
 /**
  * Which campaign a workspace arrived with.
@@ -42,5 +55,36 @@ export class InviteAttributionService {
     });
 
     return redemption ? { campaign: redemption.inviteCode?.campaign, hadInviteGrant: true } : NO_INVITE_ATTRIBUTION;
+  }
+
+  /**
+   * The code each of these accounts redeemed, keyed by user id. An account that
+   * redeemed nothing is absent from the map rather than present as null.
+   *
+   * Keyed by user rather than workspace because the admin console lists people:
+   * one redemption per account is the policy the unique index on
+   * `invite_redemptions.userId` enforces, so the key is exact.
+   */
+  async forUsers(userIds: readonly string[]): Promise<Map<string, UserInviteAttribution>> {
+    const attributions = new Map<string, UserInviteAttribution>();
+    for (let at = 0; at < userIds.length; at += USER_CHUNK) {
+      const redemptions = await this.dataSource.getRepository(InviteRedemption).find({
+        where: { userId: In(userIds.slice(at, at + USER_CHUNK)) },
+        relations: { inviteCode: true },
+      });
+      for (const redemption of redemptions) {
+        if (!redemption.inviteCode) {
+          continue;
+        }
+        attributions.set(redemption.userId, {
+          userId: redemption.userId,
+          inviteCodeId: redemption.inviteCodeId,
+          code: redemption.inviteCode.code,
+          campaign: redemption.inviteCode.campaign,
+          redeemedAt: redemption.redeemedAt,
+        });
+      }
+    }
+    return attributions;
   }
 }

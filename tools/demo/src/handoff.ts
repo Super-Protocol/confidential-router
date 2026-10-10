@@ -25,6 +25,9 @@ export interface StackHandoff {
   consoleOrigin: string;
   /** `cr_session=…`, exactly as a browser would hold it. */
   sessionCookie: string;
+  /** The same, for the operator in `auth.adminEmails` — a different person from {@link email}. */
+  adminSessionCookie: string;
+  adminEmail: string;
   workspaceId: string;
   email: string;
   /** Plaintext `/v1` credential. Test material; the stack is thrown away after. */
