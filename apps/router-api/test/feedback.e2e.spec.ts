@@ -4,7 +4,7 @@ import type { DataSource } from 'typeorm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LedgerService } from '../src/app/billing/index.js';
 import { generateInvites } from '../src/app/invites/index.js';
-import { createHarness, type Harness } from './app-harness.js';
+import { createHarness, type Harness, signUpWithCode } from './app-harness.js';
 import { type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 import { type Catalog, seedCatalog, seedGeneration } from './seed.js';
 
@@ -24,7 +24,6 @@ const FEEDBACK_GRANT = 100_000_000;
 const CAMPAIGN = 'launch-2026-10-devs';
 const FORM_URL = 'https://superprotocol.typeform.com/to/aBcDeF';
 const WEBHOOK_SECRET = 'e2e-feedback-webhook-secret';
-const PASSWORD = 'correct-horse-battery';
 const WEBHOOK_PATH = '/v1/webhooks/typeform';
 
 const OFFER = '{ feedbackOffer { eligible reason grantMicros formUrl granted { grantMicros creditTransactionId } } }';
@@ -63,7 +62,6 @@ afterEach(async () => {
 async function feedbackHarness(env: Record<string, string> = {}): Promise<Harness> {
   harness = await createHarness({
     env: {
-      CR_API_AUTH__PASSWORD__ENABLED: 'true',
       CR_API_FEEDBACK__FORM__URL: FORM_URL,
       CR_API_FEEDBACK__FORM__WEBHOOK_SECRET: WEBHOOK_SECRET,
       CR_API_FEEDBACK__MIN_METERED_TOKENS: '1000',
@@ -94,7 +92,7 @@ async function seedSpentAccount(
 ): Promise<Account> {
   const dataSource = dataSourceOf(harness);
   const email = options.email ?? 'spent@example.com';
-  const body: Record<string, unknown> = { email, password: PASSWORD, name: 'Spent' };
+  const body: Record<string, unknown> = { email, name: 'Spent' };
 
   if (options.invited !== false) {
     const [invite] = await generateInvites(dataSource, {
@@ -109,7 +107,7 @@ async function seedSpentAccount(
     body.inviteCode = invite.code;
   }
 
-  const created = await request(server()).post('/auth/sign-up/email').send(body).expect(200);
+  const created = await signUpWithCode(harness, body).expect(200);
   const raw = created.headers['set-cookie'];
   const cookies = (Array.isArray(raw) ? raw : [raw].filter(Boolean)) as string[];
   const me = await graphql({ harness, cookies, email, workspaceId: '' }, '{ me { workspaces { id } } }');
@@ -230,7 +228,7 @@ describe('who the console offers the second grant to', () => {
   });
 
   it('offers nothing on a deployment with no form configured, and its webhook is a 404', async () => {
-    harness = await createHarness({ env: { CR_API_AUTH__PASSWORD__ENABLED: 'true' } });
+    harness = await createHarness();
     const account = await seedSpentAccount({ email: 'nowhere@example.com' });
 
     expect(await offerFor(account)).toMatchObject({ eligible: false, reason: 'DISABLED', formUrl: null });

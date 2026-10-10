@@ -10,8 +10,8 @@
  * The same three arrive by two routes, because the three sign-up paths answer in
  * two different ways:
  *
- *  - **password** — a 403 whose body carries the code, read off
- *    `AuthRequestError.code`;
+ *  - **a mailed code** — the console's own request, so a 403 whose body carries
+ *    the code, read off `AuthRequestError.code`;
  *  - **magic link and OAuth** — a navigation, so the refusal comes back as
  *    `?error=<code>` on the page the visitor started from.
  *
