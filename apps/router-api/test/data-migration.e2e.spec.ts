@@ -20,8 +20,8 @@ import { InviteRedemption } from '../src/app/db/entities/invite-redemption.entit
 import { TrustedMeasurement } from '../src/app/db/entities/trusted-measurement.entity.js';
 import { User } from '../src/app/db/entities/user.entity.js';
 import { Workspace } from '../src/app/db/entities/workspace.entity.js';
-import { createHarness, type Harness } from './app-harness.js';
-import { type ConsoleSession, dataSourceOf, expectData, graphql, signIn as signInByMail } from './console.js';
+import { createHarness, type Harness, signUpWithCode } from './app-harness.js';
+import { type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
 /**
  * The redeploy migration path, end to end over two real deployments (SUP-271):
@@ -34,7 +34,6 @@ import { type ConsoleSession, dataSourceOf, expectData, graphql, signIn as signI
 
 const BOOTSTRAP_TOKEN = 'bootstrap-token-'.padEnd(40, 'x');
 const OPERATOR = 'admin@confidential-router.local';
-const PASSWORD = 'correct-horse-battery';
 const GRANT_MICROS = 25_000_000;
 const SPENT_MICROS = 1_500_000;
 const SEALED_UPSTREAM_KEY = 'v1.sealed-upstream-key-ciphertext';
@@ -63,7 +62,6 @@ interface Deployment {
 async function deploy(env: Record<string, string> = {}): Promise<Deployment> {
   const harness = await createHarness({
     env: {
-      CR_API_AUTH__PASSWORD__ENABLED: 'true',
       CR_API_AUTH__BOOTSTRAP_TOKEN: BOOTSTRAP_TOKEN,
       CR_API_AUTH__ADMIN_EMAILS: OPERATOR,
       ...env,
@@ -86,10 +84,12 @@ async function sessionOf(harness: Harness, response: request.Response): Promise<
 }
 
 async function signUp(harness: Harness, email: string, inviteCode?: string): Promise<ConsoleSession> {
-  const response = await request(harness.app.getHttpServer())
-    .post('/auth/sign-up/email')
-    .send({ email, password: PASSWORD, name: email.split('@')[0], ...(inviteCode ? { inviteCode } : {}) })
-    .expect(200);
+  // By emailed code — the only way an account is created (SUP-269).
+  const response = await signUpWithCode(harness, {
+    email,
+    name: email.split('@')[0],
+    ...(inviteCode ? { inviteCode } : {}),
+  }).expect(200);
   return sessionOf(harness, response);
 }
 
@@ -295,16 +295,19 @@ describe('deployment export', () => {
     }
 
     // By value: the secrets this deployment really holds are not in the bytes.
+    // There is no password hash among them to leak — accounts sign in with a
+    // mailed code and none is stored (SUP-269) — so what is left to keep out is
+    // the sessions, the pending sign-in codes, and the two kinds of key.
     const passwords: { password: string | null }[] = await dataSource.query('SELECT "password" FROM "account"');
     const sessions: { token: string }[] = await dataSource.query('SELECT "token" FROM "session"');
-    expect(passwords.filter((row) => row.password).length).toBe(3);
+    const pendingCodes: { value: string }[] = await dataSource.query('SELECT "value" FROM "verification"');
+    expect(passwords.filter((row) => row.password)).toEqual([]);
     expect(sessions.length).toBeGreaterThanOrEqual(4);
     for (const secret of [
-      ...passwords.map((row) => row.password),
       ...sessions.map((row) => row.token),
+      ...pendingCodes.map((row) => row.value),
       API_KEY_HASH,
       SEALED_UPSTREAM_KEY,
-      PASSWORD,
     ]) {
       if (secret) {
         expect(text.includes(secret)).toBe(false);
@@ -401,18 +404,18 @@ describe('deployment import', () => {
     });
     expect(report.notes.join(' ')).toContain('without an upstream API key');
 
-    // An imported account has no password: its owner proves the address again.
+    // An imported account carries no credential of any kind — and there is no
+    // password for anyone to have set on it in the meantime (SUP-269). Its owner
+    // proves the address again with a mailed code, and lands in the account that
+    // was carried over rather than in a new one.
     const ada = users[0] as ConsoleSession;
-    await request(b.harness.app.getHttpServer())
-      .post('/auth/sign-in/email')
-      .send({ email: ada.email, password: PASSWORD })
-      .expect(401);
-    // …and nobody else can claim the address by signing up with it.
-    const claim = await request(b.harness.app.getHttpServer())
-      .post('/auth/sign-up/email')
-      .send({ email: ada.email, password: 'somebody-elses-password', name: 'not ada' });
-    expect(claim.status).toBeGreaterThanOrEqual(400);
-    const back = await signInByMail(b.harness, ada.email);
+    for (const path of ['/auth/sign-in/email', '/auth/sign-up/email']) {
+      await request(b.harness.app.getHttpServer())
+        .post(path)
+        .send({ email: ada.email, password: 'somebody-elses-password', name: 'not ada' })
+        .expect(404);
+    }
+    const back = await sessionOf(b.harness, await signUpWithCode(b.harness, { email: ada.email }).expect(200));
     expect(back.workspaceId).toBe(ada.workspaceId);
     const credits = await expectData(back, '{ me { email workspaces { id } } }');
     expect(credits.me.email).toBe(ada.email);

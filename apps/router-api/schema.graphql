@@ -1381,11 +1381,6 @@ type Mutation {
   Switches an endpoint off, or back on. Off removes it from the sidecar config entirely; on returns it to PENDING so it re-attests before it serves. Restricted to auth.adminEmails.
   """
   setExternalEndpointEnabled(id: ID!, input: SetExternalEndpointEnabledInput!): ExternalEndpoint!
-
-  """
-  Sets a first password on the viewer’s account. Refused when the account already has one.
-  """
-  setPassword(input: SetPasswordInput!): User!
   updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
 
   """
@@ -1661,19 +1656,27 @@ input SetExternalEndpointEnabledInput {
   enabled: Boolean!
 }
 
-input SetPasswordInput {
-  """
-  The password to sign in with. `auth.password.minLength` is enforced by the router, not here.
-  """
-  password: String!
-}
-
 """Which sign-in paths this deployment offers."""
 type SignInOptions {
+  """
+  The bootstrap token can sign its own account back in: a token is configured and the account it created exists. The administrator’s way in when no code can be mailed.
+  """
+  adminRecovery: Boolean!
+
   """
   A bootstrap token can create the first account right now: one is configured and the deployment has no user yet. False on every deployment that has already been signed into.
   """
   bootstrap: Boolean!
+
+  """
+  A mailer is configured, so a one-time sign-in code can be mailed. This is how accounts sign in and how they are created; there are no passwords.
+  """
+  emailCode: Boolean!
+
+  """
+  How many digits a sign-in code has. Meaningless while `emailCode` is false.
+  """
+  emailCodeLength: Int!
 
   """A GitHub OAuth app is configured."""
   github: Boolean!
@@ -1686,18 +1689,8 @@ type SignInOptions {
   """
   inviteRequired: Boolean!
 
-  """A mailer is configured, so a one-time link can be sent."""
+  """A one-time sign-in link can be mailed as well as a code."""
   magicLink: Boolean!
-
-  """
-  Email and password sign-in and sign-up are enabled. There is no email verification and no password reset: this path exists for deployments with no mail delivery at all.
-  """
-  password: Boolean!
-
-  """
-  The shortest password this deployment accepts, so the sign-up form can state the rule instead of discovering it. Meaningless while `password` is false.
-  """
-  passwordMinLength: Int!
 }
 
 """How an account came to exist."""
@@ -1782,11 +1775,6 @@ type User {
   """When the account was created — “member since” on the Profile screen."""
   createdAt: DateTime!
   email: String!
-
-  """
-  Whether the viewer can sign in with a password. False for an account made by the bootstrap token, a magic link or OAuth until `setPassword` gives it one.
-  """
-  hasPassword: Boolean!
   id: ID!
 
   """

@@ -120,18 +120,22 @@ auth:
   secret: ${CR_API_AUTH_SECRET}
   github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
+  # How long a session lives without being used; a session in use is extended.
+  sessionMaxAge: 2160h             # 90 days
+  # Sign-in is a one-time code mailed to the address — there are no passwords.
+  # On while `mail` below has a provider.
+  emailCode:
+    ttl: 10m                       # single-use either way
+    attempts: 3                    # wrong guesses before a code is void
+    requestsPerMinute: 10          # per source address; asking and trying counted apart
+    mailsPerAddressPerHour: 10     # per recipient, silently — the answer never changes
+  # A one-time *link* beside the code. On while there is a mailer unless switched
+  # off, which is what the marketplace listing does.
   magicLink:
-    mailer: resend                 # `none` on a deployment with no mail provider at all
-    from: no-reply@tee.swarm.cloud
-    resendApiKey: ${CR_API_RESEND_KEY}
-  # Email and password, for a deployment with no mail delivery at all. Off here
-  # because this example has a mailer; the marketplace listing turns it on.
-  # No verification mail, no reset mail — see docs/router.md.
-  password:
     enabled: false
-    minLength: 12
-  # First sign-in where there is no mailer and no OAuth app: while this is set
-  # and no user exists, POST /auth/bootstrap trades it for the first account.
+  # The deployment's own token. While no user exists, POST /auth/bootstrap trades
+  # it for the first account; afterwards it signs back into that account and no
+  # other — the administrator's way in when no code can be mailed.
   # See docs/router.md, "First sign-in on a fresh deployment".
   bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}
   bootstrapEmail: admin@tee.swarm.cloud
@@ -140,6 +144,22 @@ auth:
   # because Better Auth owns the user table (ADR-004).
   adminEmails:
     - admin@tee.swarm.cloud
+
+# Outbound mail: sign-in codes and the welcome mail (SUP-269).
+# `none` sends nothing and hides every flow that needs mail. The sender domain
+# needs SPF and DKIM records for any of it to reach an inbox.
+mail:
+  provider: smtp                   # none | console (not in production) | resend | smtp
+  from: no-reply@tee.swarm.cloud
+  fromName: Confidential Router
+  # consoleUrl defaults to the first entry of server.validClientOrigins.
+  smtp:
+    host: smtp.example.com
+    port: 587
+    security: starttls             # starttls | tls (port 465) | none
+    user: no-reply@tee.swarm.cloud
+    password: ${CR_API_SMTP_PASSWORD}
+  # resendApiKey: ${CR_API_RESEND_KEY}   # with `provider: resend` instead
 
 billing:
   # `auto` is Stripe when the block below is set. The manual provider it otherwise

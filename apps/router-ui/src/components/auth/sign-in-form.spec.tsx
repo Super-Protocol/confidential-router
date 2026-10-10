@@ -29,17 +29,19 @@ function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 400) {
 
 type Offers = Partial<{
   bootstrap: boolean;
+  adminRecovery: boolean;
   github: boolean;
   google: boolean;
+  emailCode: boolean;
+  emailCodeLength: number;
   magicLink: boolean;
-  password: boolean;
-  passwordMinLength: number;
   inviteRequired: boolean;
 }>;
 
 /**
- * The development deployment: both providers and a mailer, no passwords —
- * ADR-004's original set, which is still what `nx serve` runs.
+ * The development deployment: both providers and a mailer, which is what
+ * `nx serve` runs. A mailer means a code can be mailed; the link beside it is
+ * the development extra a production deployment turns off.
  */
 function optionsMock(overrides: Offers = {}) {
   return {
@@ -49,11 +51,12 @@ function optionsMock(overrides: Offers = {}) {
         signInOptions: {
           __typename: 'SignInOptions',
           bootstrap: false,
+          adminRecovery: false,
           github: true,
           google: true,
+          emailCode: true,
+          emailCodeLength: 6,
           magicLink: true,
-          password: false,
-          passwordMinLength: 12,
           inviteRequired: false,
           ...overrides,
         },
@@ -67,8 +70,48 @@ function renderForm(mocks: MockLink.MockedResponse[] = [optionsMock()]) {
   return renderWithApollo(<SignInForm />, { mocks });
 }
 
+/** A deployment whose mailer sends links only — the code path is not on the card. */
+const LINK_ONLY: Offers = { emailCode: false };
+
+/** A production deployment with a mailer: a code, and nothing else. */
+const CODE_ONLY: Offers = { github: false, google: false, magicLink: false };
+
+/**
+ * Answers the two email-code routes by path. A test that reached for
+ * `calls[0]` would be asserting on whichever request happened to be first.
+ */
+function routeCode(handlers: { send?: Response; signIn?: Response } = {}): void {
+  fetchMock.mockImplementation((url: string) =>
+    Promise.resolve(
+      String(url).includes('/auth/sign-in/email-otp')
+        ? (handlers.signIn ?? jsonResponse({ token: 't', user: { id: 'user-1' } }))
+        : (handlers.send ?? jsonResponse({ success: true })),
+    ),
+  );
+}
+
+function callsTo(fragment: string): [string, RequestInit][] {
+  return fetchMock.mock.calls.filter(([url]) => String(url).includes(fragment)) as [string, RequestInit][];
+}
+
+function bodyOf(fragment: string, index = 0): Record<string, unknown> {
+  const call = callsTo(fragment)[index];
+  expect(call, `no request #${index} to ${fragment}`).toBeDefined();
+  return JSON.parse(call[1].body as string);
+}
+
+const SEND = '/auth/email-otp/send-verification-otp';
+const SIGN_IN = '/auth/sign-in/email-otp';
+
+/** Types an address and asks for a code, leaving the card on its code step. */
+async function requestCode(email = 'dev@example.com') {
+  await userEvent.type(await screen.findByLabelText('Email'), email);
+  await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+  return screen.findByLabelText('Code');
+}
+
 describe('SignInForm', () => {
-  it('offers both providers and the magic link', async () => {
+  it('offers both providers and an address to mail', async () => {
     renderForm();
 
     expect(await screen.findByRole('button', { name: /Continue with GitHub/ })).toBeInTheDocument();
@@ -77,7 +120,7 @@ describe('SignInForm', () => {
   });
 
   it('keeps the magic-link button disabled until an address is typed', async () => {
-    renderForm();
+    renderForm([optionsMock(LINK_ONLY)]);
     const submit = await screen.findByRole('button', { name: 'Email me a link' });
 
     expect(submit).toBeDisabled();
@@ -87,7 +130,7 @@ describe('SignInForm', () => {
 
   it('sends the address to the magic-link endpoint and confirms', async () => {
     fetchMock.mockResolvedValue(jsonResponse({}));
-    renderForm();
+    renderForm([optionsMock(LINK_ONLY)]);
 
     await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
@@ -102,7 +145,7 @@ describe('SignInForm', () => {
 
   it('lets the viewer go back and use a different address', async () => {
     fetchMock.mockResolvedValue(jsonResponse({}));
-    renderForm();
+    renderForm([optionsMock(LINK_ONLY)]);
 
     await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
@@ -132,7 +175,7 @@ describe('SignInForm', () => {
 
   it('reports an unreachable API rather than hanging on "Sending…"', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    renderForm();
+    renderForm([optionsMock(LINK_ONLY)]);
 
     await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
@@ -147,7 +190,7 @@ describe('SignInForm', () => {
       status: 500,
       json: async () => Promise.reject(new Error('nope')),
     } as unknown as Response);
-    renderForm();
+    renderForm([optionsMock(LINK_ONLY)]);
 
     await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
@@ -164,8 +207,8 @@ describe('SignInForm, on what the deployment offers', () => {
     expect(screen.queryByRole('button', { name: /Continue with Google/ })).not.toBeInTheDocument();
   });
 
-  it('hides the magic-link form when the deployment has no mailer', async () => {
-    renderForm([optionsMock({ magicLink: false })]);
+  it('asks for no address when the deployment has no mailer', async () => {
+    renderForm([optionsMock({ emailCode: false, magicLink: false })]);
 
     expect(await screen.findByRole('button', { name: /Continue with GitHub/ })).toBeInTheDocument();
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
@@ -181,7 +224,7 @@ describe('SignInForm, on what the deployment offers', () => {
   });
 
   it('offers only the bootstrap path on a fresh marketplace deployment', async () => {
-    renderForm([optionsMock({ bootstrap: true, github: false, google: false, magicLink: false })]);
+    renderForm([optionsMock({ bootstrap: true, github: false, google: false, emailCode: false, magicLink: false })]);
 
     expect(await screen.findByRole('button', { name: 'Have a bootstrap token?' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
@@ -189,9 +232,20 @@ describe('SignInForm, on what the deployment offers', () => {
   });
 
   it('says so when the deployment has no sign-in method at all', async () => {
-    renderForm([optionsMock({ bootstrap: false, github: false, google: false, magicLink: false })]);
+    renderForm([optionsMock({ github: false, google: false, emailCode: false, magicLink: false })]);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('no sign-in method configured');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('no sign-in method configured');
+    expect(alert).not.toHaveTextContent(/password/i);
+  });
+
+  it('says what the card is for without mentioning a password', async () => {
+    const { unmount } = renderForm();
+    expect(await screen.findByText('Sign in with a code mailed to your address, or a provider.')).toBeInTheDocument();
+    unmount();
+
+    renderForm([optionsMock({ emailCode: false, magicLink: false })]);
+    expect(await screen.findByText(/This deployment cannot send mail/)).toHaveTextContent('first-sign-in token');
   });
 
   it('offers every path when the query fails, rather than locking the viewer out', async () => {
@@ -199,10 +253,12 @@ describe('SignInForm, on what the deployment offers', () => {
 
     expect(await screen.findByRole('button', { name: /Continue with GitHub/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    // Except bootstrap: unlike the others it is normally unavailable, so a
-    // failed query must not advertise it.
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email me a link instead' })).toBeInTheDocument();
+    // Except the two token paths: unlike the others they are normally
+    // unavailable, so a failed query must not advertise either.
     expect(screen.queryByRole('button', { name: 'Have a bootstrap token?' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /first-sign-in token/ })).not.toBeInTheDocument();
   });
 
   it('renders no clickable path until the answer arrives', () => {
@@ -280,74 +336,321 @@ describe('SignInForm, the bootstrap path', () => {
   });
 });
 
-describe('SignInForm, the password path', () => {
-  /** A marketplace deployment: passwords, and nothing else but the token. */
-  const MAILER_LESS: Offers = { github: false, google: false, magicLink: false, password: true };
+/**
+ * The administrator's way back in (SUP-269): the bootstrap token, once the
+ * account it created exists. Sign-in is otherwise a mailed code, so this is what
+ * keeps a deployment that cannot mail one from losing its administrator.
+ */
+describe('SignInForm, administrator recovery', () => {
+  const RECOVERY = 'Administrator: use the first-sign-in token';
 
-  it('asks for a password when the deployment offers one', async () => {
-    renderForm([optionsMock(MAILER_LESS)]);
+  it('is offered only while the API reports it', async () => {
+    const { unmount } = renderForm();
+    await screen.findByRole('button', { name: /Continue with GitHub/ });
+    expect(screen.queryByRole('button', { name: RECOVERY })).not.toBeInTheDocument();
+    unmount();
 
-    expect(await screen.findByLabelText('Email')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Email me a link' })).not.toBeInTheDocument();
+    renderForm([optionsMock({ adminRecovery: true })]);
+    expect(await screen.findByRole('button', { name: RECOVERY })).toBeInTheDocument();
+    // Not the first-sign-in offer: there is an account, and nothing to set up.
+    expect(screen.queryByRole('button', { name: 'Have a bootstrap token?' })).not.toBeInTheDocument();
   });
 
-  it('signs in and reloads onto the console', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({}));
-    renderForm([optionsMock(MAILER_LESS)]);
+  it('opens the token form, worded for an account that already exists', async () => {
+    renderForm([optionsMock({ adminRecovery: true })]);
 
-    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.click(await screen.findByRole('button', { name: RECOVERY }));
+
+    expect(screen.getByRole('heading', { name: 'Administrator sign-in' })).toBeInTheDocument();
+    expect(screen.getByLabelText('First-sign-in token')).toBeInTheDocument();
+    // The first-sign-in copy would be a lie here: nothing is created.
+    expect(screen.queryByText(/creates the first account/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create the first account' })).not.toBeInTheDocument();
+  });
+
+  it('trades the token for a session through the same endpoint', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ user: { id: 'user-1', email: 'admin@example.com' } }));
+    renderForm([optionsMock({ adminRecovery: true })]);
+
+    await userEvent.click(await screen.findByRole('button', { name: RECOVERY }));
+    await userEvent.type(screen.getByLabelText('First-sign-in token'), 'a-sixteen-char-token');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in as administrator' }));
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toMatch(/\/auth\/sign-in\/email$/);
-    expect(JSON.parse(init.body)).toMatchObject({ email: 'dev@example.com', password: 'correct-horse-battery' });
-    expect(init.credentials).toBe('include');
+    expect(url).toMatch(/\/auth\/bootstrap$/);
+    expect(JSON.parse(init.body)).toEqual({ token: 'a-sixteen-char-token' });
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
   });
 
-  it('raises the console\u2019s routing marker before it leaves the page', async () => {
+  it('explains a deployment that stopped accepting the token, without claiming it has just been set up', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}, false, 404));
+    renderForm([optionsMock({ adminRecovery: true })]);
+
+    await userEvent.click(await screen.findByRole('button', { name: RECOVERY }));
+    await userEvent.type(screen.getByLabelText('First-sign-in token'), 'a-sixteen-char-token');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in as administrator' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('no longer accepts a first-sign-in token');
+  });
+
+  it('is still offered, and is not "nothing", on a deployment that can neither mail nor redirect', async () => {
+    renderForm([
+      optionsMock({ adminRecovery: true, github: false, google: false, emailCode: false, magicLink: false }),
+    ]);
+
+    expect(await screen.findByRole('button', { name: RECOVERY })).toBeInTheDocument();
+    expect(screen.queryByText(/no sign-in method configured/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Sign-in by a code mailed to the address (SUP-269) — the only way an account
+ * signs in by mail, and the same request that creates one.
+ */
+describe('SignInForm, the emailed-code path', () => {
+  it('asks for an address and nothing else', async () => {
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    expect(await screen.findByLabelText('Email')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /forgot/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps the button disabled until an address is typed', async () => {
+    renderForm([optionsMock(CODE_ONLY)]);
+    const submit = await screen.findByRole('button', { name: 'Email me a code' });
+
+    expect(submit).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('Email'), 'dev@example.com');
+    expect(submit).toBeEnabled();
+  });
+
+  it('requests a code and moves to the code step', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    const field = await requestCode();
+
+    expect(callsTo(SEND)).toHaveLength(1);
+    expect(bodyOf(SEND)).toEqual({ email: 'dev@example.com', type: 'sign-in' });
+    expect(callsTo(SEND)[0][1].credentials).toBe('include');
+    expect(screen.getByRole('heading', { name: 'Enter your code' })).toBeInTheDocument();
+    expect(field).toHaveAttribute('inputmode', 'numeric');
+    expect(field).toHaveAttribute('autocomplete', 'one-time-code');
+    expect(field).toHaveAttribute('maxlength', '6');
+    expect(field).toHaveFocus();
+  });
+
+  it('says a code was sent without claiming the address has an account', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await requestCode();
+
+    // The router mails any address and never says whether an account was behind
+    // it, so neither can this.
+    const said = screen.getByText(/We sent a 6-digit code to/);
+    expect(said).toHaveTextContent(
+      'We sent a 6-digit code to dev@example.com. It works once and expires in a few minutes.',
+    );
+    expect(document.body.textContent).not.toMatch(/your account|if an account|registered/i);
+  });
+
+  it('states the length the deployment reports', async () => {
+    routeCode();
+    renderForm([optionsMock({ ...CODE_ONLY, emailCodeLength: 8 })]);
+
+    const field = await requestCode();
+
+    expect(field).toHaveAttribute('maxlength', '8');
+    expect(screen.getByText(/We sent a 8-digit code/)).toBeInTheDocument();
+  });
+
+  it('holds "Sign in" until the code has every digit', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+    const field = await requestCode();
+    const submit = screen.getByRole('button', { name: 'Sign in' });
+
+    expect(submit).toBeDisabled();
+    await userEvent.type(field, '12345');
+    expect(submit).toBeDisabled();
+    await userEvent.type(field, '6');
+    expect(submit).toBeEnabled();
+  });
+
+  it('takes digits only, and no more than a code has', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+    const field = await requestCode();
+
+    await userEvent.type(field, '12a b3-4567890');
+
+    expect(field).toHaveValue('123456');
+  });
+
+  it('accepts a pasted code with the spaces a mail client put in it', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+    const field = await requestCode();
+
+    await userEvent.click(field);
+    await userEvent.paste('123 456');
+
+    expect(field).toHaveValue('123456');
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+  });
+
+  it('signs in with the code and reloads onto the console', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await requestCode(), '123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(bodyOf(SIGN_IN)).toEqual({ email: 'dev@example.com', otp: '123456' });
+    expect(callsTo(SIGN_IN)[0][1].credentials).toBe('include');
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
+  });
+
+  it('raises the console’s routing marker before it leaves the page', async () => {
     // router-api's session cookie is set on the API's hostname and is invisible
     // here; the marker on the console's own host is what `proxy.ts` reads, and
     // without it the browser bounces straight back to `/login` (SUP-113).
-    fetchMock.mockResolvedValue(jsonResponse({}));
-    renderForm([optionsMock(MAILER_LESS)]);
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
 
-    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.type(await requestCode(), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(document.cookie).toContain(`${SIGNED_IN_COOKIE_NAME}=1`));
   });
 
-  it('never puts the password in the URL', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({}));
-    renderForm([optionsMock(MAILER_LESS)]);
+  it('never puts the code in the URL', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
 
-    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.type(await requestCode(), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(fetchMock.mock.calls[0][0]).not.toContain('correct-horse-battery');
+    expect(callsTo(SIGN_IN)[0][0]).not.toContain('123456');
     await waitFor(() => expect(assign).toHaveBeenCalled());
-    expect(assign.mock.calls[0][0]).not.toContain('correct-horse-battery');
+    expect(assign.mock.calls[0][0]).not.toContain('123456');
   });
 
-  it('says a rejected pair was rejected, without naming which half', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ message: 'Invalid email or password' }, false, 401));
-    renderForm([optionsMock(MAILER_LESS)]);
+  it('says a wrong code is wrong, and lets it be typed again', async () => {
+    routeCode({ signIn: jsonResponse({ code: 'INVALID_OTP', message: 'Invalid OTP' }, false, 400) });
+    renderForm([optionsMock(CODE_ONLY)]);
+    const field = await requestCode();
 
-    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'wrong-password-here');
+    await userEvent.type(field, '000000');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('do not match an account here');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That code is not right');
+    // Still there to be corrected: one digit off is the usual mistake.
+    expect(screen.getByLabelText('Code')).toHaveValue('000000');
+    expect(assign).not.toHaveBeenCalled();
+    expect(document.cookie).not.toContain(SIGNED_IN_COOKIE_NAME);
+  });
+
+  it.each(['OTP_EXPIRED', 'TOO_MANY_ATTEMPTS'])('says a dead code is dead and offers a new one: %s', async (code) => {
+    routeCode({ signIn: jsonResponse({ code, message: 'refused' }, false, 400) });
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await requestCode(), '123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That code no longer works. Send a new one.');
+    // The dead code is gone from the field, so the only live button is the one
+    // that helps.
+    expect(screen.getByLabelText('Code')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send a new code' })).toBeEnabled();
     expect(assign).not.toHaveBeenCalled();
   });
 
+  it('tells a throttled attempt to wait, whichever of the two requests it was', async () => {
+    const throttled = jsonResponse({ code: 'RATE_LIMITED', message: 'Too many sign-in attempts.' }, false, 429);
+    routeCode({ signIn: throttled });
+    const { unmount } = renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await requestCode(), '123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many attempts. Wait a minute and try again.');
+    unmount();
+
+    routeCode({ send: throttled });
+    renderForm([optionsMock(CODE_ONLY)]);
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many attempts. Wait a minute and try again.');
+    // No code was mailed, so there is no code step to stand on.
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+  });
+
+  it('says so when the deployment turns out to have no mailer after all', async () => {
+    // Only reachable from the fallback that offers everything: the options
+    // query failed, so the card guessed.
+    routeCode({ send: jsonResponse({}, false, 404) });
+    renderForm([{ request: { query: SIGN_IN_OPTIONS_QUERY }, error: new Error('API is down') }]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('not available on this deployment');
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+  });
+
+  it('reports an unreachable API rather than hanging on "Sending…"', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not reach the API');
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
+  });
+
+  it('sends a new code on request, and starts the field over', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+    const field = await requestCode();
+    await userEvent.type(field, '123');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send a new code' }));
+
+    expect(await screen.findByTestId('email-code-resent')).toHaveTextContent('A new code is on its way');
+    expect(callsTo(SEND)).toHaveLength(2);
+    expect(bodyOf(SEND, 1)).toEqual({ email: 'dev@example.com', type: 'sign-in' });
+    expect(screen.getByLabelText('Code')).toHaveValue('');
+  });
+
+  it('goes back for a different address, keeping the one that was typed', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
+    await requestCode();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use a different address' }));
+
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+    expect(await screen.findByLabelText('Email')).toHaveValue('dev@example.com');
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
+  });
+
+  it('offers no code path on a deployment that cannot mail one', async () => {
+    renderForm([optionsMock({ emailCode: false, magicLink: false })]);
+
+    await screen.findByRole('button', { name: /Continue with GitHub/ });
+    expect(screen.queryByRole('button', { name: 'Email me a code' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
+  });
+
   it('links to sign-up where accounts can be created, saying where the visitor came from', async () => {
-    renderForm([optionsMock(MAILER_LESS)]);
+    renderForm([optionsMock(CODE_ONLY)]);
 
     // `from=login` is what lets `signup_started` tell this visitor apart from one
     // who opened the sign-up page directly (SUP-145).
@@ -355,28 +658,41 @@ describe('SignInForm, the password path', () => {
   });
 
   it('does not, where they cannot', async () => {
-    renderForm();
+    renderForm([optionsMock(LINK_ONLY)]);
 
     await screen.findByRole('button', { name: /Continue with GitHub/ });
     expect(screen.queryByRole('link', { name: 'Create one' })).not.toBeInTheDocument();
   });
 
   it('offers the magic link as the alternative when the deployment has both', async () => {
-    renderForm([optionsMock({ password: true })]);
+    renderForm();
 
-    // Password first: it signs the viewer in here rather than via an inbox.
-    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    // The code first: it signs in the browser the viewer is looking at.
+    expect(await screen.findByRole('button', { name: 'Email me a code' })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link instead' }));
-    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Email me a code' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Email me a link' })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Use a password instead' }));
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Use a code instead' }));
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeInTheDocument();
+  });
+
+  it('mails a link, not a code, once the viewer has switched', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    renderForm();
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a link instead' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
+
+    expect(callsTo('/auth/sign-in/magic-link')).toHaveLength(1);
+    expect(callsTo(SEND)).toHaveLength(0);
+    expect(await screen.findByText('Check your inbox')).toBeInTheDocument();
   });
 
   it('keeps the address across the switch — it is the same address either way', async () => {
-    renderForm([optionsMock({ password: true })]);
+    renderForm();
 
     await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link instead' }));
@@ -384,30 +700,22 @@ describe('SignInForm, the password path', () => {
     expect(screen.getByLabelText('Email')).toHaveValue('dev@example.com');
   });
 
-  it('offers no switch when the deployment has only one of the two', async () => {
-    renderForm([optionsMock(MAILER_LESS)]);
+  it.each([
+    ['only a code', CODE_ONLY, 'Email me a code'],
+    ['only a link', LINK_ONLY, 'Email me a link'],
+  ])('offers no switch when the deployment has %s', async (_, offers, button) => {
+    renderForm([optionsMock(offers)]);
 
-    await screen.findByLabelText('Password');
+    await screen.findByRole('button', { name: button });
     expect(screen.queryByRole('button', { name: /instead/ })).not.toBeInTheDocument();
-  });
-
-  it('keeps the submit button disabled until both fields are filled', async () => {
-    renderForm([optionsMock(MAILER_LESS)]);
-    const submit = await screen.findByRole('button', { name: 'Sign in' });
-
-    expect(submit).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('Email'), 'dev@example.com');
-    expect(submit).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
-    expect(submit).toBeEnabled();
   });
 });
 
 /**
- * An invitation reaches this screen more often than it looks. OAuth and a magic
- * link both create the account on first use, and on a deployment with no password
- * provider they are the only way an invited visitor can register — so the code has
- * to leave from here too, or the grant is silently lost (SUP-145).
+ * An invitation reaches this screen more often than it looks. Every path here
+ * creates the account on first use — a mailed code, a magic link and OAuth alike
+ * — so an invited visitor who never opens `/signup` is registered from here, and
+ * the code has to leave from here too, or the grant is silently lost (SUP-145).
  */
 describe('an invitation carried to a sign-in screen', () => {
   beforeEach(() => {
@@ -436,6 +744,7 @@ describe('an invitation carried to a sign-in screen', () => {
     renderForm();
 
     await userEvent.type(await screen.findByLabelText('Email'), 'invited@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a link instead' }));
     await userEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
 
     // `callbackURL` is the only thing that survives from the request that asks for
@@ -443,29 +752,31 @@ describe('an invitation carried to a sign-in screen', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).callbackURL).toBe('/?invite=ABCDEFGH');
   });
 
-  it('does not attach it to a password sign-in, which cannot create an account', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({}));
-    renderForm([optionsMock({ password: true, magicLink: false, github: false, google: false })]);
+  it('rides the mailed-code sign-in, which creates the account for an address that has none', async () => {
+    routeCode();
+    renderForm([optionsMock(CODE_ONLY)]);
 
-    await userEvent.type(await screen.findByLabelText('Email'), 'existing@example.com');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse-battery');
+    await userEvent.type(await requestCode('invited@example.com'), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    // An existing account cannot be topped up: redemption lives in account
-    // creation and nowhere else (SUP-142).
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.callbackURL).toBe('/');
-    expect(body.inviteCode).toBeUndefined();
+    // Sent whether or not the address has an account: redemption lives in
+    // account creation and nowhere else, so an existing one is not topped up
+    // (SUP-142) and the console does not have to know which this is.
+    expect(bodyOf(SIGN_IN)).toEqual({ email: 'invited@example.com', otp: '123456', inviteCode: 'ABCDEFGH' });
+    // The request for the code carries nothing of it: a code is asked for by
+    // address alone.
+    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in' });
   });
 });
 
 /**
  * A sign-*up* this screen started and the router refused (SUP-173).
  *
- * The two paths that can create an account from here finish as a navigation, so
- * their refusal comes back as `?error=` rather than as a rejected promise — and
- * it has to come back *here*, because the button that caused it is on this
- * screen and pressing it again is the way out.
+ * A provider and a magic link finish as a navigation, so their refusal comes
+ * back as `?error=` rather than as a rejected promise; a mailed code is this
+ * screen's own request, and its refusal is a 403. Either way it has to be said
+ * *here*, because the button that caused it is on this screen and pressing it
+ * again is the way out.
  */
 describe('an invite-only refusal carried back to the sign-in screen', () => {
   it('names the error callback it wants a refusal sent to, absolute so the router does not resolve it against its own origin', async () => {
@@ -521,5 +832,25 @@ describe('an invite-only refusal carried back to the sign-in screen', () => {
     await screen.findByRole('button', { name: 'Continue with GitHub' });
     await waitFor(() => expect(window.localStorage.getItem('cr_invite')).toBe('ABCDEFGH'));
     window.localStorage.clear();
+  });
+
+  it.each([
+    ['invite_required', 'You need an invitation'],
+    ['invite_already_claimed', 'already been claimed'],
+    ['invite_expired_or_unknown', 'cannot be used'],
+  ])('explains a mailed-code sign-up the router refused, back on the card: %s', async (code, sentence) => {
+    routeCode({ signIn: jsonResponse({ code, message: 'refused' }, false, 403) });
+    renderForm([optionsMock({ ...CODE_ONLY, inviteRequired: true })]);
+
+    await userEvent.type(await requestCode('stranger@example.com'), '123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByTestId(`invite-refused-${code}`)).toHaveTextContent(sentence);
+    expect(screen.getByRole('link', { name: 'Enter a code' })).toHaveAttribute('href', '/signup');
+    // Checking the mailed code spent it, so the code step has nothing left to
+    // offer: the card is back, ready to ask for another.
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
+    expect(assign).not.toHaveBeenCalled();
   });
 });

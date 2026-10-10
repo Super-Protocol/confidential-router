@@ -96,32 +96,49 @@ export async function signInWithMagicLink(email: string, inviteCode?: string | n
 }
 
 /**
- * Creates an account from an address and a password, and signs it in.
+ * Asks the router to mail a one-time sign-in code (SUP-269).
  *
- * No verification mail is sent and none is waited for: this path exists for the
- * deployment that cannot send one, so the session arrives with the sign-up
- * itself. Only reachable while `signInOptions.password` is true — the router
- * answers 404 on a deployment that did not enable passwords.
+ * Resolves the same way whether or not the address has an account — the router
+ * answers identically either way, so the console can only ever say "a code is
+ * on its way", never "this address is registered". Only reachable while
+ * `signInOptions.emailCode` is true: a deployment with no mailer does not
+ * register the route at all and answers 404.
  *
- * `name` is optional to the console and required by Better Auth's body schema,
- * which accepts an empty string; the console lets it be filled in later.
- *
- * `inviteCode` rides the body. This is the one sign-up path that is the console's
- * own request, so it is also the one where the code needs no cookie and no
- * `callbackURL` smuggling — and a failed redemption never fails the sign-up, so
- * there is nothing to handle here beyond sending it (SUP-142).
+ * Nothing about an invitation rides this request. The code is asked for by
+ * address alone, and the account — if there is to be one — is created by the
+ * request that hands the code back.
  */
-export async function signUpWithPassword(input: {
+export async function requestSignInCode(email: string): Promise<void> {
+  await postToAuth('/email-otp/send-verification-otp', { email, type: 'sign-in' });
+}
+
+/**
+ * Trades a mailed code for a session — and, for an address with no account,
+ * creates the account first. This one request is both sign-in and sign-up.
+ *
+ * `name` and `inviteCode` mean something only in the second case, and the
+ * router ignores them in the first: an existing account is neither renamed nor
+ * topped up by signing in (SUP-142). Both are left out of the body rather than
+ * sent empty, so a sign-in from the screen that has neither is exactly the
+ * request Better Auth documents.
+ *
+ * The router calls the code `otp`; the console calls it what the mail does.
+ *
+ * A code is spent by being checked, whatever the answer. That is why the
+ * screens validate an invitation *before* asking for a code: a sign-up an
+ * invite-only deployment refuses has still used the code up.
+ */
+export async function signInWithCode(input: {
   email: string;
-  password: string;
+  code: string;
   name?: string;
   inviteCode?: string | null;
 }): Promise<void> {
-  await postToAuth('/sign-up/email', {
+  const name = input.name?.trim();
+  await postToAuth('/sign-in/email-otp', {
     email: input.email,
-    password: input.password,
-    name: input.name?.trim() ?? '',
-    callbackURL: publicConfig().authCallbackUrl,
+    otp: input.code,
+    ...(name ? { name } : {}),
     ...(input.inviteCode ? { inviteCode: input.inviteCode } : {}),
   });
 }
@@ -146,18 +163,17 @@ function thisPageUrl(): string {
   return `${origin}${pathname}`;
 }
 
-/** Signs an existing account in with its password. The session arrives as a cookie. */
-export async function signInWithPassword(email: string, password: string): Promise<void> {
-  await postToAuth('/sign-in/email', { email, password, callbackURL: publicConfig().authCallbackUrl });
-}
-
 /**
- * Trades the deployment's bootstrap token for the first account and a session.
+ * Trades the deployment's bootstrap token for a session on the administrator's
+ * account — creating that account if the deployment has none yet.
  *
- * Only reachable while `signInOptions.bootstrap` is true: the router registers
- * the endpoint at all only when a token is configured, and answers 404 once any
- * user exists. Nothing is returned — the session arrives as a cookie, exactly
- * as it does from a magic link.
+ * Reachable in two states, and the router says which: `signInOptions.bootstrap`
+ * while no user exists, when the token creates the first account, and
+ * `signInOptions.adminRecovery` once that account exists, when the same token
+ * signs it back in — the administrator's way in on a deployment that cannot
+ * mail a code. The endpoint is registered at all only when a token is
+ * configured. Nothing is returned — the session arrives as a cookie, exactly as
+ * it does from a mailed code.
  */
 export async function signInWithBootstrapToken(token: string): Promise<void> {
   await postToAuth('/bootstrap', { token });

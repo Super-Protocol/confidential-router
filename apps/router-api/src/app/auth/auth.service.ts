@@ -1,6 +1,5 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import {
-  BadRequestException,
   Inject,
   Injectable,
   Logger,
@@ -10,12 +9,11 @@ import {
 } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { type Auth, type BetterAuthOptions, betterAuth } from 'better-auth';
-import { isAPIError } from 'better-auth/api';
 import { fromNodeHeaders } from 'better-auth/node';
 import { routerConfig } from '../config.js';
+import { MailService } from '../mail/mail.service.js';
 import { buildAuthOptions, createAuthDatabase } from './auth.options.js';
-import { runAuthMigrations } from './auth-schema.js';
-import { MAGIC_LINK_MAILER, type MagicLinkMailer } from './magic-link-mailer.js';
+import { dropStoredCredentials, runAuthMigrations } from './auth-schema.js';
 import { SignUpGate } from './sign-up-gate.service.js';
 import { SignUpProvisioning } from './sign-up-provisioning.service.js';
 
@@ -57,7 +55,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     @Inject(routerConfig.KEY) config: ConfigType<typeof routerConfig>,
-    @Inject(MAGIC_LINK_MAILER) mailer: MagicLinkMailer,
+    mail: MailService,
     provisioning: SignUpProvisioning,
     gate: SignUpGate,
   ) {
@@ -65,7 +63,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     this.migrationsRun = config.database.migrationsRun;
     this.options = buildAuthOptions({
       config,
-      mailer,
+      mail,
       database: this.database,
       onUserCreated: (user, invite, method) => provisioning.onUserCreated(user, invite, method),
       onBeforeUserCreated: (invite, bootstrap) => gate.admit(invite, bootstrap),
@@ -85,6 +83,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     }
     await runAuthMigrations(this.options);
     this.logger.log('Better Auth schema is up to date.');
+    const dropped = await dropStoredCredentials(this.database);
+    if (dropped > 0) {
+      this.logger.log(`Removed ${dropped} stored password credential(s): sign-in is by emailed code now (SUP-269).`);
+    }
   }
 
   /** The Fetch-API handler mounted at `/auth/*` by `main.ts`. */
@@ -133,40 +135,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       throw new UnauthorizedException('Authentication is required.');
     }
     return user;
-  }
-
-  /**
-   * Whether the signed-in user can sign in with a password — that is, has a
-   * `credential` account. Better Auth only ever creates one with a password in
-   * it, so the account's existence is the answer.
-   */
-  async hasPassword(headers: IncomingHttpHeaders): Promise<boolean> {
-    const accounts = await this.instance.api.listUserAccounts({ headers: fromNodeHeaders(headers) });
-    return accounts.some((account) => account.providerId === 'credential');
-  }
-
-  /**
-   * Gives the signed-in user a password, when they have none (SUP-267).
-   *
-   * The account the bootstrap token creates has no credential, and neither does
-   * one made by magic link or OAuth; on a deployment with no mailer and no OAuth
-   * app the session that came with it would otherwise be the only way back in.
-   * Better Auth's `setPassword` is server-only and refuses an account that
-   * already has a password, so this cannot be used to replace one without the
-   * old one — that stays `/auth/change-password`.
-   *
-   * @throws BadRequestException with Better Auth's own message when it refuses —
-   *   too short, too long, or a password is already set.
-   */
-  async setPassword(headers: IncomingHttpHeaders, newPassword: string): Promise<void> {
-    try {
-      await this.instance.api.setPassword({ body: { newPassword }, headers: fromNodeHeaders(headers) });
-    } catch (error) {
-      if (isAPIError(error) && error.statusCode === 400) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
-    }
   }
 
   /**

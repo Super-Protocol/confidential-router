@@ -6,11 +6,13 @@ import { SignInOptionsService } from './sign-in-options.service.js';
 
 type RouterConfigType = ConfigType<typeof routerConfig>;
 
-function build(auth: Partial<RouterConfigType['auth']>, hasUser = false) {
+function build(auth: Partial<RouterConfigType['auth']>, hasUser = false, mail: Partial<RouterConfigType['mail']> = {}) {
   const exists = vi.fn().mockResolvedValue(hasUser);
   const dataSource = { getRepository: () => ({ exists }) } as unknown as DataSource;
   const config = {
-    auth: { magicLink: { mailer: 'console' }, password: { enabled: false, minLength: 12 }, ...auth },
+    server: { publicBaseUrl: 'http://localhost:3000', validClientOrigins: ['http://localhost:4200'] },
+    mail: { fromName: 'Confidential Router', ...mail },
+    auth: { magicLink: { mailer: 'console' }, bootstrapEmail: 'admin@example.com', ...auth },
   } as RouterConfigType;
 
   return { service: new SignInOptionsService(dataSource, config), exists };
@@ -27,6 +29,34 @@ describe('SignInOptionsService', () => {
     await expect(build({ magicLink: { mailer: 'none' } as never }).service.get()).resolves.toMatchObject({
       magicLink: false,
     });
+  });
+
+  it('keeps magic link off when the deployment says so, even with a mailer (SUP-269)', async () => {
+    const options = await build({ magicLink: { mailer: 'none', enabled: false } as never }, false, {
+      provider: 'smtp',
+    }).service.get();
+
+    expect(options).toMatchObject({ magicLink: false });
+  });
+
+  it('offers magic link from the `mail` section alone', async () => {
+    const options = await build({ magicLink: { mailer: 'none' } as never }, false, { provider: 'smtp' }).service.get();
+
+    expect(options).toMatchObject({ magicLink: true });
+  });
+
+  it('offers the emailed code exactly while there is a mailer (SUP-269)', async () => {
+    await expect(build({}).service.get()).resolves.toMatchObject({ emailCode: true, emailCodeLength: 6 });
+    await expect(build({}, false, { provider: 'none' }).service.get()).resolves.toMatchObject({ emailCode: false });
+    await expect(build({ magicLink: { mailer: 'none' } as never }).service.get()).resolves.toMatchObject({
+      emailCode: false,
+    });
+  });
+
+  it('reports nothing about passwords: there are none', async () => {
+    const options = await build({}).service.get();
+
+    expect(Object.keys(options).filter((key) => /password/i.test(key))).toEqual([]);
   });
 
   it('offers bootstrap while a token is configured and the deployment is empty', async () => {
@@ -49,14 +79,20 @@ describe('SignInOptionsService', () => {
     expect(exists).not.toHaveBeenCalled();
   });
 
-  it('reports the password provider, and the minimum it enforces', async () => {
-    const { service } = build({ password: { enabled: true, minLength: 20 } });
+  it('offers administrator recovery once the token’s own account exists, instead of bootstrap', async () => {
+    const { service, exists } = build({ bootstrapToken: 't'.repeat(16), bootstrapEmail: 'Admin@Example.com' }, true);
 
-    await expect(service.get()).resolves.toMatchObject({ password: true, passwordMinLength: 20 });
+    await expect(service.get()).resolves.toMatchObject({ bootstrap: false, adminRecovery: true });
+    // Looked up the way Better Auth stores it.
+    expect(exists).toHaveBeenLastCalledWith({ where: { email: 'admin@example.com' } });
   });
 
-  it('reports passwords as unavailable by default — this is opt-in', async () => {
-    await expect(build({}).service.get()).resolves.toMatchObject({ password: false });
+  it('offers neither on an empty deployment’s recovery, nor recovery without a token', async () => {
+    await expect(build({ bootstrapToken: 't'.repeat(16) }, false).service.get()).resolves.toMatchObject({
+      bootstrap: true,
+      adminRecovery: false,
+    });
+    await expect(build({}, true).service.get()).resolves.toMatchObject({ bootstrap: false, adminRecovery: false });
   });
 
   it('never reports the token itself', async () => {

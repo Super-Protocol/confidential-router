@@ -1,0 +1,10 @@
+Your sign-in code
+
+Enter this code on the sign-in page of console.example.com. It works once and expires in 10 minutes.
+
+482913
+
+Nobody from this service will ever ask you for this code. If you did not try to sign in, ignore this email — the code is useless without the page that asked for it.
+
+--
+Sent by Confidential Router at console.example.com, a Super Protocol deployment.
