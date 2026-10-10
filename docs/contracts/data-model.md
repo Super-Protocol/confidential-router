@@ -102,3 +102,13 @@ Invariants enforced in code and tests:
    (`signup-grant.service.spec.ts`). It is independent of, and stacks with, an invitation grant. It is an
    operator's deploy-time setting written through `LedgerService` like every other credit, not a
    purchase: no user-reachable call can trigger it for an account that already exists.
+9. The deployment export (SUP-271) carries **no credential and no request content**, by construction:
+   `DataExportService` names every column it writes, reads Better Auth's `user` table and none of its
+   other three, and `buildBundle` refuses to assemble a document with a credential-shaped key in it.
+   `ApiKey`, `ChatThread`, `ChatMessage`, `Generation`, `EvidenceSnapshot`, `FeedbackSubmission`,
+   `UserPreferences`, `ExternalEndpointEvent`, `ExternalEndpoint.apiKeyCiphertext` and every verdict
+   column are left behind (`data-migration.e2e.spec.ts` asserts both the key names and that the stored
+   hashes, tokens and ciphertexts are absent from the bytes). The import is the one writer that sets
+   `Workspace.balanceMicros` absolutely — to the sum of the ledger it has just inserted, inside the
+   same transaction — and the one path that creates a `user` row without `databaseHooks`, so an
+   imported account is not gated, re-provisioned, re-granted or reported as a sign-up.

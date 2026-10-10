@@ -11,6 +11,7 @@ import { jsonErrorMiddleware } from './api/v1/openai-exception.filter.js';
 import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import { STRIPE_WEBHOOK_PATH } from './billing/index.js';
 import type { routerConfig } from './config.js';
+import { DATA_EXPORT_CONTENT_TYPE, DATA_IMPORT_PATH, MAX_BUNDLE_BYTES } from './data-migration/index.js';
 import { TYPEFORM_WEBHOOK_PATH } from './feedback/index.js';
 
 /**
@@ -92,6 +93,8 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
   // Same rule for the feedback form's webhook: the provider signs the bytes it
   // sent, and a reparsed body is a different byte string.
   app.use(TYPEFORM_WEBHOOK_PATH, express.raw({ type: 'application/json', limit: '1mb' }));
+  // The deployment export is uploaded as the gzip file it is (SUP-271).
+  app.use(DATA_IMPORT_PATH, express.raw({ type: DATA_EXPORT_CONTENT_TYPE, limit: MAX_BUNDLE_BYTES }));
   app.use(express.json({ limit: '1mb' }));
   // Body-parser failures are thrown in middleware and never reach a Nest
   // exception filter, so `/v1` gets its OpenAI-shaped `invalid_json` here.

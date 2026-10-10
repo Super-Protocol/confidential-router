@@ -730,6 +730,111 @@ environment. Re-running it rotates the secret and re-points the webhook; the for
 itself is matched by title, so the questions can be edited in Typeform's own
 editor without the job undoing them.
 
+## Moving a deployment's data across a redeploy
+
+A published deployment is replaced, not upgraded in place, and its database goes
+with it. What carries the small dataset that matters across is an **export** from
+the old deployment and an **import** into the new one, both in the console under
+**Administration → Export & import** and both restricted to `auth.adminEmails`
+(SUP-271).
+
+The export is one gzipped JSON document, `router-export-<date>-<host>.json.gz`,
+built for the request that asked for it and kept nowhere on the server:
+
+| Section | What it carries |
+| --- | --- |
+| `users` | id, address, name, `emailVerified`, sign-up date; plus `origin` (invite / bootstrap / open), `invitedByCodeId` and `role`, which are informational |
+| `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
+| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
+| `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
+
+`counts`, `totalBalanceMicros` and `integrity.contentSha256` (SHA-256 over the
+canonical JSON of `data`) are derived from the data; `source` names the
+deployment that wrote the file — its `server.publicBaseUrl`, router version and
+the evidence digest it last published for itself. Ids are the rows' own, instants
+are ISO-8601 UTC, money is integer micro-USD as a decimal string.
+
+**Left behind, by design:** chats and messages, generations and activity,
+evidence snapshots, feedback answers, preferences; sessions and every credential
+Better Auth holds (the `account`, `session` and `verification` tables are never
+read); API keys, which are stored hashed and cannot be moved — **every user issues
+new keys after a migration**; and the upstream API key of an external endpoint,
+which is sealed under the old deployment's `CR_API_SECRETS_KEY`. The file
+therefore holds **no secret**. It does hold personal data and invitation codes
+that can still be redeemed: keep it private, and delete it once the new
+deployment is verified. A bundle with a credential-shaped field in it is refused
+on both sides — the export will not write one and the import will not read one.
+
+The import takes the file **only into a fresh deployment**, and always in two
+steps:
+
+1. **Check file** — a dry run. It shows where and when the file was exported, its
+   SHA-256 (compare it with the value the export screen showed), the total credit
+   balance, and per section how many rows are in the file, would be created, are
+   already here, or collide. Nothing is written.
+2. **Import** — enabled only after a clean check, and only for the file that was
+   checked (the request carries the hash the check reported).
+
+It refuses, writing nothing, when: an account exists here that is neither in the
+file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`); the
+file's schema version is not this build's; its contents do not match its own
+hash, counts or total; a workspace balance does not equal the sum of its ledger
+entries; or a row collides with a different one here (a taken slug, an invitation
+code already issued here under another id, a taken endpoint name or model id).
+
+Three things about what it writes:
+
+- **The operator who claimed the new deployment is merged, not duplicated.** The
+  bootstrap account gets a new id on every deployment, so the exported account of
+  the same address is mapped onto it: its ledger and attribution land in the
+  workspace the operator owns here. A grant the new deployment already made to
+  that account (the sign-up credit) is not credited twice.
+- **Balances are re-summed from the imported ledger**, never copied — the same
+  invariant every other balance obeys (`contracts/data-model.md`, invariant 3).
+- **External endpoints arrive switched off, with no key.** Enter each upstream
+  key again under Administration → External endpoints, then enable the endpoint;
+  it is attested before it serves, like any other. The trust list is live at once.
+
+Accounts are created without any credential, so nobody is signed in by the
+import: each person proves their address again on the new deployment, and finds
+their workspace, balance and attribution there. Operators are still named by the
+*new* deployment's `auth.adminEmails` — the `role` in the file is not read.
+
+Importing the same file twice is safe. Accounts are written through Better Auth's
+connection and everything else in one transaction, so an import interrupted
+between the two is completed by running it again: rows already present are
+counted as such and skipped.
+
+Both actions leave an audit line (`warn`) naming the operator, the bundle's hash
+and its row counts, and never an address or a code:
+
+```
+Deployment export downloaded by admin@example.com — sha256 8135…0659: 42 account(s), 42 workspace(s), 118 ledger entr(y/ies), 50 invitation code(s) (31 unredeemed), 2 external endpoint(s), 3 trusted measurement(s).
+Deployment import by admin@example.com — applied; from https://api.old.example.com, sha256 8135…0659: users +41, workspaces +41, …
+```
+
+### Redeploy runbook
+
+1. **Announce the window.** Anything that happens on the old deployment after the
+   export is not in the file; there is no merge of a second export.
+2. **Export** on the old deployment (Administration → Export & import → Download
+   export). Note the SHA-256 the screen shows.
+3. **Delete the old deployment first**, then **deploy the new version** — the
+   order the marketplace needs for the hostnames to be free.
+4. **Claim the new deployment** with its bootstrap token (see *First sign-in on a
+   fresh deployment*), using the **same address** as the old operator so the two
+   accounts merge, and make sure that address is in `auth.adminEmails`. Do not
+   open sign-up to anyone else before the import.
+5. **Import**: Check file → confirm the source, the SHA-256 and the counts →
+   Import.
+6. **Verify:** the Invitations section shows the same codes and attribution; a
+   known user signs in with their address and sees their balance; an unredeemed
+   code still redeems; API Keys is empty for everyone (expected) and a new key
+   works; chat history is empty (expected). Re-enter upstream keys for any
+   external endpoint and enable it.
+7. **Delete the export file.**
+
 ## Running it
 
 ```bash
