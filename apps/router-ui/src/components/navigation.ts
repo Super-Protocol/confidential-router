@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowLeftRight,
   BookText,
   CreditCard,
   Globe,
@@ -114,6 +115,13 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/admin/invitations',
         icon: Ticket,
         summary: 'Invitation codes, who redeemed which, and how sign-ups are going.',
+        adminOnly: true,
+      },
+      {
+        label: 'Export & import',
+        href: '/admin/migration',
+        icon: ArrowLeftRight,
+        summary: 'Carry accounts, credit and invitation codes across a redeploy.',
         adminOnly: true,
       },
     ],
