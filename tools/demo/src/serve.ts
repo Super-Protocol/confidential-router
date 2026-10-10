@@ -34,7 +34,13 @@ import {
   waitForExternalStatus,
   waitForRelayedBundle,
 } from './external-stand.js';
-import { type ExternalHandoff, HANDOFF_FILE, type StackHandoff, TRUSTED_ROOT_FILE } from './handoff.js';
+import {
+  type ExternalHandoff,
+  HANDOFF_FILE,
+  ROUTER_LOG_FILE,
+  type StackHandoff,
+  TRUSTED_ROOT_FILE,
+} from './handoff.js';
 import { type RouterStack, type RouterStackOptions, startRouterStack } from './stack.js';
 
 /** Where the console is served from in `apps/router-ui-e2e/playwright.config.ts`. */
@@ -89,10 +95,13 @@ const stackOptions: RouterStackOptions = {
   routerPort: ROUTER_PORT,
   extraClientOrigins: [CONSOLE_E2E_ORIGIN],
   email: SESSION_EMAIL,
-  // Password sign-up, so a browser suite can create an account in one request —
-  // the Invitations flow redeems a code that way (SUP-268). Magic links are read
-  // out of this process's log, which a Playwright spec cannot reach.
-  env: { CR_API_AUTH__PASSWORD__ENABLED: 'true' },
+  // Sign-in is a code the console mailer writes to the router's log (SUP-269).
+  // A Playwright spec cannot reach this process's memory, so the log is
+  // mirrored to a file the handoff names.
+  routerLogFile: ROUTER_LOG_FILE,
+  // One loopback address signs in for every spec; the production budget is
+  // pinned by router-api's own e2e, not here.
+  env: { CR_API_AUTH__EMAIL_CODE__REQUESTS_PER_MINUTE: '1000' },
   // `docs/quickstart.md` drives the deny paths with curl against `/__mock/…`.
   controlApi: true,
   echoRouterLog: process.env.CR_DEMO_VERBOSE === '1',
@@ -182,6 +191,7 @@ const handoff: StackHandoff = {
   apiBaseUrl: stack.router.baseUrl,
   apiOrigin: API_E2E_ORIGIN,
   consoleOrigin: CONSOLE_E2E_ORIGIN,
+  routerLogFile: ROUTER_LOG_FILE,
   sessionCookie: stack.session.cookie,
   adminSessionCookie: adminCookie,
   adminEmail: ADMIN_EMAIL,

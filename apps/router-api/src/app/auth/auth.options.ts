@@ -1,10 +1,11 @@
 import type { BetterAuthOptions, BetterAuthPlugin } from 'better-auth';
+import { emailOTP } from 'better-auth/plugins/email-otp';
 import { magicLink } from 'better-auth/plugins/magic-link';
 import Database from 'better-sqlite3';
 import { Pool } from 'pg';
 import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
-import { magicLinkEnabled, passwordResetEnabled } from '../mail/mail-settings.js';
+import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
@@ -15,39 +16,55 @@ export const SESSION_COOKIE_NAME = 'cr_session';
 export const AUTH_BASE_PATH = '/auth';
 
 /**
- * Better Auth's email-and-password routes, relative to {@link AUTH_BASE_PATH}.
+ * Every Better Auth route that reads, sets or resets a password, relative to
+ * {@link AUTH_BASE_PATH} — all of them a 404 on every deployment (SUP-269).
  *
- * They are core routes rather than a plugin, so they are mounted whether or not
- * the provider is enabled — `emailAndPassword.enabled: false` only makes them
- * answer 400 "not enabled". `disabledPaths` turns that into the 404 magic link
- * and bootstrap already give when they are not configured: on this deployment a
- * sign-in path that is switched off is not a thing that exists.
+ * Password sign-in is gone: accounts are proven by a code mailed to their
+ * address, and no hash is stored. These are core routes rather than a plugin,
+ * so they are mounted whatever the configuration says —
+ * `emailAndPassword.enabled: false` only makes some of them answer 400 "not
+ * enabled", and `/reset-password` would still *create* a credential for an
+ * account that has none. `disabledPaths` is what makes them not exist.
  */
-export const PASSWORD_PATHS = ['/sign-up/email', '/sign-in/email', '/change-password', '/verify-password'];
+export const PASSWORD_PATHS = [
+  '/sign-up/email',
+  '/sign-in/email',
+  '/change-password',
+  '/verify-password',
+  '/request-password-reset',
+  '/reset-password',
+];
 
 /**
- * Password reset, off unless the deployment has both a password to reset and a
- * mailer to deliver the link (SUP-269, `passwordResetEnabled`).
- *
- * Off, it could only ever answer "reset password isn't enabled", so it is a 404
- * instead, like every other path this deployment does not offer.
- * `/reset-password/:token` is not in the list because a path parameter cannot
- * be matched by an exact-path check; it is unreachable anyway, since
- * `/request-password-reset` is the only thing that mints a token it would
- * accept. The console never uses it even when reset is on: the mailed link
- * goes straight to the console's own reset page.
+ * The parts of the email-OTP plugin this deployment does not use, switched off
+ * the same way. The plugin mounts a password-reset-by-code flow and an
+ * email-change flow next to the sign-in one; the first would mint the very
+ * credential SUP-269 removed, and the second is a feature nobody asked for
+ * with an account-takeover shape.
  */
-export const PASSWORD_RESET_PATHS = ['/request-password-reset', '/reset-password'];
+export const UNUSED_EMAIL_OTP_PATHS = [
+  '/email-otp/request-password-reset',
+  '/forget-password/email-otp',
+  '/email-otp/reset-password',
+  '/email-otp/verify-email',
+  '/email-otp/check-verification-otp',
+  '/email-otp/request-email-change',
+  '/email-otp/change-email',
+];
+
+/** Digits in a sign-in code. Six is what every authenticator has taught people to expect. */
+export const EMAIL_CODE_LENGTH = 6;
 
 /**
  * What the auth flows need from the mail service — narrower than
  * `MailService`, so this file stays a function of its inputs.
+ *
+ * Both are awaited and reject when the mail could not be sent. Neither leaks
+ * anything by that — see `MailService`.
  */
 export interface AuthMail {
-  /** Awaited: the requester is waiting for the link, and a failure is theirs to see. */
   sendMagicLink(email: string, url: string): Promise<void>;
-  /** Fire-and-forget: see `MailService.requestPasswordReset` for why it must not be awaited. */
-  requestPasswordReset(email: string, token: string): void;
+  sendSignInCode(email: string, code: string): Promise<void>;
 }
 
 export interface AuthOptionsDeps {
@@ -112,7 +129,6 @@ export function buildAuthOptions({
   onBeforeUserCreated,
 }: AuthOptionsDeps): BetterAuthOptions {
   const { auth, server } = config;
-  const resetOffered = passwordResetEnabled(config);
 
   return {
     appName: 'confidential-router',
@@ -124,43 +140,21 @@ export function buildAuthOptions({
     // usage pings to a third party by default would be a poor first impression.
     telemetry: { enabled: false },
     trustedOrigins: server.validClientOrigins,
-    // Off unless the deployment asked for it (ADR-004 §1, amended by SUP-112):
-    // OAuth and magic link are better, and this is the only path that works
-    // when neither is available.
-    emailAndPassword: {
-      enabled: auth.password.enabled,
-      minPasswordLength: auth.password.minLength,
-      // The whole point of this provider is a deployment with no mail. A
-      // verification round trip nobody can complete would lock out every
-      // account it created.
-      requireEmailVerification: false,
-      // Signing up answers with the session cookie, rather than asking for the
-      // password that was just chosen a second time.
-      autoSignIn: true,
-      // Better Auth answers `/request-password-reset` identically whether or
-      // not the address has an account, and only calls this for one that does.
-      // The link it builds is ignored: it points at the API's own redirect
-      // endpoint and carries a client-chosen `redirectTo`, where the mailed link
-      // should go straight to the console and depend on nothing the requester
-      // sent.
-      sendResetPassword: resetOffered
-        ? async ({ user, token }) => {
-            mail.requestPasswordReset(user.email, token);
-          }
-        : undefined,
-      resetPasswordTokenExpiresIn: Math.floor(auth.passwordReset.tokenTtl / 1000),
-      // A reset is what someone does when they think the password is known to
-      // somebody else, so every session that password opened ends with it.
-      revokeSessionsOnPasswordReset: true,
-    },
-    disabledPaths: [...(auth.password.enabled ? [] : PASSWORD_PATHS), ...(resetOffered ? [] : PASSWORD_RESET_PATHS)],
+    // Off, everywhere and unconditionally (SUP-269): sign-in is a code mailed
+    // to the address, OAuth, or the bootstrap token. Nothing here can create,
+    // check or change a password, and `dropStoredCredentials` removes the
+    // hashes earlier versions stored.
+    emailAndPassword: { enabled: false },
+    disabledPaths: [...PASSWORD_PATHS, ...UNUSED_EMAIL_OTP_PATHS],
     socialProviders: {
       ...(auth.github ? { github: { clientId: auth.github.clientId, clientSecret: auth.github.clientSecret } } : {}),
       ...(auth.google ? { google: { clientId: auth.google.clientId, clientSecret: auth.google.clientSecret } } : {}),
     },
     session: {
       expiresIn: Math.floor(auth.sessionMaxAge / 1000),
-      // Rolling: a session in daily use is refreshed rather than expiring at 30 days.
+      // Rolling: a session in use is refreshed rather than expiring at
+      // `sessionMaxAge` — at most once per thirtieth of it, so a console left
+      // open does not write to the session table on every request.
       updateAge: Math.floor(auth.sessionMaxAge / 1000 / 30),
     },
     advanced: {
@@ -202,15 +196,42 @@ export function buildAuthOptions({
 /**
  * The plugins this deployment's configuration asks for, and only those.
  *
- * Both are conditional on purpose. An unregistered plugin's routes 404 from
+ * All are conditional on purpose. An unregistered plugin's routes 404 from
  * Better Auth's own router, which is a stronger statement than a handler that
  * exists and refuses: there is no `/auth/bootstrap` to probe on a deployment
- * that configured no token, and no `/auth/sign-in/magic-link` to request a mail
- * from on one that has no mailer.
+ * that configured no token, and no `/auth/email-otp/send-verification-otp` to
+ * request a mail from on one that has no mailer.
  */
 function authPlugins(config: RouterConfig, mail: AuthMail): BetterAuthPlugin[] {
   const { auth } = config;
   const plugins: BetterAuthPlugin[] = [];
+
+  if (emailCodeEnabled(config)) {
+    plugins.push(
+      emailOTP({
+        otpLength: EMAIL_CODE_LENGTH,
+        expiresIn: Math.floor(auth.emailCode.ttl / 1000),
+        allowedAttempts: auth.emailCode.attempts,
+        // Only a digest of the code is stored, so a database read does not hand
+        // out a sign-in for the next ten minutes.
+        storeOTP: 'hashed',
+        // An unknown address is mailed a code like any other, and the account
+        // is created when the code comes back — subject to `SignUpGate`, which
+        // is where an invite-only deployment refuses. That is also what makes
+        // the send route answer identically for every address.
+        disableSignUp: false,
+        sendVerificationOTP: async ({ email, otp, type }) => {
+          // The send route accepts three types and this deployment uses one;
+          // the other two belong to flows whose routes are disabled above, and
+          // mailing a code nothing will accept would only be noise.
+          if (type !== 'sign-in') {
+            return;
+          }
+          await mail.sendSignInCode(email, otp);
+        },
+      }),
+    );
+  }
 
   if (magicLinkEnabled(config)) {
     plugins.push(

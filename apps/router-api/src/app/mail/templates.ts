@@ -20,6 +20,8 @@ type Block =
   | { kind: 'facts'; rows: Array<[label: string, value: string]> }
   /** The raw URL under a button, for a client that strips buttons or a reader who will not click one. */
   | { kind: 'fallback-link'; url: string }
+  /** A one-time code: large, monospaced and selectable in one gesture. */
+  | { kind: 'code'; code: string }
   | { kind: 'note'; text: string };
 
 interface Layout {
@@ -94,6 +96,11 @@ function blockHtml(block: Block): string {
       // A table cell carries the colour, not the anchor: Outlook for Windows
       // ignores padding and background on `<a>`.
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px;"><tr><td class="cr-button" bgcolor="${LIGHT.button}" style="border-radius:8px;background-color:${LIGHT.button};"><a class="cr-button-link" href="${escapeHtml(block.url)}" target="_blank" style="display:inline-block;padding:12px 24px;font-family:${FONT};font-size:15px;font-weight:600;line-height:20px;color:${LIGHT.buttonText};text-decoration:none;border-radius:8px;">${escapeHtml(block.label)}</a></td></tr></table>`;
+    case 'code':
+      // One cell, no spans between the digits: a reader who double-clicks or
+      // long-presses has to get the whole code, and a screen reader has to read
+      // it as one token. The spacing is letter-spacing, which copies as nothing.
+      return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px;"><tr><td class="cr-code cr-border" style="padding:14px 24px;border:1px solid ${LIGHT.border};border-radius:8px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:28px;line-height:36px;font-weight:700;letter-spacing:6px;color:${LIGHT.text};">${escapeHtml(block.code)}</td></tr></table>`;
     case 'fallback-link':
       return `<p class="cr-muted" style="margin:0 0 16px;font-size:13px;line-height:20px;color:${LIGHT.muted};">Or paste this link into your browser:<br><a class="cr-link" href="${escapeHtml(block.url)}" target="_blank" style="color:${LIGHT.link};word-break:break-all;">${escapeHtml(block.url)}</a></p>`;
     case 'facts':
@@ -115,6 +122,8 @@ function blockText(block: Block): string {
       return block.text;
     case 'button':
       return `${block.label}: ${block.url}`;
+    case 'code':
+      return block.code;
     case 'fallback-link':
       // The button line already carries the URL in plain text.
       return '';
@@ -130,7 +139,7 @@ const DARK_CSS = `
 @media (prefers-color-scheme: dark) {
   .cr-page { background-color: ${DARK.page} !important; }
   .cr-card { background-color: ${DARK.card} !important; border-color: ${DARK.border} !important; }
-  .cr-text, .cr-heading { color: ${DARK.text} !important; }
+  .cr-text, .cr-heading, .cr-code { color: ${DARK.text} !important; }
   .cr-muted { color: ${DARK.muted} !important; }
   .cr-border { border-color: ${DARK.border} !important; }
   .cr-button { background-color: ${DARK.button} !important; }
@@ -138,7 +147,7 @@ const DARK_CSS = `
   .cr-link { color: ${DARK.link} !important; }
 }
 /* Outlook.com's own dark mode */
-[data-ogsc] .cr-text, [data-ogsc] .cr-heading { color: ${DARK.text} !important; }
+[data-ogsc] .cr-text, [data-ogsc] .cr-heading, [data-ogsc] .cr-code { color: ${DARK.text} !important; }
 [data-ogsc] .cr-muted { color: ${DARK.muted} !important; }
 [data-ogsb] .cr-page { background-color: ${DARK.page} !important; }
 [data-ogsb] .cr-card { background-color: ${DARK.card} !important; }
@@ -205,31 +214,38 @@ export function renderMagicLinkMail({ url, consoleUrl }: MagicLinkMail): Rendere
   });
 }
 
-export interface PasswordResetMail {
-  url: string;
+export interface SignInCodeMail {
+  code: string;
   consoleUrl: string;
   /** Rendered as "expires in N minutes". */
   ttlMinutes: number;
 }
 
-export function renderPasswordResetMail({ url, consoleUrl, ttlMinutes }: PasswordResetMail): RenderedMail {
+/**
+ * The one-time sign-in code (SUP-269). No link and no button, on purpose: the
+ * code is typed into the page that asked for it, so a mail that also carried
+ * something to click would be teaching readers to click sign-in mail.
+ *
+ * The code is in the body and not in the subject, which is what a lock screen
+ * and a notification banner show to whoever is looking at the phone.
+ */
+export function renderSignInCodeMail({ code, consoleUrl, ttlMinutes }: SignInCodeMail): RenderedMail {
   const expiry =
     ttlMinutes % 60 === 0 && ttlMinutes >= 60 ? plural(ttlMinutes / 60, 'hour') : plural(ttlMinutes, 'minute');
   return render({
-    subject: 'Reset your Confidential Router password',
-    preheader: `Choose a new password. The link expires in ${expiry}.`,
-    heading: 'Reset your password',
+    subject: 'Your Confidential Router sign-in code',
+    preheader: `Enter it on the sign-in page. It expires in ${expiry}.`,
+    heading: 'Your sign-in code',
     consoleUrl,
     blocks: [
       {
         kind: 'paragraph',
-        text: `Someone asked to reset the password for this address on ${hostOf(consoleUrl)}. Choose a new one with the button below. The link works once and expires in ${expiry}.`,
+        text: `Enter this code on the sign-in page of ${hostOf(consoleUrl)}. It works once and expires in ${expiry}.`,
       },
-      { kind: 'button', label: 'Choose a new password', url },
-      { kind: 'fallback-link', url },
+      { kind: 'code', code },
       {
         kind: 'note',
-        text: 'Resetting signs you out everywhere else. If you did not ask for this, ignore this email — your password stays as it is.',
+        text: 'Nobody from this service will ever ask you for this code. If you did not try to sign in, ignore this email — the code is useless without the page that asked for it.',
       },
     ],
   });

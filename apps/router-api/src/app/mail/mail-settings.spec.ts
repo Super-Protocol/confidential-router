@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RouterConfigSchema } from '../config.schema.js';
-import { magicLinkEnabled, passwordResetEnabled, resolveMailSettings } from './mail-settings.js';
+import { emailCodeEnabled, magicLinkEnabled, resolveMailSettings } from './mail-settings.js';
 
 function config(input: Record<string, unknown> = {}) {
   return RouterConfigSchema.parse({
@@ -75,22 +75,19 @@ describe('resolveMailSettings', () => {
 });
 
 describe('which flows a mailer turns on', () => {
-  it('offers password reset only with both passwords and a mailer', () => {
-    expect(
-      passwordResetEnabled(
-        config({ auth: { password: { enabled: true } }, mail: { provider: 'smtp', smtp: { host: 'h' } } }),
-      ),
-    ).toBe(true);
-    expect(passwordResetEnabled(config({ auth: { password: { enabled: true }, magicLink: { mailer: 'none' } } }))).toBe(
-      false,
-    );
-    expect(passwordResetEnabled(config({ mail: { provider: 'smtp', smtp: { host: 'h' } } }))).toBe(false);
+  it('offers the emailed code exactly while there is a mailer', () => {
+    expect(emailCodeEnabled(config({ mail: { provider: 'smtp', smtp: { host: 'h' } } }))).toBe(true);
+    expect(emailCodeEnabled(config())).toBe(true);
+    expect(emailCodeEnabled(config({ auth: { magicLink: { mailer: 'none' } } }))).toBe(false);
+    expect(emailCodeEnabled(config({ mail: { provider: 'none' } }))).toBe(false);
   });
 
-  it('lets a deployment keep magic link off while it has a mailer', () => {
+  it('lets a deployment keep the magic link off while the code stays on', () => {
     const smtp = { provider: 'smtp', smtp: { host: 'h' } };
 
     expect(magicLinkEnabled(config({ mail: smtp }))).toBe(true);
-    expect(magicLinkEnabled(config({ mail: smtp, auth: { magicLink: { enabled: false } } }))).toBe(false);
+    const codeOnly = config({ mail: smtp, auth: { magicLink: { enabled: false } } });
+    expect(magicLinkEnabled(codeOnly)).toBe(false);
+    expect(emailCodeEnabled(codeOnly)).toBe(true);
   });
 });

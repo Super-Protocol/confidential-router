@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { LOGO_IMAGE } from './logo.js';
-import { formatUsd, renderMagicLinkMail, renderPasswordResetMail, renderWelcomeMail } from './templates.js';
+import { formatUsd, renderMagicLinkMail, renderSignInCodeMail, renderWelcomeMail } from './templates.js';
 
 const CONSOLE = 'https://console.example.com';
-const RESET_URL = `${CONSOLE}/reset-password?token=abc123`;
+const CODE = '482913';
 
 /**
  * The rendered HTML is pinned as files, so a change to the layout is a reviewed
@@ -19,12 +19,12 @@ describe('mail templates', () => {
     await expect(mail.text).toMatchFileSnapshot('__snapshots__/welcome.txt');
   });
 
-  it('renders the password reset mail', async () => {
-    const mail = renderPasswordResetMail({ url: RESET_URL, consoleUrl: CONSOLE, ttlMinutes: 60 });
+  it('renders the sign-in code mail', async () => {
+    const mail = renderSignInCodeMail({ code: CODE, consoleUrl: CONSOLE, ttlMinutes: 10 });
 
-    expect(mail.subject).toBe('Reset your Confidential Router password');
-    await expect(mail.html).toMatchFileSnapshot('__snapshots__/password-reset.html');
-    await expect(mail.text).toMatchFileSnapshot('__snapshots__/password-reset.txt');
+    expect(mail.subject).toBe('Your Confidential Router sign-in code');
+    await expect(mail.html).toMatchFileSnapshot('__snapshots__/sign-in-code.html');
+    await expect(mail.text).toMatchFileSnapshot('__snapshots__/sign-in-code.txt');
   });
 
   it('renders the magic link mail', async () => {
@@ -45,7 +45,7 @@ describe('mail templates', () => {
   });
 
   it('is dark-mode aware and keeps every style the light rendering needs inline', () => {
-    const { html } = renderPasswordResetMail({ url: RESET_URL, consoleUrl: CONSOLE, ttlMinutes: 30 });
+    const { html } = renderWelcomeMail({ consoleUrl: CONSOLE, startingCreditMicros: 0 });
 
     expect(html).toContain('<meta name="color-scheme" content="light dark">');
     expect(html).toContain('@media (prefers-color-scheme: dark)');
@@ -54,12 +54,23 @@ describe('mail templates', () => {
     expect(html).toContain('bgcolor="#1e49b7" style="border-radius:8px;background-color:#1e49b7;"');
   });
 
-  it('always has a plain-text part carrying the link', () => {
-    const { text } = renderPasswordResetMail({ url: RESET_URL, consoleUrl: CONSOLE, ttlMinutes: 30 });
+  it('puts the code in one selectable cell and in the plain-text part, and nowhere a lock screen shows', () => {
+    const mail = renderSignInCodeMail({ code: CODE, consoleUrl: CONSOLE, ttlMinutes: 10 });
 
-    expect(text).toContain(RESET_URL);
-    expect(text).toContain('expires in 30 minutes');
-    expect(text).not.toMatch(/<[a-z]/i);
+    expect(mail.html).toContain(`>${CODE}</td>`);
+    expect(mail.text).toContain(`\n\n${CODE}\n\n`);
+    expect(mail.text).toContain('expires in 10 minutes');
+    expect(mail.text).not.toMatch(/<[a-z]/i);
+    expect(mail.subject).not.toContain(CODE);
+    // The preheader is the other thing a notification shows.
+    expect(mail.html.split('</div>')[0]).not.toContain(CODE);
+  });
+
+  it('gives the sign-in code mail nothing to click', () => {
+    const { html, text } = renderSignInCodeMail({ code: CODE, consoleUrl: CONSOLE, ttlMinutes: 10 });
+
+    expect(html).not.toContain('<a ');
+    expect(text).not.toContain('http');
   });
 
   it('names the starting credit only when there is some', () => {

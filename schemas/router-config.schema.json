@@ -365,7 +365,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Whether the console offers a one-time sign-in link. Unset means: while the deployment has a mailer."
+              "description": "Whether a one-time sign-in link is offered beside the one-time code. Unset means: while the deployment has a mailer."
             },
             "mailer": {
               "type": "string",
@@ -389,47 +389,51 @@
         },
         "sessionMaxAge": {
           "$ref": "#/$defs/duration",
-          "default": "720h",
-          "description": "Rolling session lifetime (ADR-004 \u00a74)."
+          "default": "2160h",
+          "description": "Rolling session lifetime (ADR-004 \u00a74): how long a session lives without being used. Ninety days by default."
         },
         "password": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Email and password sign-in, for a deployment with no mail delivery at all. No email verification; password reset is offered only while `mail` has a provider.",
+          "deprecated": true,
+          "description": "Deprecated and ignored (SUP-269): password sign-in was removed and no hash is stored. Accepted so a configuration written for an older version still loads; remove it.",
           "properties": {
             "enabled": {
-              "type": "boolean",
-              "default": false
+              "type": "boolean"
             },
             "minLength": {
-              "type": "integer",
-              "minimum": 8,
-              "maximum": 128,
-              "default": 12
+              "type": "integer"
             }
           }
         },
-        "passwordReset": {
+        "emailCode": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Password reset by mail (SUP-269). Offered only while `password.enabled` is true and `mail` has a provider; otherwise its routes answer 404.",
+          "description": "Sign-in by a one-time code mailed to the address (SUP-269). On while `mail` has a provider; with none its routes are not mounted.",
           "properties": {
-            "tokenTtl": {
+            "ttl": {
               "$ref": "#/$defs/duration",
-              "default": "1h",
-              "description": "How long a reset link stays usable. Single-use either way."
+              "default": "10m",
+              "description": "How long a code stays usable. Single-use either way."
+            },
+            "attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 3,
+              "description": "Wrong guesses a code survives before it is void."
             },
             "requestsPerMinute": {
               "type": "integer",
               "minimum": 1,
-              "default": 5,
-              "description": "Reset requests one source address may make per minute; beyond it, 429."
+              "default": 10,
+              "description": "Requests one source address may make per minute, counted separately for asking for a code and for trying one; beyond it, 429."
             },
             "mailsPerAddressPerHour": {
               "type": "integer",
               "minimum": 1,
-              "default": 3,
-              "description": "Reset mails one recipient is sent per hour, whoever asks. Beyond it the request is answered as usual and nothing is sent."
+              "default": 10,
+              "description": "Codes one recipient is mailed per hour, whoever asks. Beyond it the request is answered as usual and nothing is sent."
             }
           }
         },

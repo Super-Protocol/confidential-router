@@ -34,7 +34,7 @@ function errorWithCode(message: string, code: string): Error {
 function build(overrides: { mail?: object; auth?: object } = {}) {
   const config = RouterConfigSchema.parse({
     server: { validClientOrigins: ['https://console.example.com'] },
-    auth: { secret: 's'.repeat(32), password: { enabled: true }, ...overrides.auth },
+    auth: { secret: 's'.repeat(32), ...overrides.auth },
     mail: {
       provider: 'smtp',
       from: 'no-reply@example.com',
@@ -60,65 +60,55 @@ describe('MailService', () => {
     expect(service.status()).toMatchObject({ state: 'failing', reason: 'unreachable' });
   });
 
-  it('mails a reset link on the console, carrying the token and nothing the requester sent', async () => {
+  it('mails a sign-in code: in the body, out of the subject, and with no link to click', async () => {
     const { service, transport } = build();
 
-    service.requestPasswordReset('a@example.com', 'tok/en');
-    await service.settle();
+    await service.sendSignInCode('a@example.com', '482913');
 
     expect(transport.sent).toHaveLength(1);
-    expect(transport.sent[0]).toMatchObject({
-      to: 'a@example.com',
-      kind: 'password-reset',
-      link: 'https://console.example.com/reset-password?token=tok%2Fen',
-    });
+    const [mail] = transport.sent;
+    expect(mail).toMatchObject({ to: 'a@example.com', kind: 'sign-in-code', code: '482913' });
+    expect(mail.link).toBeUndefined();
+    expect(mail.text).toContain('482913');
+    expect(mail.html).toContain('482913');
+    expect(mail.subject).not.toContain('482913');
+    expect(mail.html).not.toContain('<a ');
   });
 
-  it('returns from a reset request before the mail is sent — a slow server must not reveal the account', () => {
-    const { service, transport } = build();
-    let release: () => void = () => undefined;
-    vi.spyOn(transport, 'send').mockImplementation(() => new Promise<void>((resolve) => (release = resolve)));
-
-    expect(service.requestPasswordReset('a@example.com', 't')).toBeUndefined();
-    release();
-  });
-
-  it('never throws from a reset or a welcome, whatever the provider does', async () => {
+  it('awaits a sign-in code and hands its failure to the requester', async () => {
     const { service, transport } = build();
     transport.sendError = errorWithCode('Invalid login: 535', 'EAUTH');
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-    expect(() => service.requestPasswordReset('a@example.com', 't')).not.toThrow();
+    await expect(service.sendSignInCode('a@example.com', '482913')).rejects.toThrow('Invalid login');
+    expect(service.status()).toMatchObject({ state: 'failing', reason: 'auth_failed' });
+  });
+
+  it('never throws from a welcome, whatever the provider does', async () => {
+    const { service, transport } = build();
+    transport.sendError = errorWithCode('Invalid login: 535', 'EAUTH');
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
     expect(() => service.sendWelcome({ email: 'b@example.com', startingCreditMicros: 0 })).not.toThrow();
     await service.settle();
 
     expect(service.status()).toMatchObject({ state: 'failing', reason: 'auth_failed' });
   });
 
-  it('sends one recipient no more reset mails per hour than configured, silently', async () => {
-    const { service, transport } = build({ auth: { passwordReset: { mailsPerAddressPerHour: 2 } } });
+  it('mails one recipient no more codes per hour than configured, and resolves all the same', async () => {
+    const { service, transport } = build({ auth: { emailCode: { mailsPerAddressPerHour: 2 } } });
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
     for (let i = 0; i < 4; i += 1) {
-      service.requestPasswordReset('A@example.com', `t${i}`);
+      await expect(service.sendSignInCode('A@example.com', `00000${i}`)).resolves.toBeUndefined();
     }
-    service.requestPasswordReset('other@example.com', 'x');
-    await service.settle();
+    await service.sendSignInCode('other@example.com', '111111');
 
     expect(transport.sent.map((message) => message.to)).toEqual([
       'A@example.com',
       'A@example.com',
       'other@example.com',
     ]);
-  });
-
-  it('sends no reset mail on a deployment without passwords, even if asked', async () => {
-    const { service, transport } = build({ auth: { password: { enabled: false } } });
-
-    service.requestPasswordReset('a@example.com', 't');
-    await service.settle();
-
-    expect(transport.sent).toEqual([]);
   });
 
   it('welcomes a new account with the credit it was granted', async () => {

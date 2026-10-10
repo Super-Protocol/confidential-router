@@ -13,7 +13,7 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { buildAuthOptions, createAuthDatabase } from '../app/auth/auth.options.js';
-import { runAuthMigrations } from '../app/auth/auth-schema.js';
+import { dropStoredCredentials, runAuthMigrations } from '../app/auth/auth-schema.js';
 import { loadRouterConfig } from '../app/config.js';
 import { buildDataSourceOptions, ensureSqliteDirectory } from '../app/db/data-source.js';
 
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
           sendMagicLink: async () => {
             throw new Error('The migration runner must not send email.');
           },
-          requestPasswordReset: () => {
+          sendSignInCode: async () => {
             throw new Error('The migration runner must not send email.');
           },
         },
@@ -46,6 +46,10 @@ async function main(): Promise<void> {
       }),
     );
     console.log('[migrate] Better Auth schema is up to date.');
+    const dropped = await dropStoredCredentials(authDatabase);
+    if (dropped > 0) {
+      console.log(`[migrate] Removed ${dropped} stored password credential(s): sign-in is by emailed code now.`);
+    }
   } finally {
     await closeAuthDatabase(authDatabase);
   }

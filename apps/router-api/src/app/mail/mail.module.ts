@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../config.js';
+import { EmailCodeThrottle } from './email-code-throttle.js';
 import { MailService } from './mail.service.js';
 import { resolveMailSettings } from './mail-settings.js';
 import { createMailTransport, MAIL_TRANSPORT } from './mail-transport.js';
-import { PasswordResetThrottle } from './password-reset-throttle.js';
 
 /**
  * Outbound mail (SUP-269). Imported by `AuthModule`, whose flows send the
@@ -21,8 +21,8 @@ import { PasswordResetThrottle } from './password-reset-throttle.js';
       useFactory: (config: ConfigType<typeof routerConfig>) => createMailTransport(resolveMailSettings(config)),
     },
     MailService,
-    PasswordResetThrottle,
+    EmailCodeThrottle,
   ],
-  exports: [MailService, PasswordResetThrottle],
+  exports: [MailService, EmailCodeThrottle],
 })
 export class MailModule {}

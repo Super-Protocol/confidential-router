@@ -65,18 +65,18 @@ export function mailEnabled(config: Pick<RouterConfig, 'mail' | 'auth' | 'server
   return resolveMailSettings(config).provider !== 'none';
 }
 
-/** Magic-link sign-in: on while there is a mailer, unless the deployment switched it off. */
+/** Magic-link sign-in, beside the code: on while there is a mailer, unless the deployment switched it off. */
 export function magicLinkEnabled(config: Pick<RouterConfig, 'mail' | 'auth' | 'server'>): boolean {
   return mailEnabled(config) && config.auth.magicLink.enabled !== false;
 }
 
 /**
- * Password reset needs both halves: a password to reset, and a way to deliver
- * the link. Either one missing and the flow is not offered at all — the
- * routes 404 and the console shows no entry point (SUP-269 AC 2).
+ * Sign-in by emailed code: on exactly while there is somewhere to mail it from.
+ * Without a mailer the routes are not mounted and the console offers no code
+ * field — such a deployment signs in by OAuth or the bootstrap token only.
  */
-export function passwordResetEnabled(config: Pick<RouterConfig, 'mail' | 'auth' | 'server'>): boolean {
-  return config.auth.password.enabled && mailEnabled(config);
+export function emailCodeEnabled(config: Pick<RouterConfig, 'mail' | 'auth' | 'server'>): boolean {
+  return mailEnabled(config);
 }
 
 /**

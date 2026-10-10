@@ -74,16 +74,53 @@ describe('POST /auth/bootstrap, on an empty deployment', () => {
     expect(sessionCookiesOf(created).join(';')).not.toContain(TOKEN);
   });
 
-  it('works exactly once — the second call is a 404, token or not', async () => {
+  it('creates an account exactly once — afterwards it can only sign back into that one', async () => {
+    const current = await marketplaceHarness();
+    const first = await bootstrap(current, TOKEN).expect(200);
+
+    // Break-glass (SUP-269): the same token, the same account, a new session.
+    const again = await bootstrap(current, TOKEN).expect(200);
+    expect(again.body.user).toEqual(first.body.user);
+    expect(sessionCookiesOf(again).join(';')).toContain('cr_session=');
+
+    const users = await request(current.app.getHttpServer())
+      .post('/graphql')
+      .set('Cookie', sessionCookiesOf(again))
+      .send({ query: '{ me { email } }' });
+    expect(users.body.data.me.email).toBe(BOOTSTRAP_EMAIL);
+  });
+
+  it('answers 401 for a wrong token after the claim too, and opens nothing', async () => {
     const current = await marketplaceHarness();
     await bootstrap(current, TOKEN).expect(200);
 
-    await bootstrap(current, TOKEN).expect(404);
-    await bootstrap(current, 'some-other-token-entirely').expect(404);
+    const refused = await bootstrap(current, 'some-other-token-entirely').expect(401);
+    expect(sessionCookiesOf(refused).join(';')).not.toContain('cr_session=');
   });
 
-  it('is a 404 once anyone has signed in by any other means', async () => {
-    // The gate is "this deployment has an owner", not "bootstrap has been used".
+  it('lets the administrator back in when the mailer is down, and nobody else', async () => {
+    // A deployment whose codes cannot be delivered: the administrator's session
+    // is gone, and the token is the only credential that needs no inbox.
+    const current = await marketplaceHarness({ CR_API_AUTH__MAGIC_LINK__MAILER: 'none' });
+    const claimed = await bootstrap(current, TOKEN).expect(200);
+    await request(current.app.getHttpServer())
+      .post('/auth/sign-out')
+      .set('Cookie', sessionCookiesOf(claimed))
+      .send({})
+      .expect(200);
+
+    const back = await bootstrap(current, TOKEN).expect(200);
+
+    expect(back.body.user.email).toBe(BOOTSTRAP_EMAIL);
+    const options = await request(current.app.getHttpServer())
+      .post('/graphql')
+      .send({ query: '{ signInOptions { bootstrap adminRecovery emailCode } }' });
+    expect(options.body.data.signInOptions).toEqual({ bootstrap: false, adminRecovery: true, emailCode: false });
+  });
+
+  it('is a 404 once the deployment has users and none of them is the bootstrap account', async () => {
+    // The token never creates a second account and never opens somebody else's:
+    // with users present and its own address not among them, it can do nothing.
     const current = await marketplaceHarness({ CR_API_AUTH__MAGIC_LINK__MAILER: 'console' });
     await signIn(current, 'someone-else@example.com');
 

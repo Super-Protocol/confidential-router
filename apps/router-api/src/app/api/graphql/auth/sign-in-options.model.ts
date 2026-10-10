@@ -15,29 +15,25 @@ export class SignInOptionsModel {
   @Field({ description: 'A Google OAuth app is configured.' })
   google!: boolean;
 
-  @Field({ description: 'A mailer is configured, so a one-time link can be sent.' })
+  @Field({
+    description:
+      'The bootstrap token can sign its own account back in: a token is configured and the account it ' +
+      'created exists. The administrator’s way in when no code can be mailed.',
+  })
+  adminRecovery!: boolean;
+
+  @Field({
+    description:
+      'A mailer is configured, so a one-time sign-in code can be mailed. This is how accounts sign in and ' +
+      'how they are created; there are no passwords.',
+  })
+  emailCode!: boolean;
+
+  @Field(() => Int, { description: 'How many digits a sign-in code has. Meaningless while `emailCode` is false.' })
+  emailCodeLength!: number;
+
+  @Field({ description: 'A one-time sign-in link can be mailed as well as a code.' })
   magicLink!: boolean;
-
-  @Field({
-    description:
-      'Email and password sign-in and sign-up are enabled. There is no email verification; password reset ' +
-      'is offered only where `passwordReset` says so.',
-  })
-  password!: boolean;
-
-  @Field({
-    description:
-      'A forgotten password can be reset by mail: passwords are enabled and the deployment has a mailer. ' +
-      'While false the reset endpoints answer 404 and the console offers no "Forgot password?" link.',
-  })
-  passwordReset!: boolean;
-
-  @Field(() => Int, {
-    description:
-      'The shortest password this deployment accepts, so the sign-up form can state the rule instead of ' +
-      'discovering it. Meaningless while `password` is false.',
-  })
-  passwordMinLength!: number;
 
   @Field({
     description:

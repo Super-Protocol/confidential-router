@@ -4,25 +4,31 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { User } from '../db/entities/user.entity.js';
-import { magicLinkEnabled, passwordResetEnabled } from '../mail/mail-settings.js';
+import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
+import { EMAIL_CODE_LENGTH } from './auth.options.js';
 
 /** Which sign-in paths this deployment actually offers, right now. */
 export interface SignInOptions {
   /** A bootstrap token can create the first account — see `bootstrapAdmin`. */
   bootstrap: boolean;
+  /**
+   * The bootstrap token can sign its own account back in (SUP-269): a token is
+   * configured and the account it created exists. The way in for the
+   * administrator when no code can be mailed — no mailer, or one that is down.
+   */
+  adminRecovery: boolean;
   github: boolean;
   google: boolean;
-  magicLink: boolean;
-  /** Email and password, the one path that needs nothing outside the cluster. */
-  password: boolean;
-  /** `auth.password.minLength`, so the sign-up form states the real rule. */
-  passwordMinLength: number;
   /**
-   * A forgotten password can be reset by mail: passwords are on *and* a mailer
-   * is configured (SUP-269). False hides the console's "Forgot password?" link,
-   * because the routes behind it are a 404.
+   * A one-time code can be mailed (SUP-269): the deployment has a mailer. This
+   * is how an account signs in and how one is created; without it a deployment
+   * has OAuth, if configured, and the bootstrap token.
    */
-  passwordReset: boolean;
+  emailCode: boolean;
+  /** How many digits a code has, so the form can size its field and know when one is complete. */
+  emailCodeLength: number;
+  /** A one-time *link* can be mailed as well. Off on a marketplace deployment. */
+  magicLink: boolean;
   /**
    * Registration is by invitation (`auth.requireInviteForSignUp`, SUP-173).
    *
@@ -41,11 +47,12 @@ export interface SignInOptions {
  * GitHub app sends the viewer down a path that can only end in an error, and
  * the marketplace install this exists for has neither OAuth nor mail.
  *
- * `bootstrap` is the one flag that is not config alone — it also depends on the
- * deployment still being empty. The authority on that is the endpoint itself
+ * `bootstrap` and `adminRecovery` are the two flags that are not config alone —
+ * they also depend on whether the deployment is still empty and whether the
+ * token's own account exists. The authority on both is the endpoint itself
  * (`bootstrap-admin.plugin.ts` re-checks against Better Auth's own adapter
- * before it creates anything); this is the hint the login screen renders from,
- * and a stale `true` costs a 404, not an account.
+ * before it does anything); this is the hint the login screen renders from, and
+ * a stale `true` costs a 404, not an account.
  */
 @Injectable()
 export class SignInOptionsService {
@@ -57,13 +64,12 @@ export class SignInOptionsService {
   async get(): Promise<SignInOptions> {
     const { auth } = this.config;
     return {
-      bootstrap: await this.bootstrapAvailable(),
+      ...(await this.bootstrapState()),
       github: auth.github !== undefined,
       google: auth.google !== undefined,
+      emailCode: emailCodeEnabled(this.config),
+      emailCodeLength: EMAIL_CODE_LENGTH,
       magicLink: magicLinkEnabled(this.config),
-      password: auth.password.enabled,
-      passwordMinLength: auth.password.minLength,
-      passwordReset: passwordResetEnabled(this.config),
       inviteRequired: auth.requireInviteForSignUp,
     };
   }
@@ -72,11 +78,22 @@ export class SignInOptionsService {
    * `exists`, not `count`: the question is whether the deployment has an owner
    * yet, and an unconfigured deployment must not pay for a full table scan on
    * every anonymous page load either.
+   *
+   * The two are mutually exclusive by construction: the token creates its
+   * account on an empty deployment and signs back into it on any other.
    */
-  private async bootstrapAvailable(): Promise<boolean> {
-    if (this.config.auth.bootstrapToken === undefined) {
-      return false;
+  private async bootstrapState(): Promise<Pick<SignInOptions, 'bootstrap' | 'adminRecovery'>> {
+    const { bootstrapToken, bootstrapEmail } = this.config.auth;
+    if (bootstrapToken === undefined) {
+      return { bootstrap: false, adminRecovery: false };
     }
-    return !(await this.dataSource.getRepository(User).exists());
+    const users = this.dataSource.getRepository(User);
+    if (!(await users.exists())) {
+      return { bootstrap: true, adminRecovery: false };
+    }
+    return {
+      bootstrap: false,
+      adminRecovery: await users.exists({ where: { email: bootstrapEmail.toLowerCase() } }),
+    };
   }
 }

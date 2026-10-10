@@ -16,7 +16,6 @@ import { createHarness, type Harness } from './app-harness.js';
 import { closedPort, FakeSmtpServer } from './fake-smtp.js';
 
 const EMAIL = 'someone@example.com';
-const PASSWORD = 'correct-horse-battery';
 const SMTP_USER = 'mailer@example.com';
 const SMTP_PASSWORD = 'throwaway-smtp-password';
 
@@ -34,7 +33,6 @@ async function smtpHarness(port: number, env: Record<string, string> = {}): Prom
   harness = await createHarness({
     realMailTransport: true,
     env: {
-      CR_API_AUTH__PASSWORD__ENABLED: 'true',
       CR_API_MAIL__PROVIDER: 'smtp',
       CR_API_MAIL__FROM: 'no-reply@example.com',
       CR_API_MAIL__SMTP__HOST: '127.0.0.1',
@@ -55,10 +53,19 @@ async function health(current: Harness) {
   return (await request(current.app.getHttpServer()).get('/health').expect(200)).body;
 }
 
-function signUp(current: Harness) {
+function requestCode(current: Harness, email = EMAIL) {
   return request(current.app.getHttpServer())
-    .post('/auth/sign-up/email')
-    .send({ email: EMAIL, password: PASSWORD, name: 'Some One' });
+    .post('/auth/email-otp/send-verification-otp')
+    .send({ email, type: 'sign-in' });
+}
+
+/** The six digits in a delivered sign-in mail, read from the plain-text part a person would read. */
+function codeIn(data: string): string {
+  const code = data.match(/^(\d{6})\r?$/m)?.[1];
+  if (!code) {
+    throw new Error('The delivered mail carries no six-digit code on a line of its own.');
+  }
+  return code;
 }
 
 describe('an SMTP server the deployment can reach', () => {
@@ -69,44 +76,32 @@ describe('an SMTP server the deployment can reach', () => {
     expect((await health(current)).mail).toMatchObject({ provider: 'smtp', state: 'ok' });
   });
 
-  it('receives the welcome mail: authenticated, multipart, with the logo inline', async () => {
+  it('delivers a sign-in code that signs the reader in, then the welcome mail — authenticated and multipart', async () => {
     smtp = new FakeSmtpServer({ user: SMTP_USER, password: SMTP_PASSWORD });
     const current = await smtpHarness(await smtp.listen());
 
-    await signUp(current).expect(200);
-    const [mail] = await smtp.waitFor(1);
+    await requestCode(current).expect(200);
+    const [codeMail] = await smtp.waitFor(1);
+    expect(codeMail.auth).toBe(`${SMTP_USER}:${SMTP_PASSWORD}`);
+    expect(codeMail.to).toEqual([EMAIL]);
+    expect(codeMail.data).toMatch(/^Subject: Your Confidential Router sign-in code$/m);
 
-    expect(mail.auth).toBe(`${SMTP_USER}:${SMTP_PASSWORD}`);
-    expect(mail.from).toBe('no-reply@example.com');
-    expect(mail.to).toEqual([EMAIL]);
-    // nodemailer drops the quotes a plain display name does not need.
-    expect(mail.data).toMatch(/^From: "?Confidential Router"? <no-reply@example\.com>$/m);
-    expect(mail.data).toMatch(/^Subject: Welcome to Confidential Router$/m);
-    expect(mail.data).toContain('multipart/alternative');
-    expect(mail.data).toMatch(/Content-Type: text\/plain/);
-    expect(mail.data).toMatch(/Content-Type: text\/html/);
-    expect(mail.data).toMatch(/Content-Type: image\/png/);
-    expect(mail.data).toMatch(/Content-ID: <super-protocol-logo>/);
-  });
-
-  it('carries a reset link a reader can use', async () => {
-    smtp = new FakeSmtpServer({ user: SMTP_USER, password: SMTP_PASSWORD });
-    const current = await smtpHarness(await smtp.listen());
-    await signUp(current).expect(200);
-    await smtp.waitFor(1);
-
-    await request(current.app.getHttpServer()).post('/auth/request-password-reset').send({ email: EMAIL }).expect(200);
-    const [, reset] = await smtp.waitFor(2);
-
-    // Quoted-printable may fold the link; unfold before reading it.
-    const body = reset.data.replace(/=\r\n/g, '').replace(/=3D/g, '=');
-    const token = body.match(/http:\/\/localhost:4200\/reset-password\?token=([A-Za-z0-9_-]+)/)?.[1];
-    expect(token).toBeDefined();
-
+    // The code as it came off the wire, not out of a capturing double.
     await request(current.app.getHttpServer())
-      .post('/auth/reset-password')
-      .send({ token, newPassword: 'staple-new-horse-battery' })
+      .post('/auth/sign-in/email-otp')
+      .send({ email: EMAIL, otp: codeIn(codeMail.data), name: 'Some One' })
       .expect(200);
+
+    const [, welcome] = await smtp.waitFor(2);
+    expect(welcome.from).toBe('no-reply@example.com');
+    // nodemailer drops the quotes a plain display name does not need.
+    expect(welcome.data).toMatch(/^From: "?Confidential Router"? <no-reply@example\.com>$/m);
+    expect(welcome.data).toMatch(/^Subject: Welcome to Confidential Router$/m);
+    expect(welcome.data).toContain('multipart/alternative');
+    expect(welcome.data).toMatch(/Content-Type: text\/plain/);
+    expect(welcome.data).toMatch(/Content-Type: text\/html/);
+    expect(welcome.data).toMatch(/Content-Type: image\/png/);
+    expect(welcome.data).toMatch(/Content-ID: <super-protocol-logo>/);
   });
 });
 
@@ -117,21 +112,17 @@ describe('an SMTP server the deployment cannot reach', () => {
     expect((await health(current)).mail).toMatchObject({ provider: 'smtp', state: 'failing', reason: 'unreachable' });
   });
 
-  it('still answers the reset request uniformly, and keeps reporting the failure', async () => {
+  it('answers a code request the same for every address, and keeps reporting the failure', async () => {
     const current = await smtpHarness(await closedPort());
-    await signUp(current).expect(200);
 
-    const known = await request(current.app.getHttpServer())
-      .post('/auth/request-password-reset')
-      .send({ email: EMAIL })
-      .expect(200);
-    const unknown = await request(current.app.getHttpServer())
-      .post('/auth/request-password-reset')
-      .send({ email: 'nobody@example.com' })
-      .expect(200);
-    await current.settleMail();
+    const first = await requestCode(current, EMAIL);
+    const second = await requestCode(current, 'nobody@example.com');
 
-    expect(unknown.body).toEqual(known.body);
+    // Better Auth swallows a failed send, so the requester is told nothing —
+    // the same nothing for an account and for a stranger. Where it shows is
+    // here, and in the log.
+    expect(first.status).toBe(200);
+    expect(second.body).toEqual(first.body);
     expect((await health(current)).mail).toMatchObject({ state: 'failing', reason: 'unreachable' });
   });
 

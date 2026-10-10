@@ -3,7 +3,7 @@ import { createTransport, type Transporter } from 'nodemailer';
 import type { MailSettings } from './mail-settings.js';
 
 /** Which flow a message belongs to — logged, and how tests find the one they want. */
-export type MailKind = 'magic-link' | 'password-reset' | 'welcome';
+export type MailKind = 'magic-link' | 'sign-in-code' | 'welcome';
 
 /** An image the HTML refers to as `cid:<contentId>` rather than by URL. */
 export interface InlineImage {
@@ -29,6 +29,8 @@ export interface MailMessage {
    * parsing a body.
    */
   link?: string;
+  /** The one-time code of a `sign-in-code` message, for the same two readers. */
+  code?: string;
 }
 
 /**
@@ -69,7 +71,7 @@ export class DisabledMailTransport implements MailTransport {
 /** How each kind reads in the log. `Magic link for` is load-bearing: `tools/demo` matches it. */
 const CONSOLE_LABEL: Record<MailKind, string> = {
   'magic-link': 'Magic link',
-  'password-reset': 'Password reset link',
+  'sign-in-code': 'Sign-in code',
   welcome: 'Welcome mail',
 };
 
@@ -82,7 +84,9 @@ export class ConsoleMailTransport implements MailTransport {
   private readonly logger = new Logger(ConsoleMailTransport.name);
 
   async send(message: MailMessage): Promise<void> {
-    this.logger.log(`${CONSOLE_LABEL[message.kind]} for ${message.to}: ${message.link ?? message.subject}`);
+    this.logger.log(
+      `${CONSOLE_LABEL[message.kind]} for ${message.to}: ${message.code ?? message.link ?? message.subject}`,
+    );
   }
 
   async verify(): Promise<void> {}
@@ -200,7 +204,7 @@ export function createMailTransport(settings: MailSettings, nodeEnv = process.en
     case 'console':
       if (nodeEnv === 'production') {
         throw new Error(
-          'The mail provider is "console" in production: sign-in and reset links would be written to the log ' +
+          'The mail provider is "console" in production: sign-in codes and links would be written to the log ' +
             'instead of sent. Configure mail.provider "smtp" or "resend", or "none".',
         );
       }

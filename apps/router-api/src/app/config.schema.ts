@@ -157,17 +157,23 @@ const AuthSchema = z.strictObject({
    * in production, so a deployment cannot silently run on a guessable secret.
    */
   secret: z.string().min(32, 'must be at least 32 characters'),
-  sessionMaxAge: durationMs('720h'),
+  /**
+   * How long a session lives without being used. Rolling: a session in use is
+   * extended, so this is "signed out after this long away", not a hard cap.
+   * Ninety days, because sign-in is a code mailed to an inbox (SUP-269) and
+   * asking for one every few weeks would be a cost with no security in it.
+   */
+  sessionMaxAge: durationMs('2160h'),
   github: OAuthClientSchema.optional(),
   google: OAuthClientSchema.optional(),
   magicLink: z
     .strictObject({
       /**
-       * Whether the console offers a one-time sign-in link. Unset means "while
-       * this deployment can send mail at all", which is what every deployment
-       * has done so far; `false` keeps the sign-in screen password-only on a
-       * deployment that configured a mailer for password reset and the welcome
-       * mail alone (SUP-269).
+       * Whether a one-time sign-in *link* is offered beside the one-time code.
+       * Unset means "while this deployment can send mail at all", which is what
+       * every deployment has done so far; `false` leaves the emailed code as
+       * the only mail sign-in, which is what the marketplace listing ships
+       * (SUP-269).
        */
       enabled: booleanish().optional(),
       /**
@@ -190,50 +196,43 @@ const AuthSchema = z.strictObject({
     })
     .prefault({}),
   /**
-   * Password reset by mail (SUP-269). Only offered while email-and-password
-   * sign-in is on *and* the deployment can send mail — see `passwordResetEnabled`.
+   * Sign-in by a one-time code mailed to the address (SUP-269) — the one way in
+   * besides OAuth and the bootstrap token. On wherever the deployment can send
+   * mail; with `mail.provider: none` it is off and the routes are not mounted.
    */
-  passwordReset: z
+  emailCode: z
     .strictObject({
-      /** How long a reset link stays usable. It is single-use either way. */
-      tokenTtl: durationMs('1h'),
+      /** How long a code stays usable. It is single-use either way. */
+      ttl: durationMs('10m'),
+      /** Wrong guesses a code survives before it is void and a new one has to be asked for. */
+      attempts: integerish().pipe(z.number().int().min(1).max(10)).prefault(3),
       /**
-       * Reset requests one source address may make per minute. A request never
-       * says whether the address it named has an account, so this budget is
-       * what stands between the endpoint and someone using it to mail-bomb.
+       * Requests one source address may make per minute, counted separately
+       * for asking for a code and for trying one. A request never says whether
+       * the address has an account, so this budget is what stands between the
+       * endpoint and someone using it to mail-bomb or to guess.
        */
-      requestsPerMinute: integerish().pipe(z.number().int().positive()).prefault(5),
+      requestsPerMinute: integerish().pipe(z.number().int().positive()).prefault(10),
       /**
-       * Reset mails one recipient can be sent per hour, whoever asks. Beyond it
-       * the request is answered exactly as before and nothing is sent — a
-       * refusal that differed would say the address has an account.
+       * Codes one recipient can be mailed per hour, whoever asks. Beyond it the
+       * request is answered exactly as before and nothing is sent — a refusal
+       * that differed would be a way to silence somebody else's sign-in.
        */
-      mailsPerAddressPerHour: integerish().pipe(z.number().int().positive()).prefault(3),
+      mailsPerAddressPerHour: integerish().pipe(z.number().int().positive()).prefault(10),
     })
     .prefault({}),
   /**
-   * Email and password, for the deployment that has no mail delivery at all.
-   *
-   * Off by default: ADR-004 §1 chose OAuth and magic link, and both are better
-   * than a password. But a bootstrap token creates exactly *one* account, so on
-   * a mailer-less deployment everyone after the first has no way in — and this
-   * is the only sign-in path that needs nothing outside the cluster.
-   *
-   * There is no email verification, deliberately: it is a mail round trip
-   * nobody on a mailer-less deployment could complete. Password reset is the
-   * same round trip, so it is offered only once `mail` can deliver one
-   * (SUP-269) and is hidden otherwise.
+   * Deprecated and ignored (SUP-269): password sign-in is gone, and with it
+   * every stored hash. The key is still accepted — and `loadRouterConfig` says
+   * so once at boot — because every chart before 0.12 renders it, and a strict
+   * schema that refused it would turn an image upgrade into a crash loop.
    */
   password: z
     .strictObject({
-      enabled: booleanish().prefault(false),
-      /**
-       * Better Auth hashes with scrypt, so length is the rule worth having;
-       * composition rules buy less than the characters they cost.
-       */
-      minLength: integerish().pipe(z.number().int().min(8).max(128)).prefault(12),
+      enabled: booleanish().optional(),
+      minLength: integerish().optional(),
     })
-    .prefault({}),
+    .optional(),
   /**
    * Invite-only registration: no account is created without a code that is
    * valid and unredeemed at that moment (SUP-173).

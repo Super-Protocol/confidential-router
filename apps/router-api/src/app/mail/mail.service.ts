@@ -1,10 +1,10 @@
 import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../config.js';
-import { type MailSettings, passwordResetEnabled, resolveMailSettings } from './mail-settings.js';
+import { type MailSettings, resolveMailSettings } from './mail-settings.js';
 import { MAIL_TRANSPORT, type MailKind, type MailTransport } from './mail-transport.js';
 import { RecipientWindow } from './recipient-window.js';
-import { type RenderedMail, renderMagicLinkMail, renderPasswordResetMail, renderWelcomeMail } from './templates.js';
+import { type RenderedMail, renderMagicLinkMail, renderSignInCodeMail, renderWelcomeMail } from './templates.js';
 
 /**
  * Where the mail path stands, as `/health` reports it.
@@ -75,21 +75,22 @@ const HOUR_MS = 3_600_000;
  * Every transactional mail this deployment sends, rendered from one template
  * set and delivered through whichever provider is configured (SUP-269).
  *
- * Two kinds of caller, two contracts. A sign-in link is awaited and its
- * failure is the requester's — they are waiting for it, and a silent success
- * would leave them refreshing an empty inbox. A reset link and a welcome mail
- * are fire-and-forget: the reset request must answer the same way and in the
- * same time whether or not the address has an account, and a sign-up must not
- * fail because the greeting did not go out. Their failures are the operator's,
- * so they go to the log at error level and into `status()`.
+ * Two kinds of caller, two contracts. A sign-in code or link is awaited and
+ * rejects when it could not be sent; what the requester then sees is Better
+ * Auth's decision, and for a code it is nothing — the send route swallows the
+ * failure and answers every address alike. Awaiting leaks nothing either way:
+ * a code is mailed to any address that asks, account or not, so the answer and
+ * the time it takes are the same for both. The welcome mail is fire-and-forget:
+ * a sign-up must not fail because the greeting did not go out. Every failure
+ * is the operator's to see, so each goes to the log at error level and into
+ * `status()`, which `/health` reports.
  */
 @Injectable()
 export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(MailService.name);
   readonly settings: MailSettings;
-  private readonly resetWindow: RecipientWindow;
-  private readonly resetTtlMinutes: number;
-  private readonly resetOffered: boolean;
+  private readonly codeWindow: RecipientWindow;
+  private readonly codeTtlMinutes: number;
   private current: MailStatus;
   /** Sends still in flight, so shutdown — and a test — can wait for them. */
   private readonly pending = new Set<Promise<void>>();
@@ -99,9 +100,8 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
     @Inject(MAIL_TRANSPORT) private readonly transport: MailTransport,
   ) {
     this.settings = resolveMailSettings(config);
-    this.resetWindow = new RecipientWindow(config.auth.passwordReset.mailsPerAddressPerHour, HOUR_MS);
-    this.resetTtlMinutes = Math.max(1, Math.round(config.auth.passwordReset.tokenTtl / 60_000));
-    this.resetOffered = passwordResetEnabled(config);
+    this.codeWindow = new RecipientWindow(config.auth.emailCode.mailsPerAddressPerHour, HOUR_MS);
+    this.codeTtlMinutes = Math.max(1, Math.round(config.auth.emailCode.ttl / 60_000));
     this.current = { provider: this.settings.provider, state: this.enabled ? 'unverified' : 'disabled' };
   }
 
@@ -146,38 +146,26 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
 
   /** A one-time sign-in link. Awaited: the requester is waiting for it. */
   async sendMagicLink(email: string, url: string): Promise<void> {
-    await this.deliver(
-      email,
-      'magic-link',
-      renderMagicLinkMail({ url, consoleUrl: this.settings.consoleUrl }),
-      url,
-      true,
-    );
+    const mail = renderMagicLinkMail({ url, consoleUrl: this.settings.consoleUrl });
+    await this.deliver({ to: email, kind: 'magic-link', mail, link: url, rethrow: true });
   }
 
   /**
-   * A reset link, for a request Better Auth has already matched to an account.
+   * A one-time sign-in code. Awaited, and a failed send rejects — for every
+   * address alike, so it says nothing about who has an account.
    *
-   * Returns before anything is sent. Better Auth awaits this callback only for
-   * an address that exists, so awaiting the SMTP round trip here would make the
-   * answer measurably slower for a real account than for an unknown one — the
-   * enumeration the uniform response is meant to prevent.
+   * A recipient past their hourly allowance is the one case that resolves
+   * without sending: the allowance exists so that nobody can flood somebody
+   * else's inbox, and answering the flooder differently would hand them a way
+   * to tell when the victim's sign-in has been silenced.
    */
-  requestPasswordReset(email: string, token: string): void {
-    if (!this.resetOffered) {
+  async sendSignInCode(email: string, code: string): Promise<void> {
+    if (!this.codeWindow.admit(email)) {
+      this.logger.warn('Sign-in code not sent: this address has had its hourly allowance.');
       return;
     }
-    if (!this.resetWindow.admit(email)) {
-      this.logger.warn('Password reset mail not sent: this address has had its hourly allowance.');
-      return;
-    }
-    const url = `${this.settings.consoleUrl}/reset-password?token=${encodeURIComponent(token)}`;
-    const mail = renderPasswordResetMail({
-      url,
-      consoleUrl: this.settings.consoleUrl,
-      ttlMinutes: this.resetTtlMinutes,
-    });
-    this.track(this.deliver(email, 'password-reset', mail, url, false));
+    const mail = renderSignInCodeMail({ code, consoleUrl: this.settings.consoleUrl, ttlMinutes: this.codeTtlMinutes });
+    await this.deliver({ to: email, kind: 'sign-in-code', mail, code, rethrow: true });
   }
 
   /** The welcome mail after a sign-up. Never fails the sign-up. */
@@ -195,17 +183,26 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
       consoleUrl: this.settings.consoleUrl,
       startingCreditMicros: input.startingCreditMicros,
     });
-    this.track(this.deliver(input.email, 'welcome', mail, this.settings.consoleUrl, false));
+    this.track(
+      this.deliver({ to: input.email, kind: 'welcome', mail, link: this.settings.consoleUrl, rethrow: false }),
+    );
   }
 
-  // biome-ignore lint/complexity/useMaxParams: private, and every argument is distinct.
-  private async deliver(to: string, kind: MailKind, mail: RenderedMail, link: string, rethrow: boolean): Promise<void> {
+  private async deliver(job: {
+    to: string;
+    kind: MailKind;
+    mail: RenderedMail;
+    link?: string;
+    code?: string;
+    rethrow: boolean;
+  }): Promise<void> {
+    const { to, kind, mail, link, code } = job;
     try {
-      await this.transport.send({ to, kind, link, ...mail });
+      await this.transport.send({ to, kind, link, code, ...mail });
       this.record({ state: 'ok' });
     } catch (error) {
       this.reportFailure(kind, error);
-      if (rethrow) {
+      if (job.rethrow) {
         throw error;
       }
     }
