@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { OverviewQuery } from '../../generated/graphql';
-import { overviewData, publishedEndpoint } from '../../test-fixtures';
+import { evidenceSnapshot, overviewData, publishedEndpoint, unpublishedEndpoint } from '../../test-fixtures';
 import { renderWithSession, sessionMock } from '../../test-utils';
 import { OVERVIEW_QUERY, OverviewScreen } from './overview-screen';
 
@@ -78,10 +78,38 @@ describe('OverviewScreen', () => {
     const row = within(await screen.findByRole('table', { name: 'Confidential endpoints' })).getByRole('row', {
       name: /llama-33-70b\.tee\.swarm\.cloud/,
     });
-    expect(within(row).getByText('Intel TDX + H100 CC')).toBeInTheDocument();
+    expect(within(row).getByText('Intel TDX (GCP)')).toBeInTheDocument();
     // Hex, the spelling every Super Protocol surface shows (SUP-115).
     expect(within(row).getByText('sha256:f57936…09a00b')).toBeInTheDocument();
     expect(within(row).getByText('598M')).toBeInTheDocument();
+  });
+
+  it('labels the TEE from the published evidence, never from the config (SUP-270)', async () => {
+    renderOverview([
+      overviewMock(
+        overviewData({
+          endpoints: [
+            {
+              // What production looked like: a TDX label declared, SEV-SNP evidence published.
+              ...publishedEndpoint({
+                tee: 'Intel TDX + H100 CC',
+                latestEvidence: evidenceSnapshot({ tee: 'AMD SEV-SNP (Azure)' }),
+              }),
+              tokensRouted30d: 0,
+            },
+            { ...unpublishedEndpoint({ tee: 'Intel TDX + H100 CC' }), tokensRouted30d: 0 },
+          ],
+        }),
+      ),
+    ]);
+
+    const table = await screen.findByRole('table', { name: 'Confidential endpoints' });
+    const prod = within(table).getByRole('row', { name: /llama-33-70b\.tee\.swarm\.cloud/ });
+    expect(within(prod).getByText('AMD SEV-SNP (Azure)')).toBeInTheDocument();
+    // Nothing published, nothing named: the declared label does not fill the gap.
+    const unpublished = within(table).getByRole('row', { name: /qwen25-72b\.tee\.swarm\.cloud/ });
+    expect(within(unpublished).getAllByText('—').length).toBeGreaterThan(0);
+    expect(within(table).queryByText('Intel TDX + H100 CC')).not.toBeInTheDocument();
   });
 
   it('copies the full hex digest, not the truncated one on screen', async () => {

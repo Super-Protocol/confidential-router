@@ -455,7 +455,7 @@ type Endpoint {
   name: String!
 
   """
-  Operator-declared TEE label from the config. Informational, never a claim.
+  Operator-declared TEE label from the config. Informational, never a claim — the console labels an endpoint with `latestEvidence.tee`, which is read from what the endpoint publishes.
   """
   tee: String!
 
@@ -541,6 +541,11 @@ type EvidenceSnapshot {
 
   """rootCaTeeQuote.format, e.g. intel-tdx-quote-v5."""
   quoteFormat: String
+
+  """
+  The TEE the published evidence names — the hardware branch of the TeeEvidence in the root certificate of the chain, e.g. "AMD SEV-SNP (Azure)". Read, never verified; null when the root carries no evidence this router recognises.
+  """
+  tee: String
 }
 
 type EvidenceSnapshotConnection {
