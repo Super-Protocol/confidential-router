@@ -136,7 +136,7 @@ async function askForCode(page: Page, email = 'developer@example.com'): Promise<
 /** Both steps, ending on the press of "Sign in". */
 async function signInByCode(page: Page, code = MAILED_CODE): Promise<void> {
   await askForCode(page);
-  await page.getByLabel('Code').fill(code);
+  await page.getByLabel('Code', { exact: true }).fill(code);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
 
@@ -316,7 +316,7 @@ test.describe('sign-in', () => {
     await expect(
       page.getByText('We sent a 6-digit code to developer@example.com. It works once and expires in a few minutes.'),
     ).toBeVisible();
-    const field = page.getByLabel('Code');
+    const field = page.getByLabel('Code', { exact: true });
     await expect(field).toBeFocused();
     await expect(field).toHaveAttribute('autocomplete', 'one-time-code');
     await expect(field).toHaveAttribute('inputmode', 'numeric');
@@ -354,7 +354,7 @@ test.describe('sign-in', () => {
 
       await expect(page.locator('#email-code-error')).toContainText('That code no longer works. Send a new one.');
       // Emptied, so the only button left to press is the one that helps.
-      await expect(page.getByLabel('Code')).toHaveValue('');
+      await expect(page.getByLabel('Code', { exact: true })).toHaveValue('');
       await expect(page.getByRole('button', { name: 'Sign in' })).toBeDisabled();
 
       await page.getByRole('button', { name: 'Send a new code' }).click();
@@ -379,7 +379,7 @@ test.describe('sign-in', () => {
     await page.getByRole('button', { name: 'Email me a code' }).click();
 
     await expect(page.locator('#sign-in-error')).toContainText('Too many attempts. Wait a minute and try again.');
-    await expect(page.getByLabel('Code')).toBeHidden();
+    await expect(page.getByLabel('Code', { exact: true })).toBeHidden();
   });
 
   test('goes back from the code step for a different address', async ({ page }) => {
@@ -459,7 +459,7 @@ test.describe('sign-in', () => {
     expect(submitted).toEqual([]);
     await capture(page, 'signup-code');
 
-    await page.getByLabel('Code').fill(MAILED_CODE);
+    await page.getByLabel('Code', { exact: true }).fill(MAILED_CODE);
     await page.getByRole('button', { name: 'Create account' }).click();
 
     // The same request that signs an account in creates this one, so the name

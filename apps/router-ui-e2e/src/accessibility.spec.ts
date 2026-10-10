@@ -95,7 +95,7 @@ test.describe('accessibility', () => {
     await page.goto('/login');
     await page.getByLabel('Email').fill('developer@example.com');
     await page.getByRole('button', { name: 'Email me a code' }).click();
-    await expect(page.getByLabel('Code')).toBeVisible();
+    await expect(page.getByLabel('Code', { exact: true })).toBeVisible();
 
     const violations = await auditPage(page);
     expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
