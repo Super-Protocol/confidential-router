@@ -192,7 +192,14 @@ export function OverviewScreen() {
                       <span className="font-mono text-xs">{endpoint.hostname}</span>
                       <span className="block text-muted-foreground text-xs">{endpoint.name}</span>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs">{endpoint.tee}</TableCell>
+                    {/*
+                      What the published evidence names, never the config's
+                      label: the chart default once put "Intel TDX + H100 CC"
+                      beside an AMD SEV-SNP deployment (SUP-270).
+                    */}
+                    <TableCell className="text-muted-foreground text-xs">
+                      {endpoint.latestEvidence?.tee ?? '—'}
+                    </TableCell>
                     <TableCell>
                       {endpoint.latestEvidence ? (
                         // The digest is the value a user pins in their
