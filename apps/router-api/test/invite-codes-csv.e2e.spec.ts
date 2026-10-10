@@ -5,7 +5,7 @@ import { parseCsv } from '../src/app/activity/csv.js';
 import { InviteCarriedRedemption } from '../src/app/db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { INVITE_CODES_CSV_HEADER, normaliseInviteCode } from '../src/app/invites/index.js';
-import { createHarness, type Harness } from './app-harness.js';
+import { createHarness, type Harness, signUpWithCode } from './app-harness.js';
 import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
 /**
@@ -20,7 +20,6 @@ import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } fro
 
 const BOOTSTRAP_TOKEN = 'bootstrap-token-'.padEnd(40, 'x');
 const OPERATOR = 'admin@confidential-router.local';
-const PASSWORD = 'correct-horse-battery';
 const OLD_LANDING = 'https://old.router.example.com';
 const NEW_LANDING = 'https://router.superprotocol.com';
 const GRANT_MICROS = '25000000';
@@ -56,7 +55,6 @@ const open: Harness[] = [];
 async function deploy(landing: string): Promise<Deployment> {
   const harness = await createHarness({
     env: {
-      CR_API_AUTH__PASSWORD__ENABLED: 'true',
       CR_API_AUTH__BOOTSTRAP_TOKEN: BOOTSTRAP_TOKEN,
       CR_API_AUTH__ADMIN_EMAILS: OPERATOR,
       CR_API_INVITES__LANDING_BASE_URL: landing,
@@ -79,10 +77,11 @@ async function sessionOf(harness: Harness, response: request.Response): Promise<
 }
 
 async function signUp(harness: Harness, email: string, inviteCode?: string): Promise<ConsoleSession> {
-  const response = await request(harness.app.getHttpServer())
-    .post('/auth/sign-up/email')
-    .send({ email, password: PASSWORD, name: email.split('@')[0], ...(inviteCode ? { inviteCode } : {}) })
-    .expect(200);
+  const response = await signUpWithCode(harness, {
+    email,
+    name: email.split('@')[0],
+    ...(inviteCode ? { inviteCode } : {}),
+  }).expect(200);
   return sessionOf(harness, response);
 }
 
