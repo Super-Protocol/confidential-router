@@ -2,7 +2,7 @@ import { ArgsType, Field, Float, ID, Int, ObjectType, registerEnumType } from '@
 import { IsDate, IsOptional, IsString } from 'class-validator';
 import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { Coverage, DigestChange } from '../../../evidence/index.js';
-import { type EvidenceState, fingerprintHex, quoteAgeMs } from '../../../evidence/index.js';
+import { type EvidenceState, fingerprintHex, quoteAgeMs, teeLabelOfBundle } from '../../../evidence/index.js';
 import { PageInfoModel } from '../common/page-info.model.js';
 import { JSONObject } from '../scalars/json.scalar.js';
 
@@ -86,6 +86,15 @@ export class EvidenceSnapshotModel {
   @Field(() => String, { nullable: true, description: 'rootCaTeeQuote.format, e.g. intel-tdx-quote-v5.' })
   quoteFormat!: string | null;
 
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The TEE the published evidence names — the hardware branch of the TeeEvidence in the root ' +
+      'certificate of the chain, e.g. "AMD SEV-SNP (Azure)". Read, never verified; null when the root ' +
+      'carries no evidence this router recognises.',
+  })
+  tee!: string | null;
+
   @Field(() => [String], { description: 'Enclave image digests from the canonical snapshot.' })
   containerImages!: string[];
 
@@ -116,6 +125,9 @@ export class EvidenceSnapshotModel {
       // fingerprint (SUP-115).
       certFingerprintHex: fingerprintHex(snapshot.certFingerprint),
       quoteFormat: snapshot.quoteFormat,
+      // Derived from the stored bundle rather than a column, like the hex
+      // spellings above: the root certificate is already in the row (SUP-270).
+      tee: teeLabelOfBundle(snapshot.bundle),
       containerImages: snapshot.containerImages,
       chain: snapshot.chainSummary.map((certificate, index) => ({
         ...certificate,

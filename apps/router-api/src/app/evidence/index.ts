@@ -17,3 +17,4 @@ export {
 } from './evidence-fetcher.js';
 export { EvidencePollerService, type PollReport } from './evidence-poller.service.js';
 export { type EvidenceState, evidenceStateOf, quoteAgeMs } from './evidence-state.js';
+export { OID_TEE_EVIDENCE, teeLabelOfBundle, teeLabelOfEvidence } from './evidence-tee.js';

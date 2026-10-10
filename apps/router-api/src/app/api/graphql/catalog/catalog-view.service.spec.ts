@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { CatalogModel, CatalogService } from '../../../catalog/catalog.service.js';
 import type { Endpoint } from '../../../db/entities/endpoint.entity.js';
+import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { EvidenceCoverageStatsService, EvidenceService } from '../../../evidence/index.js';
 import type { ExternalCatalogService, ExternalCatalogueEntry } from '../../../external-endpoints/index.js';
 import { CatalogViewService } from './catalog-view.service.js';
@@ -79,20 +81,70 @@ function externalEntry(overrides: Partial<ExternalCatalogueEntry> = {}): Externa
 }
 
 function build(
-  options: { config?: CatalogModel[]; external?: ExternalCatalogueEntry[]; own?: Endpoint | null } = {},
+  options: {
+    config?: CatalogModel[];
+    external?: ExternalCatalogueEntry[];
+    own?: Endpoint | null;
+    latest?: EvidenceSnapshot[];
+  } = {},
 ): CatalogViewService {
   return new CatalogViewService(
     { list: () => options.config ?? [configModel()] } as unknown as CatalogService,
     { listCatalogue: () => options.external ?? [externalEntry()] } as unknown as ExternalCatalogService,
     {
       activeEndpoints: vi.fn().mockResolvedValue([OWN_ENDPOINT]),
-      latestForMany: vi.fn().mockResolvedValue(new Map()),
-      stateOfSnapshot: () => 'NOT_PUBLISHED',
+      latestForMany: vi
+        .fn()
+        .mockResolvedValue(new Map((options.latest ?? []).map((snapshot) => [snapshot.endpointId, snapshot]))),
+      stateOfSnapshot: (snapshot: EvidenceSnapshot | null) => (snapshot ? 'PUBLISHED' : 'NOT_PUBLISHED'),
       ownEndpoint: vi.fn().mockResolvedValue(options.own === undefined ? OWN_ENDPOINT : options.own),
     } as unknown as EvidenceService,
     { tokensByEndpoint: vi.fn().mockResolvedValue(new Map()) } as unknown as EvidenceCoverageStatsService,
   );
 }
+
+/** A stored publication of {@link OWN_ENDPOINT} whose chain ends in `rootPem`. */
+function snapshotWithRoot(rootPem: string): EvidenceSnapshot {
+  return {
+    id: 'snap-1',
+    endpointId: OWN_ENDPOINT.id,
+    externalEndpointId: null,
+    fetchedAt: new Date('2026-10-09T22:00:00.000Z'),
+    issuedAt: new Date('2026-10-09T21:59:00.000Z'),
+    evidenceDigest: `sha256/${'A'.repeat(43)}`,
+    evidenceDigestHex: '0'.repeat(64),
+    certFingerprint: `sha256/${'B'.repeat(43)}`,
+    quoteFormat: null,
+    containerImages: [],
+    chainSummary: [],
+    workloads: null,
+    measurements: null,
+    jws: 'a.b.c',
+    bundle: { certChain: [rootPem] },
+  } as EvidenceSnapshot;
+}
+
+describe('endpointViews', () => {
+  const testdata = (file: string) =>
+    readFileSync(new URL(`../../../evidence/testdata/${file}`, import.meta.url), 'utf8');
+
+  it('labels the endpoint with the TEE its evidence names, not the one the config declares (SUP-270)', async () => {
+    const [view] = await build({
+      latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))],
+    }).endpointViews(null, new Date('2026-10-09T22:00:00.000Z'));
+
+    expect(view?.tee).toBe('Intel TDX + H100 CC');
+    expect(view?.latestEvidence?.tee).toBe('AMD SEV-SNP (Azure)');
+  });
+
+  it('labels a TDX deployment with its own branch', async () => {
+    const [view] = await build({
+      latest: [snapshotWithRoot(testdata('synthetic-tdx-azure-root.pem'))],
+    }).endpointViews(null, new Date('2026-10-09T22:00:00.000Z'));
+
+    expect(view?.latestEvidence?.tee).toBe('Intel TDX (Azure)');
+  });
+});
 
 describe('modelViews', () => {
   it('lists the config models first, then the external ones', async () => {

@@ -159,8 +159,8 @@ function EvidenceDetails({
         <SectionTitle>Enclave</SectionTitle>
         <FieldGrid>
           <Field label="Platform" mono={false}>
-            {endpoint.tee}
-            <span className="text-muted-foreground"> · operator-declared label</span>
+            {snapshot.tee ?? 'not stated'}
+            <span className="text-muted-foreground"> · named by the root certificate’s evidence</span>
           </Field>
           {/*
             The shipped schema has no TCB SVN field. `quoteFormat` is the

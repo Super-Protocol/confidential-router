@@ -37,6 +37,7 @@ export function evidenceSnapshot(
     fetchedAt: '2026-08-31T09:28:12.000Z',
     quoteAgeSeconds: 12,
     quoteFormat: 'intel-tdx-quote-v5',
+    tee: 'Intel TDX (GCP)',
     evidenceDigest: 'sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs',
     evidenceDigestHex: 'f579367d3d6942f03b05d138acbd1e426dd7913a59f2f35cd58b16b87809a00b',
     certFingerprint: 'sha256/PmQ7dR2xWvB9CkE5sM1fTnZ4aYh6UbLp0GjXoIeVwNs',

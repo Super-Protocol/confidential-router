@@ -26,6 +26,9 @@ describe('EvidenceModal', () => {
     expect(within(dialog).getByRole('heading', { name: 'Evidence published' })).toBeInTheDocument();
     expect(within(dialog).getByText('llama-33-70b.tee.swarm.cloud')).toBeInTheDocument();
     expect(within(dialog).getByText('intel-tdx-quote-v5')).toBeInTheDocument();
+    // The platform is the one the evidence names, not the config's label (SUP-270).
+    expect(within(dialog).getByText(/Intel TDX \(GCP\)/)).toBeInTheDocument();
+    expect(dialog.textContent).not.toContain('Intel TDX + H100 CC');
     expect(within(dialog).getByText('vllm-tdx@sha256:6b1f9c04')).toBeInTheDocument();
     expect(within(dialog).getByText(/12s ago/)).toBeInTheDocument();
     expect(within(dialog).getByText(/issued 2026-08-31 09:28 UTC/)).toBeInTheDocument();
