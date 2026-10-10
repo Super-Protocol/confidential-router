@@ -147,7 +147,7 @@ test.describe
       await expect(page.getByText(`We sent a 6-digit code to ${email}.`, { exact: false })).toBeVisible();
 
       usedCode = await readMailedCode(handoff, email);
-      await page.getByLabel('Code').fill(usedCode);
+      await page.getByLabel('Code', { exact: true }).fill(usedCode);
       await page.getByRole('button', { name: 'Sign in' }).click();
 
       // The address had no account: the same request created it, with the
@@ -197,7 +197,7 @@ test.describe
       );
 
       await askForCode(page);
-      await page.getByLabel('Code').fill(usedCode);
+      await page.getByLabel('Code', { exact: true }).fill(usedCode);
       await page.getByRole('button', { name: 'Sign in' }).click();
 
       // The router forgets a code the moment it is used, so a second attempt is
