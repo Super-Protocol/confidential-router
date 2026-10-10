@@ -1021,10 +1021,17 @@ type InviteCampaignStats {
 }
 
 type InviteCodeRedeemer {
+  """Redeemed on another deployment and brought here by a codes CSV import."""
+  carried: Boolean!
+
   """Null when the account no longer exists."""
   email: String
   redeemedAt: DateTime!
-  userId: ID!
+
+  """
+  Null for a redemption imported from another deployment whose address has no account here.
+  """
+  userId: ID
 }
 
 """

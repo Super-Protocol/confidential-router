@@ -191,11 +191,19 @@ async function mockInviteFlow(page: Page, operations: GraphQLFixtures): Promise<
   return recorded;
 }
 
-/** Both steps of the form: an address and a mailed code asked for, then the code handed back. */
+/**
+ * Both steps of the form: an address and a mailed code asked for, then the code handed back.
+ *
+ * The code field is matched exactly. The first step can carry a field labelled
+ * "Invitation code", and a loose `Code` matches that one for as long as the
+ * request for a mailed code is still out — so the mailed code was typed into the
+ * invitation, and the step that then appeared had an empty field and a disabled
+ * button. It only lost the race on a slow, single-worker run, which is CI.
+ */
 async function fillInAndSubmit(page: Page): Promise<void> {
   await page.getByLabel('Email').fill('invited@example.com');
   await page.getByRole('button', { name: 'Email me a code' }).click();
-  await page.getByLabel('Code').fill(MAILED_CODE);
+  await page.getByLabel('Code', { exact: true }).fill(MAILED_CODE);
   await page.getByRole('button', { name: 'Create account' }).click();
 }
 

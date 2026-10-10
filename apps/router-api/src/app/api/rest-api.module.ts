@@ -4,6 +4,7 @@ import { FeedbackModule } from '../feedback/feedback.module.js';
 import { InvitesModule } from '../invites/invites.module.js';
 import { AnalyticsIngestModule } from './analytics/analytics-ingest.module.js';
 import { HealthModule } from './health/health.module.js';
+import { InviteCodesCsvModule } from './invite-codes/invite-codes-csv.module.js';
 import { V1Module } from './v1/v1.module.js';
 
 /**
@@ -20,6 +21,14 @@ import { V1Module } from './v1/v1.module.js';
  * behaviour rather than these lines.
  */
 @Module({
-  imports: [HealthModule, InvitesModule, FeedbackModule, DataMigrationModule, AnalyticsIngestModule, V1Module],
+  imports: [
+    HealthModule,
+    InvitesModule,
+    InviteCodesCsvModule,
+    FeedbackModule,
+    DataMigrationModule,
+    AnalyticsIngestModule,
+    V1Module,
+  ],
 })
 export class RestApiModule {}

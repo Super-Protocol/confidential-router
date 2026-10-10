@@ -490,6 +490,42 @@ with its origin (invitation / bootstrap / open sign-up), and charts sign-ups and
 redemptions from this database. No code value is ever logged: the audit lines name
 the operator, the campaign and the row id.
 
+**Moving codes between deployments** (SUP-272). A redeploy starts from an empty
+database, and codes that were already mailed have to keep working on it. The Codes
+tab has **Export CSV** and **Import CSV** for that — both behind
+`auth.adminEmails`, both audit-logged with the operator and the counts, neither
+ever logging a code. The file holds live codes: handle it like the mailing itself.
+
+- *Export* writes every code, or the ones the tab's campaign / status filter
+  shows: `code` (full value), `url`, `campaign`, `grantUsd`, `status`
+  (`active` / `redeemed` / `expired` / `withdrawn`), `redeemedByEmail`,
+  `redeemedAt`, `createdAt`, then `expiresAt`, `withdrawnAt`, `maxRedemptions`
+  and `note` — the four a code needs to mean the same thing on the other side. A
+  shared code lists each redemption, `;`-separated, in the two `redeemed…` columns.
+- *Import* takes that file and nothing else — another header is refused. It runs
+  as a **dry run first**: per-status counts, duplicates, malformed rows by row
+  number, nothing written. Confirming sends the file's SHA-256 back, so what is
+  imported is the file that was looked at. The write is one transaction; a file
+  with a single malformed row writes nothing.
+- An unredeemed code arrives live with its exact value, credit, seats and expiry.
+  A redeemed or withdrawn one arrives **already spent** — it can never be
+  redeemed on the new deployment — and who redeemed it is kept on the code,
+  matched to an account by email whenever that address exists here. No credit is
+  granted for a carried redemption, and nobody's balance moves.
+- A code already present is skipped and reported, never overwritten.
+- `url` is rebuilt from this deployment's `invites.landingBaseUrl` on every
+  export; the import does not read it. Who issued a code does not travel — the
+  operator's account is the other deployment's.
+
+The same two routes without a browser, with an operator's session cookie:
+
+```bash
+curl -b "$COOKIE" -o codes.csv "$API/admin/invite-codes/export.csv"
+curl -b "$COOKIE" -H 'Content-Type: text/csv' --data-binary @codes.csv "$API/admin/invite-codes/import"
+curl -b "$COOKIE" -H 'Content-Type: text/csv' --data-binary @codes.csv \
+  "$API/admin/invite-codes/import?apply=true&expect=<sha256 from the dry run>"
+```
+
 ```bash
 node apps/router-api/dist/cli/invites.js generate \
   --count 5000 --grant 100 --campaign launch-2026-10-devs \
