@@ -114,6 +114,11 @@ test.describe('API keys', () => {
 
     await page.getByRole('button', { name: 'New key' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
+    // The dialog fades and zooms in over 200ms and is "visible" from the first
+    // frame. Measured mid-fade, its submit button is the brand colour at partial
+    // opacity over the overlay, and axe reports a contrast the finished dialog
+    // does not have — a failure that depended on how busy the machine was.
+    await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
     expect(await seriousViolations(page)).toEqual([]);
   });
 });
