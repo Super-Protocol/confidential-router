@@ -167,3 +167,48 @@ test.describe('the Invitations section, against a live router-api', () => {
     await expect(page.getByRole('button', { name: 'Issue codes' })).toHaveCount(0);
   });
 });
+
+/**
+ * Export & import against the real API (SUP-271): the operator downloads this
+ * deployment's export in the browser and gives the same file back to it. Every
+ * row is already here, so the check has to read as a clean retry — nothing to
+ * create, nothing colliding — and importing it has to change nothing. The move
+ * between two deployments is `data-migration.e2e.spec.ts` in router-api, which
+ * can stand up two; this is the browser, the cookie and the upload for real.
+ */
+test.describe('the Export & import section, against a live router-api', () => {
+  test('downloads the export, and re-imports it as a no-op', async ({ page, baseURL }) => {
+    await useAdminSession(page, baseURL as string, handoff);
+    await page.goto('/admin/migration');
+
+    const pending = page.waitForEvent('download');
+    await page.getByTestId('export-button').click();
+    const download = await pending;
+    expect(download.suggestedFilename()).toMatch(/^router-export-\d{8}-\d{4}-.+\.json\.gz$/);
+    const sha = (await page.getByTestId('export-sha').innerText()).trim();
+    expect(sha).toMatch(/^[0-9a-f]{64}$/);
+
+    await page.getByTestId('import-file').setInputFiles(await download.path());
+    await page.getByTestId('import-check').click();
+
+    await expect(page.getByTestId('import-verdict')).toHaveText('Ready to import — nothing written yet');
+    await expect(page.getByTestId('import-sha')).toHaveText(sha);
+    const accounts = page.getByTestId('import-section-users').getByRole('cell');
+    const inFile = Number(await accounts.nth(1).innerText());
+    expect(inFile).toBeGreaterThanOrEqual(2);
+    await expect(accounts.nth(2)).toHaveText('0');
+    await expect(accounts.nth(3)).toHaveText(String(inFile));
+    await expect(accounts.nth(4)).toHaveText('0');
+
+    await page.getByTestId('import-apply').click();
+    await expect(page.getByTestId('import-verdict')).toContainText('Imported');
+    await expect(page.getByTestId('import-section-creditLedger').getByRole('cell').nth(2)).toHaveText('0');
+  });
+
+  test('shows a member nothing of it', async ({ page }) => {
+    await page.goto('/admin/migration');
+
+    await expect(page.getByTestId('data-migration-restricted')).toBeVisible();
+    await expect(page.getByTestId('export-button')).toHaveCount(0);
+  });
+});
