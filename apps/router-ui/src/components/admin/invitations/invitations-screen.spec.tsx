@@ -149,6 +149,7 @@ describe('InvitationsScreen', () => {
                 userId: 'u-1',
                 email: 'dev@example.com',
                 redeemedAt: '2026-10-09T09:00:00.000Z',
+                carried: false,
               },
             ],
           }),
@@ -169,6 +170,188 @@ describe('InvitationsScreen', () => {
 
     await userEvent.click(within(row).getByRole('button', { name: 'Reveal code ABCD-••••-••••' }));
     expect(within(row).getByTestId('invite-code')).toHaveTextContent(CODE);
+  });
+
+  it('exports what the filters show: every code by default, the chosen campaign and status after', async () => {
+    renderScreen({
+      mocks: [
+        codesMock([code()]),
+        {
+          request: {
+            query: ADMIN_INVITE_CODES_QUERY,
+            variables: { campaign: null, status: 'REDEEMED', offset: 0, limit: 50 },
+          },
+          result: { data: { adminInviteCodes: { __typename: 'AdminInviteCodePage', totalCount: 0, nodes: [] } } },
+        },
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Codes' }));
+    const link = await screen.findByRole('link', { name: 'Export CSV' });
+    expect(new URL(link.getAttribute('href') ?? '').pathname).toBe('/admin/invite-codes/export.csv');
+    expect(new URL(link.getAttribute('href') ?? '').search).toBe('');
+
+    await userEvent.click(screen.getByRole('combobox', { name: 'Status' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Redeemed' }));
+
+    await waitFor(() =>
+      expect(new URL(screen.getByRole('link', { name: 'Export CSV' }).getAttribute('href') ?? '').search).toBe(
+        '?status=redeemed',
+      ),
+    );
+  });
+
+  it('marks a redemption carried over by an import, linked or not', async () => {
+    renderScreen({
+      mocks: [
+        codesMock([
+          code({
+            status: 'REDEEMED',
+            redemptionCount: 1,
+            issuedByEmail: null,
+            redeemers: [
+              {
+                __typename: 'InviteCodeRedeemer',
+                userId: null,
+                email: 'earlier@example.com',
+                redeemedAt: '2026-10-01T09:00:00.000Z',
+                carried: true,
+              },
+            ],
+          }),
+        ]),
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Codes' }));
+    const row = await screen.findByTestId('invite-code-row-code-1');
+
+    expect(row).toHaveTextContent('earlier@example.com');
+    expect(row).toHaveTextContent('imported');
+    expect(within(row).getByTitle(/no account with this address here/)).toBeInTheDocument();
+  });
+
+  it('imports a CSV in two steps: the dry-run report first, the write only on confirm', async () => {
+    const report = {
+      sha256: 'f'.repeat(64),
+      applied: false,
+      ok: true,
+      totalRows: 6,
+      toCreate: { active: 3, redeemed: 1, expired: 0, withdrawn: 1 },
+      createCount: 5,
+      campaigns: 2,
+      redemptionsLinked: 0,
+      redemptionsUnlinked: 1,
+      duplicateCount: 1,
+      duplicates: [{ row: 4, code: 'WXYZ-••••-••••', reason: 'already_present' }],
+      errorCount: 0,
+      errors: [],
+    };
+    const calls: { url: URL; init: RequestInit }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: URL, init: RequestInit) => {
+        calls.push({ url: new URL(url), init });
+        const applied = new URL(url).searchParams.get('apply') === 'true';
+        return new Response(JSON.stringify({ ...report, applied }), { status: 200 });
+      }),
+    );
+    renderScreen({ mocks: [codesMock([code()])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Codes' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Import CSV' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: 'Import' })).toBeDisabled();
+
+    const file = new File(['code,url\r\n'], 'invite-codes-all.csv', { type: 'text/csv' });
+    await userEvent.upload(within(dialog).getByLabelText('Codes CSV'), file);
+
+    expect(await within(dialog).findByTestId('import-report')).toHaveTextContent('6 rows in the file');
+    expect(within(dialog).getByTestId('import-count-unredeemed')).toHaveTextContent('3');
+    expect(within(dialog).getByTestId('import-count-redeemed')).toHaveTextContent('1');
+    expect(within(dialog).getByTestId('import-count-withdrawn')).toHaveTextContent('1');
+    expect(within(dialog).getByRole('list', { name: 'Skipped duplicates' })).toHaveTextContent(
+      'Row 4 · WXYZ-••••-•••• · already on this deployment',
+    );
+    // Only the dry run so far: nothing asked the API to write.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url.pathname).toBe('/admin/invite-codes/import');
+    expect(calls[0].url.search).toBe('');
+    expect(calls[0].init).toMatchObject({ method: 'POST', credentials: 'include', body: 'code,url\r\n' });
+    expect(calls[0].init.headers).toEqual({ 'Content-Type': 'text/csv' });
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Import 5 codes' }));
+
+    expect(await within(dialog).findByRole('heading', { name: 'Invitation codes imported' })).toBeInTheDocument();
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url.searchParams.get('apply')).toBe('true');
+    expect(calls[1].url.searchParams.get('expect')).toBe(report.sha256);
+    vi.unstubAllGlobals();
+  });
+
+  it('shows malformed rows by number and will not import the file', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              sha256: 'a'.repeat(64),
+              applied: false,
+              ok: false,
+              totalRows: 2,
+              toCreate: { active: 1, redeemed: 0, expired: 0, withdrawn: 0 },
+              createCount: 1,
+              campaigns: 1,
+              redemptionsLinked: 0,
+              redemptionsUnlinked: 0,
+              duplicateCount: 0,
+              duplicates: [],
+              errorCount: 1,
+              errors: [{ row: 3, message: '“code” is not an invitation code.' }],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    renderScreen({ mocks: [codesMock([code()])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Codes' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Import CSV' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.upload(
+      within(dialog).getByLabelText('Codes CSV'),
+      new File(['x'], 'bad.csv', { type: 'text/csv' }),
+    );
+
+    expect(await within(dialog).findByRole('list', { name: 'Malformed rows' })).toHaveTextContent(
+      'Row 3: “code” is not an invitation code.',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Import' })).toBeDisabled();
+    vi.unstubAllGlobals();
+  });
+
+  it('says why a file that is not a codes export was refused', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ message: 'This is not an invitation codes export.' }), { status: 400 }),
+      ),
+    );
+    renderScreen({ mocks: [codesMock([code()])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Codes' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Import CSV' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.upload(
+      within(dialog).getByLabelText('Codes CSV'),
+      new File(['a,b'], 'x.csv', { type: 'text/csv' }),
+    );
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('This is not an invitation codes export.');
+    expect(within(dialog).queryByTestId('import-report')).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it('withdraws an unredeemed code by its id', async () => {
