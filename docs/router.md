@@ -16,7 +16,7 @@ about publication, never a verdict.
 - [Evidence](#evidence)
 - [Auth](#auth)
 - [First sign-in on a fresh deployment](#first-sign-in-on-a-fresh-deployment)
-- [Email and password, where there is no mail](#email-and-password-where-there-is-no-mail)
+- [Sign-in by emailed code](#sign-in-by-emailed-code)
 - [Billing and Stripe](#billing-and-stripe)
 - [The OpenAI-compatible surface](#the-openai-compatible-surface)
 - [Running it](#running-it)
@@ -173,8 +173,9 @@ screens are empty. That is the honest state, and it is what a laptop shows.
 
 ## Auth
 
-OAuth and magic link, and — where a deployment has neither — a bootstrap token
-and email with a password. Sessions live in the database. Better Auth owns four
+A one-time code mailed to the address, OAuth, and the deployment's own bootstrap
+token. There are no passwords, and no hash is stored (SUP-269). Sessions live in
+the database. Better Auth owns four
 tables and its own migration (ADR-004).
 
 ```yaml
@@ -183,8 +184,9 @@ auth:
   secret: ${CR_API_AUTH_SECRET}          # required in production
   github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
+  sessionMaxAge: 2160h                   # 90 days, rolling
   magicLink:
-    enabled: true                        # default: while `mail` has a provider
+    enabled: false                       # a link beside the code; default: while `mail` has a provider
 
 mail:
   provider: smtp                         # none | console | resend | smtp
@@ -192,11 +194,15 @@ mail:
   smtp: { host: smtp.example.com, port: 587, security: starttls, user: …, password: ${CR_API_SMTP_PASSWORD} }
 ```
 
-Magic-link sign-in is on wherever [mail](#mail) can be sent, unless
-`magicLink.enabled: false` keeps the sign-in screen password-only. With
-`mail.provider: none` it is off altogether — `/auth/sign-in/magic-link` is not
-mounted — which is what lets a deployment with no mail provider boot in
-production at all.
+[Sign-in by emailed code](#sign-in-by-emailed-code) is on wherever
+[mail](#mail) can be sent. A one-time *link* is offered beside it unless
+`magicLink.enabled: false`, which is what the marketplace listing sets. With
+`mail.provider: none` both are off altogether — their routes are not mounted —
+and the deployment signs in by OAuth, if configured, and the bootstrap token.
+
+A session lasts `auth.sessionMaxAge` without being used and is extended while it
+is: ninety days by default, as a persistent cookie, so closing the browser does
+not sign anyone out.
 
 Every new user gets a personal workspace on first sign-in. `/v1` takes no
 cookies and no query parameters — a `Bearer sk-tee-v1-…` key, and nothing else.
@@ -205,26 +211,29 @@ response.
 
 The console asks `signInOptions` — the one public query it makes before there is
 a session — for which of these paths this deployment actually offers, and renders
-only those, `password` and `passwordMinLength` among them. A "Continue with
-GitHub" button on a deployment with no GitHub app can only end in an error.
+only those: `emailCode` (with `emailCodeLength`), `magicLink`, `github`,
+`google`, `bootstrap` and `adminRecovery`. A "Continue with GitHub" button on a
+deployment with no GitHub app can only end in an error.
 
 ## Mail
 
-Every transactional mail — the sign-in link, the password reset link, the
-welcome mail after a sign-up — is rendered from one template set
+Every transactional mail — the sign-in code, the sign-in link where one is
+offered, the welcome mail after a sign-up — is rendered from one template set
 (`apps/router-api/src/app/mail/templates.ts`: Super Protocol logo, inline CSS,
 a dark-mode block, and a plain-text part with the same content) and sent through
 one provider (SUP-269):
 
 | `mail.provider` | Sends through | Notes |
 |---|---|---|
-| `none` | nothing | Magic link and password reset are not offered; no welcome mail. |
-| `console` | the log | Development only: refused in production, because a link in a log is a link anyone with the log can use. |
+| `none` | nothing | No sign-in by code or link — the deployment is bootstrap-token-only; no welcome mail. |
+| `console` | the log | Development only: refused in production, because a code in a log is a sign-in for anyone with the log. |
 | `resend` | the Resend HTTP API | Needs `mail.resendApiKey`. |
 | `smtp` | any SMTP server | `mail.smtp`: `host`, `port`, `security` (`starttls` — the default, upgrade required; `tls` — port 465; `none`), `user`, `password`. |
 
-Links in a mail point at the console — `mail.consoleUrl`, by default the first
-entry of `server.validClientOrigins` — never at the API.
+Where a mail names the console — the welcome mail's button, the footer of every
+mail — it is `mail.consoleUrl`, by default the first entry of
+`server.validClientOrigins`, never the API. The sign-in code mail carries no
+link at all: the code is typed into the page that asked for it.
 
 `mail` is new; before it the provider lived in `auth.magicLink`
 (`mailer`, `from`, `resendApiKey`). Those keys are still read whenever
@@ -244,33 +253,53 @@ On a Swarm cluster space, outbound connections to public addresses are open and
 private ranges are not, so the SMTP host has to resolve to a public address;
 some clouds also block outbound port 25, which is what 587 and 465 are for.
 
-## Password reset
+## Sign-in by emailed code
 
-Offered only where both halves exist: `auth.password.enabled` and a
-`mail.provider` other than `none`. Anywhere else `/auth/request-password-reset`
-and `/auth/reset-password` are 404 and `signInOptions.passwordReset` is false,
-so the console shows no "Forgot password?" link.
+How an account signs in, and how one is created (SUP-269). On wherever
+`mail.provider` is not `none`.
 
 ```yaml
 auth:
-  passwordReset:
-    tokenTtl: 1h                  # single-use either way
-    requestsPerMinute: 5          # per source address; beyond it, 429
-    mailsPerAddressPerHour: 3     # per recipient; beyond it, nothing is sent
+  emailCode:
+    ttl: 10m                      # single-use either way
+    attempts: 3                   # wrong guesses before a code is void
+    requestsPerMinute: 10         # per source address; asking and trying counted apart
+    mailsPerAddressPerHour: 10    # per recipient; beyond it, nothing is sent
 ```
 
-1. `POST /auth/request-password-reset {"email": …}` answers
-   `200 {"status": true, …}` whether or not the address has an account. The mail
-   is sent in the background, so the answer takes the same time either way.
-2. The mail links to `<console>/reset-password?token=…`. Any `redirectTo` in the
-   request is ignored: the link depends on nothing the requester sent.
-3. The console posts `POST /auth/reset-password {"token": …, "newPassword": …}`.
-   The token is consumed — a second use is `400 INVALID_TOKEN`, as is an expired
-   one — and every session the account had is revoked.
+1. `POST /auth/email-otp/send-verification-otp {"email": …, "type": "sign-in"}`
+   answers `200 {"success": true}` for every address, account or not, and mails
+   it a six-digit code. Only a digest of the code is stored.
+2. `POST /auth/sign-in/email-otp {"email": …, "otp": …}` answers with the
+   session cookie. The code is consumed: a second use, a wrong code and an
+   expired one are all a 400 (`INVALID_OTP`, `OTP_EXPIRED`), and after `attempts`
+   wrong guesses the code is void (`TOO_MANY_ATTEMPTS`).
 
-It works on an invite-only deployment, because resetting is signing in, not
-signing up; and it gives an account that never had a password (the bootstrapped
-administrator, a magic-link account) its first one.
+**Sign-up is the same two requests.** An address with no account is created when
+its code comes back; the second request may carry `name`, and `inviteCode` for
+[an invitation](#invitation-codes). On an
+[invite-only](#invite-only-registration) deployment that is the whole rule: an
+unknown address needs a valid, unredeemed invitation *and* the code, in that one
+request, and an existing account needs only the code. A refused sign-up has
+still spent its code, so the console checks the invitation before it asks for
+one.
+
+**What it does not tell anyone.** The send route answers identically for every
+address and is rate-limited per source (429). One recipient is mailed at most
+`mailsPerAddressPerHour` codes — past that the answer is the same 200 and
+nothing is sent, so the limit cannot be used to learn or to silence anything. A
+send the mail server refused is also a 200: it shows in the log and in
+`/health`, not to the requester.
+
+**Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
+`/auth/change-password`, `/auth/request-password-reset` and
+`/auth/reset-password` are 404 on every deployment. `auth.password` is still
+accepted in the configuration and ignored, with a warning at boot, so a config
+written for an older version loads. The password hashes older versions stored
+are deleted right after the auth migrations — at boot where migrations run at
+boot, and by `router-api-migrate` otherwise. The accounts themselves are
+untouched: the same address signs in with a mailed code, and the first time it
+does its address becomes a verified one, which it never was under a password.
 
 ## First sign-in on a fresh deployment
 
@@ -309,86 +338,40 @@ refused with 403.
 
 What the endpoint promises:
 
-- **Once.** The first account closes it. `user.email` is unique, so two
-  simultaneous requests cannot both win — the loser gets the same 404 as anyone
-  arriving afterwards.
+- **One account.** The token creates an account exactly once, on an empty
+  deployment, at `bootstrapEmail`. `user.email` is unique, so two simultaneous
+  requests cannot make two.
+- **Break-glass afterwards (SUP-269).** Once that account exists, the same token
+  signs back into it — into that account and no other, and it creates nothing.
+  Sign-in is otherwise a code mailed to the address, so this is the
+  administrator's way in when no code can be delivered: a deployment with
+  `mail.provider: none`, or one whose mail server is down. The console offers it
+  as "Administrator: use the first-sign-in token" while
+  `signInOptions.adminRecovery` is true. Unset `bootstrapToken` to close it.
 - **404, not 403.** With no token configured the endpoint is not mounted at all;
-  once the deployment has an owner it answers 404. Neither state confirms to an
-  anonymous caller that a bootstrap token exists. A *wrong* token while
-  bootstrap is genuinely open answers 401, because at that point availability is
-  already public (`signInOptions.bootstrap`) and a typo deserves a retry.
+  on a deployment that has users but not the bootstrap account it answers 404.
+  Neither state confirms to an anonymous caller that a bootstrap token exists. A
+  *wrong* token where the token could do something answers 401, because at that
+  point availability is already public (`signInOptions`) and a typo deserves a
+  retry.
 - **Constant-time, and never logged.** The token is compared through SHA-256
   digests, so neither its value nor its length leaks through timing, and it is
   not written to the log, echoed in a response or exposed by any query.
 - **Rate-limited** to five attempts a minute per source, in production.
 
 Afterwards the account is an ordinary one: it owns its workspace and it is the
-account a magic link to `bootstrapEmail` signs into, so a deployment that later
-configures a mailer or an OAuth app is not left with a stranded admin. It is
-also the *only* account the token can make — everyone after the first gets in
-through OAuth, a magic link, or
-[email and password](#email-and-password-where-there-is-no-mail). There is
-no separate "admin" role — this product's only role is workspace ownership.
-Clearing `bootstrapToken` is optional; the endpoint is already closed.
+account a code mailed to `bootstrapEmail` signs into — so `bootstrapEmail` should
+be a mailbox somebody reads on any deployment that has a mailer. It is also the
+*only* account the token can make or open: everyone else gets in through
+[an emailed code](#sign-in-by-emailed-code) or OAuth. There is no separate
+"admin" role in the workspace model — the operator-only screens are gated on
+`auth.adminEmails`.
 
-## Email and password, where there is no mail
-
-A bootstrap token creates exactly one account. On a deployment that also has no
-mailer and no OAuth app, everyone after that first person has no way in at all —
-which is what `auth.password.enabled` is for. It is the only sign-in path that
-needs nothing outside the cluster.
-
-```yaml
-auth:
-  password:
-    enabled: true      # default false; the marketplace listing turns it on
-    minLength: 12      # the router's rule, reported to the console
-mail:
-  provider: none       # no mail on this deployment, and none needed
-```
-
-With it on, `POST /auth/sign-up/email` creates the account, its personal
-workspace and a session in one request, and `POST /auth/sign-in/email` signs it
-in afterwards. The console renders both forms — `/login` and `/signup` — from
-`signInOptions.password`.
-
-```bash
-curl -i -X POST https://api.example.com/auth/sign-up/email \
-  -H 'content-type: application/json' \
-  -H 'origin: https://console.example.com' \
-  -d '{"email":"someone@example.com","password":"…","name":"Some One"}'
-# 200, Set-Cookie: cr_session=…
-```
-
-What this path deliberately does **not** have:
-
-- **No email verification.** The address is never proven, because proving it is
-  a mail round trip and the whole premise here is that there is no mail. Treat
-  addresses on such a deployment as self-asserted labels, not as identities.
-- **No password reset without mail.** `/auth/request-password-reset` and
-  `/auth/reset-password` are 404 on a deployment with no mailer, for the same
-  reason. A forgotten password there is a new account. Configure
-  [mail](#mail) and [password reset](#password-reset) turns on by itself.
-- **No open door where it is off.** `enabled: false` is the default, and then
-  `/auth/sign-up/email`, `/auth/sign-in/email`, `/auth/change-password` and
-  `/auth/verify-password` are all 404 — not "provider disabled", because an
-  unavailable path here is not a thing that exists.
-
-Two consequences worth deciding about before turning it on:
-
-- **Anyone who can reach the console can create an account.** There are no
-  invitations in v1, so a deployment on a public hostname with passwords on is
-  open for sign-up. It is no risk to anyone else's data — a new account gets its
-  own empty workspace, no credit and no access to anybody's keys — but it is
-  rows in your database. Put something in front of the hostname if that matters.
-- **The bootstrap window closes on the first account, whoever created it.**
-  `POST /auth/bootstrap` is gated on the deployment having no user at all. Claim
-  the deployment with the token before publishing the hostname, not after.
-
-Passwords are hashed with Better Auth's scrypt; `auth.password.minLength` is the
-only rule the router enforces, and the console reads it from `signInOptions`
-rather than restating it, so raising it does not leave the form advertising a
-floor the API refuses.
+**A deployment with `mail.provider: none` is bootstrap-token-only.** Nobody but
+the bootstrap account can sign in unless an OAuth app is configured, because
+there is no other credential: no code can be mailed and there are no passwords.
+That is a workable evaluation setup for one person and nothing more; configure
+[mail](#mail) to let anyone else in.
 
 ## Billing and Stripe
 
@@ -472,8 +455,8 @@ decision and not a purchase, so none of the billing provider's no-minting rules
 (SUP-167) are touched. A production launch that wants credit to come only from
 invitations sets it to `0`. See `docs/contracts/data-model.md` invariant 8.
 
-**Mind what it costs on an open deployment.** Password sign-up does not verify the
-address, so with registration open each throwaway account collects the credit:
+**Mind what it costs on an open deployment.** An emailed code proves a mailbox, and
+mailboxes are free, so with registration open each throwaway address collects the credit:
 the grant is once per *account*, not per person. Pair a non-zero value with
 invite-only registration (`auth.requireInviteForSignUp`) where that matters, or
 keep it small enough to be an evaluation allowance rather than a prize.
@@ -563,7 +546,7 @@ alone.
 **In the console** (SUP-145) the code is never typed. `/signup` reads `?invite=`,
 keeps a copy in `localStorage` so it survives the console's own navigations, and
 appends it to whichever sign-up path the deployment offers — the request body for
-a password sign-up, `callbackURL` for a magic link, the `cr_invite` cookie before
+an emailed-code sign-up, `callbackURL` for a magic link, the `cr_invite` cookie before
 an OAuth redirect.
 
 That cookie's `Domain` attribute is load-bearing rather than optional. A cookie
@@ -575,7 +558,7 @@ console therefore scopes it to the longest suffix the two hosts share —
 `router.superprotocol.com` for `console.…` and `api.…` — which is the tightest
 scope both can be reached at. Where there is no such suffix (unrelated registrable
 domains, or an IP literal) the cookie stays host-only, OAuth sign-up carries no
-code, and the post-sign-up screen says so; password and magic-link sign-up are
+code, and the post-sign-up screen says so; emailed-code and magic-link sign-up are
 unaffected, because they carry the code in the request itself. This is the one
 attribute no local topology can check — compose and the e2e stack share a host,
 the single arrangement where host-only crosses — so it is pinned by a unit test on
@@ -596,7 +579,7 @@ auth:
   requireInviteForSignUp: true
 ```
 
-While it is on, every sign-up path — password, magic link, OAuth callback — is
+While it is on, every sign-up path — emailed code, magic link, OAuth callback — is
 refused before the `user` row exists unless the request carries a code that is
 usable at that moment. The check runs in Better Auth's
 `databaseHooks.user.create.before`, which is the one seam all three paths pass
@@ -622,7 +605,7 @@ real one, and keeps a withdrawal from announcing itself. The public lookup
 `GET /v1/invites/:code` is unchanged and still collapses every unusable code into
 one `unavailable`.
 
-A password sign-up reads the code out of the 403 body (`{ code, message }`). The
+An emailed-code sign-up reads the refusal out of the 403 body (`{ code, message }`). The
 other two finish as navigations and cannot be answered with a body, so Better Auth
 redirects to the error callback the console named, with `?error=<code>` on it —
 the same three values either way, which is what lets the console have one set of
@@ -639,8 +622,8 @@ sentence that opened by suggesting a typo. So the button is held only while the
 lookup has *no* answer — in flight, or unreachable — and a settled `unavailable`
 submits: the gate runs before the insert, so the 403 costs nothing and is the one
 place the distinction exists. It is not a new oracle either, because that POST
-already answers the three codes to any caller, at the price of an email and a
-password per guess; the free `GET /v1/invites/:code` stays collapsed.
+already answers the three codes to any caller, at the price of a mailed code
+per guess; the free `GET /v1/invites/:code` stays collapsed.
 
 **One window the check does not cover.** The pre-check is a read, and the seat is
 still claimed by the atomic `UPDATE` inside the grant that follows the insert. It
