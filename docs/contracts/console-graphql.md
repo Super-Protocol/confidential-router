@@ -353,13 +353,16 @@ SUP-75 deltas above, these are the differences between this document's outline a
   `tokensRouted30d` on the same query; an anonymous one gets `0`, because there is no workspace to
   attribute usage to.
 - **`signInOptions`** — new (SUP-95), and public, like `models`. Which sign-in paths this deployment
-  offers: `bootstrap`, `github`, `google`, `magicLink`, `password` (SUP-112), plus `passwordMinLength`.
-  The console asks before it has a session, so it can render only the paths that can work — a deployment
-  with no OAuth app and no mailer would otherwise show two buttons and a form that all end in an error.
-  `bootstrap` is the only one that is not configuration alone: it is true while `auth.bootstrapToken` is
-  set *and* the deployment has no user, which is the window `POST /auth/bootstrap` is open in. Neither the
-  token nor any password is ever reported; `passwordMinLength` is a rule, not a secret, and reporting it
-  is what keeps the sign-up form from advertising a floor the router refuses.
+  offers: `emailCode` with `emailCodeLength` (SUP-269 — a one-time code mailed to the address, which is
+  how accounts sign in and how they are created), `magicLink`, `github`, `google`, `bootstrap` and
+  `adminRecovery`. The console asks before it has a session, so it can render only the paths that can
+  work — a deployment with no OAuth app and no mailer would otherwise show two buttons and a form that all
+  end in an error. `bootstrap` and `adminRecovery` are the two that are not configuration alone:
+  `bootstrap` is true while `auth.bootstrapToken` is set *and* the deployment has no user, and
+  `adminRecovery` while it is set and the account it created exists — the two states in which
+  `POST /auth/bootstrap` does something. The token itself is never reported. `password`,
+  `passwordMinLength`, `me.hasPassword` and the `setPassword` mutation were removed with password sign-in
+  (SUP-269): there is nothing left for them to describe.
 - **`gatekeeperRelease`** — new, and the Gatekeeper screen's only query. Version, notes URL, checksum
   manifest and one `GatekeeperDownload` per platform, read from GitHub Releases and cached
   (`gatekeeper.*` in the router config). `stale: true` means GitHub could not be reached and these are the

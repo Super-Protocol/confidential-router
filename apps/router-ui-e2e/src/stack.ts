@@ -24,6 +24,13 @@ export interface StackHandoff {
   apiBaseUrl: string;
   apiOrigin: string;
   consoleOrigin: string;
+  /**
+   * The router's log, mirrored to a file. Sign-in is a code mailed to the
+   * address (SUP-269), and this stack's mailer is the development one that
+   * writes each mail to the log instead of sending it — so this file is the
+   * inbox. See {@link readMailedCode}.
+   */
+  routerLogFile: string;
   sessionCookie: string;
   /** The operator in `auth.adminEmails`; deliberately not {@link email}. */
   adminSessionCookie: string;
@@ -89,6 +96,48 @@ export async function readHandoff(): Promise<StackHandoff> {
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+/** How long a mailed code may take to reach the log file after the request for it was answered. */
+const MAILED_CODE_TIMEOUT_MS = 15_000;
+
+/**
+ * The sign-in code most recently mailed to an address, read out of the router's
+ * log — the only inbox a live stack has.
+ *
+ * The log is pino's JSON lines, so the sentence is matched wherever it sits in
+ * one rather than parsed out of a field. The *last* match is the one returned:
+ * a code replaces the one before it, and the log keeps both. Polled, because
+ * the router answers the request for a code before the mirror has necessarily
+ * flushed the line that carries it.
+ *
+ * A spec that asks for a second code for the same address has to wait for the
+ * new one itself — this cannot tell a code that has not arrived yet from the
+ * one that was already there. Every case here mails each address once.
+ */
+export async function readMailedCode(handoff: StackHandoff, email: string): Promise<string> {
+  const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`Sign-in code for ${escaped}: (\\d{6})`, 'g');
+  const deadline = Date.now() + MAILED_CODE_TIMEOUT_MS;
+  for (;;) {
+    let log = '';
+    try {
+      log = readFileSync(handoff.routerLogFile, 'utf8');
+    } catch {
+      // Not written yet: the same wait as a line that has not been.
+    }
+    const last = [...log.matchAll(pattern)].at(-1);
+    if (last) {
+      return last[1];
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `no sign-in code for ${email} in ${handoff.routerLogFile} after ${MAILED_CODE_TIMEOUT_MS}ms — ` +
+          'the stack needs the "console" mail provider, and the address must not have run out its hourly allowance',
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 

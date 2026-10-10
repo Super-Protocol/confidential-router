@@ -12,7 +12,18 @@ import { consoleUrl, DEPLOYMENTS, type ImageDeployment } from './image-origins';
  */
 
 const SIGN_IN_OPTIONS = {
-  data: { signInOptions: { bootstrap: false, github: true, google: true, magicLink: true } },
+  data: {
+    signInOptions: {
+      bootstrap: false,
+      adminRecovery: false,
+      github: true,
+      google: true,
+      emailCode: true,
+      emailCodeLength: 6,
+      magicLink: true,
+      inviteRequired: false,
+    },
+  },
 };
 
 /**
