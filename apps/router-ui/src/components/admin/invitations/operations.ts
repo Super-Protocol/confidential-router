@@ -58,6 +58,7 @@ export const ADMIN_INVITE_CODES_QUERY = graphql(`
           userId
           email
           redeemedAt
+          carried
         }
       }
     }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, type SelectQueryBuilder } from 'typeorm';
+import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { User } from '../db/entities/user.entity.js';
@@ -18,10 +19,16 @@ export type InviteCodeStatus = 'active' | 'redeemed' | 'expired' | 'withdrawn';
 export type SignUpOrigin = 'invite' | 'bootstrap' | 'open';
 
 export interface InviteCodeRedeemer {
-  userId: string;
+  /**
+   * Null for a redemption carried over by a CSV import (SUP-272) whose address
+   * belongs to no account on this deployment.
+   */
+  userId: string | null;
   /** Null when the account has since been deleted from Better Auth's table. */
   email: string | null;
   redeemedAt: Date;
+  /** Redeemed on another deployment and imported, rather than redeemed here. */
+  carried: boolean;
 }
 
 export interface AdminInviteCode {
@@ -114,6 +121,8 @@ export class InviteAdminService {
       .getManyAndCount();
 
     const redemptions = await this.redemptionsOf(rows.map((row) => row.id));
+    const carried = await this.carriedOf(rows.map((row) => row.id));
+    const accounts = await this.accountsOf(carried.flatMap((row) => (row.email ? [row.email] : [])));
     const emails = await this.emailsOf([
       ...redemptions.map((redemption) => redemption.userId),
       ...rows.flatMap((row) => (row.issuedByUserId ? [row.issuedByUserId] : [])),
@@ -134,13 +143,24 @@ export class InviteAdminService {
         disabledAt: row.disabledAt,
         note: row.note,
         issuedByEmail: row.issuedByUserId ? (emails.get(row.issuedByUserId) ?? null) : null,
-        redeemers: redemptions
-          .filter((redemption) => redemption.inviteCodeId === row.id)
-          .map((redemption) => ({
-            userId: redemption.userId,
-            email: emails.get(redemption.userId) ?? null,
-            redeemedAt: redemption.redeemedAt,
-          })),
+        redeemers: [
+          ...carried
+            .filter((redemption) => redemption.inviteCodeId === row.id)
+            .map((redemption) => ({
+              userId: redemption.email ? (accounts.get(redemption.email) ?? null) : null,
+              email: redemption.email,
+              redeemedAt: redemption.redeemedAt,
+              carried: true,
+            })),
+          ...redemptions
+            .filter((redemption) => redemption.inviteCodeId === row.id)
+            .map((redemption) => ({
+              userId: redemption.userId,
+              email: emails.get(redemption.userId) ?? null,
+              redeemedAt: redemption.redeemedAt,
+              carried: false,
+            })),
+        ],
       })),
     };
   }
@@ -218,11 +238,50 @@ export class InviteAdminService {
     if (codeIds.length === 0) {
       return [];
     }
-    // One page of codes is at most a few hundred ids, under the chunk size.
-    return this.dataSource.getRepository(InviteRedemption).find({
-      where: { inviteCodeId: In([...codeIds]) },
-      order: { redeemedAt: 'ASC' },
-    });
+    const redemptions: InviteRedemption[] = [];
+    for (let at = 0; at < codeIds.length; at += ID_CHUNK) {
+      redemptions.push(
+        ...(await this.dataSource.getRepository(InviteRedemption).find({
+          where: { inviteCodeId: In(codeIds.slice(at, at + ID_CHUNK)) },
+          order: { redeemedAt: 'ASC' },
+        })),
+      );
+    }
+    return redemptions;
+  }
+
+  /** Redemptions a CSV import carried over from another deployment, oldest first. */
+  private async carriedOf(codeIds: readonly string[]): Promise<InviteCarriedRedemption[]> {
+    const carried: InviteCarriedRedemption[] = [];
+    for (let at = 0; at < codeIds.length; at += ID_CHUNK) {
+      carried.push(
+        ...(await this.dataSource.getRepository(InviteCarriedRedemption).find({
+          where: { inviteCodeId: In(codeIds.slice(at, at + ID_CHUNK)) },
+          order: { redeemedAt: 'ASC', id: 'ASC' },
+        })),
+      );
+    }
+    return carried;
+  }
+
+  /**
+   * The account behind each of these addresses, keyed by address — how a carried
+   * redemption is linked to the person once they exist here. Read every time
+   * rather than stored, so someone who signs up after the import is linked too.
+   */
+  async accountsOf(addresses: readonly string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(addresses)];
+    const accounts = new Map<string, string>();
+    for (let at = 0; at < unique.length; at += ID_CHUNK) {
+      const users = await this.dataSource.getRepository(User).find({
+        where: { email: In(unique.slice(at, at + ID_CHUNK)) },
+        select: { id: true, email: true },
+      });
+      for (const user of users) {
+        accounts.set(user.email.toLowerCase(), user.id);
+      }
+    }
+    return accounts;
   }
 
   private async emailsOf(userIds: readonly string[]): Promise<Map<string, string>> {

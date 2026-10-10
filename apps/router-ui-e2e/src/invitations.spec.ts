@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, type TestInfo, test } from '@playwright/test';
 import { signIn, viewerIsAdmin } from './fixtures';
+import { API_ORIGIN } from './origins';
 
 /**
  * The admin Invitations section in a browser (SUP-268): the gate, the three
@@ -19,6 +20,13 @@ async function blockingViolations(page: Page) {
       help: violation.help,
       nodes: violation.nodes.map((node) => node.target.join(' ')),
     }));
+}
+
+/** A screenshot kept with the run's output — what a PR for this screen shows a reviewer. */
+async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  const path = testInfo.outputPath(`${name}.png`);
+  await page.screenshot({ path });
+  await testInfo.attach(name, { path, contentType: 'image/png' });
 }
 
 const CODE = 'ABCD-EFGH-JKMN';
@@ -107,6 +115,7 @@ const INVITATION_OPERATIONS = {
               userId: 'u-2',
               email: 'dev@example.com',
               redeemedAt: '2026-10-09T09:00:00.000Z',
+              carried: false,
             },
           ],
         },
@@ -194,6 +203,82 @@ test.describe('the Invitations section', () => {
     await expect(table).not.toContainText(CODE);
     await table.getByRole('button', { name: 'Reveal code ABCD-••••-••••' }).click();
     await expect(table).toContainText(CODE);
+  });
+
+  test('exports what the Codes tab shows, and imports a CSV only after its dry run is confirmed', async ({
+    page,
+    baseURL,
+  }, testInfo) => {
+    const report = {
+      sha256: 'c0de'.repeat(16),
+      applied: false,
+      ok: true,
+      totalRows: 53,
+      toCreate: { active: 47, redeemed: 3, expired: 0, withdrawn: 1 },
+      createCount: 51,
+      campaigns: 2,
+      redemptionsLinked: 1,
+      redemptionsUnlinked: 2,
+      duplicateCount: 2,
+      duplicates: [
+        { row: 7, code: 'ABCD-••••-••••', reason: 'already_present' },
+        { row: 31, code: 'PQRS-••••-••••', reason: 'repeated_in_file' },
+      ],
+      errorCount: 0,
+      errors: [],
+    };
+    const imports: { search: string; contentType: string | undefined; body: string | null }[] = [];
+    await page.route(`${API_ORIGIN}/admin/invite-codes/import*`, async (route) => {
+      const request = route.request();
+      if (request.method() === 'OPTIONS') {
+        return route.fulfill({
+          status: 204,
+          headers: {
+            'access-control-allow-origin': baseURL as string,
+            'access-control-allow-credentials': 'true',
+            'access-control-allow-headers': 'content-type',
+            'access-control-allow-methods': 'POST',
+          },
+        });
+      }
+      const url = new URL(request.url());
+      imports.push({ search: url.search, contentType: request.headers()['content-type'], body: request.postData() });
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': baseURL as string, 'access-control-allow-credentials': 'true' },
+        body: JSON.stringify({ ...report, applied: url.searchParams.get('apply') === 'true' }),
+      });
+    });
+    await openAsAdmin(page, baseURL as string);
+    await page.getByRole('tab', { name: 'Codes' }).click();
+
+    const exportLink = page.getByRole('link', { name: 'Export CSV' });
+    await expect(exportLink).toHaveAttribute('href', `${API_ORIGIN}/admin/invite-codes/export.csv`);
+    await page.getByRole('combobox', { name: 'Status' }).click();
+    await page.getByRole('option', { name: 'Withdrawn' }).click();
+    await expect(exportLink).toHaveAttribute('href', `${API_ORIGIN}/admin/invite-codes/export.csv?status=withdrawn`);
+    await shot(page, testInfo, 'codes-tab-export-import');
+
+    await page.getByRole('button', { name: 'Import CSV' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeDisabled();
+    const csv = 'code,url,campaign\r\n';
+    await dialog
+      .getByLabel('Codes CSV')
+      .setInputFiles({ name: 'invite-codes-all-2026-10-10.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+
+    await expect(dialog.getByTestId('import-report')).toContainText('53 rows in the file · 51 codes to import');
+    await expect(dialog.getByTestId('import-count-unredeemed')).toHaveText('47');
+    await expect(dialog.getByRole('list', { name: 'Skipped duplicates' })).toContainText('Row 7 · ABCD-••••-••••');
+    expect(imports).toEqual([{ search: '', contentType: 'text/csv', body: csv }]);
+    await shot(page, testInfo, 'import-dry-run');
+
+    await dialog.getByRole('button', { name: 'Import 51 codes' }).click();
+
+    await expect(dialog.getByRole('heading', { name: 'Invitation codes imported' })).toBeVisible();
+    expect(imports[1]).toEqual({ search: `?apply=true&expect=${report.sha256}`, contentType: 'text/csv', body: csv });
+    await shot(page, testInfo, 'import-applied');
   });
 
   for (const theme of ['dark', 'light'] as const) {
