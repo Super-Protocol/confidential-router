@@ -104,3 +104,30 @@ export function inviteUrl({ landingBaseUrl, campaign, code }: InviteUrlParts): s
   url.searchParams.set('utm_campaign', campaign);
   return url.toString();
 }
+
+/**
+ * The shape a campaign tag must have: a lowercase slug of at most 64 characters.
+ *
+ * Tags are read back by people and grouped on, so a stray space or capital would
+ * silently split one campaign's numbers into two rows. The CLI and the console's
+ * issuing form both check against this one rule.
+ */
+export const INVITE_CAMPAIGN_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+export function isInviteCampaignTag(value: string): boolean {
+  return INVITE_CAMPAIGN_PATTERN.test(value);
+}
+
+/**
+ * A code with everything but its first group hidden: `ABCD-••••-••••`.
+ *
+ * For the places that need to *name* a code without *carrying* it — an audit log
+ * line, above all. Four of twelve characters leave 30^8 ≈ 6.6 × 10^11
+ * possibilities, which at the lookup's rate limit is no head start on guessing
+ * the rest.
+ */
+export function maskInviteCode(normalised: string): string {
+  return formatInviteCode(
+    normalised.slice(0, GROUP_LENGTH) + '•'.repeat(Math.max(normalised.length - GROUP_LENGTH, 0)),
+  );
+}

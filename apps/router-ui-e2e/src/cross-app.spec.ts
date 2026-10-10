@@ -9,7 +9,7 @@
  * Run by the `cross-app` Playwright project only — see `playwright.config.ts`.
  */
 import { expect, test } from '@playwright/test';
-import { readHandoff, type StackHandoff, useSession } from './stack';
+import { readHandoff, type StackHandoff, useAdminSession, useSession } from './stack';
 
 let handoff: StackHandoff;
 
@@ -97,5 +97,73 @@ test.describe('the console, against a live router-api', () => {
     await page.goto('/logs');
     await expect(page.getByRole('heading', { level: 1, name: 'Logs' })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'Llama 3.3 70B Instruct' }).first()).toBeVisible();
+  });
+});
+
+/**
+ * The Invitations section against the real API (SUP-268): an operator issues a
+ * code in the browser, somebody signs up with it, and the redemption is then
+ * visible from both sides — the code's row and the account's — and in the
+ * statistics. Driven as the stack's operator, who is a different person from
+ * the member every other case here signs in as.
+ */
+test.describe('the Invitations section, against a live router-api', () => {
+  test('issues a code, and finds its redemption in the codes, the sign-ups and the statistics', async ({
+    page,
+    baseURL,
+    request,
+  }) => {
+    await useAdminSession(page, baseURL as string, handoff);
+    const campaign = `e2e-${Date.now().toString(36)}`;
+    const email = `${campaign}@example.com`;
+
+    await page.goto('/admin/invitations');
+    await page.getByRole('button', { name: 'Issue codes' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Credit per code (USD)').fill('25');
+    await dialog.getByLabel('Campaign tag').fill(campaign);
+    await dialog.getByRole('button', { name: 'Issue codes' }).click();
+    await expect(dialog.getByText('Invitation code issued')).toBeVisible();
+    const code = (await dialog.getByTestId('issued-code').innerText()).trim();
+    expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+
+    // Somebody redeems it, the way the console's own sign-up form does.
+    const created = await request.post(`${handoff.apiBaseUrl}/auth/sign-up/email`, {
+      headers: { origin: handoff.consoleOrigin },
+      data: { email, password: 'correct-horse-battery', name: 'Invited', inviteCode: code },
+    });
+    expect(created.status(), await created.text()).toBe(200);
+
+    await page.getByRole('tab', { name: 'Codes' }).click();
+    const codeRow = page
+      .getByRole('table', { name: 'Invitation codes' })
+      .getByRole('row')
+      .filter({ hasText: campaign });
+    await expect(codeRow).toContainText('Redeemed');
+    await expect(codeRow).toContainText(email);
+    await expect(codeRow).toContainText(handoff.adminEmail);
+    // Masked until asked.
+    await expect(codeRow).not.toContainText(code);
+    await codeRow.getByRole('button', { name: /^Reveal code/ }).click();
+    await expect(codeRow).toContainText(code);
+
+    await page.getByRole('tab', { name: 'Sign-ups' }).click();
+    const accountRow = page.getByRole('table', { name: 'Sign-ups' }).getByRole('row').filter({ hasText: email });
+    await expect(accountRow).toContainText('Invitation');
+    await expect(accountRow).toContainText(campaign);
+
+    await page.getByRole('tab', { name: 'Statistics' }).click();
+    const campaignRow = page.getByRole('table', { name: 'Campaigns' }).getByRole('row').filter({ hasText: campaign });
+    await expect(campaignRow).toContainText('100%');
+    await expect(campaignRow).toContainText('$25');
+    await expect(page.getByRole('img', { name: /Sign-ups per day by origin/ })).toBeVisible();
+  });
+
+  test('shows a member nothing of it', async ({ page }) => {
+    await page.goto('/admin/invitations');
+
+    await expect(page.getByTestId('invitations-restricted')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Issue codes' })).toHaveCount(0);
   });
 });

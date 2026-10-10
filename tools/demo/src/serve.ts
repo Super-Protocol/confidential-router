@@ -23,6 +23,7 @@
  */
 import { copyFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { signIn } from './console-client.js';
 import {
   addTrustedMeasurement,
   type ExternalStand,
@@ -88,6 +89,10 @@ const stackOptions: RouterStackOptions = {
   routerPort: ROUTER_PORT,
   extraClientOrigins: [CONSOLE_E2E_ORIGIN],
   email: SESSION_EMAIL,
+  // Password sign-up, so a browser suite can create an account in one request —
+  // the Invitations flow redeems a code that way (SUP-268). Magic links are read
+  // out of this process's log, which a Playwright spec cannot reach.
+  env: { CR_API_AUTH__PASSWORD__ENABLED: 'true' },
   // `docs/quickstart.md` drives the deny paths with curl against `/__mock/…`.
   controlApi: true,
   echoRouterLog: process.env.CR_DEMO_VERBOSE === '1',
@@ -97,12 +102,18 @@ let stand: ExternalStand | undefined;
 let stack: RouterStack;
 let external: ExternalHandoff | undefined;
 
+let adminCookie: string;
+
 if (WITH_EXTERNAL) {
   stand = await startExternalStand({ adminEmail: ADMIN_EMAIL, stack: { ...stackOptions } });
   stack = stand.stack;
   external = await registerUpstream(stand);
+  adminCookie = stand.admin.cookie;
 } else {
-  stack = await startRouterStack({ ...stackOptions });
+  // The same operator as the external stand's, so the admin-only screens have a
+  // session to be driven with in either mode — and still not the browser's.
+  stack = await startRouterStack({ ...stackOptions, adminEmails: [ADMIN_EMAIL] });
+  adminCookie = (await signIn(stack.router, ADMIN_EMAIL, stack.session.origin)).cookie;
 }
 
 /**
@@ -172,6 +183,8 @@ const handoff: StackHandoff = {
   apiOrigin: API_E2E_ORIGIN,
   consoleOrigin: CONSOLE_E2E_ORIGIN,
   sessionCookie: stack.session.cookie,
+  adminSessionCookie: adminCookie,
+  adminEmail: ADMIN_EMAIL,
   workspaceId: stack.session.workspaceId,
   email: stack.session.email,
   apiKeySecret: stack.credential.secret,
