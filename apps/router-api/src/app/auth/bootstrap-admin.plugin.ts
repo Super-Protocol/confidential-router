@@ -1,8 +1,15 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import type { BetterAuthPlugin } from 'better-auth';
 import { APIError, createAuthEndpoint, formCsrfMiddleware } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
 import * as z from 'zod';
+
+/**
+ * Nest's logger, so the audit line below lands in the same stream as the rest
+ * of the application's log rather than in Better Auth's own.
+ */
+const logger = new Logger('BootstrapAdmin');
 
 /** Path under `AUTH_BASE_PATH`, so the full route is `POST /auth/bootstrap`. */
 export const BOOTSTRAP_PATH = '/bootstrap';
@@ -105,6 +112,14 @@ export function bootstrapAdmin(options: BootstrapAdminOptions): BetterAuthPlugin
           if (existing) {
             // Break-glass: the token's own account, and only that one.
             user = existing.user;
+            // A static credential has just opened an administrator session, and
+            // nothing mailed anybody to say so. An operator has to be able to
+            // see that it happened and from where — the account and the source,
+            // never the token.
+            logger.warn(
+              `Break-glass sign-in: the bootstrap token opened a session for ${user.email} ` +
+                `from ${sourceOf(ctx.headers)}. If nobody on your side did this, rotate auth.bootstrapToken.`,
+            );
           } else {
             try {
               user = await ctx.context.internalAdapter.createUser(
@@ -145,4 +160,14 @@ export function bootstrapAdmin(options: BootstrapAdminOptions): BetterAuthPlugin
     // makes an offline-speed search of a 16-character secret pointless.
     rateLimit: [{ pathMatcher: (path) => path === BOOTSTRAP_PATH, window: 60, max: 5 }],
   };
+}
+
+/**
+ * Where a request came from, for the audit line: the first hop the proxy
+ * reported, which is the same reading `sign-up-invite.ts` takes. It is a label
+ * for an operator, not something a decision rests on.
+ */
+function sourceOf(headers: Headers | undefined): string {
+  const forwarded = headers?.get('x-forwarded-for')?.split(',')[0]?.trim();
+  return forwarded || headers?.get('x-real-ip') || 'an unknown address';
 }

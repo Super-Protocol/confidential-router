@@ -5,8 +5,9 @@
  * because the whole feature is defined by the state of the `user` table and a
  * suite that shared one would only be able to test the first assertion.
  */
+import { Logger } from '@nestjs/common';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE_NAME } from '../src/app/auth/index.js';
 import { createHarness, type Harness, pathOf, signIn } from './app-harness.js';
 
@@ -88,6 +89,28 @@ describe('POST /auth/bootstrap, on an empty deployment', () => {
       .set('Cookie', sessionCookiesOf(again))
       .send({ query: '{ me { email } }' });
     expect(users.body.data.me.email).toBe(BOOTSTRAP_EMAIL);
+  });
+
+  it('leaves an audit line when the token is used as break-glass — and only then, and never the token', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const lines = (): string[] =>
+      warn.mock.calls.map((call) => String(call[0])).filter((line) => /Break-glass/.test(line));
+    const current = await marketplaceHarness();
+
+    // The first claim is not break-glass: there was no account to break into.
+    await bootstrap(current, TOKEN).expect(200);
+    expect(lines()).toEqual([]);
+
+    // A wrong token opens nothing, so there is nothing to audit.
+    await bootstrap(current, 'some-other-token-entirely').expect(401);
+    expect(lines()).toEqual([]);
+
+    await bootstrap(current, TOKEN).set('x-forwarded-for', '203.0.113.7, 10.0.0.1').expect(200);
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]).toContain(BOOTSTRAP_EMAIL);
+    expect(lines()[0]).toContain('203.0.113.7');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(TOKEN);
+    warn.mockRestore();
   });
 
   it('answers 401 for a wrong token after the claim too, and opens nothing', async () => {

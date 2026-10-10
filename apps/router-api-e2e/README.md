@@ -24,8 +24,9 @@ project asserts and it deliberately leaves the rest alone.
 | `gateway.e2e.spec.ts` | the OpenAI SDK ↔ the built process: completions, streaming, what reaches the backend, the error table, a revoked key |
 | `console.e2e.spec.ts` | the console's API ↔ the gateway: money bought on Credits is money `/v1` spends, and a metered generation is the one Activity shows |
 | `evidence.e2e.spec.ts` | the evidence poller ↔ a live HTTPS publisher: retrieval, digest history, a publisher that goes away, coverage attribution |
-| `bootstrap.e2e.spec.ts` | first sign-in on an empty deployment: the token must not reach the log, and the CSRF guard is only observable outside a test runner |
-| `password.e2e.spec.ts` | the same two, for email and password |
+| `bootstrap.e2e.spec.ts` | the deployment's own token on an empty deployment: the first sign-in, then the break-glass sign-in into that one account and its audit line (SUP-269). The token must not reach the log, and the CSRF guard is only observable outside a test runner |
+| `bootstrap-missing.e2e.spec.ts` | the one state in which that token does nothing: users exist and its account is not among them — a 404, right token or wrong |
+| `email-code.e2e.spec.ts` | sign-in by emailed code (SUP-269), the code read out of the process's log the way a developer reads it: account creation, the ninety-day session, a used and a wrong code, uniform answers, no password route left, and no session token in the log |
 | `invites.e2e.spec.ts` | `dist/cli/invites.js` ↔ the running process: a second webpack entry point can stop existing while every in-process test stays green, so the CLI mints a campaign and each URL in its CSV is resolved against the live lookup endpoint |
 | `external-endpoints.e2e.spec.ts` | router-api ↔ the **real** egress sidecar ↔ an upstream in another cloud (ADR-008): the config router-api renders is a file the shipped binary accepts, an admin's trust-list edit reaches a running proxy, and a connection the gatekeeper closes mid-stream comes back as `attestation_revoked` |
 
