@@ -44,10 +44,8 @@ function requestCode(current: Harness, email: string) {
   return request(server(current)).post('/auth/email-otp/send-verification-otp').send({ email, type: 'sign-in' });
 }
 
-function signIn(current: Harness, email: string, otp: string, extra: Record<string, unknown> = {}) {
-  return request(server(current))
-    .post('/auth/sign-in/email-otp')
-    .send({ email, otp, ...extra });
+function signIn(current: Harness, email: string, otp: string) {
+  return request(server(current)).post('/auth/sign-in/email-otp').send({ email, otp });
 }
 
 async function me(current: Harness, cookies: string[]) {
@@ -83,7 +81,10 @@ describe('signing in with an emailed code', () => {
     expect(mail?.html).toContain(mail?.code);
     expect(mail?.subject).not.toContain(mail?.code);
 
-    const signedIn = await signIn(current, EMAIL, lastCodeFor(current, EMAIL), { name: 'Some One' }).expect(200);
+    const signedIn = await request(server(current))
+      .post('/auth/sign-in/email-otp')
+      .send({ email: EMAIL, otp: lastCodeFor(current, EMAIL), name: 'Some One' })
+      .expect(200);
     const cookies = cookiesOf(signedIn);
     expect(cookies.join(';')).toContain(SESSION_COOKIE_NAME);
 
