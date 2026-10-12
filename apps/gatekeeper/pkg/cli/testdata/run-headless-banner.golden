@@ -1,4 +1,4 @@
-gatekeeper running, from $TMP/config.yaml — every endpoint is verified before anything is forwarded.
+gatekeeper running, from $TMP/config.yaml — every endpoint below is verified before anything is forwarded.
 
   ENDPOINT      POINT YOUR CLIENT AT      VERIFIED UPSTREAM
   llama-33-70b  http://127.0.0.1:8443/v1  https://llama-33-70b.tee.swarm.cloud

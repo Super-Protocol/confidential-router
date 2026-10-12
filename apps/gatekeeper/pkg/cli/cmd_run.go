@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -94,12 +95,18 @@ func newRunCommand(g *globals) *cobra.Command {
 		// Every endpoint is started individually so that one address already in
 		// use leaves that endpoint broken — and visible as broken — instead of
 		// taking the whole gatekeeper down with it.
+		//
+		// Which ones failed is carried to the summary rather than only logged:
+		// a banner that lists an address nothing is bound to is a false
+		// confirmation of the very step it exists to confirm.
+		failed := make(map[string]bool, len(cfg.Endpoints))
 		for _, ep := range cfg.Endpoints {
 			if err := supervisor.Start(ctx, ep.Name); err != nil {
 				fmt.Fprintf(runLog, "starting %s: %v\n", ep.Name, err)
+				failed[ep.Name] = true
 			}
 		}
-		printRunning(runLog, g.path(), cfg)
+		printRunning(runLog, g.path(), cfg, failed)
 
 		if headless {
 			err = runHeadless(ctx, cmd.OutOrStdout(), supervisor)
@@ -138,13 +145,45 @@ func newRunCommand(g *globals) *cobra.Command {
 // it a headless run printed nothing at all until the first event, so the last
 // step of the console's sequence was the only one whose output never confirmed
 // that it had worked (SUP-300).
-func printRunning(w io.Writer, path string, cfg *config.Config) {
-	fmt.Fprintf(w, "gatekeeper running, from %s — every endpoint is verified before anything is forwarded.\n\n", path)
+//
+// Only the endpoints that actually started are offered as an address to point a
+// client at. `failed` is the set that did not, and it is the whole reason this
+// function takes an argument it could have derived from the config: the first
+// version printed every configured endpoint, so a port already in use produced
+// `bind: address already in use` and then, two lines below, `POINT YOUR CLIENT
+// AT http://127.0.0.1:8787/v1` — an address nothing of ours was listening on.
+// A confirmation that is wrong about the one thing it confirms is worse than no
+// confirmation at all, which is what this replaced.
+func printRunning(w io.Writer, path string, cfg *config.Config, failed map[string]bool) {
 	rows := make([][]string, 0, len(cfg.Endpoints))
+	broken := make([]string, 0, len(failed))
 	for _, ep := range cfg.Endpoints {
+		if failed[ep.Name] {
+			broken = append(broken, fmt.Sprintf("%s (%s)", ep.Name, ep.Listen))
+			continue
+		}
 		rows = append(rows, []string{"  " + ep.Name, "http://" + ep.Listen + "/v1", ep.Upstream})
 	}
+
+	// Nothing bound: the process stays up — the dashboard still reports, and a
+	// SIGHUP can still fix the file — but it is serving nobody, and the summary
+	// has to lead with that rather than with the word "running".
+	if len(rows) == 0 {
+		fmt.Fprintf(w, "gatekeeper started from %s, and nothing is listening: "+
+			"every endpoint failed to start.\n", path)
+		fmt.Fprintf(w, "\n! not listening: %s — the reason for each is above.\n", strings.Join(broken, ", "))
+		fmt.Fprintf(w, "\nNext: free the address, or change `listen:` for it in %s, then start again.\n", path)
+		fmt.Fprintln(w, "Press Ctrl-C to stop.")
+		return
+	}
+
+	fmt.Fprintf(w, "gatekeeper running, from %s — every endpoint below is verified "+
+		"before anything is forwarded.\n\n", path)
 	table(w, []string{"  ENDPOINT", "POINT YOUR CLIENT AT", "VERIFIED UPSTREAM"}, rows)
+	if len(broken) > 0 {
+		fmt.Fprintf(w, "\n! not listening: %s — the reason for each is above, and nothing of ours "+
+			"answers there.\n", strings.Join(broken, ", "))
+	}
 	fmt.Fprintln(w, "\nPress Ctrl-C to stop.")
 }
 

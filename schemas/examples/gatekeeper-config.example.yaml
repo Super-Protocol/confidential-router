@@ -46,7 +46,7 @@ defaults:
 
 endpoints:
   - name: llama-33-70b
-    listen: 127.0.0.1:8443
+    listen: 127.0.0.1:8787
     upstream: https://llama-33-70b.tee.swarm.cloud
     # Pinned evidenceDigest values, in the sha256:<hex> form the gatekeeper prints
     # and writes back (canonical sha256/<base64url> and bare hex still load).
