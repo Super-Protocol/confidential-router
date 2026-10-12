@@ -67,9 +67,10 @@ func newTrustMeasurementsListCommand(g *globals) *cobra.Command {
 
 		return g.printer(cmd, *asJSON).emit(views, func(w io.Writer) {
 			if len(views) == 0 {
-				fmt.Fprintln(w, "No pinned measurements. Only roots whose measurement Super Protocol signed")
-				fmt.Fprintln(w, "are accepted on their own evidence. To add one:")
-				fmt.Fprintln(w, "  gatekeeper trust measurements add --from-upstream <endpoint>")
+				fmt.Fprintf(w, "No pinned measurements in %s. Only roots whose measurement\n"+
+					"Super Protocol signed are accepted on their own evidence.\n", store.Path())
+				nextStep(w, "accept a cloud the registry has not signed, after reviewing its report",
+					"gatekeeper trust measurements add --from-upstream <endpoint>")
 				return
 			}
 			rows := make([][]string, 0, len(views))
@@ -140,13 +141,20 @@ func newTrustMeasurementsAddCommand(g *globals) *cobra.Command {
 		}
 		out := cmd.OutOrStdout()
 		if !added {
-			fmt.Fprintf(out, "%s is already pinned; nothing to do\n", measurement)
-			return nil
+			fmt.Fprintf(out, "%s is already pinned in %s; nothing to do.\n", measurement, store.Path())
+		} else {
+			fmt.Fprintf(out, "Pinned measurement %s in %s\n", measurement, store.Path())
+			fmt.Fprintln(cmd.ErrOrStderr(),
+				"note: this measurement is accepted because you pinned it, not because Super Protocol "+
+					"signed it; reports and policies see it as \"attested (operator-pinned)\"")
 		}
-		fmt.Fprintf(out, "Pinned measurement %s in %s\n", measurement, store.Path())
-		fmt.Fprintln(cmd.ErrOrStderr(),
-			"note: this measurement is accepted because you pinned it, not because Super Protocol "+
-				"signed it; reports and policies see it as \"attested (operator-pinned)\"")
+		// --from-upstream names the endpoint this was taken from, so the check
+		// that it now passes can be printed as a command rather than a shape.
+		target := fromUpstream
+		if target == "" {
+			target = "<endpoint>"
+		}
+		nextStep(out, "check that the endpoint now verifies", "gatekeeper verify "+target)
 		return nil
 	}
 	return cmd
