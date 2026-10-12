@@ -23,7 +23,7 @@ import type { BridgeOutcome } from './extension-bridge';
  *
  * ADR-002 forbids the *router* from asserting a verdict, and nothing here breaks
  * that: each of these is the viewer's own agent reporting what it did, and the
- * router never learns the answer.
+ * answer is never sent to the router.
  */
 
 export type TierId = 'page' | 'extension' | 'gatekeeper';

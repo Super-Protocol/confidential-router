@@ -43,8 +43,9 @@ export function DataFlowDiagram() {
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand-emphasis" aria-hidden="true" />
         <p>
           <span className="font-medium text-foreground">Evidence path.</span> The endpoint publishes its signed bundle
-          at <code className="font-mono">/.well-known/swarm-evidence</code>; the gatekeeper fetches it and decides. The
-          verdict stays on your machine — the router is never told that anyone verified it.
+          at <code className="font-mono">/.well-known/swarm-evidence</code>. The gatekeeper fetches and verifies it on
+          your computer, and forwards your request only if verification succeeds. The verdict itself never leaves your
+          machine.
         </p>
       </div>
     </figure>

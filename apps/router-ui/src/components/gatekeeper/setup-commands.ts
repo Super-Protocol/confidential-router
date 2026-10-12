@@ -102,13 +102,13 @@ export function setupSteps(input: SetupInput): SetupStep[] {
       command: 'gatekeeper init',
       title: 'Write a starter config',
       detail:
-        'Creates ~/.config/confidential-gatekeeper/config.yaml with the default policy. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
+        'Creates confidential-gatekeeper/config.yaml inside your user configuration directory and prints the path it wrote \u2014 ~/.config on Linux, ~/Library/Application Support on macOS, %AppData% on Windows. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
     },
     {
       id: 'endpoint',
       command: `gatekeeper endpoint add ${ENDPOINT_NAME} --upstream ${upstream} --listen ${GATEKEEPER_LISTEN}`,
       title: 'Front this endpoint',
-      detail: `The upstream is this deployment’s API origin; ${GATEKEEPER_LISTEN} is what your agents will point at instead. Nothing is registered with the router at any point — it never learns that a gatekeeper exists.`,
+      detail: `The upstream is this deployment’s API origin; ${GATEKEEPER_LISTEN} is what your agents will point at instead. Nothing is registered with the router at any point, and the request it forwards is your client’s own, so no header reveals that a gatekeeper is in the path.`,
     },
     evidenceDigestHex
       ? {
