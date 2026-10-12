@@ -21,6 +21,36 @@ export interface KeyFormValues {
 
 export type KeyFormErrors = Partial<Record<keyof KeyFormValues, string>>;
 
+/**
+ * Where the API's own field names appear on this form.
+ *
+ * The server refuses an input by naming the property it refused
+ * (`validation-error.ts`), and only this table knows that `spendLimitMicros` is
+ * the box labelled "Spend limit (USD)". Without it the dialog could only put a
+ * sentence about a field at the bottom of the form and leave the reader to find
+ * which one (SUP-295 item 2).
+ */
+const FORM_FIELD_OF: Record<string, keyof KeyFormValues> = {
+  name: 'name',
+  modelIds: 'modelIds',
+  spendLimitMicros: 'spendLimit',
+  expiresAt: 'expiresAt',
+  requestsPerMinute: 'requestsPerMinute',
+  tokensPerMinute: 'tokensPerMinute',
+};
+
+/** The server's field-level refusals, as this form shows them. Empty when none apply here. */
+export function keyFormErrorsOf(fields: Record<string, string>): KeyFormErrors {
+  const errors: KeyFormErrors = {};
+  for (const [property, message] of Object.entries(fields)) {
+    const field = FORM_FIELD_OF[property];
+    if (field) {
+      errors[field] = message;
+    }
+  }
+  return errors;
+}
+
 export const EMPTY_KEY_FORM: KeyFormValues = {
   name: '',
   modelIds: null,
@@ -201,7 +231,10 @@ export function KeyFormFields({ values, onChange, errors, models, idPrefix, disa
             value={values.expiresAt}
             onChange={(event) => set({ expiresAt: event.target.value })}
             disabled={disabled}
+            aria-invalid={errors.expiresAt !== undefined || undefined}
+            aria-describedby={errors.expiresAt ? `${idPrefix}-expires-error` : undefined}
           />
+          <FieldError id={`${idPrefix}-expires-error`} message={errors.expiresAt} />
           <p className="text-muted-foreground text-xs">Leave empty for a key that never expires.</p>
         </div>
 
@@ -259,5 +292,18 @@ export function useKeyForm(initial: KeyFormValues) {
     return Object.keys(found).length === 0;
   };
 
-  return { values, setValues, errors, validate, reset: () => setValues(initial) };
+  /**
+   * Shows what the API refused, under the inputs it refused.
+   *
+   * Answers whether it found anywhere to put it: a refusal about a field this
+   * form does not render is not a refusal the reader can see, and the caller
+   * falls back to saying it outright.
+   */
+  const showServerErrors = (fields: Record<string, string>) => {
+    const found = keyFormErrorsOf(fields);
+    setErrors(found);
+    return Object.keys(found).length > 0;
+  };
+
+  return { values, setValues, errors, validate, showServerErrors, reset: () => setValues(initial) };
 }
