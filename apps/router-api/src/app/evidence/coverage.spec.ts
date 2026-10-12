@@ -91,7 +91,6 @@ beforeEach(async () => {
       id,
       name,
       hostname: `${name}.tee.swarm.cloud`,
-      tee: 'Intel TDX',
       evidenceUrl: null,
       enabled: true,
       updatedAt: NOW,
@@ -107,7 +106,6 @@ beforeEach(async () => {
     capabilities: ['chat'],
     promptPer1mMicros: 280000,
     completionPer1mMicros: 420000,
-    tee: 'Intel TDX',
     enabled: true,
     updatedAt: NOW,
   });

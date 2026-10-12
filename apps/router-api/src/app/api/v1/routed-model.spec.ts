@@ -17,7 +17,6 @@ const CONFIG: CatalogModel = {
     id: 'ep-1',
     name: 'llama-33-70b',
     hostname: 'llama.tee.example',
-    tee: 'Intel TDX + H100 CC',
     declaredImages: null,
   },
   updatedAt: UPDATED_AT,
@@ -31,7 +30,6 @@ const EXTERNAL: ExternalCatalogModel = {
   capabilities: ['chat', 'completions'],
   promptPer1mMicros: 400_000,
   completionPer1mMicros: 800_000,
-  tee: 'AMD SEV-SNP',
   endpoint: {
     id: 'xep-1',
     name: 'partner-cloud',
@@ -56,7 +54,7 @@ describe('routedConfigModel', () => {
       promptPer1mMicros: 280_000,
       completionPer1mMicros: 420_000,
       origin: 'config',
-      endpoint: { id: 'ep-1', name: 'llama-33-70b', hostname: 'llama.tee.example', tee: 'Intel TDX + H100 CC' },
+      endpoint: { id: 'ep-1', name: 'llama-33-70b', hostname: 'llama.tee.example' },
       external: null,
       updatedAt: UPDATED_AT,
     });
@@ -82,7 +80,6 @@ describe('routedExternalModel', () => {
       id: 'xep-1',
       name: 'partner-cloud',
       hostname: 'api.partner.example',
-      tee: 'AMD SEV-SNP',
     });
   });
 

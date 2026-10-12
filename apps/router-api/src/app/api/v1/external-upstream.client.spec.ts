@@ -58,7 +58,7 @@ function model(listenPort: number, overrides: Partial<ExternalRoute> = {}): Rout
     promptPer1mMicros: 1,
     completionPer1mMicros: 1,
     origin: 'external',
-    endpoint: { id: 'xep-1', name: 'partner-cloud', hostname: 'api.partner.example', tee: 'AMD SEV-SNP' },
+    endpoint: { id: 'xep-1', name: 'partner-cloud', hostname: 'api.partner.example' },
     external,
     updatedAt: new Date('2026-10-06T00:00:00Z'),
   };

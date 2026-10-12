@@ -72,7 +72,6 @@ export async function seedCatalog(dataSource: DataSource, balanceMicros = 0): Pr
     id: endpointId,
     name: endpointName,
     hostname: `${endpointName}.tee.example`,
-    tee: 'Intel TDX + H100 CC',
     enabled: true,
     updatedAt: new Date(),
   });
@@ -85,7 +84,6 @@ export async function seedCatalog(dataSource: DataSource, balanceMicros = 0): Pr
     capabilities: ['chat'],
     promptPer1mMicros: 280_000,
     completionPer1mMicros: 420_000,
-    tee: 'Intel TDX + H100 CC',
     enabled: true,
     updatedAt: new Date(),
   });
