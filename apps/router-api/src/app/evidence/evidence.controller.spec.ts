@@ -60,7 +60,6 @@ async function seedEndpoint(dataSource: DataSource, name: string, hostname: stri
     id,
     name,
     hostname,
-    tee: 'Intel TDX',
     evidenceUrl: null,
     enabled: true,
     updatedAt: new Date(),

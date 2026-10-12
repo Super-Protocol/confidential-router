@@ -21,8 +21,8 @@ import { ModelOriginEnum } from './model.model.js';
  *
  * The services under it are stubs rather than a database: what is being checked
  * is the projection — which fields are populated for which origin, what an
- * anonymous caller is handed, and what the TEE filter does to a model that has no
- * TEE label. Where the rows come from is `external-catalog.service.spec.ts`'s
+ * anonymous caller is handed, where a row's TEE label comes from, and what the
+ * TEE filter does to a model that has none. Where the rows come from is `external-catalog.service.spec.ts`'s
  * subject, and it runs against a migrated database.
  */
 
@@ -30,7 +30,6 @@ const OWN_ENDPOINT = {
   id: 'ep-1',
   name: 'demo-tee',
   hostname: 'router.example.test',
-  tee: 'Intel TDX + H100 CC',
   declaredImages: null,
   enabled: true,
   updatedAt: new Date('2026-10-01T00:00:00.000Z'),
@@ -49,7 +48,6 @@ function configModel(overrides: Partial<CatalogModel> = {}): CatalogModel {
       id: OWN_ENDPOINT.id,
       name: OWN_ENDPOINT.name,
       hostname: OWN_ENDPOINT.hostname,
-      tee: OWN_ENDPOINT.tee,
       declaredImages: null,
     },
     updatedAt: new Date('2026-10-01T00:00:00.000Z'),
@@ -124,16 +122,14 @@ function snapshotWithRoot(rootPem: string): EvidenceSnapshot {
   } as EvidenceSnapshot;
 }
 
-describe('endpointViews', () => {
-  const testdata = (file: string) =>
-    readFileSync(new URL(`../../../evidence/testdata/${file}`, import.meta.url), 'utf8');
+const testdata = (file: string) => readFileSync(new URL(`../../../evidence/testdata/${file}`, import.meta.url), 'utf8');
 
-  it('labels the endpoint with the TEE its evidence names, not the one the config declares (SUP-270)', async () => {
+describe('endpointViews', () => {
+  it('labels the endpoint with the TEE its evidence names (SUP-270)', async () => {
     const [view] = await build({
       latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))],
     }).endpointViews(null, new Date('2026-10-09T22:00:00.000Z'));
 
-    expect(view?.tee).toBe('Intel TDX + H100 CC');
     expect(view?.latestEvidence?.tee).toBe('AMD SEV-SNP (Azure)');
   });
 
@@ -158,8 +154,30 @@ describe('modelViews', () => {
 
     expect(view?.endpoint?.hostname).toBe('router.example.test');
     expect(view?.externalUpstream).toBeNull();
-    expect(view?.tee).toBe('Intel TDX + H100 CC');
     expect(view?.available).toBe(true);
+  });
+
+  /*
+   * The row's label and its endpoint's are one value read from one place — the
+   * root of the published chain — so the Models table and the Overview cannot
+   * disagree about a deployment's hardware (SUP-260). The chart's old config
+   * default is deliberately the thing this fixture does not carry.
+   */
+  it('labels a config model with the TEE its endpoint’s evidence names', async () => {
+    const [view] = await build({
+      external: [],
+      latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))],
+    }).modelViews({ workspaceId: null, signedIn: true });
+
+    expect(view?.tee).toBe('AMD SEV-SNP (Azure)');
+    expect(view?.tee).toBe(view?.endpoint?.latestEvidence?.tee);
+  });
+
+  it('labels a config model null while its endpoint has published nothing', async () => {
+    const [view] = await build({ external: [] }).modelViews({ workspaceId: null, signedIn: true });
+
+    expect(view?.endpoint?.latestEvidence).toBeNull();
+    expect(view?.tee).toBeNull();
   });
 
   /*
@@ -209,10 +227,16 @@ describe('modelViews', () => {
     );
   });
 
-  it('excludes external models from a TEE filter, because they declare none', async () => {
-    const views = await build().modelViews({ workspaceId: null, signedIn: true, tee: 'Intel TDX + H100 CC' });
+  it('narrows on the TEE the evidence names, and excludes external models, which have none', async () => {
+    const service = build({ latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))] });
 
-    expect(views.map((view) => view.origin)).toEqual([ModelOriginEnum.CONFIG]);
+    const matching = await service.modelViews({ workspaceId: null, signedIn: true, tee: 'AMD SEV-SNP (Azure)' });
+    expect(matching.map((view) => view.origin)).toEqual([ModelOriginEnum.CONFIG]);
+
+    // The label the chart used to declare for every deployment matches nothing:
+    // no evidence names it, and nothing else is consulted.
+    const declared = await service.modelViews({ workspaceId: null, signedIn: true, tee: 'Intel TDX + H100 CC' });
+    expect(declared).toEqual([]);
   });
 
   it('prices an external model in the same shape as a built-in', async () => {

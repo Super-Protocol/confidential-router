@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Req, UseFilters, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeController } from '@nestjs/swagger';
+import { EvidenceService, teeLabelOfBundle } from '../../evidence/index.js';
 import { ApiKeyGuard, type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
 import type { RoutedModel } from './gateway.types.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
@@ -18,6 +19,14 @@ import { OpenAiExceptionFilter } from './openai-exception.filter.js';
  * their own endpoint — and only while a live verdict admits that endpoint, which
  * is decision 5's fail-closed drop: an upstream the router cannot currently verify
  * is absent from the list and from `GET /v1/models/{id}`, not listed-but-broken.
+ *
+ * `endpoint.tee` is read from the evidence the endpoint publishes, not from the
+ * config (SUP-260): the operator-declared label this used to print was one
+ * default for every deployment, whatever hardware it landed on. It is the same
+ * value the console's `latestEvidence.tee` shows — read, never verified
+ * (ADR-002) — and the key is omitted while the endpoint has published nothing
+ * this router recognises, and for an external upstream, whose hardware this
+ * router reads no evidence for.
  */
 @ApiExcludeController()
 @ApiBearerAuth()
@@ -25,12 +34,16 @@ import { OpenAiExceptionFilter } from './openai-exception.filter.js';
 @UseFilters(OpenAiExceptionFilter)
 @UseGuards(ApiKeyGuard)
 export class ModelsController {
-  constructor(private readonly policy: GatewayPolicyService) {}
+  constructor(
+    private readonly policy: GatewayPolicyService,
+    private readonly evidence: EvidenceService,
+  ) {}
 
   @Get()
-  list(@Req() request: ApiKeyRequest): { object: 'list'; data: ReturnType<typeof presentModel>[] } {
+  async list(@Req() request: ApiKeyRequest): Promise<{ object: 'list'; data: ReturnType<typeof presentModel>[] }> {
     const models = this.policy.listModels(apiKeyOf(request).key);
-    return { object: 'list', data: models.map(presentModel) };
+    const tee = await this.teeLabels(models);
+    return { object: 'list', data: models.map((model) => presentModel(model, tee.get(model.endpoint.id) ?? null)) };
   }
 
   /**
@@ -39,17 +52,31 @@ export class ModelsController {
    * first slash.
    */
   @Get('*id')
-  get(@Req() request: ApiKeyRequest, @Param('id') id: string | string[]) {
+  async get(@Req() request: ApiKeyRequest, @Param('id') id: string | string[]) {
     const wanted = Array.isArray(id) ? id.join('/') : id;
     const model = this.policy.listModels(apiKeyOf(request).key).find((candidate) => candidate.id === wanted);
     if (!model) {
       throw openAiErrors.modelNotFound(wanted);
     }
-    return presentModel(model);
+    const tee = await this.teeLabels([model]);
+    return presentModel(model, tee.get(model.endpoint.id) ?? null);
+  }
+
+  /**
+   * The TEE each model's endpoint publishes evidence from, by endpoint id.
+   *
+   * Only this deployment's own endpoints are looked up: an external upstream's
+   * id names an `external_endpoints` row, which holds a verdict about a cloud
+   * and no root this reader would name a TEE from.
+   */
+  private async teeLabels(models: RoutedModel[]): Promise<Map<string, string | null>> {
+    const own = [...new Set(models.filter((model) => model.external === null).map((model) => model.endpoint.id))];
+    const latest = await this.evidence.latestForMany(own);
+    return new Map([...latest].map(([endpointId, snapshot]) => [endpointId, teeLabelOfBundle(snapshot.bundle)]));
   }
 }
 
-function presentModel(model: RoutedModel) {
+function presentModel(model: RoutedModel, tee: string | null) {
   return {
     id: model.id,
     object: 'model' as const,
@@ -64,10 +91,10 @@ function presentModel(model: RoutedModel) {
     endpoint: {
       name: model.endpoint.name,
       hostname: model.endpoint.hostname,
-      // Omitted rather than blank for an external upstream: no one declared a TEE
-      // label for it and this router cannot observe one, so the honest answer is
-      // that the field is not there (`docs/contracts/router-api.md`).
-      ...(model.endpoint.tee ? { tee: model.endpoint.tee } : {}),
+      // Omitted rather than blank when the evidence names nothing, and for an
+      // external upstream: the honest answer is that the field is not there
+      // (`docs/contracts/router-api.md`), never a label nobody read.
+      ...(tee ? { tee } : {}),
     },
     capabilities: model.capabilities,
   };

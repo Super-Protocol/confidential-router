@@ -35,7 +35,7 @@ type Query {
 
 # ---------- models & endpoints ----------
 type Endpoint {
-  id: ID!, name: String!, hostname: String!, tee: String!            # tee = operator-declared label from router config; surfaces show latestEvidence.tee
+  id: ID!, name: String!, hostname: String!                          # no declared TEE label: the TEE is latestEvidence.tee, read from what the endpoint publishes (SUP-260)
   latestEvidence: EvidenceSnapshot                                   # what the platform currently publishes (may be null)
   evidenceState: EvidenceState!                                      # PUBLISHED | STALE | NOT_PUBLISHED (freshness only)
   tokensRouted30d: Int!
@@ -58,7 +58,7 @@ type CertSummary { subject: String!, issuer: String!, notAfter: DateTime!, finge
 type Measurement { name: String!, value: String! }
 type Model {
   id: ID!, slug: String!, name: String!, contextLength: Int!, capabilities: [ModelCapability!]!
-  pricing: Pricing!, endpoint: Endpoint!, tee: String!
+  pricing: Pricing!, endpoint: Endpoint!, tee: String                 # = endpoint.latestEvidence.tee (SUP-260)
 }
 enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS }
 type Pricing { promptPer1m: Micros!, completionPer1m: Micros! }
@@ -312,7 +312,18 @@ and small:
     and answers a JSON report; see `router.md`, "Moving codes between deployments" (SUP-272);
   - `GET /exports/evidence.zip?token=…` — the link `exportEvidence` mints. Signed with `auth.secret` and
     valid for 15 minutes, because the point of the export is that it can be handed to an auditor who has
-    no console session. Membership is re-checked when the link is followed.
+    no console session. Membership is re-checked when the link is followed. The archive holds
+    `manifest.json` plus `snapshots/<id>/{bundle.json,evidence.jws}` per publication, and covers **both
+    origins**: a generation this deployment's own endpoint served is reached through its
+    `evidenceSnapshotId`, and one an external upstream served through `(externalEndpointId,
+    evidenceDigest)` — it carries no snapshot id, because there is no row to stamp when it is recorded
+    (SUP-295). Each manifest entry says which with `origin: own | external`, and the manifest's `origins`
+    legend says what that means for the reader: who published the document, and what matched it to the
+    generations it covers — an `own` entry is this deployment's own publication, matched by the snapshot
+    stamped at serve time; an `external` one is the upstream's, matched by the digest the egress leg
+    observed when it verified that upstream. Neither is a verdict, which is what `note` says. Digests
+    whose bundle this router never retrieved are listed under `unretrieved`, and
+    `generations: { served, covered }` is what tells an empty archive apart from a quiet period.
   - `GET /admin/data/export` — the deployment export (SUP-271), a gzipped JSON document. Session cookie
     **and** `auth.adminEmails`; deliberately *not* a signed link, because this file is not for handing on.
     `Cache-Control: no-store`; `X-Export-Sha256` carries the bundle's content hash.
@@ -399,6 +410,15 @@ exceptions are mapped in one place (`src/app/api/graphql/errors.ts`):
 (`GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, …) are kept as they are. With
 `graphql.introspection` off — the production default — an `INTERNAL_SERVER_ERROR` loses its message and
 its stack trace.
+
+**`extensions.fields`** is present when the global `ValidationPipe` refused the input: a map of the
+input property to the first constraint message about it, e.g.
+`{ "spendLimitMicros": "spendLimitMicros must match /^\\d{1,15}$/ regular expression" }`. The error's
+`message` carries the same messages joined. Both exist because neither used to (SUP-295): the array the
+pipe produces lives inside `extensions.originalError`, which production deletes, and
+`HttpException.message` for a response object is the literal string *"Bad Request Exception"* — so a
+console could not say which field it had got wrong. A client shows each message under the input it
+names; a property the client does not render is one it should report outright instead.
 
 `503` is mapped because one refusal is policy rather than a fault (SUP-171): on a deployment with
 `billing.provider: disabled`, `createCheckout` answers `SERVICE_UNAVAILABLE` with *"Buying credits is
@@ -934,11 +954,11 @@ Three decisions, and the first two are schema changes to a type that was already
    so the console cannot mix the two vocabularies even by accident (ADR-008 §1).
 2. **`Model.endpoint` and `Model.tee` are nullable now.** Both were non-null before ADR-008 and
    both are facts about *this* deployment: there is no `endpoints` row for someone else's
-   deployment, this router publishes no evidence for its hostname, and nobody declares a TEE label
-   for its hardware. A synthetic endpoint row would have carried an `evidenceState` about a hostname
-   this deployment does not publish, which is exactly the blend decision 1 forbids; a relayed TEE
-   label would have been this router asserting a fact it has no source for. A measurement admits a
-   *cloud* and does not name its silicon.
+   deployment, this router publishes no evidence for its hostname, and reads none for its hardware
+   (`Model.tee` is the endpoint's `latestEvidence.tee`, SUP-260). A synthetic endpoint row would
+   have carried an `evidenceState` about a hostname this deployment does not publish, which is
+   exactly the blend decision 1 forbids; a relayed TEE label would have been this router asserting
+   a fact it has no source for. A measurement admits a *cloud* and does not name its silicon.
 3. **`Model.externalUpstream` is session-scoped, the whole field** (SUP-221 ruling 3). An anonymous
    caller gets name, price and `available` — no endpoint URLs and no verdict detail — and `null`
    rather than a populated object with nulls in it: "there is an upstream and here is nothing about
@@ -1005,7 +1025,11 @@ extend type Model {
   endpoint: Endpoint
   """Null for a CONFIG model, and null for an anonymous caller (ruling 3)."""
   externalUpstream: ExternalUpstream
-  """Null for an EXTERNAL model: nobody declares one for another deployment."""
+  """
+  The TEE the serving endpoint's published evidence names — `endpoint.latestEvidence.tee`,
+  carried here so a list needs no second lookup (SUP-260). Null while nothing recognisable is
+  published, and null for an EXTERNAL model: this router reads none for another deployment.
+  """
   tee: String
 }
 
@@ -1023,7 +1047,8 @@ extend type Query {
 ```
 
 A `tee:` argument on `models` excludes every external model, which is the filter being honest rather
-than losing rows: it narrows on an operator's declaration about this deployment's own hardware.
+than losing rows: it narrows on the TEE this deployment's own endpoints publish evidence from, and
+this router reads none for someone else's hardware.
 
 ### Screen → operations, SUP-227
 

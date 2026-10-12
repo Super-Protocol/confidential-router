@@ -168,18 +168,23 @@ would both misprice the Logs screen and leave `aborted` unable to mean "policy c
   "id": "meta/llama-3.3-70b-instruct:tdx", "object": "model", "created": 1756550000, "owned_by": "confidential-router",
   "name": "Llama 3.3 70B Instruct", "context_length": 131072,
   "pricing": { "prompt_per_1m_micros": 280000, "completion_per_1m_micros": 420000 },
-  "endpoint": { "name": "llama-33-70b", "hostname": "llama-33-70b.tee.swarm.cloud", "tee": "Intel TDX + H100 CC" },
+  "endpoint": { "name": "llama-33-70b", "hostname": "llama-33-70b.tee.swarm.cloud", "tee": "Intel TDX (GCP)" },
   "capabilities": ["chat", "completions"]
 } ] }
 ```
 
 Only models within the key's scope are listed.
 
-`endpoint.tee` is the operator-declared TEE label from the router config, and is **absent** for a
-model served by an external upstream (ADR-008): nobody declares an upstream's hardware — the admin
-API has no field for it (`console-graphql.md`, `ExternalModelInput`) — and this router cannot observe
-it, so there is nothing to publish. What it *can* say about an upstream is the measurement a verdict
-saw, which the console reads from `ExternalEndpoint.measurementSeen` rather than from the model.
+`endpoint.tee` is the TEE the endpoint's **published evidence** names: the hardware branch of the
+`TeeEvidence` in the root certificate of its chain, e.g. `AMD SEV-SNP (Azure)`, read from the latest
+bundle this router stored and never verified (ADR-002) — the same value the console shows as
+`EvidenceSnapshot.tee`. It is **absent** while the endpoint has published nothing this router
+recognises, and absent for a model served by an external upstream (ADR-008): this router reads no
+evidence for an upstream's hardware, and the admin API has no field to declare it
+(`console-graphql.md`, `ExternalModelInput`). What it *can* say about an upstream is the measurement
+a verdict saw, which the console reads from `ExternalEndpoint.measurementSeen` rather than from the
+model. Until SUP-260 the field was the operator-declared `endpoints[].tee` label from the router
+config; that key is accepted and ignored now.
 
 ### `GET /v1/evidence` and `GET /v1/evidence/{endpoint}`
 

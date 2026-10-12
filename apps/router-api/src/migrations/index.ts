@@ -12,6 +12,7 @@ import { ExternalEndpointRegistrySignal1759700000000 } from './1759700000000-Ext
 import { ExternalEndpointPinnedDigest1759800000000 } from './1759800000000-ExternalEndpointPinnedDigest.js';
 import { InviteCodeIssuer1759900000000 } from './1759900000000-InviteCodeIssuer.js';
 import { InviteCarriedRedemptions1760000000000 } from './1760000000000-InviteCarriedRedemptions.js';
+import { DropDeclaredTee1760100000000 } from './1760100000000-DropDeclaredTee.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -34,4 +35,5 @@ export const MIGRATIONS = [
   ExternalEndpointPinnedDigest1759800000000,
   InviteCodeIssuer1759900000000,
   InviteCarriedRedemptions1760000000000,
+  DropDeclaredTee1760100000000,
 ];

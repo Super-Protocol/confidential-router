@@ -44,7 +44,6 @@ function model(overrides: Partial<Model> = {}): Model {
     capabilities: ['chat'],
     promptPer1mMicros: 400_000,
     completionPer1mMicros: 800_000,
-    tee: '',
     enabled: true,
     updatedAt: NOW,
     ...overrides,

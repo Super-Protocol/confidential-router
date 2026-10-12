@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@confidential-router/ui/components/dialog';
 import * as React from 'react';
-import { errorMessageOf } from '../../lib/graphql-error';
+import { errorMessageOf, fieldErrorsOf } from '../../lib/graphql-error';
 import { KeyFormFields, keyFormOf, toUpdateInput, useKeyForm } from './key-form';
 import { UPDATE_API_KEY } from './operations';
 import type { ApiKeyRow, CatalogueModel } from './types';
@@ -44,7 +44,11 @@ function EditKeyForm({ apiKey, models, onOpenChange }: { apiKey: ApiKeyRow } & O
       await updateKey({ variables: { id: apiKey.id, input: toUpdateInput(form.values) } });
       onOpenChange(false);
     } catch (caught) {
-      setFailure(errorMessageOf(caught));
+      // Under the input it is about when the API named one, and at the bottom of
+      // the dialog otherwise (SUP-295 item 2).
+      if (!form.showServerErrors(fieldErrorsOf(caught))) {
+        setFailure(errorMessageOf(caught));
+      }
     }
   };
 

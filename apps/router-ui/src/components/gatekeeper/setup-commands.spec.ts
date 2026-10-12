@@ -55,6 +55,60 @@ describe('setupSteps', () => {
     }
   });
 
+  /*
+   * SUP-295 item 1: the block is copied whole and run top to bottom, so every
+   * command after the install has to be reachable. On a stock macOS zsh the
+   * binary lands in ~/.local/bin, which that shell does not search — and the
+   * second step was command-not-found for every reader on that platform.
+   */
+  it('puts the install directory on this terminal’s PATH before the next command runs', () => {
+    const [install, next] = setupSteps(input());
+
+    expect(install.command).toBe(`${SH.command}\nexport PATH="$HOME/.local/bin:$PATH"`);
+    expect(next.command).toBe('gatekeeper init');
+  });
+
+  it('spares Windows a PATH line it does not need', () => {
+    const install = setupSteps(input({ platform: POWERSHELL })).find((step) => step.id === 'install');
+
+    expect(install?.command).toBe(POWERSHELL.command);
+    expect(install?.command).not.toContain('PATH');
+  });
+
+  /*
+   * SUP-300 item 2: step 2 promised `~/.config/confidential-gatekeeper/config.yaml`,
+   * which is not where the file lands on macOS (`~/Library/Application Support`)
+   * or Windows (`%AppData%`) — `config.DefaultPath()` is Go's
+   * `os.UserConfigDir()`. A tester on macOS was told a path that never existed.
+   *
+   * The rule the two surfaces split between them: copy written *before* a
+   * command runs never names a path, and the CLI prints the one it resolved
+   * afterwards. This holds the browser half of it; the terminal half is
+   * `TestNoCommandInventsAConfigurationPath` in `apps/gatekeeper/pkg/cli`.
+   */
+  it('never promises a filesystem path it cannot know', () => {
+    const invented = [/~\//, /\$HOME/, /Library\/Application Support/, /AppData/, /\/Users\//, /C:\\/];
+
+    for (const platform of INSTALL_COMMANDS) {
+      for (const evidenceDigestHex of [DIGEST, null]) {
+        const steps = [
+          ...setupSteps(input({ platform, evidenceDigestHex })),
+          ...testBuildSteps(input({ platform, evidenceDigestHex })),
+        ];
+        for (const step of steps) {
+          for (const pattern of invented) {
+            // The install command is the one place a home-relative path is not
+            // a promise: `export PATH="$HOME/.local/bin:$PATH"` is a line the
+            // reader's own shell expands, and it is what SUP-295 added.
+            if (step.id === 'install') continue;
+            expect(`${step.title} ${step.detail}`, `${step.id} detail`).not.toMatch(pattern);
+            expect(step.command, `${step.id} command`).not.toMatch(pattern);
+          }
+        }
+      }
+    }
+  });
+
   it('fronts the origin it was given, on loopback — a gatekeeper on 0.0.0.0 is an open relay', () => {
     const endpoint = setupSteps(input()).find((step) => step.id === 'endpoint');
 
@@ -120,11 +174,19 @@ describe('testBuildSteps', () => {
 });
 
 describe('setupScript', () => {
-  it('is the whole sequence, one command per line, ready to paste', () => {
+  it('is the whole sequence, every line a command, ready to paste', () => {
     const steps = setupSteps(input());
+    const lines = setupScript(input()).split('\n');
 
     expect(setupScript(input())).toBe(steps.map((step) => step.command).join('\n'));
-    expect(setupScript(input()).split('\n')).toHaveLength(steps.length);
+    // One line per step, plus the PATH line the install step carries on this
+    // platform — and no blank or continuation line anywhere, which is what
+    // makes the block safe to paste as a whole.
+    expect(lines).toHaveLength(steps.length + 1);
+    for (const line of lines) {
+      expect(line.trim()).toBe(line);
+      expect(line).not.toBe('');
+    }
   });
 
   it('leaves the test-build commands out of the script', () => {
