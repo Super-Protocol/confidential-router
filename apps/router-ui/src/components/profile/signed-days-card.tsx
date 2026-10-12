@@ -14,7 +14,7 @@ export interface SignedDaysCardProps {
  * platform had published.
  *
  * It says *published*, never *verified* (ADR-002): this router does not know
- * whether anyone checked a bundle, and a square here is a fact about
+ * whether anyone acted on a bundle, and a square here is a fact about
  * publication only.
  */
 export function SignedDaysCard({ signedDays, now }: SignedDaysCardProps) {
@@ -28,7 +28,7 @@ export function SignedDaysCard({ signedDays, now }: SignedDaysCardProps) {
         <CardTitle>Days with signed responses</CardTitle>
         <CardDescription>
           Days on which at least one generation was served while its endpoint had a fresh evidence bundle published.
-          Whether anyone verified it happens in your Gatekeeper, and this router never learns it.
+          Verification happens in your Gatekeeper, and its verdict is never sent to this router.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
