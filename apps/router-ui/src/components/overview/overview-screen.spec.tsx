@@ -84,20 +84,18 @@ describe('OverviewScreen', () => {
     expect(within(row).getByText('598M')).toBeInTheDocument();
   });
 
-  it('labels the TEE from the published evidence, never from the config (SUP-270)', async () => {
+  it('labels the TEE from the published evidence, and names none without it (SUP-270)', async () => {
     renderOverview([
       overviewMock(
         overviewData({
           endpoints: [
             {
-              // What production looked like: a TDX label declared, SEV-SNP evidence published.
-              ...publishedEndpoint({
-                tee: 'Intel TDX + H100 CC',
-                latestEvidence: evidenceSnapshot({ tee: 'AMD SEV-SNP (Azure)' }),
-              }),
+              // What production published, under the hostname that used to be
+              // labelled "Intel TDX + H100 CC" by the chart's one default.
+              ...publishedEndpoint({ latestEvidence: evidenceSnapshot({ tee: 'AMD SEV-SNP (Azure)' }) }),
               tokensRouted30d: 0,
             },
-            { ...unpublishedEndpoint({ tee: 'Intel TDX + H100 CC' }), tokensRouted30d: 0 },
+            { ...unpublishedEndpoint(), tokensRouted30d: 0 },
           ],
         }),
       ),
@@ -106,7 +104,8 @@ describe('OverviewScreen', () => {
     const table = await screen.findByRole('table', { name: 'Confidential endpoints' });
     const prod = within(table).getByRole('row', { name: /llama-33-70b\.tee\.swarm\.cloud/ });
     expect(within(prod).getByText('AMD SEV-SNP (Azure)')).toBeInTheDocument();
-    // Nothing published, nothing named: the declared label does not fill the gap.
+    // Nothing published, nothing named: there is no declared label to fill the
+    // gap with any more (SUP-260).
     const unpublished = within(table).getByRole('row', { name: /qwen25-72b\.tee\.swarm\.cloud/ });
     expect(within(unpublished).getAllByText('—').length).toBeGreaterThan(0);
     expect(within(table).queryByText('Intel TDX + H100 CC')).not.toBeInTheDocument();

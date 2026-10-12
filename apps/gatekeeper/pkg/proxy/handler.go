@@ -138,8 +138,12 @@ func (e *endpoint) forward(w http.ResponseWriter, r *http.Request, start time.Ti
 // newReverseProxy builds the forwarding half of the data plane over one
 // connection pool.
 func (e *endpoint) newReverseProxy(p *pool) *httputil.ReverseProxy {
+	p.roundTripper.onReplay = func(err error) {
+		e.sup.log("warn", e.name,
+			"upstream request never left ("+err.Error()+"); sending it again on a fresh connection")
+	}
 	return &httputil.ReverseProxy{
-		Transport: p.transport,
+		Transport: p.roundTripper,
 		// -1 flushes after every write to the client. It is what makes
 		// `text/event-stream` arrive chunk by chunk instead of in one buffered
 		// block at the end of a completion.

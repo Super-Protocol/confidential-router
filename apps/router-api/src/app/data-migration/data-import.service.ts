@@ -12,7 +12,7 @@ import { Model } from '../db/entities/model.entity.js';
 import { TrustedMeasurement } from '../db/entities/trusted-measurement.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
-import { EXTERNAL_MODEL_TEE, ExternalCatalogService, SidecarConfigWriterService } from '../external-endpoints/index.js';
+import { ExternalCatalogService, SidecarConfigWriterService } from '../external-endpoints/index.js';
 import {
   decodeBundle,
   type ExportBundle,
@@ -257,7 +257,6 @@ export class DataImportService {
           capabilities: model.capabilities,
           promptPer1mMicros: numberOf(model.promptPer1mMicros),
           completionPer1mMicros: numberOf(model.completionPer1mMicros),
-          tee: EXTERNAL_MODEL_TEE,
           enabled: model.enabled,
           updatedAt: now,
         })),
