@@ -1,18 +1,7 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { signIn } from './fixtures';
 import { CONSOLE_ORIGIN } from './origins';
-
-/** Same bar as `accessibility.spec.ts`: nothing serious or critical. */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
-
-async function seriousViolations(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-
-  return results.violations
-    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
-    .map((violation) => ({ id: violation.id, nodes: violation.nodes.map((node) => node.target.join(' ')) }));
-}
 
 const WORKSPACE_ID = '00000000-0000-4000-8000-0000000000a1';
 
@@ -162,7 +151,7 @@ test.describe('Credits', () => {
     await expect(page.getByTestId('credit-balance')).toHaveText('$170.65');
     await expect(page.getByRole('cell', { name: 'Credit purchase of $25.00' })).toBeVisible();
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
 
@@ -271,7 +260,7 @@ test.describe('Preferences', () => {
     await page.goto('/preferences');
     await expect(page.getByRole('switch', { name: 'Archive quotes' })).toBeVisible();
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
 
@@ -315,6 +304,6 @@ test.describe('Profile', () => {
     await expect(page.getByText('Llama 3.3 70B Instruct')).toBeVisible();
     await expect(page.getByRole('img', { name: /Days with published evidence/ })).toBeVisible();
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
