@@ -132,6 +132,26 @@ describe('PreferencesScreen', () => {
     expect(await screen.findByRole('combobox', { name: 'Retention window' })).toHaveTextContent('45 days');
   });
 
+  /*
+   * SUP-295 item 3. The card is read by someone deciding whether to press a
+   * button that hands them a file; it is not the place to describe the archive's
+   * internals, and it certainly is not the place for the lifetime of a link the
+   * reader never sees. The screen downloads directly (`startDownload`), so an
+   * expiry sentence was a deadline for something that never happens.
+   */
+  it('says what the file is in plain words, with no link, no expiry and no internals', async () => {
+    renderWithSession(<PreferencesScreen />, { mocks: [typedSessionMock(), server().query] });
+
+    const card = (await screen.findByText('Export evidence bundle')).closest('div[data-slot="card"]');
+    const copy = card?.textContent ?? '';
+
+    expect(copy).toContain('cryptographic evidence');
+    expect(copy).toContain('auditor');
+    for (const internal of ['JWS', 'digest', 'payload', 'link', 'expires', '15 minutes']) {
+      expect(copy.toLowerCase()).not.toContain(internal.toLowerCase());
+    }
+  });
+
   it('downloads the evidence bundle from the link the API mints', async () => {
     const range = exportRangeInstants(defaultExportRange()) as { from: string; to: string };
     const click = vi.fn();

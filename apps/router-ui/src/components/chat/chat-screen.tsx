@@ -468,7 +468,6 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
             <InspectAttestationButton
               verification={verification}
               hostname={endpoint.hostname}
-              teeLabel={endpoint.tee ?? null}
               declaredImages={endpoint.declaredImages ?? null}
             />
           ) : null}

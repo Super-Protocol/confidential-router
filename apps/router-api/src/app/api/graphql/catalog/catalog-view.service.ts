@@ -55,7 +55,6 @@ export class CatalogViewService {
         id: endpoint.id,
         name: endpoint.name,
         hostname: endpoint.hostname,
-        tee: endpoint.tee,
         declaredImages: endpoint.declaredImages,
         latestEvidence: snapshot ? EvidenceSnapshotModel.from(snapshot, now) : null,
         evidenceState: this.evidence.stateOfSnapshot(snapshot, now),
@@ -111,22 +110,21 @@ export class CatalogViewService {
     const endpoints = new Map((await this.endpointViews(input.workspaceId, now)).map((view) => [view.id, view]));
     const tee = input.tee;
 
-    const config = this.catalog
-      .list()
-      .filter((model) => !tee || model.endpoint.tee === tee)
-      .flatMap((model) => {
-        const endpoint = endpoints.get(model.endpoint.id);
-        // A model whose endpoint is not in the active set cannot be routed to,
-        // so listing it would offer the console something it cannot use.
-        return endpoint ? [toModelView(model, endpoint)] : [];
-      });
+    const config = this.catalog.list().flatMap((model) => {
+      const endpoint = endpoints.get(model.endpoint.id);
+      // A model whose endpoint is not in the active set cannot be routed to,
+      // so listing it would offer the console something it cannot use.
+      if (!endpoint) return [];
+      const view = toModelView(model, endpoint);
+      return !tee || view.tee === tee ? [view] : [];
+    });
 
     /*
      * A TEE filter excludes every external model, and that is the filter being
-     * honest rather than losing rows: the label it narrows on is an operator's
-     * declaration about this deployment's own hardware, and this router has none
-     * to make about someone else's. "All TEEs" is the only tab externals appear
-     * under.
+     * honest rather than losing rows: the label it narrows on is read from the
+     * evidence this deployment's own endpoints publish, and this router reads
+     * none for someone else's hardware. "All TEEs" is the only tab externals
+     * appear under.
      */
     const external = tee
       ? []
@@ -154,7 +152,11 @@ function toModelView(model: CatalogModel, endpoint: EndpointModel): LlmModel {
     available: true,
     endpoint,
     externalUpstream: null,
-    tee: endpoint.tee,
+    // The TEE the endpoint's published evidence names, not a config label
+    // (SUP-260): the same value the Overview prints, so a model row and its
+    // endpoint row can never disagree. Null while nothing recognisable is
+    // published, which the Models screen shows as such.
+    tee: endpoint.latestEvidence?.tee ?? null,
   };
 }
 

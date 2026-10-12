@@ -164,6 +164,62 @@ unit_tests() {
   expect_eq 'archive_name on macOS' "$(archive_name darwin 0.1.0 arm64)" 'gatekeeper_0.1.0_darwin_arm64.tar.gz'
   expect_eq 'archive_name on Windows is a zip' "$(archive_name windows 0.1.0 amd64)" 'gatekeeper_0.1.0_windows_amd64.zip'
 
+  echo 'install.sh: install directory and PATH helpers'
+
+  # The destination has to be one the caller's shell will actually search, which
+  # is what SUP-295 item 1 was about: a correct install the next command cannot
+  # find is indistinguishable from a failed one.
+  onpath="$workdir/home-onpath"
+  mkdir -p "$onpath/.local/bin"
+  # PATH carries the per-user bin and not /usr/local/bin, which is what pins the
+  # preference on every host: as root in a container that system directory is
+  # writable and searched, and would otherwise win here for the right reason.
+  expect_eq 'default_install_dir takes a writable candidate already on PATH' \
+    "$(HOME="$onpath" PATH="$onpath/.local/bin" default_install_dir)" "$onpath/.local/bin"
+
+  offpath="$workdir/home-offpath"
+  mkdir -p "$offpath"
+  # Nothing of this HOME is on PATH and /usr/local/bin is either absent from the
+  # candidate list or not writable, so the per-user directory is the fallback —
+  # and the caller is told, rather than left to find out at the next command.
+  expect_eq 'default_install_dir falls back to the per-user bin' \
+    "$(HOME="$offpath" PATH="/nonexistent-for-this-test" default_install_dir)" "$offpath/.local/bin"
+
+  mkdir -p "$workdir/exists"
+  if writable_dir "$workdir/exists"; then pass 'writable_dir accepts a writable directory'; else
+    fail 'writable_dir accepts a writable directory' 'said no'; fi
+  if writable_dir "$workdir/exists/not-yet"; then pass 'writable_dir accepts one that can be created'; else
+    fail 'writable_dir accepts one that can be created' 'said no'; fi
+  if writable_dir /proc/nonexistent/bin; then
+    fail 'writable_dir refuses an uncreatable directory' 'said yes'; else
+    pass 'writable_dir refuses an uncreatable directory'; fi
+
+  expect_eq 'rc_file_for zsh is .zshrc' "$(HOME=/h rc_file_for /bin/zsh)" '/h/.zshrc'
+  # macOS Terminal opens a login shell (.bash_profile); a Linux terminal does not
+  # (.bashrc). Writing to the other one is writing to nowhere.
+  if [ "$(uname -s)" = Darwin ]; then
+    expect_eq 'rc_file_for bash is .bash_profile on macOS' "$(HOME=/h rc_file_for /bin/bash)" '/h/.bash_profile'
+  else
+    expect_eq 'rc_file_for bash is .bashrc on Linux' "$(HOME=/h rc_file_for /bin/bash)" '/h/.bashrc'
+  fi
+  expect_eq 'rc_file_for guesses nothing for an unknown shell' "$(HOME=/h rc_file_for /bin/ksh)" ''
+
+  # The console prints a PATH line of its own in the block a reader pastes
+  # (`apps/router-ui/src/components/gatekeeper/install-commands.ts`). It has to
+  # name the directory this script actually falls back to: a line for any other
+  # one would fix nothing, and the two files are edited by different people.
+  console="$here/../../apps/router-ui/src/components/gatekeeper/install-commands.ts"
+  if [ -f "$console" ]; then
+    expect_eq 'the fallback is the per-user bin' "$(HOME=/h PATH=/nonexistent-for-this-test default_install_dir)" \
+      '/h/.local/bin'
+    if grep -F 'export PATH="$HOME/.local/bin:$PATH"' "$console" >/dev/null 2>&1; then
+      pass 'the console block puts that same directory on the PATH'
+    else
+      fail 'the console block puts that same directory on the PATH' \
+        "no \$HOME/.local/bin PATH line in $console"
+    fi
+  fi
+
   # The file name reaches awk as data, so a name whose dots would match any
   # character as a regex still selects its own line and no other.
   sums="$workdir/checksums-unit.txt"
@@ -260,6 +316,91 @@ e2e_tests() {
   set -e
   expect_eq 'a file:// base URL succeeds' "$status" '0'
   expect_contains 'a file:// install still verifies the checksum' "$out" 'Checksum OK'
+}
+
+# path_tests cover the close of the install: a destination the shell does not
+# search is the failure SUP-295 item 1 reported, and the fix is only a fix if the
+# next command in the console's copy-paste block works — in this terminal and in
+# the next one.
+path_tests() {
+  echo 'install.sh: PATH handling'
+
+  home="$workdir/home-zsh"
+  dest="$home/.local/bin"
+  mkdir -p "$home"
+
+  set +e
+  out="$(
+    HOME="$home" SHELL=/bin/zsh \
+      GATEKEEPER_REPO="$REPO" GATEKEEPER_BASE_URL="$base" GATEKEEPER_API_URL="$base" \
+      sh "$install_sh" --install-dir "$dest" 2>&1
+  )"
+  status=$?
+  set -e
+
+  expect_eq 'an install off the PATH still succeeds' "$status" '0'
+  expect_contains 'it says the directory is not on the PATH' "$out" 'is not on your PATH'
+  expect_contains 'it names the startup file it wrote' "$out" "Added it to $home/.zshrc"
+  # The line for *this* terminal: a script run through a pipe cannot export into
+  # the shell that invoked it, so printing the line is the only thing it can do.
+  expect_contains 'it prints the line for the current session' "$out" "export PATH=\"$dest:\$PATH\""
+
+  if [ -f "$home/.zshrc" ]; then
+    expect_contains 'the startup file carries the export' "$(cat "$home/.zshrc")" "export PATH=\"$dest:\$PATH\""
+    expect_contains 'and says who wrote it' "$(cat "$home/.zshrc")" 'Confidential Router gatekeeper installer'
+  else
+    fail 'the startup file carries the export' "$home/.zshrc was not written: $out"
+  fi
+
+  # Installing again must not stack a second copy of the same line.
+  set +e
+  out="$(
+    HOME="$home" SHELL=/bin/zsh \
+      GATEKEEPER_REPO="$REPO" GATEKEEPER_BASE_URL="$base" GATEKEEPER_API_URL="$base" \
+      sh "$install_sh" --install-dir "$dest" 2>&1
+  )"
+  status=$?
+  set -e
+  expect_eq 'a second install succeeds' "$status" '0'
+  expect_eq 'it adds no second PATH line' "$(grep -c "export PATH=" "$home/.zshrc")" '1'
+  expect_contains 'and says the file already covers it' "$out" 'already adds it'
+
+  # --no-modify-path is the escape hatch for anyone who manages their own dotfiles.
+  quiet="$workdir/home-quiet"
+  mkdir -p "$quiet"
+  set +e
+  out="$(
+    HOME="$quiet" SHELL=/bin/zsh \
+      GATEKEEPER_REPO="$REPO" GATEKEEPER_BASE_URL="$base" GATEKEEPER_API_URL="$base" \
+      sh "$install_sh" --install-dir "$quiet/.local/bin" --no-modify-path 2>&1
+  )"
+  status=$?
+  set -e
+  expect_eq '--no-modify-path still installs' "$status" '0'
+  if [ -e "$quiet/.zshrc" ]; then
+    fail '--no-modify-path writes no startup file' 'the file was written anyway'
+  else
+    pass '--no-modify-path writes no startup file'
+  fi
+  expect_contains '--no-modify-path still prints the session line' "$out" \
+    "export PATH=\"$quiet/.local/bin:\$PATH\""
+
+  # A destination the shell already searches needs none of this.
+  searched="$workdir/searched"
+  mkdir -p "$searched"
+  set +e
+  out="$(
+    HOME="$workdir/home-none" SHELL=/bin/zsh PATH="$searched:$PATH" \
+      GATEKEEPER_REPO="$REPO" GATEKEEPER_BASE_URL="$base" GATEKEEPER_API_URL="$base" \
+      sh "$install_sh" --install-dir "$searched" 2>&1
+  )"
+  status=$?
+  set -e
+  expect_eq 'an install onto the PATH succeeds' "$status" '0'
+  case "$out" in
+    *'not on your PATH'*) fail 'an install onto the PATH says nothing about it' "it did: $out" ;;
+    *) pass 'an install onto the PATH says nothing about it' ;;
+  esac
 }
 
 # refusal_tests come last: they tamper with the served release, so nothing that
@@ -360,6 +501,7 @@ base="$(start_server "$served")"
 
 unit_tests
 e2e_tests
+path_tests
 powershell_tests
 refusal_tests
 

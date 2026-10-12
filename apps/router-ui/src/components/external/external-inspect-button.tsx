@@ -41,7 +41,6 @@ export function ExternalInspectButton({ upstream }: ExternalInspectButtonProps) 
       // Nobody declared what another deployment runs, and v1 does not ask an
       // operator to: null is "nothing was declared", which the graph already
       // renders as the signed images without a comparison (ADR-008 §7).
-      teeLabel={null}
       declaredImages={null}
     />
   );

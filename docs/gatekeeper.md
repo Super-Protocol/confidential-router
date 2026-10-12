@@ -23,7 +23,14 @@ client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:8443/v1")
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Super-Protocol/confidential-router/main/tools/installer/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # only if the installer says it is needed
 ```
+
+The script installs into the first writable directory your shell already
+searches, and otherwise into `~/.local/bin` — which a stock macOS zsh does not
+search. When that happens it adds the directory to your startup file, for the
+terminals you open next, and prints the `export` line above for the one you are
+in. `--no-modify-path` leaves your dotfiles alone and prints the line only.
 
 Or take a static binary and its checksum from
 [Releases](https://github.com/Super-Protocol/confidential-router/releases).
@@ -79,7 +86,11 @@ Every command takes `--json`, and every one exits with a meaningful status:
 
 ## Configuration
 
-`~/.config/confidential-gatekeeper/config.yaml` by default; `--config` or
+`confidential-gatekeeper/config.yaml` under your user configuration directory
+by default — Go's `os.UserConfigDir()`, so `$XDG_CONFIG_HOME` or `~/.config` on
+Linux, `~/Library/Application Support` on macOS and `%AppData%` on Windows.
+**`gatekeeper config path` prints the one this machine resolves**, and every
+command that writes the file prints it back; `--config` or
 `$CR_GATEKEEPER_CONFIG` override it. Normative schema:
 `schemas/gatekeeper-config.schema.json`. The `trust` and `endpoint` commands
 edit this file in place and keep your comments.

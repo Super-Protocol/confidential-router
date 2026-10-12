@@ -40,6 +40,10 @@ function snapshot(overrides: Record<string, unknown>) {
     fetchedAt: '2026-08-31T09:28:12.000Z',
     quoteAgeSeconds: 12,
     quoteFormat: 'intel-tdx-quote-v5',
+    // Every TEE label in the console is read from the root certificate of the
+    // published chain (SUP-260), so it is the snapshot that carries one — an
+    // endpoint has no declared label to fall back on.
+    tee: 'Intel TDX (GCP)',
     evidenceDigest: PUBLISHED_DIGEST,
     evidenceDigestHex: PUBLISHED_DIGEST_HEX.slice('sha256:'.length),
     certFingerprint: 'sha256/PmQ7dR2xWvB9CkE5sM1fTnZ4aYh6UbLp0GjXoIeVwNs',
@@ -81,7 +85,6 @@ const ENDPOINTS = [
     id: 'ep-1',
     name: 'Llama 3.3 70B',
     hostname: PUBLISHED_HOST,
-    tee: 'Intel TDX + H100 CC',
     evidenceState: 'PUBLISHED',
     latestEvidence: snapshot({}),
     tokensRouted30d: 598_000_000,
@@ -91,11 +94,11 @@ const ENDPOINTS = [
     id: 'ep-2',
     name: 'DeepSeek-V3',
     hostname: ROTATING_HOST,
-    tee: 'Intel TDX + H100 CC',
     evidenceState: 'STALE',
     latestEvidence: snapshot({
       id: 'snap-2',
       endpointId: 'ep-2',
+      tee: 'AMD SEV-SNP (Azure)',
       quoteAgeSeconds: 740,
       evidenceDigest: ROTATING_DIGEST,
       evidenceDigestHex: ROTATING_DIGEST_HEX.slice('sha256:'.length),
@@ -108,7 +111,6 @@ const ENDPOINTS = [
     id: 'ep-3',
     name: 'Qwen2.5 72B',
     hostname: UNPUBLISHED_HOST,
-    tee: 'AMD SEV-SNP',
     evidenceState: 'NOT_PUBLISHED',
     latestEvidence: null,
     tokensRouted30d: 0,
@@ -154,7 +156,7 @@ export const CATALOGUE_DATA = {
       slug: 'meta/llama-3.3-70b-instruct:tdx',
       name: 'Llama 3.3 70B Instruct',
       contextLength: 128_000,
-      tee: 'Intel TDX + H100 CC',
+      tee: 'Intel TDX (GCP)',
       origin: 'CONFIG',
       available: true,
       pricing: { __typename: 'Pricing', promptPer1m: '280000', completionPer1m: '420000' },
@@ -167,7 +169,7 @@ export const CATALOGUE_DATA = {
       slug: 'deepseek/deepseek-v3:tdx',
       name: 'DeepSeek-V3',
       contextLength: 64_000,
-      tee: 'Intel TDX + H100 CC',
+      tee: 'AMD SEV-SNP (Azure)',
       origin: 'CONFIG',
       available: true,
       pricing: { __typename: 'Pricing', promptPer1m: '310000', completionPer1m: '620000' },
@@ -180,7 +182,9 @@ export const CATALOGUE_DATA = {
       slug: 'alibaba/qwen2.5-72b-instruct:snp',
       name: 'Qwen2.5 72B Instruct',
       contextLength: 128_000,
-      tee: 'AMD SEV-SNP',
+      // Its endpoint has published nothing, so no evidence names a TEE for it —
+      // and there is no declared label to print instead (SUP-260).
+      tee: null,
       origin: 'CONFIG',
       available: true,
       pricing: { __typename: 'Pricing', promptPer1m: '240000', completionPer1m: '360000' },
@@ -207,7 +211,7 @@ export const MIXED_CATALOGUE_DATA = {
       slug: 'partner/llama-3.3-70b:snp',
       name: 'Llama 3.3 70B (partner)',
       contextLength: 128_000,
-      // Null, not a borrowed label: nobody declares a TEE for another
+      // Null, not a borrowed label: this router reads no evidence for another
       // deployment's hardware, and a measurement admits a cloud rather than
       // naming its silicon.
       tee: null,

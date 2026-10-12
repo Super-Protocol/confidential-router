@@ -455,11 +455,6 @@ type Endpoint {
   name: String!
 
   """
-  Operator-declared TEE label from the config. Informational, never a claim — the console labels an endpoint with `latestEvidence.tee`, which is read from what the endpoint publishes.
-  """
-  tee: String!
-
-  """
   Prompt + completion tokens the viewer’s workspace routed here in 30 days.
   """
   tokensRouted30d: Int!
@@ -1265,7 +1260,7 @@ type Model {
   slug: String!
 
   """
-  Denormalised from the endpoint so a model list needs no join. Null for an EXTERNAL model: the operator declares no TEE label for another deployment’s hardware, and a measurement admits a cloud rather than naming its silicon.
+  The TEE the serving endpoint’s published evidence names — `endpoint.latestEvidence.tee`, carried here so a model list needs no second lookup. Read, never verified. Null while the endpoint has published nothing this router recognises, and null for an EXTERNAL model: this router reads no TEE for another deployment’s hardware, and a measurement admits a cloud rather than naming its silicon.
   """
   tee: String
 }
@@ -1571,7 +1566,7 @@ type Query {
 
   """Routable models, in config order. Public."""
   models(
-    """Narrow to one TEE label."""
+    """Narrow to one TEE label, as `Model.tee` spells it."""
     tee: String
   ): [Model!]!
 
