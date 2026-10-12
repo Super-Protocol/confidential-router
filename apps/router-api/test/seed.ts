@@ -132,8 +132,19 @@ export interface GenerationSeed {
    * Records the generation against an external endpoint instead of the catalogue's
    * own one (ADR-008 §6). Exactly one of the two is ever set, so this nulls
    * `endpointId` rather than sitting beside it.
+   *
+   * It also nulls `evidenceSnapshotId`, whatever `covered` says, because that is
+   * what the metering path does: at the moment an external generation is recorded
+   * there is no `evidence_snapshots` row to point at — the upstream's bundle is
+   * fetched by a poller that runs afterwards — so what it carries is
+   * {@link evidenceDigest} alone (`generation-recorder.service.ts`, ADR-008 §4).
    */
   externalEndpointId?: string;
+  /**
+   * The digest the verdict observed, for an external generation. Defaults to the
+   * catalogue's, which is what an own-endpoint generation records.
+   */
+  evidenceDigest?: string;
 }
 
 export async function seedGeneration(
@@ -142,15 +153,16 @@ export async function seedGeneration(
   seed: GenerationSeed,
 ): Promise<Generation> {
   const covered = seed.covered ?? true;
+  const external = seed.externalEndpointId !== undefined;
   const values = {
     id: `gen-${randomUUID()}`,
     workspaceId: catalog.workspaceId,
     apiKeyId: seed.apiKeyId === undefined ? catalog.apiKeyId : seed.apiKeyId,
     modelId: seed.modelId ?? catalog.modelId,
-    endpointId: seed.externalEndpointId ? null : catalog.endpointId,
+    endpointId: external ? null : catalog.endpointId,
     externalEndpointId: seed.externalEndpointId ?? null,
-    evidenceSnapshotId: covered ? catalog.snapshotId : null,
-    evidenceDigest: covered ? catalog.evidenceDigest : null,
+    evidenceSnapshotId: covered && !external ? catalog.snapshotId : null,
+    evidenceDigest: covered ? (seed.evidenceDigest ?? catalog.evidenceDigest) : null,
     promptTokens: seed.promptTokens ?? 100,
     completionTokens: seed.completionTokens ?? 50,
     costMicros: seed.costMicros ?? 1_000,
@@ -249,6 +261,38 @@ export async function seedExternalEndpoint(
   }
 
   return { id, name, listenPort, modelId };
+}
+
+/**
+ * The bundle an external upstream published, filed the way
+ * `ExternalEvidenceService` files it: under `(externalEndpointId, evidenceDigest)`,
+ * with `endpointId` null because the two origins are separate namespaces
+ * (`evidenceSnapshotEndpointIsExclusive`).
+ */
+export async function seedExternalSnapshot(
+  dataSource: DataSource,
+  externalEndpointId: string,
+  evidenceDigest: string,
+): Promise<string> {
+  const id = randomUUID();
+  const issuedAt = new Date('2026-08-01T00:00:00Z');
+  await dataSource.getRepository(EvidenceSnapshot).insert({
+    id,
+    endpointId: null,
+    externalEndpointId,
+    fetchedAt: issuedAt,
+    issuedAt,
+    evidenceDigest,
+    evidenceDigestHex: 'f1'.repeat(32),
+    certFingerprint: 'sha256/upstream-leaf',
+    quoteFormat: 'amd-sev-snp-report-v2',
+    containerImages: ['ghcr.io/partner/vllm@sha256:def'],
+    chainSummary: [],
+    measurements: { MEASUREMENT: 'ccdd' },
+    jws: 'eyJhbGciOiJFUzI1NksifQ.upstream.signature',
+    bundle: { version: 1, evidenceDigest },
+  });
+  return id;
 }
 
 /** One entry of the admin trust list. */

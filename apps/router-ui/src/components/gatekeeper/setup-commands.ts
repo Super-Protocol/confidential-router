@@ -84,9 +84,18 @@ export function setupSteps(input: SetupInput): SetupStep[] {
   return [
     {
       id: 'install',
-      command: platform.command,
+      // Two lines on macOS and Linux, and the second one is not decoration: the
+      // installer runs in a child process and cannot change this terminal's
+      // PATH, so without it the next step is command-not-found on any machine
+      // whose shell does not already search the install directory — which is a
+      // stock macOS zsh (SUP-295).
+      command: [platform.command, platform.sessionPath].filter(Boolean).join('\n'),
       title: `Install it — ${platform.platform}`,
-      detail: `${installStepsSentence()} Nobody should paste a one-liner from the internet on trust alone, so that is what this one does.`,
+      detail: `${installStepsSentence()} Nobody should paste a one-liner from the internet on trust alone, so that is what this one does.${
+        platform.sessionPath
+          ? ' The second line puts it on the PATH of this terminal; the installer has already done the same for the ones you open afterwards.'
+          : ''
+      }`,
     },
     {
       id: 'init',
