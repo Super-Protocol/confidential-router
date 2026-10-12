@@ -72,9 +72,14 @@ func newEndpointTrustListCommand(g *globals) *cobra.Command {
 			})
 		}
 
+		// The text branch of emit runs only when --json was not given, so advice
+		// written here can never contaminate the document a script parses.
 		return g.printer(cmd, *asJSON).emit(views, func(w io.Writer) {
 			if len(views) == 0 {
-				fmt.Fprintf(w, "%s has no pinned evidenceDigest and cannot admit traffic.\n", ep.Name)
+				fmt.Fprintf(w, "%s has no pinned evidenceDigest in %s and cannot admit traffic.\n",
+					ep.Name, store.Path())
+				nextStep(w, "review what the endpoint publishes, then pin it",
+					fmt.Sprintf("gatekeeper endpoint trust add %s --from-upstream", ep.Name))
 				return
 			}
 			rows := make([][]string, 0, len(views))
@@ -153,10 +158,12 @@ func newEndpointTrustAddCommand(g *globals) *cobra.Command {
 		}
 		out := cmd.OutOrStdout()
 		if !added {
-			fmt.Fprintf(out, "%s is already pinned for %q; nothing to do\n", digest.Display(), name)
-			return nil
+			fmt.Fprintf(out, "%s is already pinned for %q in %s; nothing to do.\n",
+				digest.Display(), name, store.Path())
+		} else {
+			fmt.Fprintf(out, "Pinned %s for %q in %s\n", digest.Display(), name, store.Path())
 		}
-		fmt.Fprintf(out, "Pinned %s for %q in %s\n", digest.Display(), name, store.Path())
+		nextStep(out, "start the gatekeeper", "gatekeeper run")
 		return nil
 	}
 	return cmd
@@ -243,7 +250,8 @@ func newEndpointTrustRemoveCommand(g *globals) *cobra.Command {
 		fmt.Fprintf(cmd.OutOrStdout(), "Unpinned %s from %q in %s\n", digest.Display(), name, store.Path())
 		if ep, ok := store.Endpoint(name); ok && len(ep.Pins) == 0 {
 			fmt.Fprintf(cmd.ErrOrStderr(),
-				"warning: %q has no pins left and can no longer admit traffic\n", name)
+				"warning: %q has no pins left and can no longer admit traffic; "+
+					"pin one with `gatekeeper endpoint trust add %s --from-upstream`\n", name, name)
 		}
 		return nil
 	}

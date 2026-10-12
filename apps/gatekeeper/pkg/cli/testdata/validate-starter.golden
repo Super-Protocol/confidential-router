@@ -1,5 +1,7 @@
 $TMP/config.yaml is not ready to run (1 problem):
   - endpoints: at least one endpoint is required
 
-Nothing in the file is wrong — it is not finished. See `gatekeeper trust roots add`
-and `gatekeeper endpoint add`.
+Nothing in the file is wrong — it is not finished.
+
+Next: finish the setup
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
