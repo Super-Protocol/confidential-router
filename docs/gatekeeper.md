@@ -708,7 +708,7 @@ nothing it does not need:
 ```bash
 docker run --rm --read-only --user 65532 \
   -v ./config.yaml:/etc/gatekeeper/config.yaml:ro \
-  -p 8443:8443 ghcr.io/super-protocol/confidential-router/gatekeeper@sha256:…
+  -p 8787:8787 ghcr.io/super-protocol/confidential-router/gatekeeper@sha256:…
 ```
 
 The entrypoint is not the gatekeeper itself but a supervisor, because in this
