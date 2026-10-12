@@ -126,6 +126,40 @@ async function generationsOf(modelId: string): Promise<{ id: string; status: str
   return generations.edges.map((edge) => edge.node).filter((node) => node.modelId === modelId);
 }
 
+/**
+ * Waits until the withdrawal of the stand's cloud has reached the row.
+ *
+ * Every `fail-closed` test below opens by re-adding the measurement and waiting
+ * for `VERIFIED`, which is only an observation if the row was *not* already
+ * verified when the test began. `addTrustedMeasurement` does not write the
+ * status itself — admission is re-derived by the next status poll (500 ms here) —
+ * so a test that withdrew the cloud and ended without waiting leaves the row
+ * reading `VERIFIED` while the sidecar is already denying. The next test's wait
+ * then matches that stale row immediately, never sees the cloud re-admitted, and
+ * its wait for the *next* denial is satisfied by the previous test's denial
+ * arriving late — with the previous test's reason on it.
+ *
+ * That is reproducible rather than rare: the poll interval is fixed and the beats
+ * above it are deterministic, so whether the stale row is still there when the
+ * next test reads it turns on a few milliseconds of unrelated work. It is why
+ * `denies when the trusted cloud redeploys` once failed in 221 ms with
+ * `measurement-not-trusted` naming the *stand's* measurement instead of the
+ * rotated one (SUP-298).
+ *
+ * So: withdraw, then settle. One extra poll interval per test, and every
+ * `VERIFIED` below is a verdict this suite actually watched arrive.
+ *
+ * On the stage and not on `DENIED` alone, for the same reason: a row already
+ * denied at `untrusted-root` would satisfy a wait for the status without any
+ * withdrawal having been projected at all.
+ */
+async function settleWithdrawn(): Promise<void> {
+  await waitForExternal(stand.admin, endpointId, {
+    until: (endpoint) => endpoint.status === DENIED && endpoint.lastStage === 'measurement-not-trusted',
+    wanted: 'denied at measurement-not-trusted, the withdrawal projected',
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -350,6 +384,8 @@ describe('fail-closed', () => {
     );
     const aborted = (await generationsOf(EXTERNAL_MODEL)).filter((row) => row.status === 'ABORTED');
     expect(aborted[0].errorCode).toBe('attestation_revoked');
+
+    await settleWithdrawn();
   });
 
   it('denies when the trusted cloud redeploys on an image nobody listed', async () => {
@@ -375,6 +411,7 @@ describe('fail-closed', () => {
     expect(readmitted.measurementSeen).toBe(STAND_MEASUREMENT);
     expect(await listedModels()).toContain(EXTERNAL_MODEL);
     await removeTrustedMeasurement(stand.admin, trusted.id);
+    await settleWithdrawn();
   });
 
   /**
@@ -426,6 +463,7 @@ describe('fail-closed', () => {
     approvedDigest = readmitted.pinnedEvidenceDigest ?? '';
 
     await removeTrustedMeasurement(stand.admin, trusted.id);
+    await settleWithdrawn();
   });
 
   it("denies at untrusted-root when the upstream's own hardware report stops verifying", async () => {
@@ -446,6 +484,7 @@ describe('fail-closed', () => {
 
     stand.sidecar.restore();
     await removeTrustedMeasurement(stand.admin, trusted.id);
+    await settleWithdrawn();
   });
 });
 
