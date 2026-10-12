@@ -3,7 +3,7 @@ import { loadCaseBody, loadConformanceManifest } from '@confidential-router/atte
 import { NotFoundException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSqliteFixture, type SqliteFixture } from '../../../test/sqlite.js';
 import type { routerConfig } from '../config.js';
 import { type RouterConfig, RouterConfigSchema } from '../config.schema.js';
@@ -136,6 +136,41 @@ describe('reading snapshots', () => {
 
     expect(latest.get(endpointId)?.id).toBe(newest.id);
     expect(latest.get(other)?.issuedAt.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+  });
+
+  /*
+   * The shape of the read, not just its answer. This used to be one `IN` query
+   * that loaded every publication of every endpoint named — `bundle` and `jws`
+   * per row — and chose the newest in JS. The table only grows: a row per
+   * issuance, and the retention preference prunes nothing. The Overview paid
+   * all of it per load, and SUP-260 added `GET /v1/models` to the callers, so
+   * the cost had to stop scaling with history.
+   */
+  it('reads one indexed row per endpoint, whatever the history, and collapses repeated ids', async () => {
+    const other = await seedEndpoint(fixture.dataSource, 'second');
+    for (const day of ['01', '02', '03', '04']) {
+      await service.record(endpointId, parsed({ issuedAt: `2026-08-${day}T00:00:00.000Z` }));
+    }
+    const newest = await service.record(endpointId, parsed({ issuedAt: '2026-08-05T00:00:00.000Z' }));
+    await service.record(other, parsed({ issuedAt: '2026-07-01T00:00:00.000Z' }));
+    expect(await fixture.dataSource.getRepository(EvidenceSnapshot).count()).toBe(6);
+
+    const perEndpoint = vi.spyOn(service, 'latestFor');
+    // The gateway's model list names one endpoint once per model it serves.
+    const latest = await service.latestForMany([endpointId, endpointId, other, endpointId]);
+
+    expect(latest.get(endpointId)?.id).toBe(newest.id);
+    expect(perEndpoint.mock.calls.map(([id]) => id)).toEqual([endpointId, other]);
+    perEndpoint.mockRestore();
+  });
+
+  it('answers an empty list without touching the table', async () => {
+    const perEndpoint = vi.spyOn(service, 'latestFor');
+
+    expect(await service.latestForMany([])).toEqual(new Map());
+
+    expect(perEndpoint).not.toHaveBeenCalled();
+    perEndpoint.mockRestore();
   });
 
   it('pages newest first', async () => {

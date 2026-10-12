@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In, LessThan } from 'typeorm';
+import { DataSource, LessThan } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
@@ -162,26 +162,29 @@ export class EvidenceService {
       .findOne({ where: { endpointId }, order: { issuedAt: 'DESC', fetchedAt: 'DESC' } });
   }
 
-  /** Same, for a list of endpoints — the Overview table's one query. */
+  /**
+   * Same, for a list of endpoints — one indexed row each.
+   *
+   * `latestFor` per id rather than one `IN` query over all of them. The `IN`
+   * form read *every* publication of every endpoint named, `bundle` and `jws`
+   * included, and picked the newest in JS, because neither driver takes a
+   * window function portably. That is unbounded: a row is filed per issuance
+   * (`record`), the retention preference prunes nothing today, so the table
+   * grows for the life of the deployment — and the Overview paid the whole of
+   * it on every load. SUP-260 put this on `GET /v1/models` too, where it would
+   * have become a per-request cost that grows with uptime.
+   *
+   * Now it is N single-row lookups on `IDX_evidence_snapshots_endpointId`, each
+   * a `LIMIT 1` the index can answer, where N is how many endpoints the router
+   * config declares — a handful. N small queries beat one query whose size
+   * nobody bounds.
+   */
   async latestForMany(endpointIds: string[]): Promise<Map<string, EvidenceSnapshot>> {
-    const latest = new Map<string, EvidenceSnapshot>();
-    if (endpointIds.length === 0) {
-      return latest;
-    }
-    // Ordered ascending so that the last row written per endpoint is the newest;
-    // a window function would be tighter but is not portable to SQLite.
-    const rows = await this.dataSource.getRepository(EvidenceSnapshot).find({
-      where: { endpointId: In(endpointIds) },
-      order: { issuedAt: 'ASC', fetchedAt: 'ASC' },
-    });
-    for (const row of rows) {
-      // Narrowing, not filtering: the `where` above names the ids, so a null here
-      // would mean the query had picked up an upstream's publication.
-      if (row.endpointId) {
-        latest.set(row.endpointId, row);
-      }
-    }
-    return latest;
+    // Deduplicated: several models share one endpoint, so the gateway's model
+    // list routinely names the same id more than once.
+    const unique = [...new Set(endpointIds)];
+    const found = await Promise.all(unique.map(async (id) => [id, await this.latestFor(id)] as const));
+    return new Map(found.filter((entry): entry is [string, EvidenceSnapshot] => entry[1] !== null));
   }
 
   async stateOf(endpointId: string, now: Date = new Date()): Promise<EvidenceState> {
