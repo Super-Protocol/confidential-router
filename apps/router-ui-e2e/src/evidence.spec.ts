@@ -105,10 +105,18 @@ test.describe('Models', () => {
     // from (SUP-260), so this narrows on a label read off a root certificate.
     await page.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }).click();
 
-    await expect(page.getByText('DeepSeek-V3')).toBeVisible();
-    await expect(page.getByText('Llama 3.3 70B Instruct')).toHaveCount(0);
+    /*
+     * Rows rather than bare text: a model's name is a substring of its own slug
+     * and of its endpoint's hostname — "DeepSeek-V3" is in
+     * `deepseek/deepseek-v3:tdx` and in `deepseek-v3.tee.swarm.cloud` — so
+     * `getByText` matches three nodes and trips strict mode. The row's
+     * accessible name covers every cell, which is what the test means anyway.
+     */
+    const table = page.getByRole('table', { name: 'Model catalogue' });
+    await expect(table.getByRole('row', { name: /DeepSeek-V3/ })).toBeVisible();
+    await expect(table.getByRole('row', { name: /Llama 3\.3 70B Instruct/ })).toHaveCount(0);
     // Its endpoint publishes nothing, so it is under no TEE chip at all.
-    await expect(page.getByText('Qwen2.5 72B Instruct')).toHaveCount(0);
+    await expect(table.getByRole('row', { name: /Qwen2\.5 72B Instruct/ })).toHaveCount(0);
   });
 
   test('opens the same evidence modal and copies the JWS', async ({ page, baseURL }) => {
