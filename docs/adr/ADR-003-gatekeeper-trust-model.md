@@ -187,7 +187,9 @@ sent upstream** (no request header, no query parameter, no separate call).
 
 ### 8. Config file
 
-`~/.config/confidential-gatekeeper/config.yaml` (override `--config`, env `GATEKEEPER_CONFIG`); schema
+`confidential-gatekeeper/config.yaml` under the OS user configuration directory — `os.UserConfigDir()`:
+`$XDG_CONFIG_HOME`/`~/.config` on Linux, `~/Library/Application Support` on macOS, `%AppData%` on Windows;
+`gatekeeper config path` prints the resolved one (override `--config`, env `GATEKEEPER_CONFIG`); schema
 `schemas/gatekeeper-config.schema.json`, example `schemas/examples/gatekeeper-config.example.yaml`. Secrets
 never live in the file: the gatekeeper does not hold the router API key — the client sends
 `Authorization: Bearer sk-tee-…` through the proxy untouched.

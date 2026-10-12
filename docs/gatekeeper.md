@@ -86,7 +86,11 @@ Every command takes `--json`, and every one exits with a meaningful status:
 
 ## Configuration
 
-`~/.config/confidential-gatekeeper/config.yaml` by default; `--config` or
+`confidential-gatekeeper/config.yaml` under your user configuration directory
+by default — Go's `os.UserConfigDir()`, so `$XDG_CONFIG_HOME` or `~/.config` on
+Linux, `~/Library/Application Support` on macOS and `%AppData%` on Windows.
+**`gatekeeper config path` prints the one this machine resolves**, and every
+command that writes the file prints it back; `--config` or
 `$CR_GATEKEEPER_CONFIG` override it. Normative schema:
 `schemas/gatekeeper-config.schema.json`. The `trust` and `endpoint` commands
 edit this file in place and keep your comments.

@@ -1,0 +1,4 @@
+Pinned sha256:4b04a5f2792a2ec3479fdaec5bb0df7a4f6619378378f9bc32c1cf43767ee3dd for "router" in $TMP/config.yaml
+
+Next: start the gatekeeper
+  gatekeeper run
