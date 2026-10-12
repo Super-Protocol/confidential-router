@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
@@ -25,9 +26,18 @@ const (
 	// only so that an upstream that accepted a connection and then went silent
 	// is eventually given up on.
 	responseHeaderTimeout = 5 * time.Minute
-	idleConnTimeout       = 90 * time.Second
-	maxIdleConnsPerHost   = 32
-	defaultHTTPSPort      = 443
+	// idleConnTimeout must stay below the keep-alive timeout of every upstream
+	// gateway the sidecar talks to, so that the local pool drops an idle
+	// connection before the remote end does. nginx and OpenResty close one after
+	// `keepalive_timeout` — 65 s by default, 60–75 s across the family — and the
+	// Swarm gateway in front of external endpoints measured 64 s. A connection
+	// the remote has abandoned but the pool still holds is the one the next POST
+	// rides and dies on (SUP-289). 30 s leaves a margin for a gateway configured
+	// tighter than the default; the cost is a fresh handshake after half a
+	// minute of silence, which is nothing next to a completion.
+	idleConnTimeout     = 30 * time.Second
+	maxIdleConnsPerHost = 32
+	defaultHTTPSPort    = 443
 )
 
 // leafMismatchError is returned by a dial whose peer presented a certificate
@@ -69,6 +79,9 @@ type pool struct {
 	pin       string
 	conns     map[net.Conn]struct{}
 	transport *http.Transport
+	// roundTripper is what the reverse proxy sends through: transport, plus
+	// the one replay a request that provably never left is allowed.
+	roundTripper *replayingTransport
 }
 
 // newPool builds a pool for one upstream host. An empty pin accepts whatever
@@ -93,6 +106,7 @@ func newPool(hostname string, port int, dial DialFunc) *pool {
 		MaxIdleConnsPerHost:   maxIdleConnsPerHost,
 		ForceAttemptHTTP2:     false,
 	}
+	p.roundTripper = &replayingTransport{pool: p}
 	return p
 }
 
@@ -225,11 +239,32 @@ func (p *pool) forget(conn net.Conn) {
 }
 
 // trackedConn is an upstream connection the pool can reach to close.
+//
+// It also counts the bytes that cross it, which is how a failed request is
+// judged replayable: a request whose connection moved no bytes between being
+// handed the connection and failing never reached the upstream.
 type trackedConn struct {
 	net.Conn
-	pool *pool
-	once sync.Once
+	pool    *pool
+	once    sync.Once
+	written atomic.Int64
+	read    atomic.Int64
 }
+
+func (c *trackedConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.read.Add(int64(n))
+	return n, err
+}
+
+func (c *trackedConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	c.written.Add(int64(n))
+	return n, err
+}
+
+// traffic is the number of bytes moved in either direction so far.
+func (c *trackedConn) traffic() int64 { return c.written.Load() + c.read.Load() }
 
 func (c *trackedConn) Close() error {
 	c.once.Do(func() { c.pool.forget(c) })
