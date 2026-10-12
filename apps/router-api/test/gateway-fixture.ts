@@ -50,10 +50,10 @@ export function routerConfigFor(
       litellm: { baseUrl: litellmBaseUrl, apiKey: 'mock-litellm-key', connectTimeout: '2s', readTimeout: '5s' },
     },
     endpoints: [
-      { name: 'mock-primary', hostname: PRIMARY_ENDPOINT_HOSTNAME, tee: 'Intel TDX + H100 CC' },
-      { name: 'mock-embeddings', hostname: EMBEDDINGS_ENDPOINT_HOSTNAME, tee: 'AMD SEV-SNP' },
-      { name: 'mock-covered', hostname: 'covered.mock.tee.example', tee: 'Intel TDX' },
-      { name: 'mock-stale', hostname: 'stale.mock.tee.example', tee: 'Intel TDX' },
+      { name: 'mock-primary', hostname: PRIMARY_ENDPOINT_HOSTNAME },
+      { name: 'mock-embeddings', hostname: EMBEDDINGS_ENDPOINT_HOSTNAME },
+      { name: 'mock-covered', hostname: 'covered.mock.tee.example' },
+      { name: 'mock-stale', hostname: 'stale.mock.tee.example' },
     ],
     models: MODELS.map((model) => ({
       id: model.id,

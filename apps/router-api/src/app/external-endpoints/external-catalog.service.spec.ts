@@ -76,7 +76,6 @@ describe('refresh', () => {
       promptPer1mMicros: 400_000,
       completionPer1mMicros: 800_000,
       capabilities: ['chat', 'completions'],
-      tee: 'snp',
     });
   });
 

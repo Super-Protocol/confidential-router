@@ -30,8 +30,6 @@ export interface ExternalCatalogModel {
   capabilities: ModelCapability[];
   promptPer1mMicros: number;
   completionPer1mMicros: number;
-  /** Null unless a deployment registered one before the field left the API. */
-  tee: string | null;
   endpoint: ExternalCatalogEndpoint;
   updatedAt: Date;
 }
@@ -213,7 +211,6 @@ export class ExternalCatalogService {
         capabilities: row.capabilities,
         promptPer1mMicros: row.promptPer1mMicros,
         completionPer1mMicros: row.completionPer1mMicros,
-        tee: row.tee || null,
         endpoint: {
           id: endpoint.id,
           name: endpoint.name,
@@ -242,9 +239,9 @@ export class ExternalCatalogService {
  * One catalogue row, with `available` derived from the endpoint rather than
  * stored.
  *
- * No TEE label: `models.tee` survives on these rows only from before the field
- * left the registration API (ADR-008 §6), and relaying a vestigial value as
- * though this deployment declared it would be the one fabrication the user
+ * No TEE label: this router reads the TEE of its *own* endpoints off the
+ * evidence they publish (`evidence-tee.ts`), and relaying anything of the kind
+ * for another deployment's hardware would be the one fabrication the user
  * surfaces must not make. A measurement admits a cloud and does not name its
  * silicon, which is what `Model.tee: null` says for an external model.
  *

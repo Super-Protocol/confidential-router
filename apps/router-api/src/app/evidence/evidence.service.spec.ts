@@ -46,7 +46,6 @@ async function seedEndpoint(dataSource: DataSource, name = 'router'): Promise<st
     id,
     name,
     hostname: name === 'router' ? HOSTNAME : `${name}.example.test`,
-    tee: 'Intel TDX',
     evidenceUrl: null,
     enabled: true,
     updatedAt: new Date(),
