@@ -70,9 +70,7 @@ export class ModelsController {
    * and no root this reader would name a TEE from.
    */
   private async teeLabels(models: RoutedModel[]): Promise<Map<string, string | null>> {
-    // Not deduplicated here — several models share one endpoint and
-    // `latestForMany` collapses the repeats itself.
-    const own = models.filter((model) => model.external === null).map((model) => model.endpoint.id);
+    const own = [...new Set(models.filter((model) => model.external === null).map((model) => model.endpoint.id))];
     const latest = await this.evidence.latestForMany(own);
     return new Map([...latest].map(([endpointId, snapshot]) => [endpointId, teeLabelOfBundle(snapshot.bundle)]));
   }
