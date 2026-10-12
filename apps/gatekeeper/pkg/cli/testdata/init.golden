@@ -1,10 +1,4 @@
-Wrote $TMP/config.yaml
+Configuration created at $TMP/config.yaml
 
-Next:
-  gatekeeper endpoint add <name> --listen 127.0.0.1:8443 --upstream https://<host>
-  gatekeeper endpoint trust add <name> --from-upstream
-  gatekeeper config validate
-
-A Swarm cloud needs no `trust roots add`: its certificate authority is
-accepted on its own TEE evidence. Add one with `gatekeeper trust roots add`
-to pin a particular cloud, or to trust a CA that publishes no evidence.
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787

@@ -101,8 +101,15 @@ export function setupSteps(input: SetupInput): SetupStep[] {
       id: 'init',
       command: 'gatekeeper init',
       title: 'Write a starter config',
+      // No path here, deliberately. The gatekeeper resolves its config with Go's
+      // `os.UserConfigDir()` (`apps/gatekeeper/pkg/config/load.go`), which is
+      // `~/.config` on Linux, `~/Library/Application Support` on macOS and
+      // `%AppData%` on Windows — so the literal this used to print was simply
+      // false for the macOS reader it was shown to (SUP-300). An instruction
+      // written before the command runs never invents a path; the command
+      // prints the one it actually resolved, afterwards.
       detail:
-        'Creates confidential-gatekeeper/config.yaml inside your user configuration directory and prints the path it wrote \u2014 ~/.config on Linux, ~/Library/Application Support on macOS, %AppData% on Windows. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
+        'Creates a starter config in your user configuration directory — the command prints the full path — with the default policy. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
     },
     {
       id: 'endpoint',
