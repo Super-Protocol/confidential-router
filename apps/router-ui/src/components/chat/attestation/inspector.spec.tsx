@@ -30,7 +30,6 @@ function open(state: VerificationState = verification(), declaredImages = DECLAR
       onOpenChange={vi.fn()}
       verification={state}
       hostname={HOSTNAME}
-      teeLabel="Intel TDX + H100 CC"
       declaredImages={declaredImages}
     />,
   );
@@ -38,8 +37,8 @@ function open(state: VerificationState = verification(), declaredImages = DECLAR
 
 /**
  * The same panel over an external upstream's relayed bundle, with the props the
- * chat passes for one: no TEE label and no allow-list, because nobody declared
- * either for another deployment (ADR-008 §7).
+ * chat passes for one: no allow-list, because nobody declared what another
+ * deployment runs (ADR-008 §7).
  */
 const UPSTREAM_HOSTNAME = 'llama-33-70b.partner.example';
 
@@ -50,7 +49,6 @@ function openExternal(state: VerificationState = verification({ gate: relayedGat
       onOpenChange={vi.fn()}
       verification={state}
       hostname={UPSTREAM_HOSTNAME}
-      teeLabel={null}
       declaredImages={null}
       endpointKind="external"
     />,
@@ -125,11 +123,20 @@ describe('the measurements panel', () => {
     expect(await screen.findByRole('button', { name: /Copy the signed evidence/ })).toBeInTheDocument();
   });
 
-  it('refuses to call the operator’s TEE label a check', () => {
-    // The one field most likely to be read as hardware attestation. It is config.
+  /*
+   * The row that used to print the router configuration's label, which the chart
+   * defaulted to "Intel TDX + H100 CC" on every deployment (SUP-260). It reads
+   * the TEE out of the verified document now, and still says in words that
+   * reading is not checking.
+   */
+  it('names the TEE from the evidence, and still calls it no verdict', () => {
     open();
 
-    expect(fieldValue('TEE, as the operator declares it')).toHaveTextContent('nothing on this page checks it');
+    const tee = fieldValue('TEE, as the evidence names it');
+    expect(tee).toHaveTextContent('AMD SEV-SNP (QEMU)');
+    expect(tee).toHaveTextContent('never a verdict');
+    expect(screen.queryByText('TEE, as the operator declares it')).not.toBeInTheDocument();
+    expect(tee).not.toHaveTextContent('Intel TDX + H100 CC');
   });
 
   it('lists every image the signed evidence carries, with its verdict', () => {
@@ -306,12 +313,17 @@ describe('an external upstream’s evidence', () => {
     expect(fieldValue('Bundle came from')).toHaveTextContent(/signature was checked here/);
   });
 
-  it('declares no TEE label rather than borrowing one', () => {
+  /*
+   * The upstream's own document is relayed and verified in this page, so its
+   * root names its hardware here exactly as this deployment's does — read from
+   * the evidence, never declared and never borrowed from the catalogue.
+   */
+  it('names the upstream’s TEE from the upstream’s own evidence', () => {
     openExternal();
 
-    const tee = fieldValue('TEE, as the operator declares it');
-    expect(tee).toHaveTextContent(/Nobody declares one for another deployment/);
-    expect(tee).not.toHaveTextContent('Intel TDX');
+    const tee = fieldValue('TEE, as the evidence names it');
+    expect(tee).toHaveTextContent('AMD SEV-SNP (QEMU)');
+    expect(tee).toHaveTextContent(/Nobody declares it/);
   });
 
   it('says whose channel the pinned certificate is about', () => {

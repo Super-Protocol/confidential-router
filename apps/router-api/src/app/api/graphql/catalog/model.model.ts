@@ -130,9 +130,10 @@ export class LlmModel {
   @Field(() => String, {
     nullable: true,
     description:
-      'Denormalised from the endpoint so a model list needs no join. Null for an EXTERNAL model: the operator ' +
-      'declares no TEE label for another deployment’s hardware, and a measurement admits a cloud rather than ' +
-      'naming its silicon.',
+      'The TEE the serving endpoint’s published evidence names — `endpoint.latestEvidence.tee`, carried here ' +
+      'so a model list needs no second lookup. Read, never verified. Null while the endpoint has published ' +
+      'nothing this router recognises, and null for an EXTERNAL model: this router reads no TEE for another ' +
+      'deployment’s hardware, and a measurement admits a cloud rather than naming its silicon.',
   })
   tee!: string | null;
 }

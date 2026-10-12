@@ -135,7 +135,7 @@ function model(overrides: Record<string, unknown> = {}) {
     name: 'Llama 3.3 70B Instruct',
     contextLength: 131_072,
     capabilities: ['CHAT' as const, 'COMPLETIONS' as const],
-    tee: 'Intel TDX + H100 CC',
+    tee: 'AMD SEV-SNP (QEMU)',
     origin: 'CONFIG' as const,
     pricing: { __typename: 'Pricing' as const, promptPer1m: '350000', completionPer1m: '900000' },
     endpoint: publishedEndpoint(),

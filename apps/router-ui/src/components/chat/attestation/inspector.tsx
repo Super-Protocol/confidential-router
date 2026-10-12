@@ -28,8 +28,6 @@ export interface AttestationInspectorProps {
   /** The chat's own tier-1 and tier-2 results. Never re-run here. */
   verification: VerificationState;
   hostname: string;
-  /** The catalogue's operator-declared TEE label. */
-  teeLabel: string | null;
   /**
    * The endpoint's image allow-list, or null when it declares none.
    *
@@ -77,7 +75,6 @@ export default function AttestationInspector({
   onOpenChange,
   verification,
   hostname,
-  teeLabel,
   declaredImages,
   endpointKind = 'own',
 }: AttestationInspectorProps) {
@@ -165,7 +162,6 @@ export default function AttestationInspector({
                 <Measurements
                   hostname={hostname}
                   endpointKind={endpointKind}
-                  teeLabel={teeLabel}
                   gate={gate}
                   evidence={evidence}
                   extension={extension}

@@ -81,7 +81,16 @@ const DeclaredImageSchema = z.strictObject({
 const EndpointSchema = z.strictObject({
   name,
   hostname: z.string().min(1),
-  tee: z.string().min(1),
+  /**
+   * Accepted and ignored. Until SUP-260 this was the operator-declared TEE label
+   * the console printed beside the endpoint, and the chart's one default
+   * ("Intel TDX + H100 CC") reached deployments running on AMD SEV-SNP. Every
+   * surface now names the TEE from the evidence the endpoint publishes
+   * (`evidence/evidence-tee.ts`), so the key carries nothing — it stays accepted
+   * only so an image from this change on boots against a chart that still
+   * renders it; the listing drops the key in its own release.
+   */
+  tee: z.string().optional(),
   evidenceUrl: z.url().optional(),
   /**
    * What the operator says this endpoint runs. Compared in the console against

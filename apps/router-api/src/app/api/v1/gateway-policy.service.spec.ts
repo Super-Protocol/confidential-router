@@ -26,7 +26,7 @@ const CONFIG_MODEL: CatalogModel = {
   capabilities: ['chat'],
   promptPer1mMicros: 1,
   completionPer1mMicros: 1,
-  endpoint: { id: 'ep-1', name: 'mock-primary', hostname: 'primary.example', tee: 'Intel TDX', declaredImages: null },
+  endpoint: { id: 'ep-1', name: 'mock-primary', hostname: 'primary.example', declaredImages: null },
   updatedAt: new Date('2026-10-06T00:00:00Z'),
 };
 
@@ -38,7 +38,6 @@ const EXTERNAL_MODEL: ExternalCatalogModel = {
   capabilities: ['chat'],
   promptPer1mMicros: 2,
   completionPer1mMicros: 2,
-  tee: 'AMD SEV-SNP',
   endpoint: {
     id: 'xep-1',
     name: 'partner-cloud',

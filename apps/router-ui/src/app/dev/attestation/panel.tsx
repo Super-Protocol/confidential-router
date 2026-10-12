@@ -81,7 +81,6 @@ export function AttestationReviewPanel() {
         <InspectAttestationButton
           verification={verification}
           hostname={INSPECTED_HOSTNAME}
-          teeLabel="Intel TDX + H100 CC"
           declaredImages={DECLARED_IMAGES}
         />
       </section>
@@ -91,19 +90,13 @@ export function AttestationReviewPanel() {
         <InspectAttestationButton
           verification={undeclared}
           hostname={INSPECTED_HOSTNAME}
-          teeLabel="Intel TDX + H100 CC"
           declaredImages={DECLARED_IMAGES}
         />
       </section>
 
       <section className="space-y-2">
         <h2 className="font-medium text-sm">No allow-list declared</h2>
-        <InspectAttestationButton
-          verification={verification}
-          hostname={INSPECTED_HOSTNAME}
-          teeLabel="Intel TDX + H100 CC"
-          declaredImages={null}
-        />
+        <InspectAttestationButton verification={verification} hostname={INSPECTED_HOSTNAME} declaredImages={null} />
       </section>
 
       <section className="space-y-2">
@@ -112,7 +105,6 @@ export function AttestationReviewPanel() {
           verification={relayed}
           hostname={verifiedUpstream().hostname}
           endpointKind="external"
-          teeLabel={null}
           declaredImages={null}
         />
       </section>
