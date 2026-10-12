@@ -104,8 +104,13 @@ export function formatConsoleError(
    * in is inside `originalError`, which the next block deletes — and because
    * `HttpException.message` for a response object is the useless literal
    * "Bad Request Exception", which is what the console used to show (SUP-295).
+   *
+   * Skipped entirely for a masked failure: nothing of a 5xx survives when
+   * internals are hidden, and a field map outliving the message it belongs to
+   * would describe an error the caller is no longer being told about.
    */
-  const validation = validationFailureOf(exceptionOf(raw));
+  const masked = internal && !exposeInternals;
+  const validation = masked ? null : validationFailureOf(exceptionOf(raw));
   const message = validation ? validation.messages.join(' ') : formatted.message;
   if (validation && Object.keys(validation.fields).length > 0) {
     extensions.fields = validation.fields;
@@ -120,7 +125,7 @@ export function formatConsoleError(
 
   return {
     ...formatted,
-    message: internal && !exposeInternals ? INTERNAL_ERROR_MESSAGE : message,
+    message: masked ? INTERNAL_ERROR_MESSAGE : message,
     extensions,
   };
 }

@@ -347,6 +347,48 @@ describe('APIKeysScreen', () => {
     });
 
     /*
+     * Moving the reload out of the mutation opened a window the mutation's own
+     * `loading` no longer covers: it goes false the moment the key exists, while
+     * the dialog is still open and the reload is still in flight. A second click
+     * there mints a second key, and the reader only ever sees the second secret
+     * — the first exists, unshown and unusable.
+     */
+    it('cannot be submitted twice while the list is still reloading', async () => {
+      let creates = 0;
+      const counted: MockLink.MockedResponse = {
+        ...createMock(),
+        maxUsageCount: Number.POSITIVE_INFINITY,
+        result: () => {
+          creates += 1;
+          return { data: { createApiKey: { secret: SECRET, key: created } } };
+        },
+      };
+      // One load for the screen, then a reload slow enough to click through.
+      renderScreen([{ ...keysMock(), maxUsageCount: 1 }, counted, { ...keysMock(), delay: 300 }]);
+
+      await openCreateDialog();
+      await userEvent.type(screen.getByLabelText('Name'), 'ci-agent');
+      await userEvent.click(screen.getByRole('checkbox', { name: /Restrict this key to specific models/ }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'GPT-OSS 120B' }));
+      await userEvent.type(screen.getByLabelText('Spend limit (USD)'), '25');
+
+      const create = screen.getByRole('button', { name: 'Create key' });
+      await userEvent.click(create);
+      // The key now exists and the reload has not come back — the window the
+      // mutation's own `loading` stopped covering.
+      await waitFor(() => expect(creates).toBe(1));
+
+      // user-event, because only it emulates the implicit form submission a
+      // click on a submit button performs — and it declines to click a disabled
+      // one, which is exactly the behaviour under test.
+      await userEvent.click(create);
+
+      expect(await screen.findByText('Copy your key now')).toBeInTheDocument();
+      expect(screen.getByTestId('created-key-secret')).toHaveTextContent(SECRET);
+      expect(creates).toBe(1);
+    });
+
+    /*
      * The secret is shown once and is not recoverable. Reloading the table is a
      * courtesy — the mutation has already succeeded — so a reload that fails
      * must not be reported as a failed creation, which would lose the key for

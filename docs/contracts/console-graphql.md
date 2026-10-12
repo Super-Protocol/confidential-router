@@ -317,9 +317,13 @@ and small:
     origins**: a generation this deployment's own endpoint served is reached through its
     `evidenceSnapshotId`, and one an external upstream served through `(externalEndpointId,
     evidenceDigest)` — it carries no snapshot id, because there is no row to stamp when it is recorded
-    (SUP-295). Each manifest entry says which with `origin: own | external`; digests whose bundle this
-    router never retrieved are listed under `unretrieved`, and `generations: { served, covered }` is what
-    tells an empty archive apart from a quiet period.
+    (SUP-295). Each manifest entry says which with `origin: own | external`, and the manifest's `origins`
+    legend says what that means for the reader: who published the document, and what matched it to the
+    generations it covers — an `own` entry is this deployment's own publication, matched by the snapshot
+    stamped at serve time; an `external` one is the upstream's, matched by the digest the egress leg
+    observed when it verified that upstream. Neither is a verdict, which is what `note` says. Digests
+    whose bundle this router never retrieved are listed under `unretrieved`, and
+    `generations: { served, covered }` is what tells an empty archive apart from a quiet period.
   - `GET /admin/data/export` — the deployment export (SUP-271), a gzipped JSON document. Session cookie
     **and** `auth.adminEmails`; deliberately *not* a signed link, because this file is not for handing on.
     `Cache-Control: no-store`; `X-Export-Sha256` carries the bundle's content hash.

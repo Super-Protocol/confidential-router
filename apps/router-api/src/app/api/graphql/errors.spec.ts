@@ -138,6 +138,24 @@ describe('formatConsoleError', () => {
     });
   });
 
+  it('drops the field map of a failure whose message is masked', () => {
+    // No resolver throws a 5xx carrying a validation body today. If one ever
+    // does, the map must not outlive the message it belongs to: the caller is
+    // being told "internal server error" and nothing else.
+    const refusal = validationException([
+      { property: 'spendLimitMicros', constraints: { matches: 'spendLimitMicros must be a number' } },
+    ] as never);
+    const masked = new InternalServerErrorException(refusal.getResponse());
+    const [formatted, raw] = thrown(masked);
+
+    const result = formatConsoleError(formatted, raw, false);
+
+    expect(result.message).toBe(INTERNAL_ERROR_MESSAGE);
+    // The status still travels — it is not an internal detail — but the field
+    // map does not.
+    expect(result.extensions).toEqual({ code: 'INTERNAL_SERVER_ERROR', status: 500 });
+  });
+
   it('leaves an ordinary refusal alone — there is no field to name', () => {
     const [formatted, raw] = thrown(new BadRequestException('Unknown model id(s): nope.'));
 

@@ -9,6 +9,11 @@ import { Endpoint } from '../db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { Generation } from '../db/entities/generation.entity.js';
+// The leaf module rather than `../external-endpoints/index.js`: that barrel
+// re-exports `ExternalEndpointsModule`, and going through it closes an import
+// cycle whose only symptom is an `undefined` provider at decorator time (the
+// same trap `external-evidence.service.ts` documents).
+import { ExternalEvidenceService } from '../external-endpoints/external-evidence.service.js';
 
 /** Audience of an evidence-export link. A token minted for anything else is refused. */
 export const EVIDENCE_EXPORT_AUDIENCE = 'evidence:export';
@@ -38,6 +43,35 @@ export interface EvidenceExportLink {
   expiresAt: Date;
 }
 
+/**
+ * What an archive's entries mean, per origin: who published the document, and
+ * what matched it to the generations it covers.
+ *
+ * The distinction the single `note` used to flatten (SUP-295). An `own` entry is
+ * this deployment's own publication about an endpoint it operates, matched by the
+ * snapshot stamped on each generation as it was served; this router does not
+ * verify its own evidence (ADR-002). An `external` entry was published by a
+ * third-party upstream — this platform published nothing about it — and is
+ * matched by the digest the egress leg observed when it verified that upstream
+ * before serving the request (ADR-008 §4). Neither entry is a verdict, and an
+ * auditor reading an `external` row as "what this deployment published" would be
+ * reading a claim nobody made.
+ */
+const ORIGIN_LEGEND = {
+  own: 'Published by this deployment, for an endpoint it operates. Matched to its generations by the evidence snapshot stamped on each of them at the moment it was served. This router does not verify its own evidence.',
+  external:
+    'Published by the named third-party upstream, not by this deployment. Matched to its generations by the evidence digest this router’s egress leg observed when it verified that upstream in order to serve them — the document is the upstream’s, and the match rests on that verification.',
+} as const;
+
+/** The legend, narrowed to the origins this archive actually carries. */
+function originLegend(references: SnapshotReference[]): Partial<Record<SnapshotReference['origin'], string>> {
+  const legend: Partial<Record<SnapshotReference['origin'], string>> = {};
+  for (const reference of references) {
+    legend[reference.origin] = ORIGIN_LEGEND[reference.origin];
+  }
+  return legend;
+}
+
 /** Generations of one period grouped by the publication that covered them. */
 interface SnapshotReference {
   /** The `evidence_snapshots` row, once one has been found for this group. */
@@ -53,11 +87,21 @@ interface SnapshotReference {
  * Packages the evidence a workspace's generations were served under, for an
  * auditor.
  *
- * The zip contains exactly what the platform published — bundle, JWS and the
- * digests — and a manifest saying which generation referenced which snapshot. It
- * contains no verdict: this router does not verify, and an export that implied
- * otherwise would be the design regression ADR-002 exists to prevent. Whoever
- * receives the zip verifies it with the gatekeeper.
+ * The zip contains published documents — bundle, JWS and the digests — and a
+ * manifest saying which generations each one covers. It contains **no verdict**:
+ * nothing here records whether any document was found valid, and an export that
+ * implied otherwise would be the design regression ADR-002 exists to prevent.
+ * Whoever receives the zip verifies it with the gatekeeper.
+ *
+ * Who published a document, and how it was matched to the generations it covers,
+ * differs by origin, and the manifest's `origins` legend says so rather than
+ * leaving an auditor to assume. An `own` entry was published by this deployment,
+ * which does not verify its own evidence. An `external` entry was published by a
+ * third-party upstream — this platform published nothing about it — and was
+ * matched by the digest this router's egress leg observed when it verified that
+ * upstream before serving the request. The archived document is still not a
+ * verdict; the *match* rests on one, and that is what makes the pairing worth
+ * anything to a reader.
  *
  * **Both origins are in it, and they are reached differently** (SUP-295 item 4).
  * A generation served by one of this deployment's own endpoints carries
@@ -79,6 +123,10 @@ export class EvidenceExportService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
+    // The one reader of the `(externalEndpointId, evidenceDigest)` pairing, so the
+    // export cannot drift from the service that files bundles under it. Reached
+    // with no module import: `ExternalEndpointsModule` is `@Global`.
+    private readonly externalEvidence: ExternalEvidenceService,
   ) {}
 
   /**
@@ -127,11 +175,15 @@ export class EvidenceExportService {
       from: from.toISOString(),
       to: to.toISOString(),
       generatedAt: new Date().toISOString(),
-      // Said once, in the artefact itself, so the export cannot be mistaken for
-      // an attestation result.
+      // Said in the artefact itself, so the export cannot be mistaken for an
+      // attestation result — and said per origin, because the two differ in who
+      // published the document and in what matched it to a generation. One
+      // sentence covering both was wrong about half its own entries (SUP-295).
       note:
-        'The Confidential Router publishes evidence and never verifies it. This archive is what the ' +
-        'platform published for the endpoints that served these generations; verify it with the gatekeeper.',
+        'This archive is evidence, not a verdict: nothing in it records whether any document was found ' +
+        'valid, and verifying them is yours to do with the gatekeeper. Who published each document, and ' +
+        'how it was matched to the generations it covers, is in `origins` below.',
+      origins: originLegend(references),
       // What the period actually held, so a short archive can be read. An
       // archive with no snapshots and a four-figure `generations` is a fault to
       // report; one with no snapshots and no generations is a quiet month.
@@ -207,6 +259,13 @@ export class EvidenceExportService {
       .select('generation.evidenceSnapshotId', 'snapshotId')
       .addSelect('COUNT(*)', 'generations')
       .andWhere('generation.evidenceSnapshotId IS NOT NULL')
+      // The two origin queries partition the period, structurally rather than by
+      // convention. Nothing the recorder writes can satisfy both today, but
+      // `generationEndpointIsExclusive` does not constrain `evidenceSnapshotId`,
+      // so no invariant forbids a row that does — and one such row would be
+      // counted twice, making `generations.covered` exceed `served` and the new
+      // "a fault to report" signal report a fault that is not there.
+      .andWhere('generation.externalEndpointId IS NULL')
       .groupBy('generation.evidenceSnapshotId')
       .limit(MAX_SNAPSHOTS)
       .getRawMany<{ snapshotId: string; generations: string | number }>();
@@ -264,14 +323,14 @@ export class EvidenceExportService {
     }
 
     const endpointIds = [...new Set(rows.map((row) => row.endpointId))];
-    const [snapshots, endpoints] = await Promise.all([
-      this.dataSource.getRepository(EvidenceSnapshot).find({
-        where: {
-          externalEndpointId: In(endpointIds),
-          evidenceDigest: In([...new Set(rows.map((row) => row.evidenceDigest))]),
-        },
-        order: { issuedAt: 'ASC', fetchedAt: 'ASC' },
-      }),
+    const [summaries, endpoints] = await Promise.all([
+      // Asked for exactly the pairs this archive will carry. The lookup —
+      // including the rule that one upstream's publication is never filed under
+      // another's digest, and that a re-issue wins on `issuedAt` — belongs to the
+      // service that writes these rows, and is not worth a second copy here.
+      this.externalEvidence.summariesFor(
+        rows.map((row) => ({ externalEndpointId: row.endpointId, evidenceDigest: row.evidenceDigest })),
+      ),
       // Two columns and no more: this table also holds the sealed upstream
       // credential, and an export is a file that leaves the building. Nothing
       // can be put in the zip that was never loaded.
@@ -279,15 +338,10 @@ export class EvidenceExportService {
         .getRepository(ExternalEndpoint)
         .find({ where: { id: In(endpointIds) }, select: { id: true, name: true } }),
     ]);
-    // The two `In`s are a cross product, so the pairing is re-applied here —
-    // one upstream's publication must never be filed under another's digest.
-    const byPair = new Map(
-      snapshots.map((snapshot) => [`${snapshot.externalEndpointId}\u0000${snapshot.evidenceDigest}`, snapshot]),
-    );
     const names = new Map(endpoints.map((endpoint) => [endpoint.id, endpoint.name]));
 
     return rows.map((row) => ({
-      snapshot: byPair.get(`${row.endpointId}\u0000${row.evidenceDigest}`) ?? null,
+      snapshot: summaries.get(row.endpointId)?.get(row.evidenceDigest) ?? null,
       origin: 'external' as const,
       endpoint: names.get(row.endpointId) ?? row.endpointId,
       evidenceDigest: row.evidenceDigest,

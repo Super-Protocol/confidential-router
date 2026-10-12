@@ -31,11 +31,16 @@ function firstErrorOf(error: unknown): GraphQLFormattedError | null {
 /**
  * What to put in front of the user when a mutation fails.
  *
- * A message that came from our own API is written for a user — `BAD_USER_INPUT`
- * carries the validation text — and is shown as it is. Anything else is a
- * transport failure whose message can name internal hosts, so it is replaced;
- * the status code is kept, because "the server answered 502" is the difference
- * between a bug report someone can act on and "it failed".
+ * A GraphQL error message is written for a user — `BAD_USER_INPUT` carries the
+ * validation text — and is shown as it is. Anything else is a transport failure
+ * whose message can name internal hosts, so it is replaced; the status code is
+ * kept, because "the server answered 502" is the difference between a bug report
+ * someone can act on and "it failed".
+ *
+ * The one soft edge: a non-200 body that parses as a GraphQL response is taken
+ * at its word, and a proxy between us and the API could in principle return one.
+ * It would have to serve a JSON body with an `errors` array to do any harm, and
+ * the realistic case — an HTML error page — falls through to the status.
  */
 export function errorMessageOf(error: unknown, fallback = 'The request failed. Please try again.'): string {
   const first = firstErrorOf(error);
