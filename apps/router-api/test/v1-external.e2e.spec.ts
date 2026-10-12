@@ -149,7 +149,6 @@ async function register(
       contextLength: 8192,
       capabilities: ['chat', 'completions'],
       ...PRICING,
-      tee: 'AMD SEV-SNP',
       enabled: true,
       updatedAt: now,
     });
@@ -294,7 +293,7 @@ describe('a verified external endpoint', () => {
       .expect(200);
     expect(one.body).toMatchObject({
       id: endpoint.modelId,
-      endpoint: { name: endpoint.name, hostname: endpoint.hostname, tee: 'AMD SEV-SNP' },
+      endpoint: { name: endpoint.name, hostname: endpoint.hostname },
       pricing: { prompt_per_1m_micros: PRICING.promptPer1mMicros },
     });
   });

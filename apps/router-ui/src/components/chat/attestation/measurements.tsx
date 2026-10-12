@@ -12,8 +12,6 @@ export interface MeasurementsProps {
   hostname: string;
   /** Whose endpoint this is. Decides the first group's heading and the provenance row. */
   endpointKind?: EndpointKind;
-  /** The operator's TEE label from the catalogue. Informational, never a claim. */
-  teeLabel: string | null;
   gate: GateResult;
   evidence: GateEvidence;
   extension: BridgeOutcome | null;
@@ -41,12 +39,11 @@ export interface MeasurementsProps {
  * that reached it; the rows here are *what the document says*, which is a
  * different kind of statement and must not borrow the other's tone. Where a field
  * is routinely misread as a verdict — the root's own TEE quote, the report
- * measurement, the operator's TEE label — the row says in words why it is not.
+ * measurement, the TEE the evidence names — the row says in words why it is not.
  */
 export function Measurements({
   hostname,
   endpointKind = 'own',
-  teeLabel,
   gate,
   evidence,
   extension,
@@ -70,19 +67,25 @@ export function Measurements({
         }
       >
         <Field label="Hostname" value={hostname} mono />
-        {external ? (
-          <Field
-            label="TEE, as the operator declares it"
-            value={null}
-            note="Nobody declares one for another deployment's hardware, and this router does not invent one: an admitted measurement says which cloud answered, not which silicon or which software. The rows below are what that cloud itself signed."
-          />
-        ) : (
-          <Field
-            label="TEE, as the operator declares it"
-            value={teeLabel}
-            note="A label from the router's configuration. It is what the operator says the hardware is, and nothing on this page checks it — the rows below are what the hardware itself signed."
-          />
-        )}
+        {/*
+          Read out of the document this page just verified, never declared
+          anywhere: the hardware branch of the TeeEvidence in the root
+          certificate of the published chain. Until SUP-260 this row printed the
+          operator's label from the router configuration, and the chart's one
+          default put "Intel TDX + H100 CC" in front of readers of an AMD SEV-SNP
+          deployment. It is the same value the Overview's TEE column and
+          `Model.tee` carry, read the same way — in the browser here, from the
+          API's own reader there.
+        */}
+        <Field
+          label="TEE, as the evidence names it"
+          value={evidence.rootEvidenceLabel}
+          note={
+            external
+              ? "The hardware the upstream's own root certificate enrolled from, out of the document this page relayed and verified. Nobody declares it and this router does not invent one: read, never a verdict."
+              : "The hardware this deployment's root certificate enrolled from, read off the evidence rather than declared beside it. Read, never a verdict — what the hardware signed is below."
+          }
+        />
         <Field
           label="Evidence kind"
           value={evidence.kind}
@@ -284,14 +287,15 @@ export function Measurements({
         title="Does Super Protocol vouch for this VM?"
         description="The one question this page cannot answer out of the bundle alone, and the one the badge above does not cover."
       >
+        {/*
+          The TEE this root enrolled from is the first group's business — what
+          belongs here is the enrolment itself, which is the part of the root's
+          story the registry verdict below is about.
+        */}
         <Field
-          label="Hardware the root enrolled from"
-          value={evidence.rootEvidenceLabel}
-          note={
-            evidence.rootChallengeType
-              ? `The root certificate's enrolment challenge was "${evidence.rootChallengeType}".`
-              : undefined
-          }
+          label="Enrolment challenge"
+          value={evidence.rootChallengeType}
+          note="Verbatim from the root certificate's enrolment-challenge extension. It says which enrolment path produced this certificate authority, and on its own vouches for nothing."
         />
         <Field label="sp-vm release" value={evidence.rootBuild} />
         <Field

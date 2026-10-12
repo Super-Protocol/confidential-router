@@ -101,10 +101,14 @@ test.describe('Models', () => {
   test('narrows the catalogue to one TEE', async ({ page, baseURL }) => {
     await enterConsole(page, baseURL as string, '/models');
 
-    await page.getByRole('tab', { name: 'AMD SEV-SNP' }).click();
+    // The chips are the TEEs the deployment's own endpoints publish evidence
+    // from (SUP-260), so this narrows on a label read off a root certificate.
+    await page.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }).click();
 
-    await expect(page.getByText('Qwen2.5 72B Instruct')).toBeVisible();
+    await expect(page.getByText('DeepSeek-V3')).toBeVisible();
     await expect(page.getByText('Llama 3.3 70B Instruct')).toHaveCount(0);
+    // Its endpoint publishes nothing, so it is under no TEE chip at all.
+    await expect(page.getByText('Qwen2.5 72B Instruct')).toHaveCount(0);
   });
 
   test('opens the same evidence modal and copies the JWS', async ({ page, baseURL }) => {
@@ -208,14 +212,14 @@ test.describe('Models, with an external endpoint', () => {
     await expect(dialog).toContainText('the one its operator approved');
   });
 
-  test('declares no TEE label for another deployment’s hardware', async ({ page, baseURL }) => {
+  test('names no TEE for another deployment’s hardware', async ({ page, baseURL }) => {
     await mockClipboard(page);
     await signIn(page, baseURL as string, mixed);
     await page.goto('/models');
 
-    // The TEE filter narrows on an operator's declaration about *this*
-    // deployment, so selecting one hides the external row rather than guessing.
-    await page.getByRole('tab', { name: 'AMD SEV-SNP' }).click();
+    // The TEE filter narrows on what *this* deployment's endpoints publish, so
+    // selecting one hides the external row rather than guessing at its silicon.
+    await page.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }).click();
     await expect(page.getByText('Llama 3.3 70B (partner)')).toHaveCount(0);
   });
 });

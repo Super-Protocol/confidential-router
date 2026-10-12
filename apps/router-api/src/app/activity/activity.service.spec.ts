@@ -265,7 +265,6 @@ describe('usageByModel', () => {
       capabilities: ['chat'],
       promptPer1mMicros: 100_000,
       completionPer1mMicros: 100_000,
-      tee: 'Intel TDX',
       enabled: true,
       updatedAt: new Date(),
     });

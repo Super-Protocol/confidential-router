@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { loadCaseBody, loadConformanceManifest } from '@confidential-router/attestation-fixtures';
@@ -31,6 +32,11 @@ const UPSTREAM_PENDING = 'newcomer.example.test';
 const UPSTREAM_DIGEST = 'sha256/upstream-snapshot';
 const DIGEST = 'sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs';
 const PLATFORM_IMAGE = 'ghcr.io/super-protocol/confidential-router/router-api@sha256:21de82b6';
+/** The real production root, whose TeeEvidence names an AMD SEV-SNP Azure VM. */
+const PROD_AZURE_SNP_ROOT = readFileSync(
+  new URL('../src/app/evidence/testdata/prod-router-azure-sev-snp-root.pem', import.meta.url),
+  'utf8',
+);
 
 const manifest = loadConformanceManifest();
 const bundle = loadCaseBody(
@@ -138,19 +144,16 @@ beforeAll(async () => {
         {
           name: 'published',
           hostname: PUBLISHING,
-          tee: 'Intel TDX + H100 CC',
           evidenceUrl: `http://127.0.0.1:${port}/published/.well-known/swarm-evidence`,
         },
         {
           name: 'silent',
           hostname: SILENT,
-          tee: 'AMD SEV-SNP',
           evidenceUrl: `http://127.0.0.1:${port}/silent/.well-known/swarm-evidence`,
         },
         {
           name: 'platform',
           hostname: PLATFORM,
-          tee: 'Intel TDX + H100 CC',
           evidenceUrl: `http://127.0.0.1:${port}/platform/.well-known/swarm-evidence`,
         },
       ],
@@ -312,7 +315,6 @@ describe('the console view', () => {
         endpoints(workspaceId: $id) {
           name
           hostname
-          tee
           evidenceState
           tokensRouted30d
           latestEvidence {
@@ -387,16 +389,50 @@ describe('the console view', () => {
       slug: 'meta/llama-3.3-70b-instruct:tdx',
       contextLength: 131072,
       capabilities: ['CHAT', 'COMPLETIONS'],
-      tee: 'Intel TDX + H100 CC',
+      // The conformance fixture's root is an ordinary CA carrying no TeeEvidence,
+      // so the published bundle names no TEE — and there is nowhere else the
+      // label is read from (SUP-260).
+      tee: null,
       pricing: { promptPer1m: '280000', completionPer1m: '420000' },
       endpoint: { name: 'published', hostname: PUBLISHING },
     });
   });
 
-  it('narrows the model list by TEE label', async () => {
-    const data = await graphql(`{ models(tee: "AMD SEV-SNP") { id } }`, cookies);
+  /*
+   * The filter narrows on the label read off the root of a published chain, and
+   * on nothing else: the string the chart used to declare for every deployment
+   * now matches no model at all.
+   */
+  it('narrows the model list by the TEE label the evidence names', async () => {
+    const ids = await endpointIds();
+    const snapshots = harness.app.get(DataSource).getRepository(EvidenceSnapshot);
+    const filed = await snapshots.save({
+      id: randomUUID(),
+      endpointId: ids.silent,
+      externalEndpointId: null,
+      fetchedAt: new Date(),
+      issuedAt: new Date(),
+      evidenceDigest: `sha256/${'C'.repeat(43)}`,
+      evidenceDigestHex: '1'.repeat(64),
+      certFingerprint: `sha256/${'D'.repeat(43)}`,
+      quoteFormat: null,
+      containerImages: [],
+      chainSummary: [],
+      workloads: null,
+      measurements: null,
+      jws: 'a.b.c',
+      bundle: { certChain: [PROD_AZURE_SNP_ROOT] },
+    });
 
-    expect(data.models.map((model: { id: string }) => model.id)).toEqual(['alibaba/qwen2.5-72b-instruct:snp']);
+    try {
+      const data = await graphql(`{ models(tee: "AMD SEV-SNP (Azure)") { id tee } }`, cookies);
+      expect(data.models).toEqual([{ id: 'alibaba/qwen2.5-72b-instruct:snp', tee: 'AMD SEV-SNP (Azure)' }]);
+
+      const none = await graphql(`{ models(tee: "Intel TDX + H100 CC") { id } }`, cookies);
+      expect(none.models).toEqual([]);
+    } finally {
+      await snapshots.delete({ id: filed.id });
+    }
   });
 
   it('reports the digest history a pinned value would have to follow', async () => {

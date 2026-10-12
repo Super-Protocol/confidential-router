@@ -28,17 +28,6 @@ import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 /** The sidecar's endpoint key is a Rego key: `schemas/gatekeeper-config.schema.json` `$defs/name`. */
 export const EXTERNAL_ENDPOINT_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-/**
- * What an external catalogue row records under `models.tee`.
- *
- * Empty, because nobody is in a position to fill it: the admin does not declare
- * an upstream's hardware (the API has no field for it) and the router cannot
- * observe it. `/v1/models` omits the key rather than publishing a blank, and
- * `ExternalEndpoint.measurementSeen` is where the console reads what the verdict
- * actually saw.
- */
-export const EXTERNAL_MODEL_TEE = '';
-
 /** One model an admin registers on an external endpoint, with the prices the ledger will freeze. */
 export interface ExternalModelSpec {
   /** The public model id, i.e. the primary key of `models`. */
@@ -647,13 +636,6 @@ export class ExternalEndpointAdminService {
         capabilities: model.capabilities,
         promptPer1mMicros: model.promptPer1mMicros,
         completionPer1mMicros: model.completionPer1mMicros,
-        // Blank, and deliberately: an external model's hardware is not something
-        // an admin declares (the contract's `ExternalModelInput` has no `tee`) or
-        // this router can know. What it *can* say about the upstream is the
-        // measurement a verdict saw, which is a column on the endpoint. A label
-        // invented here would read as a claim on `/v1/models`, so the field is
-        // omitted there instead (`models.controller.ts`).
-        tee: EXTERNAL_MODEL_TEE,
         enabled: true,
         updatedAt: now,
       });

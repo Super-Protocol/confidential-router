@@ -155,7 +155,6 @@ describe('registering an external endpoint', () => {
       capabilities: ['chat'],
       promptPer1mMicros: 1,
       completionPer1mMicros: 1,
-      tee: 'Intel TDX',
       enabled: true,
       updatedAt: new Date(),
     });
