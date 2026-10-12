@@ -173,10 +173,12 @@ export class EvidenceService {
    * enforces, so the table grows for the life of the deployment — and the
    * console's Overview paid the whole of it on every load.
    *
-   * Now it is N single-row lookups on `IDX_evidence_snapshots_endpointId`, each
-   * a `LIMIT 1` the index answers, where N is how many endpoints the router
-   * declares — a handful. N bounded queries beat one query whose size nobody
-   * bounds.
+   * Now it is N single-row lookups, each a `LIMIT 1` served by
+   * `IDX_evidence_snapshots_endpointId_issuedAt` — the composite this change
+   * added, because the ordering is `issuedAt DESC, fetchedAt DESC` and no index
+   * on `endpointId` alone can answer it without sorting the endpoint's whole
+   * history first. N is how many endpoints the router declares, a handful, so N
+   * bounded queries beat one query whose size nobody bounds.
    *
    * Sequential rather than `Promise.all`: N is small, so there is nothing to win
    * from concurrency, and the e2e stand runs this on SQLite, which takes one

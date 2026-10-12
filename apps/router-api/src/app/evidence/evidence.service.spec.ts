@@ -164,6 +164,41 @@ describe('reading snapshots', () => {
     perEndpoint.mockRestore();
   });
 
+  /*
+   * The claim the comment on `latestForMany` makes, checked against the planner
+   * rather than asserted. An earlier draft of this change said the read was
+   * answered by `IDX_evidence_snapshots_endpointId`, which was not true: that
+   * index is one column, the ordering is `issuedAt DESC, fetchedAt DESC`, and
+   * SQLite answered it with `SEARCH … USING INDEX IDX_evidence_snapshots_endpointId`
+   * followed by `USE TEMP B-TREE FOR ORDER BY` — the endpoint's whole history
+   * sorted to return one row, on a table that only grows.
+   *
+   * So the index this pins is load-bearing, and so is the absence of the sort.
+   * SQLite-only because the fixture is; the PostgreSQL leg of `migrations.spec.ts`
+   * is what proves the same index exists there.
+   */
+  it('is answered by the index, without sorting the endpoint history', async () => {
+    const plan = async (sql: string, parameters: unknown[]): Promise<string> =>
+      ((await fixture.dataSource.query(`EXPLAIN QUERY PLAN ${sql}`, parameters)) as { detail: string }[])
+        .map((row) => row.detail)
+        .join(' | ');
+
+    const latest = await plan(
+      'SELECT * FROM evidence_snapshots WHERE endpointId = ? ORDER BY issuedAt DESC, fetchedAt DESC LIMIT 1',
+      [endpointId],
+    );
+    expect(latest).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(latest).not.toContain('TEMP B-TREE');
+
+    // `snapshots()` pages on the same key, so the same index has to carry it.
+    const page = await plan(
+      'SELECT * FROM evidence_snapshots WHERE endpointId = ? AND issuedAt < ? ORDER BY issuedAt DESC, fetchedAt DESC LIMIT 21',
+      [endpointId, 0],
+    );
+    expect(page).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(page).not.toContain('TEMP B-TREE');
+  });
+
   it('answers an empty list without touching the table', async () => {
     const perEndpoint = vi.spyOn(service, 'latestFor');
 

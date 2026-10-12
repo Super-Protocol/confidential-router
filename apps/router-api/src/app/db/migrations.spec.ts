@@ -59,6 +59,16 @@ async function isNullable(queryRunner: QueryRunner, table: string, column: strin
   return found.isNullable;
 }
 
+/**
+ * Whether one index is on the table, read back the same way {@link isNullable}
+ * reads a column — through TypeORM's introspection, so the assertion is
+ * dialect-neutral rather than a `PRAGMA` on one side and a catalogue query on
+ * the other.
+ */
+async function hasIndex(queryRunner: QueryRunner, table: string, name: string): Promise<boolean> {
+  return ((await queryRunner.getTable(table))?.indices ?? []).some((index) => index.name === name);
+}
+
 async function sqliteDataSource(): Promise<DataSource> {
   const dataSource = new DataSource(
     buildDataSourceOptions({
@@ -111,8 +121,20 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-298 adds one index and nothing else; the first undo drops it and
+      // leaves the two indices that were already on the table.
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        true,
+      );
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        false,
+      );
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId')).toBe(true);
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_identity')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();
