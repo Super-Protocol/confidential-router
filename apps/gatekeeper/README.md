@@ -127,24 +127,47 @@ worse than not reloading. `SIGINT` and `SIGTERM` drain every listener
 
 ## Getting started
 
+Paths below are a Linux session's; the configuration directory is
+`os.UserConfigDir()` and differs per OS, so every command prints the one it
+actually resolved and `gatekeeper config path` prints it on demand.
+
 ```console
 $ gatekeeper init
-Wrote ~/.config/confidential-gatekeeper/config.yaml
-...
+Configuration created at /home/you/.config/confidential-gatekeeper/config.yaml
+
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
+/home/you/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
   - endpoints: at least one endpoint is required
 
-Nothing in the file is wrong — it is not finished. See `gatekeeper trust roots add`
-and `gatekeeper endpoint add`.
+Nothing in the file is wrong — it is not finished.
+
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper endpoint add llama-33-70b \
-    --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
+    --upstream https://llama-33-70b.tee.swarm.cloud --listen 127.0.0.1:8787
+Added endpoint "llama-33-70b" (127.0.0.1:8787 → https://llama-33-70b.tee.swarm.cloud) to /home/you/.config/confidential-gatekeeper/config.yaml
+
+It has no pinned evidenceDigest, so it cannot admit traffic yet.
+
+Next: review what the endpoint publishes, then pin it
+  gatekeeper endpoint trust add llama-33-70b --from-upstream
+
 $ gatekeeper endpoint discover llama-33-70b     # review what it publishes
 $ gatekeeper endpoint trust add llama-33-70b --from-upstream
+Pinned sha256:aba90ff985…75e530fe for "llama-33-70b" in /home/you/.config/confidential-gatekeeper/config.yaml
+
+Next: start the gatekeeper
+  gatekeeper run
+
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is valid and ready to run
+/home/you/.config/confidential-gatekeeper/config.yaml is valid and ready to run
+
+Next: start the gatekeeper
+  gatekeeper run
 ```
 
 There is no `trust roots add` in that sequence. A Swarm cloud's certificate
@@ -484,9 +507,10 @@ and the schemas in [`/schemas`](../../schemas); read those first.
 
 ### Configuration (`pkg/config`)
 
-`~/.config/confidential-gatekeeper/config.yaml` by default
-(`--config`, `$CR_GATEKEEPER_CONFIG`, or `$GATEKEEPER_CONFIG`). Values resolve
-in four layers, later ones winning:
+`confidential-gatekeeper/config.yaml` under `os.UserConfigDir()` by default —
+`$XDG_CONFIG_HOME`/`~/.config`, `~/Library/Application Support`, `%AppData%` —
+overridden by `--config`, `$CR_GATEKEEPER_CONFIG`, or `$GATEKEEPER_CONFIG`.
+Values resolve in four layers, later ones winning:
 
 ```
 built-in defaults  →  the file  →  CR_GATEKEEPER_*  →  command-line flags
