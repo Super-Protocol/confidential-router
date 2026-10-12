@@ -41,7 +41,11 @@ export interface BlockingViolation {
  * a loaded CI runner does not, which is the whole of SUP-296.
  *
  * Infinite animations are skipped rather than awaited: a `Loader2` spinner or an
- * `animate-pulse` skeleton never finishes, and neither paints text.
+ * `animate-pulse` skeleton never finishes, and neither paints text — every
+ * spinner is `aria-hidden`, and every `<Skeleton />` in the tree is
+ * self-closing. Give a skeleton children and that stops being true: pulsing
+ * text would then be judged at whatever opacity the sample caught, and this skip
+ * is where the blind spot would be.
  *
  * Returns once nothing is in flight, or when `timeout` is spent — a stuck
  * animation should fail as the contrast violation it is, not as a hang.
