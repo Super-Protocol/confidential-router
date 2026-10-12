@@ -1,5 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import type { GraphQLFormattedError } from 'graphql';
+import { validationFailureOf } from '../../common/validation-error.js';
 
 /**
  * The stable error codes this schema answers with.
@@ -50,15 +51,20 @@ const APOLLO_CODES = new Set([
   'PERSISTED_QUERY_NOT_SUPPORTED',
 ]);
 
-/** The HTTP status a Nest exception carries, wherever Apollo wrapped it. */
-function statusOf(error: unknown, depth = 0): number | null {
+/** The Nest exception behind a thrown error, wherever Apollo wrapped it. */
+function exceptionOf(error: unknown, depth = 0): HttpException | null {
   if (error instanceof HttpException) {
-    return error.getStatus();
+    return error;
   }
   // `originalError` may nest twice: Apollo wraps the resolver's throw, and a
   // Nest exception filter may itself have wrapped something.
   const nested = (error as { originalError?: unknown })?.originalError;
-  return nested && depth < 4 ? statusOf(nested, depth + 1) : null;
+  return nested && depth < 4 ? exceptionOf(nested, depth + 1) : null;
+}
+
+/** The HTTP status a Nest exception carries, wherever Apollo wrapped it. */
+function statusOf(error: unknown): number | null {
+  return exceptionOf(error)?.getStatus() ?? null;
 }
 
 /**
@@ -90,6 +96,21 @@ export function formatConsoleError(
   if (status !== null) {
     extensions.status = status;
   }
+
+  /*
+   * A validation refusal names the field it is about, and that name is the whole
+   * value of the message: the console puts it under the input rather than at the
+   * bottom of the dialog. It has to be lifted out here because the array it lives
+   * in is inside `originalError`, which the next block deletes — and because
+   * `HttpException.message` for a response object is the useless literal
+   * "Bad Request Exception", which is what the console used to show (SUP-295).
+   */
+  const validation = validationFailureOf(exceptionOf(raw));
+  const message = validation ? validation.messages.join(' ') : formatted.message;
+  if (validation && Object.keys(validation.fields).length > 0) {
+    extensions.fields = validation.fields;
+  }
+
   if (!exposeInternals) {
     // Apollo puts the whole Nest exception, and the stack, in here.
     delete extensions.originalError;
@@ -99,7 +120,7 @@ export function formatConsoleError(
 
   return {
     ...formatted,
-    message: internal && !exposeInternals ? INTERNAL_ERROR_MESSAGE : formatted.message,
+    message: internal && !exposeInternals ? INTERNAL_ERROR_MESSAGE : message,
     extensions,
   };
 }

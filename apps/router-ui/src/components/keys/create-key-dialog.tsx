@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation } from '@apollo/client/react';
+import { useApolloClient, useMutation } from '@apollo/client/react';
 import { Button } from '@confidential-router/ui/components/button';
 import {
   Dialog,
@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@confidential-router/ui/components/dialog';
 import * as React from 'react';
-import { errorMessageOf } from '../../lib/graphql-error';
+import { errorMessageOf, fieldErrorsOf } from '../../lib/graphql-error';
 import { EMPTY_KEY_FORM, KeyFormFields, toCreateInput, useKeyForm } from './key-form';
 import { API_KEYS_QUERY, CREATE_API_KEY } from './operations';
 import type { CatalogueModel } from './types';
@@ -29,12 +29,8 @@ export function CreateKeyDialog({ open, onOpenChange, workspaceId, models, onCre
   const form = useKeyForm(EMPTY_KEY_FORM);
   const [failure, setFailure] = React.useState<string | null>(null);
 
-  const [createKey, { loading }] = useMutation(CREATE_API_KEY, {
-    // The list is the screen's only copy of the workspace's keys, and the
-    // mutation cannot know where a new row sorts, so let the server say.
-    refetchQueries: [{ query: API_KEYS_QUERY, variables: { workspaceId } }],
-    awaitRefetchQueries: true,
-  });
+  const [createKey, { loading }] = useMutation(CREATE_API_KEY);
+  const client = useApolloClient();
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -46,11 +42,23 @@ export function CreateKeyDialog({ open, onOpenChange, workspaceId, models, onCre
       const created = result.data?.createApiKey;
       if (!created) throw new Error('The key was not returned.');
 
+      /*
+       * The list is the screen's only copy of the workspace's keys, and the
+       * mutation cannot know where a new row sorts, so the server is asked
+       * again. Deliberately *after* the key exists and outside the try that
+       * decides whether creation failed: the secret is shown once and never
+       * again, so a refetch that does not come back must cost the reader a stale
+       * table, not the key they just made (SUP-295 item 2).
+       */
+      await client.refetchQueries({ include: [API_KEYS_QUERY] }).catch(() => undefined);
+
       onOpenChange(false);
       form.reset();
       onCreated(created.secret, created.key.name);
     } catch (caught) {
-      setFailure(errorMessageOf(caught));
+      if (!form.showServerErrors(fieldErrorsOf(caught))) {
+        setFailure(errorMessageOf(caught));
+      }
     }
   };
 

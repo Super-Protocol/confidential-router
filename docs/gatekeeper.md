@@ -23,7 +23,14 @@ client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:8443/v1")
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Super-Protocol/confidential-router/main/tools/installer/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # only if the installer says it is needed
 ```
+
+The script installs into the first writable directory your shell already
+searches, and otherwise into `~/.local/bin` — which a stock macOS zsh does not
+search. When that happens it adds the directory to your startup file, for the
+terminals you open next, and prints the `export` line above for the one you are
+in. `--no-modify-path` leaves your dotfiles alone and prints the line only.
 
 Or take a static binary and its checksum from
 [Releases](https://github.com/Super-Protocol/confidential-router/releases).

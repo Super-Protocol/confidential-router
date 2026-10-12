@@ -65,7 +65,7 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
         <Step
           number={2}
           title="Install the gatekeeper and point it at this router"
-          lead="Five commands, already carrying this deployment’s own API origin — paste them as they are."
+          lead="Five steps, already carrying this deployment’s own API origin — paste them as they are."
           more={
             <p>
               Nothing is registered with the router at any point, and there is no certificate to trust: the gatekeeper

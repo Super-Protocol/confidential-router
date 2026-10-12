@@ -312,7 +312,14 @@ and small:
     and answers a JSON report; see `router.md`, "Moving codes between deployments" (SUP-272);
   - `GET /exports/evidence.zip?token=…` — the link `exportEvidence` mints. Signed with `auth.secret` and
     valid for 15 minutes, because the point of the export is that it can be handed to an auditor who has
-    no console session. Membership is re-checked when the link is followed.
+    no console session. Membership is re-checked when the link is followed. The archive holds
+    `manifest.json` plus `snapshots/<id>/{bundle.json,evidence.jws}` per publication, and covers **both
+    origins**: a generation this deployment's own endpoint served is reached through its
+    `evidenceSnapshotId`, and one an external upstream served through `(externalEndpointId,
+    evidenceDigest)` — it carries no snapshot id, because there is no row to stamp when it is recorded
+    (SUP-295). Each manifest entry says which with `origin: own | external`; digests whose bundle this
+    router never retrieved are listed under `unretrieved`, and `generations: { served, covered }` is what
+    tells an empty archive apart from a quiet period.
   - `GET /admin/data/export` — the deployment export (SUP-271), a gzipped JSON document. Session cookie
     **and** `auth.adminEmails`; deliberately *not* a signed link, because this file is not for handing on.
     `Cache-Control: no-store`; `X-Export-Sha256` carries the bundle's content hash.
@@ -399,6 +406,15 @@ exceptions are mapped in one place (`src/app/api/graphql/errors.ts`):
 (`GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, …) are kept as they are. With
 `graphql.introspection` off — the production default — an `INTERNAL_SERVER_ERROR` loses its message and
 its stack trace.
+
+**`extensions.fields`** is present when the global `ValidationPipe` refused the input: a map of the
+input property to the first constraint message about it, e.g.
+`{ "spendLimitMicros": "spendLimitMicros must match /^\\d{1,15}$/ regular expression" }`. The error's
+`message` carries the same messages joined. Both exist because neither used to (SUP-295): the array the
+pipe produces lives inside `extensions.originalError`, which production deletes, and
+`HttpException.message` for a response object is the literal string *"Bad Request Exception"* — so a
+console could not say which field it had got wrong. A client shows each message under the input it
+names; a property the client does not render is one it should report outright instead.
 
 `503` is mapped because one refusal is policy rather than a fault (SUP-171): on a deployment with
 `billing.provider: disabled`, `createCheckout` answers `SERVICE_UNAVAILABLE` with *"Buying credits is

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { GraphQLError, type GraphQLFormattedError } from 'graphql';
 import { describe, expect, it } from 'vitest';
+import { validationException } from '../../common/validation-error.js';
 import { formatConsoleError, INTERNAL_ERROR_MESSAGE } from './errors.js';
 
 /** What Apollo hands `formatError`: the formatted error, and the thing that was thrown. */
@@ -95,6 +96,55 @@ describe('formatConsoleError', () => {
 
     expect(result.message).toBe('Buying credits is switched off on this deployment.');
     expect(result.extensions).toEqual({ code: 'SERVICE_UNAVAILABLE', status: 503 });
+  });
+
+  /*
+   * SUP-295 item 2. A validation refusal used to arrive as the literal string
+   * "Bad Request Exception" — `HttpException.message` for a response object —
+   * with the real messages inside `originalError`, which production deletes.
+   * The console had nothing to show and fell back to "The request failed."
+   */
+  it('says what was wrong with a validated input, and under which field', () => {
+    const [formatted, raw] = thrown(
+      validationException([
+        { property: 'spendLimitMicros', constraints: { matches: 'spendLimitMicros must match /^\\d{1,15}$/' } },
+      ] as never),
+    );
+
+    const result = formatConsoleError(formatted, raw, false);
+
+    expect(result.message).toBe('spendLimitMicros must match /^\\d{1,15}$/');
+    expect(result.extensions).toMatchObject({
+      code: 'BAD_USER_INPUT',
+      status: 400,
+      fields: { spendLimitMicros: 'spendLimitMicros must match /^\\d{1,15}$/' },
+    });
+  });
+
+  it('joins several refusals rather than showing one and hiding the rest', () => {
+    const [formatted, raw] = thrown(
+      validationException([
+        { property: 'name', constraints: { isString: 'name must be a string' } },
+        { property: 'requestsPerMinute', constraints: { min: 'requestsPerMinute must not be less than 1' } },
+      ] as never),
+    );
+
+    const result = formatConsoleError(formatted, raw, false);
+
+    expect(result.message).toBe('name must be a string requestsPerMinute must not be less than 1');
+    expect(result.extensions?.fields).toEqual({
+      name: 'name must be a string',
+      requestsPerMinute: 'requestsPerMinute must not be less than 1',
+    });
+  });
+
+  it('leaves an ordinary refusal alone — there is no field to name', () => {
+    const [formatted, raw] = thrown(new BadRequestException('Unknown model id(s): nope.'));
+
+    const result = formatConsoleError(formatted, raw, false);
+
+    expect(result.message).toBe('Unknown model id(s): nope.');
+    expect(result.extensions).not.toHaveProperty('fields');
   });
 
   it('treats an unlisted 5xx as internal and an unlisted 4xx as a bad request', () => {

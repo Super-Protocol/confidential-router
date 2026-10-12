@@ -15,6 +15,7 @@ import {
 import { jsonErrorMiddleware } from './api/v1/openai-exception.filter.js';
 import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import { STRIPE_WEBHOOK_PATH } from './billing/index.js';
+import { validationException } from './common/validation-error.js';
 import type { routerConfig } from './config.js';
 import { DATA_EXPORT_CONTENT_TYPE, DATA_IMPORT_PATH, MAX_BUNDLE_BYTES } from './data-migration/index.js';
 import { TYPEFORM_WEBHOOK_PATH } from './feedback/index.js';
@@ -49,6 +50,12 @@ export const VALIDATION_PIPE_OPTIONS: ValidationPipeOptions = {
   forbidNonWhitelisted: true,
   transform: true,
   transformOptions: { enableImplicitConversion: false },
+  // Nest's own factory produces the `message` array and nothing else, and that
+  // array does not survive the GraphQL layer in production — so a refused field
+  // reached the console as "Bad Request Exception" or, through a non-200, as
+  // nothing at all. `validationException` keeps the array and adds the per-field
+  // map the dialogs put under their inputs (SUP-295 item 2).
+  exceptionFactory: validationException,
 };
 
 /**

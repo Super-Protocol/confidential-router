@@ -75,7 +75,7 @@ test.describe('How to connect', () => {
     await expect(card.getByRole('heading', { name: /Install the gatekeeper/ })).toBeVisible();
     await expect(card.getByRole('heading', { name: /Point your client at it/ })).toBeVisible();
     // Each step's lead is one line; the rest is behind a labelled ⓘ (SUP-262).
-    await expect(card.getByText(/Five commands, already carrying/)).toBeVisible();
+    await expect(card.getByText(/Five steps, already carrying/)).toBeVisible();
     await expect(card.getByText(/there is no certificate to trust/)).toHaveCount(0);
     await card.getByRole('button', { name: 'About these commands' }).click();
     await expect(page.getByText(/there is no certificate to trust/)).toBeVisible();
