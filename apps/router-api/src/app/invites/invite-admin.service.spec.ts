@@ -216,15 +216,46 @@ describe('the account list', () => {
     expect(await only('bootstrap')).toHaveLength(1);
   });
 
-  it('finds no bootstrap account when the first account has another address', async () => {
+  it('still finds the operator behind accounts an import carried in ahead of them (SUP-309)', async () => {
+    // Deployment B after a migration: the operator claimed it minutes ago, and
+    // the import then wrote the other deployment's accounts under their
+    // original — earlier — timestamps. Position would call the operator `open`.
+    const operator = await account(BOOTSTRAP_EMAIL, new Date('2026-10-09T00:00:00Z'));
+    const [issued] = await issue(1);
+    const invited = await account('ada@example.com', new Date('2026-10-01T00:00:00Z'));
+    await redeem(issued.code, invited);
+    await account('open@example.com', new Date('2026-10-02T00:00:00Z'));
+
+    expect(await admin.bootstrapAccountId(BOOTSTRAP_EMAIL)).toBe(operator);
+    expect(await admin.bootstrapAccountId(BOOTSTRAP_EMAIL.toUpperCase())).toBe(operator);
+
+    const page = await admin.signUps({ offset: 0, limit: 10 }, BOOTSTRAP_EMAIL);
+    expect(page.nodes.find((row) => row.userId === operator)?.origin).toBe('bootstrap');
+    const bootstrap = await admin.signUps({ origin: 'bootstrap', offset: 0, limit: 10 }, BOOTSTRAP_EMAIL);
+    expect(bootstrap.nodes.map((row) => row.userId)).toEqual([operator]);
+  });
+
+  it('finds no bootstrap account when nobody holds the configured address', async () => {
     await account('first@example.com', new Date('2026-10-01T00:00:00Z'));
-    // Same address as the bootstrap one, but not the first account: the plugin
-    // only ever creates the first, so this one signed up some other way.
-    await account(BOOTSTRAP_EMAIL, new Date('2026-10-02T00:00:00Z'));
 
     expect(await admin.bootstrapAccountId(BOOTSTRAP_EMAIL)).toBeNull();
     const bootstrap = await admin.signUps({ origin: 'bootstrap', offset: 0, limit: 10 }, BOOTSTRAP_EMAIL);
     expect(bootstrap.totalCount).toBe(0);
+  });
+
+  it('calls the operator invited when they redeemed a code, on the row and in the filter', async () => {
+    const operator = await account(BOOTSTRAP_EMAIL, new Date('2026-10-01T00:00:00Z'));
+    const [issued] = await issue(1);
+    await redeem(issued.code, operator);
+
+    const page = await admin.signUps({ offset: 0, limit: 10 }, BOOTSTRAP_EMAIL);
+    expect(page.nodes.map((row) => row.origin)).toEqual(['invite']);
+    // The filter reads the redemption first as well, so the page a label puts an
+    // account on is the page that lists it.
+    const bootstrap = await admin.signUps({ origin: 'bootstrap', offset: 0, limit: 10 }, BOOTSTRAP_EMAIL);
+    expect(bootstrap.totalCount).toBe(0);
+    const invite = await admin.signUps({ origin: 'invite', offset: 0, limit: 10 }, BOOTSTRAP_EMAIL);
+    expect(invite.nodes.map((row) => row.userId)).toEqual([operator]);
   });
 
   it('labels an origin from the redemption first', () => {
