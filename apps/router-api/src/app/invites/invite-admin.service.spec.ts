@@ -235,6 +235,20 @@ describe('the account list', () => {
     expect(bootstrap.nodes.map((row) => row.userId)).toEqual([operator]);
   });
 
+  it('picks the configured spelling when a case variant of the address exists too', async () => {
+    // `user.email` is unique but case-sensitive on both drivers, so the two are
+    // separate rows. Without a deterministic pick, `adminSignUps` and
+    // `inviteStatistics` could name a different operator in one page load.
+    const variant = await account(BOOTSTRAP_EMAIL, new Date('2026-10-01T00:00:00Z'));
+    const configured = await account(BOOTSTRAP_EMAIL.toUpperCase(), new Date('2026-10-02T00:00:00Z'));
+
+    const picked = await admin.bootstrapAccountId(BOOTSTRAP_EMAIL.toUpperCase());
+    expect(picked).toBe(configured);
+    expect(await admin.bootstrapAccountId(BOOTSTRAP_EMAIL.toUpperCase())).toBe(picked);
+    // And the other spelling resolves to its own row, not whichever came first.
+    expect(await admin.bootstrapAccountId(BOOTSTRAP_EMAIL)).toBe(variant);
+  });
+
   it('finds no bootstrap account when nobody holds the configured address', async () => {
     await account('first@example.com', new Date('2026-10-01T00:00:00Z'));
 
