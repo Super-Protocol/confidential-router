@@ -243,17 +243,25 @@ export class InviteAdminService {
    * about, and it is the operator's own either way.
    */
   async bootstrapAccountId(bootstrapEmail: string): Promise<string | null> {
-    const email = bootstrapEmail.trim().toLowerCase();
+    const configured = bootstrapEmail.trim();
+    const email = configured.toLowerCase();
     if (!email) {
       return null;
     }
-    const [account] = await this.dataSource
+    const matches = await this.dataSource
       .getRepository(User)
       .createQueryBuilder('account')
       .where('LOWER(account.email) = :email', { email })
-      .take(1)
+      .orderBy('account.id', 'ASC')
       .getMany();
-    return account?.id ?? null;
+    // Matched case-insensitively, so more than one row can answer: `user.email`
+    // is unique but case-sensitive on both drivers, which leaves a case variant
+    // of one address free to exist beside it. `/auth/bootstrap` writes
+    // `auth.bootstrapEmail` verbatim, so the exact spelling is the row it made,
+    // and `account.id` settles whatever is left — without an order the row
+    // chosen is the driver's to pick, and `adminSignUps` and `inviteStatistics`
+    // could then disagree about the operator inside one page load.
+    return (matches.find((account) => account.email === configured) ?? matches[0])?.id ?? null;
   }
 
   private async redemptionsOf(codeIds: readonly string[]): Promise<InviteRedemption[]> {
