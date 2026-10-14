@@ -457,6 +457,13 @@ with the matching semver tags, and on every push to `main` as `:main` and
 `:main-<sha>`. The digest is in the job summary, because the digest is what a
 chart pins (ADR-008 §2: the sidecar is inside the snapshot a user verifies).
 
+Only a push publishes the image. `:main-<sha>` is written once, by the push that
+advanced the branch, and never rewritten — not by the nightly, not by a dispatch
+— so re-resolving it stays a usable check on a chart's pins. A rebuild of the
+same commit would not be byte-identical, so a second publish would hand out a
+different digest for source that never changed (SUP-316). `:main` is the one
+moving tag; `:build<run number>` names a run.
+
 The image is the *cluster* packaging, not a replacement for the binaries: it
 exists for a pod running the gatekeeper as an attested egress, where the
 configuration is rendered by a control loop rather than edited by a person. Its
