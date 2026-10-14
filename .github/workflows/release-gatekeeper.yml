@@ -14,8 +14,8 @@ name: Release gatekeeper
 # the gatekeeper also ships as an attested egress inside a pod). The image is
 # the *other* packaging, not a replacement: what a person installs is still a
 # binary from a Release. Only a *push* publishes it: `main-<sha>` names the
-# image built from that commit, once and for good (SUP-316 — see the `image`
-# job).
+# image built from that commit, and nothing but a re-run of that run can
+# replace it (SUP-316 — see the `image` job).
 #
 # The tag prefix exists because this is a monorepo and the router will get tags
 # of its own; see apps/gatekeeper/.goreleaser.yaml for how the bare version is
