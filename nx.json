@@ -18,6 +18,7 @@
     ],
     "sharedGlobals": [
       "{workspaceRoot}/.github/workflows/pull-request.yml",
+      "{workspaceRoot}/.github/workflows/release-*.yml",
       "{workspaceRoot}/biome.json",
       "{workspaceRoot}/tsconfig.base.json",
       "{workspaceRoot}/schemas/analytics-taxonomy.json",
