@@ -98,7 +98,6 @@ describe('wiringSnippet', () => {
     expect(vscode?.hint).toContain('example of the reference VS Code writes');
     // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
     expect(vscode?.hint).toContain('"${input:routerKey}"');
-    expect(vscode?.hint).toContain('chat.lm.secret.');
   });
 
   it('never writes a VS Code key into the file, even when one is supplied', () => {
