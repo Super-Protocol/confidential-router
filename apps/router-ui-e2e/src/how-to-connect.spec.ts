@@ -102,6 +102,10 @@ test.describe('How to connect', () => {
     await card.getByRole('tab', { name: 'VS Code' }).click();
     const vscode = card.getByTestId('wiring-snippet-vscode');
     await expect(vscode).toContainText('"vendor": "customendpoint"');
+    // SUP-326: VS Code resolves this file's `apiKey` against its own secret
+    // storage, so a key written here authenticates nothing — the snippet has
+    // no key in it, and VS Code prompts for one.
+    await expect(vscode).not.toContainText('apiKey');
     await expect(vscode).toContainText('http://127.0.0.1:8787/v1/chat/completions');
     await expect(vscode).toContainText('meta/llama-3.3-70b-instruct:tdx');
 

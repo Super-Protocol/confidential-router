@@ -158,7 +158,7 @@ describe('APIKeysScreen', () => {
       expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
     });
 
-    it('offers curl, Python, Node, VS Code and OpenCode examples with the key prefix filled in', async () => {
+    it('offers curl, Python, Node, VS Code and OpenCode examples, with a key only where one belongs', async () => {
       renderScreen();
       await screen.findByText('production-agent');
 
@@ -166,9 +166,12 @@ describe('APIKeysScreen', () => {
       for (const label of ['curl', 'Python', 'Node', 'VS Code', 'OpenCode']) {
         expect(tabs).toContain(label);
       }
+      expect(screen.getByTestId('wiring-snippet-curl')).toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
-      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('sk-tee-v1-4f…');
+      // No key, not even a prefix: VS Code reads this file's `apiKey` as a
+      // secret-storage lookup and asks for the key itself (SUP-326).
+      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
     });
@@ -187,6 +190,25 @@ describe('APIKeysScreen', () => {
       expect(screen.queryByText(/Keys are stored hashed/)).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
       expect(await screen.findByText(/Keys are stored hashed/)).toBeInTheDocument();
+    });
+
+    /**
+     * SUP-326. This paragraph is shared by all five tabs, and "paste the full
+     * key" is the instruction that caused the incident when a reader on the VS
+     * Code tab followed it: a key written into `chatLanguageModels.json` is
+     * resolved against VS Code's secret storage, never used as the key, so
+     * every request goes out unauthenticated. It has to name which snippets it
+     * is talking about.
+     */
+    it('does not tell the VS Code reader to paste a key into the file', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+      await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
+
+      const note = await screen.findByText(/Keys are stored hashed/);
+      expect(note).toHaveTextContent(/in curl, Python and Node, paste the full key/i);
+      expect(note).toHaveTextContent(/VS Code entry has no key in it and none belongs there/i);
+      expect(note).toHaveTextContent(/secret storage/i);
     });
 
     it('links the documentation site, which does not exist yet and is linked anyway', async () => {

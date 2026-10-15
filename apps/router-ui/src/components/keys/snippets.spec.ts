@@ -53,7 +53,6 @@ describe('wiringSnippet', () => {
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
-        apiKey: 'sk-tee-v1-4f7a',
         models: [
           {
             id: 'gpt-oss:tdx',
@@ -76,6 +75,21 @@ describe('wiringSnippet', () => {
       options: { baseURL: GATEKEEPER_BASE_URL, apiKey: 'sk-tee-v1-4f7a' },
       models: { 'gpt-oss:tdx': { name: 'gpt-oss:tdx' } },
     });
+  });
+
+  /**
+   * SUP-326. VS Code reads `apiKey` in this file as a key into its own secret
+   * storage, never as the key itself, so a key written here authenticates
+   * nothing and the request goes out with an empty bearer. The snippet must
+   * therefore not have the line at all — and a key in a settings file was never
+   * what this product should be teaching.
+   */
+  it('gives VS Code no apiKey line, whatever key the caller has', () => {
+    const snippet = wiringSnippet('vscode', { apiKey: 'sk-tee-v1-4f7a' });
+
+    expect(JSON.parse(snippet)[0]).not.toHaveProperty('apiKey');
+    expect(snippet).not.toContain('sk-tee-v1');
+    expect(snippet).not.toContain('apiKey');
   });
 
   it('tells the reader where each file-shaped snippet goes', () => {
