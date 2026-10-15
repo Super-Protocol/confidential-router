@@ -267,7 +267,9 @@ that property:
 2. **Reload.** The sidecar image's entrypoint watches the rendered file and sends the process
    SIGHUP on change — confined to the sidecar container, no `shareProcessNamespace`, no core
    change. A reload that fails to load changes nothing and logs why (`pkg/cli/cmd_run.go`);
-   unchanged endpoints keep their connections (`pkg/proxy/endpoint.go:156-158`).
+   unchanged endpoints keep their connections (`pkg/proxy/endpoint.go:156-158`), and an endpoint
+   the render added is listening by the time the reload returns — registering a model must not
+   need a restart (SUP-338).
 
    Two refinements the e2e stand forced (SUP-229), both about the difference between a file a *person*
    wrote and a file a control loop renders:

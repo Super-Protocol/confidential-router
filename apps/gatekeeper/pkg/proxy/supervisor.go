@@ -213,7 +213,8 @@ func (s *Supervisor) Reattest(ctx context.Context, name string) (*status.Report,
 //
 // Endpoints whose listener, upstream and tuning are unchanged keep running with
 // their connections intact: a SIGHUP that added a trusted root must not drop a
-// completion that is halfway through streaming. Everything else is rebuilt, and
+// completion that is halfway through streaming. Everything else is rebuilt and
+// started, so an endpoint the reload introduced is serving when it returns, and
 // every endpoint is re-verified, because the pins and policies behind its
 // verdict may be exactly what changed.
 func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
@@ -264,12 +265,17 @@ func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
 			s.log("info", ep.name, "endpoint removed by reload")
 		}
 	}
+	// Every endpoint the reload built gets its listener, whether it replaces a
+	// retired one or carries a name that has never appeared before: a
+	// configuration that names an endpoint is a configuration that wants it
+	// served, and binding is not a trust decision — the listener admits nothing
+	// until a verdict says so (ADR-003 §7). A name with no predecessor used to be
+	// skipped on the assumption that the caller starts everything, which only
+	// `run` does, and only at process start: a model registered on a gatekeeper
+	// that was already serving stayed stopped until the process restarted
+	// (SUP-338). An endpoint deliberately stopped from the dashboard keeps that
+	// state by surviving the reload in `kept`, not by being skipped here.
 	for _, ep := range added {
-		// A new endpoint only comes up if its predecessor was up, or if this is
-		// the first time the name appears and the caller starts everything.
-		if replaced := findEndpoint(retired, ep.name); replaced == nil {
-			continue
-		}
 		if err := ep.start(ctx); err != nil {
 			s.log("error", ep.name, "could not start after reload: "+err.Error())
 		}

@@ -586,6 +586,86 @@ func TestReloadKeepsRunningEndpointsAndAdoptsNewPins(t *testing.T) {
 	}
 }
 
+// An endpoint registered on a gatekeeper that is already serving has no
+// predecessor in the running set, and a reload used to leave it stopped: the
+// configuration arrived, the listener never bound, and nothing short of a
+// process restart brought it up (SUP-338).
+func TestReloadStartsAnEndpointThatIsNewToARunningGatekeeper(t *testing.T) {
+	pki := newPKI(t)
+	digest := digestOf("a deployment both endpoints reach")
+	upstream := newUpstream(t, pki.leaf.cert, buildBundle(t, bundleSpec{
+		signer: pki.leaf, rootPEM: pki.rootPEM, digest: digest,
+	}))
+	dir := t.TempDir()
+	serving, registered := freePort(t), freePort(t)
+	cfg := writeConfig(t, dir, configSpec{
+		roots:     map[string]string{"test-root": pki.rootPEM},
+		endpoints: []endpointSpec{{name: "serving", listen: serving, pins: []string{digest}}},
+	})
+	supervisor := startSupervisor(t, cfg, upstream, nil)
+	awaitHealth(t, supervisor, "serving", status.Confidential)
+
+	// The admin registers a second model; the control loop renders it into the
+	// file and signals a reload.
+	reloaded := writeConfig(t, dir, configSpec{
+		roots: map[string]string{"test-root": pki.rootPEM},
+		endpoints: []endpointSpec{
+			{name: "serving", listen: serving, pins: []string{digest}},
+			{name: "registered", listen: registered, pins: []string{digest}},
+		},
+	})
+	if err := supervisor.Reload(t.Context(), reloaded); err != nil {
+		t.Fatalf("reloading: %v", err)
+	}
+
+	// The new endpoint is listening and attested, and carries traffic.
+	awaitHealth(t, supervisor, "registered", status.Confidential)
+	if resp := get(t, registered, "/v1/models", nil); resp.status != http.StatusOK {
+		t.Errorf("status = %d on the registered endpoint, want 200 (%s)", resp.status, resp.body)
+	}
+	// The endpoint that was already serving was not disturbed.
+	if ep, _ := supervisor.Snapshot(t.Context()).Endpoint("serving"); ep.Health != status.Confidential {
+		t.Errorf("serving = %+v, want it still serving", ep)
+	}
+}
+
+// Disabling and re-enabling an endpoint reaches the gatekeeper as two separate
+// reloads, so the second one has no predecessor to match either — the one
+// recovery an operator could try without a restart (SUP-338).
+func TestReloadBringsBackAnEndpointThatWasRemovedAndAddedAgain(t *testing.T) {
+	pki := newPKI(t)
+	digest := digestOf("a toggled deployment")
+	upstream := newUpstream(t, pki.leaf.cert, buildBundle(t, bundleSpec{
+		signer: pki.leaf, rootPEM: pki.rootPEM, digest: digest,
+	}))
+	dir := t.TempDir()
+	listen := freePort(t)
+	full := configSpec{
+		roots:     map[string]string{"test-root": pki.rootPEM},
+		endpoints: []endpointSpec{{name: "toggled", listen: listen, pins: []string{digest}}},
+	}
+	supervisor := startSupervisor(t, writeConfig(t, dir, full), upstream, nil)
+	awaitHealth(t, supervisor, "toggled", status.Confidential)
+
+	// Disabled: the endpoint leaves the configuration entirely.
+	disabled := writeConfig(t, dir, configSpec{roots: full.roots, editable: true})
+	if err := supervisor.Reload(t.Context(), disabled); err != nil {
+		t.Fatalf("reloading without the endpoint: %v", err)
+	}
+	if _, ok := supervisor.Snapshot(t.Context()).Endpoint("toggled"); ok {
+		t.Fatal("the disabled endpoint is still reported")
+	}
+
+	// Enabled again, one reload later.
+	if err := supervisor.Reload(t.Context(), writeConfig(t, dir, full)); err != nil {
+		t.Fatalf("reloading with the endpoint back: %v", err)
+	}
+	awaitHealth(t, supervisor, "toggled", status.Confidential)
+	if resp := get(t, listen, "/v1/models", nil); resp.status != http.StatusOK {
+		t.Errorf("status = %d after re-enabling, want 200 (%s)", resp.status, resp.body)
+	}
+}
+
 func TestReloadRetiresAnEndpointThatIsGone(t *testing.T) {
 	pki := newPKI(t)
 	digest := digestOf("retired deployment")
