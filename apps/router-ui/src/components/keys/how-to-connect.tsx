@@ -19,6 +19,8 @@ export interface HowToConnectProps {
   apiKey?: string;
   /** A model this router will actually route to, so the snippet is runnable as pasted. */
   model?: string;
+  /** That model's context length, written into the VS Code snippet as `contextWindow`. */
+  contextLength?: number;
 }
 
 /**
@@ -31,7 +33,7 @@ export interface HowToConnectProps {
  * chat's tier-3 panel shows — so the two cannot drift (SUP-193), and the client
  * examples are the same snippets the created-key dialog fills in.
  */
-export function HowToConnect({ apiKey, model }: HowToConnectProps) {
+export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps) {
   return (
     <Card id="how-to-connect" className="mt-6 scroll-mt-20">
       <CardHeader>
@@ -89,7 +91,7 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
           }
           moreLabel="About the key in this snippet"
         >
-          <WiringSnippet apiKey={apiKey} model={model} />
+          <WiringSnippet apiKey={apiKey} model={model} contextLength={contextLength} />
         </Step>
 
         <p className="flex items-center gap-2 text-sm">

@@ -19,6 +19,8 @@ export interface CreatedKeyDialogProps {
   name: string;
   /** First model in the catalogue, so the snippet is runnable as pasted. */
   model?: string;
+  /** That model's context length, written into the VS Code snippet as `contextWindow`. */
+  contextLength?: number;
   onClose: () => void;
 }
 
@@ -27,7 +29,7 @@ export interface CreatedKeyDialogProps {
  * with the wiring snippet already filled in, because the next thing anyone does
  * with a new key is paste it into a client.
  */
-export function CreatedKeyDialog({ secret, name, model, onClose }: CreatedKeyDialogProps) {
+export function CreatedKeyDialog({ secret, name, model, contextLength, onClose }: CreatedKeyDialogProps) {
   return (
     <Dialog open={secret !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl">
@@ -53,7 +55,7 @@ export function CreatedKeyDialog({ secret, name, model, onClose }: CreatedKeyDia
               One base-URL swap: point the OpenAI SDK at the Gatekeeper running on your machine. The SDK, the model slug
               and the key are unchanged.
             </p>
-            {secret ? <WiringSnippet apiKey={secret} model={model} /> : null}
+            {secret ? <WiringSnippet apiKey={secret} model={model} contextLength={contextLength} /> : null}
           </div>
         </div>
 
