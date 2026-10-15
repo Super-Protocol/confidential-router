@@ -95,7 +95,7 @@ describe('wiringSnippet', () => {
       expect.stringContaining('go-to-file icon'),
     ]);
     expect(vscode?.steps?.[1]).toContain('model selector');
-    expect(vscode?.hint).toContain('example of the reference VS Code writes');
+    expect(vscode?.hint).toContain('Update API Key');
     // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
     expect(vscode?.hint).toContain('"${input:routerKey}"');
   });

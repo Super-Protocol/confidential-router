@@ -170,7 +170,7 @@ describe('APIKeysScreen', () => {
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
       // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('${input:chat.lm.secret.-...}');
-      expect(screen.getByText(/example of the reference VS Code writes/)).toBeInTheDocument();
+      expect(screen.getByText(/Update API Key/)).toBeInTheDocument();
       expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');

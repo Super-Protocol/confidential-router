@@ -203,7 +203,7 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
     ],
     hint:
       // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
-      'The apiKey above is an example of the reference VS Code writes after you enter the key in its form. The ID is generated, so yours will differ — leave the line VS Code writes. Do not paste the key, and do not use "${input:routerKey}".',
+      'Then click + in the model selector, open the gear on the Confidential Router group, choose Update API Key, paste the key, and press Enter. VS Code writes the apiKey reference above; the id differs, so leave that line. Do not paste the key into the file or use "${input:routerKey}".',
   },
   {
     id: 'opencode',
