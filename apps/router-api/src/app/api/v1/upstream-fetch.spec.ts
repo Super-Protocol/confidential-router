@@ -119,10 +119,14 @@ describe('postToUpstream', () => {
       request.resume();
     });
 
-    await expect(
-      call(url, { responseTimeoutMs: 40, onRetry: (attempt) => retries.push(attempt) }),
-    ).rejects.toBeInstanceOf(UpstreamTimeoutError);
+    const failure = await call(url, { responseTimeoutMs: 40, onRetry: (attempt) => retries.push(attempt) }).catch(
+      (error: unknown) => error,
+    );
 
+    expect(failure).toBeInstanceOf(UpstreamTimeoutError);
+    // The deadline reads as itself. Rounding it to whole seconds would print "0s"
+    // to a client whose deployment configured a sub-second one.
+    expect((failure as Error).message).toContain('0.04s');
     expect(retries).toEqual([]);
   });
 

@@ -26,9 +26,19 @@ export class UpstreamUnavailableError extends Error {
  */
 export class UpstreamTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
-    super(`The model backend did not start answering within ${Math.round(timeoutMs / 1000)}s.`);
+    super(`The model backend did not start answering within ${secondsOf(timeoutMs)}.`);
     this.name = 'UpstreamTimeoutError';
   }
+}
+
+/**
+ * The deadline as a client should read it: whole seconds at the scale a
+ * deployment configures, and a decimal below one rather than the `0s` that
+ * rounding a sub-second timeout would print into a user-facing message.
+ */
+function secondsOf(ms: number): string {
+  const value = ms / 1000;
+  return `${value >= 1 ? Math.round(value) : Number(value.toFixed(2))}s`;
 }
 
 /**
