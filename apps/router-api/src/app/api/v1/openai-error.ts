@@ -97,12 +97,27 @@ export const openAiErrors = {
       param: 'messages',
     }),
 
+  /**
+   * The three authentication refusals read differently on purpose, and each one
+   * says that nothing was sent to a model (SUP-326).
+   *
+   * The status is the contract, but it is not always what the user is shown: an
+   * IDE that reaches the router through a local bridge can lose it — VS Code's
+   * agent host forwards a BYOK failure as a message with no status and
+   * re-stamps it 502, which reads as a model outage *and* earns a retry storm.
+   * The message is the only field that survives such a hop intact, so it
+   * carries the meaning the status was supposed to: this is the credential, the
+   * request never reached a model, and here is what to do about it.
+   */
   invalidApiKey: () =>
     new OpenAiApiError({
       status: 401,
       type: 'authentication_error',
       code: 'invalid_api_key',
-      message: 'Incorrect API key provided. Send it as "Authorization: Bearer sk-tee-v1-…".',
+      message:
+        'Incorrect API key provided: this router has no such key, so the request never reached a model. ' +
+        'Send it as "Authorization: Bearer sk-tee-v1-…". A key that used to work was issued by an earlier ' +
+        'installation of this router and no longer exists — issue a new one in the console.',
     }),
 
   apiKeyRevoked: () =>
@@ -110,7 +125,7 @@ export const openAiErrors = {
       status: 401,
       type: 'authentication_error',
       code: 'api_key_revoked',
-      message: 'This API key has been revoked.',
+      message: 'This API key has been revoked, so the request never reached a model. Issue a new one in the console.',
     }),
 
   apiKeyExpired: () =>
@@ -118,7 +133,7 @@ export const openAiErrors = {
       status: 401,
       type: 'authentication_error',
       code: 'api_key_expired',
-      message: 'This API key has expired.',
+      message: 'This API key has expired, so the request never reached a model. Issue a new one in the console.',
     }),
 
   insufficientCredits: () =>

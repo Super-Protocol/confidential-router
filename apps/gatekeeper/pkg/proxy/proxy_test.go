@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -643,6 +644,50 @@ func TestUpstreamFailureIsABadGateway(t *testing.T) {
 	}
 	if ep, _ := supervisor.Snapshot(t.Context()).Endpoint("router"); ep.Health != status.Confidential {
 		t.Errorf("health = %q, want the verdict unaffected by a backend outage", ep.Health)
+	}
+}
+
+// TestUpstreamRefusalsReachTheClientUnchanged pins SUP-326: a non-2xx the
+// upstream *answered* is the upstream's, and the gatekeeper forwards it
+// verbatim — status, body and the headers a client acts on.
+//
+// Only a transport failure is the gatekeeper's own 502
+// (TestUpstreamFailureIsABadGateway). Collapsing a refusal into one would tell
+// a client the router was unreachable when it had in fact replied, and turn a
+// 401 nobody should retry into a 5xx every SDK retries.
+func TestUpstreamRefusalsReachTheClientUnchanged(t *testing.T) {
+	_, _, cfg := admitted(t)
+	listen := cfg.Endpoints[0].Listen
+
+	for _, want := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(strconv.Itoa(want), func(t *testing.T) {
+			resp := get(t, listen, "/refuse?status="+strconv.Itoa(want), nil)
+
+			if resp.status != want {
+				t.Errorf("status = %d, want %d (body: %s)", resp.status, want, resp.body)
+			}
+			if resp.body != routerRefusals[want] {
+				t.Errorf("body = %s, want the upstream's own %s", resp.body, routerRefusals[want])
+			}
+			if got := resp.header.Get("Content-Type"); got != "application/json" {
+				t.Errorf("Content-Type = %q, want the upstream's own", got)
+			}
+			// The verdict header is the one addition: it is written on every
+			// client-facing response, refusals included.
+			if got := resp.header.Get(proxy.VerdictHeader); got != "allow" {
+				t.Errorf("%s = %q, want %q", proxy.VerdictHeader, got, "allow")
+			}
+			if strings.Contains(resp.body, "gatekeeper_error") {
+				t.Errorf("body = %s, want no gatekeeper vocabulary in an upstream refusal", resp.body)
+			}
+		})
+	}
+
+	// Retry-After is the one header a 429 is acted on by; dropping it would
+	// leave a client to guess.
+	resp := get(t, listen, "/refuse?status=429", nil)
+	if got := resp.header.Get("Retry-After"); got != "7" {
+		t.Errorf("Retry-After = %q, want the upstream's %q", got, "7")
 	}
 }
 
