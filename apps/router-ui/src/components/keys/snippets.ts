@@ -187,8 +187,8 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
     label: 'VS Code',
     hint:
       'In the chat model picker open the gear icon ▸ Add Models ▸ Custom Endpoint, then paste this into the ' +
-      'chatLanguageModels.json it opens. The key is not in it: VS Code asks for the key itself and keeps it in ' +
-      'secret storage — use Update API Key on the group to set or change it.',
+      'chatLanguageModels.json it opens. The key does not go in the file: VS Code asks for it during Add Models, ' +
+      'or afterwards through Update API Key on the group, and keeps it in secret storage.',
   },
   {
     id: 'opencode',
