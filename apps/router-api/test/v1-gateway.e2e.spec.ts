@@ -113,6 +113,33 @@ describe('authentication', () => {
     expect(response.body.error.code).toBe('api_key_expired');
   });
 
+  /**
+   * SUP-326. A client can reach `/v1` through a hop that keeps the message and
+   * drops the status — VS Code's agent host re-stamps a BYOK failure as a 502,
+   * which the user reads as "the model is down" and the runtime retries. The
+   * wording is the part that survives, so it has to carry the meaning.
+   */
+  it('says on the wire that an auth refusal never reached a model', async () => {
+    const revoked = await createKey(harness.app, workspaceId);
+    await harness.app.get(DataSource).getRepository(ApiKey).update({ id: revoked.id }, { revokedAt: new Date() });
+
+    const unknown = await request(server()).post('/v1/chat/completions').set(bearer('sk-tee-v1-nope')).send(CHAT);
+    const stale = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(revoked.secret))
+      .send(CHAT)
+      .expect(401);
+
+    for (const body of [unknown.body, stale.body]) {
+      expect(body.error.type).toBe('authentication_error');
+      expect(body.error.message).toMatch(/never reached a model/);
+      expect(body.error.message).toMatch(/console/);
+    }
+    // A key this router never minted and a key it revoked are not the same
+    // problem, and a tester acts on them differently.
+    expect(unknown.body.error.message).not.toBe(stale.body.error.message);
+  });
+
   it('records that an accepted key was used', async () => {
     const fresh = await createKey(harness.app, workspaceId);
     await request(server()).post('/v1/chat/completions').set(bearer(fresh.secret)).send(CHAT).expect(200);

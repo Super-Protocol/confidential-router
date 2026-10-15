@@ -280,6 +280,13 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | 503 | `gatekeeper_error` | `attestation_failed`, `attestation_revoked` — see below |
 | 500 | `server_error` | `internal` |
 
+Every `message` is written to stand on its own, because the status does not always reach the user. An
+IDE that reaches the router through a local bridge can lose it: VS Code's agent host forwards a BYOK
+model failure as a bare message and re-stamps it `502 api_error`, which reads as a model outage and
+earns a client-side retry storm on a request that can never succeed (SUP-326). So the three 401
+messages each say that nothing was sent to a model, and name the fix — an unknown key, a revoked key
+and an expired key read differently.
+
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
 ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at
 runtime — the router *is* a gatekeeper, and says so in the same vocabulary a client already branches on.
