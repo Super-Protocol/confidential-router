@@ -192,6 +192,25 @@ describe('APIKeysScreen', () => {
       expect(await screen.findByText(/Keys are stored hashed/)).toBeInTheDocument();
     });
 
+    /**
+     * SUP-326. This paragraph is shared by all five tabs, and "paste the full
+     * key" is the instruction that caused the incident when a reader on the VS
+     * Code tab followed it: a key written into `chatLanguageModels.json` is
+     * resolved against VS Code's secret storage, never used as the key, so
+     * every request goes out unauthenticated. It has to name which snippets it
+     * is talking about.
+     */
+    it('does not tell the VS Code reader to paste a key into the file', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+      await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
+
+      const note = await screen.findByText(/Keys are stored hashed/);
+      expect(note).toHaveTextContent(/in curl, Python and Node, paste the full key/i);
+      expect(note).toHaveTextContent(/VS Code entry has no key in it and none belongs there/i);
+      expect(note).toHaveTextContent(/secret storage/i);
+    });
+
     it('links the documentation site, which does not exist yet and is linked anyway', async () => {
       renderScreen();
       await screen.findByText('production-agent');

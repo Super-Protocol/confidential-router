@@ -83,8 +83,9 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
           lead="Any OpenAI-compatible client works. Swap the base URL for the gatekeeper’s local address and nothing else changes."
           more={
             <p>
-              Keys are stored hashed, so the snippet carries only the visible prefix. Paste the full key you copied when
-              it was created.
+              Keys are stored hashed, so a snippet here carries only the visible prefix: in curl, Python and Node, paste
+              the full key you copied when it was created. The VS Code entry has no key in it and none belongs there —
+              VS Code asks for the key itself and keeps it in secret storage.
             </p>
           }
           moreLabel="About the key in this snippet"
