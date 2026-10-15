@@ -15,8 +15,26 @@ export const GATEKEEPER_BASE_URL = `http://${GATEKEEPER_LISTEN}/v1`;
 /**
  * Stands in for a key the console can no longer read. Keys are shown in full
  * exactly once, so every snippet outside that one dialog carries a placeholder.
+ *
+ * Only the command-shaped snippets use it. A command is edited in the terminal
+ * line the user is already typing; a *file* is pasted once and forgotten, and a
+ * placeholder left in one is refused by the router as a bad key — or, with this
+ * U+2026 in it, is not even sent: a Node or Electron client rejects the header
+ * before the wire ("Invalid character in header content"). Hence
+ * {@link VSCODE_KEY_REFERENCE} and {@link OPENCODE_KEY_REFERENCE} (SUP-326).
  */
 export const PLACEHOLDER_KEY = 'sk-tee-v1-…';
+
+/**
+ * VS Code's own reference to a secret it stores rather than a literal in the
+ * file: it prompts for the value once, keeps it in secret storage, and
+ * substitutes it per request. It is what VS Code's documentation shows for
+ * `apiKey`, so a pasted file is complete as it stands.
+ */
+export const VSCODE_KEY_REFERENCE = '${input:routerKey}';
+
+/** OpenCode's equivalent: the key comes from `ROUTER_KEY` in the environment. */
+export const OPENCODE_KEY_REFERENCE = '{env:ROUTER_KEY}';
 
 /**
  * Stands in for a model id when the caller has no catalogue to hand — while
@@ -107,13 +125,14 @@ function nodeSnippet(options: SnippetOptions): string {
  * URL — that is how the provider is specified.
  */
 function vscodeSnippet(options: SnippetOptions): string {
-  const { baseUrl, apiKey, model } = resolve(options);
+  const { baseUrl, model } = resolve(options);
   return JSON.stringify(
     [
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
-        apiKey,
+        // Deliberately not the caller's key: see VSCODE_KEY_REFERENCE.
+        apiKey: VSCODE_KEY_REFERENCE,
         models: [{ id: model, name: model, url: `${baseUrl}/chat/completions`, toolCalling: true, vision: false }],
       },
     ],
@@ -128,7 +147,7 @@ function vscodeSnippet(options: SnippetOptions): string {
  * adapter for any `/v1/chat/completions` server, which the gatekeeper is.
  */
 function opencodeSnippet(options: SnippetOptions): string {
-  const { baseUrl, apiKey, model } = resolve(options);
+  const { baseUrl, model } = resolve(options);
   return JSON.stringify(
     {
       $schema: 'https://opencode.ai/config.json',
@@ -136,7 +155,8 @@ function opencodeSnippet(options: SnippetOptions): string {
         'confidential-router': {
           npm: '@ai-sdk/openai-compatible',
           name: 'Confidential Router',
-          options: { baseURL: baseUrl, apiKey },
+          // Deliberately not the caller's key: see OPENCODE_KEY_REFERENCE.
+          options: { baseURL: baseUrl, apiKey: OPENCODE_KEY_REFERENCE },
           models: { [model]: { name: model } },
         },
       },
@@ -171,14 +191,14 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
     hint:
       'In the chat model picker open the gear icon ▸ Add Models ▸ Custom Endpoint, then paste this into the ' +
       // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
-      'chatLanguageModels.json it opens. Keep the key out of the file with "apiKey": "${input:routerKey}" and VS Code asks for it once.',
+      'chatLanguageModels.json it opens. VS Code asks for the key once and keeps it in secret storage; ${input:routerKey} stays in the file.',
   },
   {
     id: 'opencode',
     label: 'OpenCode',
     hint:
-      'Save as opencode.json in your project, or in ~/.config/opencode/ for every project; "{env:ROUTER_KEY}" in ' +
-      'place of the key reads it from the environment instead. Then pick the model in OpenCode.',
+      'Save as opencode.json in your project, or in ~/.config/opencode/ for every project; "{env:ROUTER_KEY}" ' +
+      'reads the key from the environment, so export it before you start. Then pick the model in OpenCode.',
   },
 ];
 

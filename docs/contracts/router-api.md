@@ -271,7 +271,7 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | HTTP | `type` | `code` |
 | --- | --- | --- |
 | 400 | `invalid_request_error` | `invalid_json`, `missing_field`, `unsupported_parameter`, `context_length_exceeded` |
-| 401 | `authentication_error` | `invalid_api_key`, `api_key_revoked`, `api_key_expired` |
+| 401 | `authentication_error` | `invalid_api_key`, `api_key_placeholder`, `api_key_revoked`, `api_key_expired` |
 | 402 | `insufficient_credits` | `insufficient_credits`, `key_spend_limit_reached` |
 | 403 | `permission_error` | `model_not_in_key_scope` |
 | 404 | `invalid_request_error` | `model_not_found`, `not_found` |
@@ -283,9 +283,15 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 Every `message` is written to stand on its own, because the status does not always reach the user. An
 IDE that reaches the router through a local bridge can lose it: VS Code's agent host forwards a BYOK
 model failure as a bare message and re-stamps it `502 api_error`, which reads as a model outage and
-earns a client-side retry storm on a request that can never succeed (SUP-326). So the three 401
-messages each say that nothing was sent to a model, and name the fix — an unknown key, a revoked key
-and an expired key read differently.
+earns a client-side retry storm on a request that can never succeed (SUP-326). So every 401 message
+says that nothing was sent to a model, and names the fix; the four causes read differently, and none
+of them quotes `sk-tee-v1-…` as the example of a key — that literal is the placeholder the console
+and the docs put in a config file, and quoting it back makes a wrong value look right.
+
+**`api_key_placeholder`** is that case made explicit: the credential is one of the placeholders this
+product prints where a key goes — `sk-tee-v1-…`, VS Code's `${input:…}`, OpenCode's `{env:…}` — left
+unreplaced or unresolved. Nothing was revoked and nothing expired; the value was never a key, which
+is the one 401 a user can fix without opening the console.
 
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
 ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at

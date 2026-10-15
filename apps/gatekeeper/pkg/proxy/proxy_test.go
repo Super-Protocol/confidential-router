@@ -406,6 +406,62 @@ func TestHopByHopHeadersDoNotReachTheUpstream(t *testing.T) {
 	}
 }
 
+// TestTheCredentialReachesTheUpstreamInEveryShape pins the other half of
+// SUP-326: a tester's key worked in curl straight to the router and failed from
+// an IDE pointed at a gatekeeper, with the router's own "Incorrect API key
+// provided" coming back. A dropped `Authorization` and a wrong key are the same
+// 401 from the far end, so the only question an answer can be read from is what
+// the *upstream received* — which is what this asserts, in the two shapes an
+// IDE sends: a POST with a body, and a streamed completion.
+//
+// TestHopByHopHeadersDoNotReachTheUpstream covers the plain GET.
+func TestTheCredentialReachesTheUpstreamInEveryShape(t *testing.T) {
+	const credential = "Bearer sk-tee-v1-" + "0123456789abcdef"
+	_, upstream, cfg := admitted(t)
+	listen := cfg.Endpoints[0].Listen
+
+	post, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		"http://"+listen+"/echo", strings.NewReader(`{"model":"m","messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post.Header.Set("Authorization", credential)
+	post.Header.Set("Content-Type", "application/json")
+	answer, err := localClient().Do(post)
+	if err != nil {
+		t.Fatalf("posting: %v", err)
+	}
+	_ = collect(t, answer)
+
+	stream, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listen+"/sse", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.Header.Set("Authorization", credential)
+	stream.Header.Set("Accept", "text/event-stream")
+	streamed, err := localClient().Do(stream)
+	if err != nil {
+		t.Fatalf("streaming request: %v", err)
+	}
+	defer streamed.Body.Close() //nolint:errcheck // test
+	// One frame is enough: the request headers crossed long before it.
+	if first := readEvent(t, bufio.NewReader(streamed.Body)); !strings.Contains(first, `"chunk":1`) {
+		t.Fatalf("first chunk = %q, want the first event", first)
+	}
+	close(upstream.release)
+
+	seen := upstream.seen()
+	if len(seen) != 2 {
+		t.Fatalf("upstream saw %d requests, want 2", len(seen))
+	}
+	for _, request := range seen {
+		if got := request.Header.Get("Authorization"); got != credential {
+			t.Errorf("%s %s reached the upstream with Authorization %q, want %q",
+				request.Method, request.Path, got, credential)
+		}
+	}
+}
+
 func TestTheFirstRequestWaitsForTheFirstVerdict(t *testing.T) {
 	pki := newPKI(t)
 	digest := digestOf("slow deployment")

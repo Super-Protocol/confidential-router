@@ -98,8 +98,8 @@ export const openAiErrors = {
     }),
 
   /**
-   * The three authentication refusals read differently on purpose, and each one
-   * says that nothing was sent to a model (SUP-326).
+   * The authentication refusals read differently on purpose, and each one says
+   * that nothing was sent to a model (SUP-326).
    *
    * The status is the contract, but it is not always what the user is shown: an
    * IDE that reaches the router through a local bridge can lose it — VS Code's
@@ -108,6 +108,10 @@ export const openAiErrors = {
    * The message is the only field that survives such a hop intact, so it
    * carries the meaning the status was supposed to: this is the credential, the
    * request never reached a model, and here is what to do about it.
+   *
+   * Nothing here quotes `sk-tee-v1-…`. That literal is the placeholder our own
+   * docs and console put in a config file, so a user who sent it reads the
+   * example as a formatting hint and their own value as correct.
    */
   invalidApiKey: () =>
     new OpenAiApiError({
@@ -116,8 +120,27 @@ export const openAiErrors = {
       code: 'invalid_api_key',
       message:
         'Incorrect API key provided: this router has no such key, so the request never reached a model. ' +
-        'Send it as "Authorization: Bearer sk-tee-v1-…". A key that used to work was issued by an earlier ' +
-        'installation of this router and no longer exists — issue a new one in the console.',
+        'Send a full key from the console as "Authorization: Bearer <key>".',
+    }),
+
+  /**
+   * The credential is one of our own placeholders, not a key at all
+   * ({@link isCredentialPlaceholder}).
+   *
+   * Its own code because it is its own fix — nothing was revoked, nothing
+   * expired, and re-issuing a key would not help: the value in the config file
+   * was never a key. This is the one 401 a user can resolve without opening the
+   * console.
+   */
+  apiKeyPlaceholder: () =>
+    new OpenAiApiError({
+      status: 401,
+      type: 'authentication_error',
+      code: 'api_key_placeholder',
+      message:
+        'The credential sent is a configuration placeholder, not an API key, so the request never reached a ' +
+        'model. Replace it in your client configuration with the full key the console showed when the key ' +
+        'was created.',
     }),
 
   apiKeyRevoked: () =>

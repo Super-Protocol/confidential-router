@@ -83,8 +83,9 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
           lead="Any OpenAI-compatible client works. Swap the base URL for the gatekeeper’s local address and nothing else changes."
           more={
             <p>
-              Keys are stored hashed, so the snippet carries only the visible prefix. Paste the full key you copied when
-              it was created.
+              Keys are stored hashed, so a command here carries only the visible prefix — paste the full key you copied
+              when it was created. The two config files carry no key at all: each names where its tool keeps one, so
+              nothing that is not a key can be left behind in a file.
             </p>
           }
           moreLabel="About the key in this snippet"
