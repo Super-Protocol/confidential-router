@@ -35,6 +35,12 @@ export interface SnippetOptions {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  /**
+   * The model's context length from the catalogue. VS Code's language-models
+   * entry uses it as `contextWindow`; without it the snippet names no token
+   * limits rather than inventing a pair that can exceed the window.
+   */
+  contextLength?: number;
 }
 
 export type SnippetLanguage = 'curl' | 'python' | 'node' | 'vscode' | 'opencode';
@@ -100,14 +106,17 @@ function nodeSnippet(options: SnippetOptions): string {
   ].join('\n');
 }
 
-/** Token limits written into the VS Code language-models entry. */
-const VSCODE_MAX_INPUT_TOKENS = 100_000;
-const VSCODE_MAX_OUTPUT_TOKENS = 100_000;
+/**
+ * Completion cap written next to `contextWindow`. VS Code derives
+ * `maxInputTokens` as the difference, and the sum of the two must not exceed
+ * the model's context window, so the cap is also kept to half of a short window.
+ */
+const VSCODE_MAX_OUTPUT_TOKENS = 8_192;
 
 /**
- * An example of the reference VS Code writes after the key is entered in its
- * form. The id after `chat.lm.secret.` is generated; a literal key resolves to
- * an empty bearer, and `${input:routerKey}` is not a reference VS Code creates.
+ * An example of the reference Update API Key writes. The id after
+ * `chat.lm.secret.` is generated. A literal key is not a reference: resolution
+ * yields an empty bearer.
  */
 // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, not a template.
 const VSCODE_API_KEY_INPUT = '${input:chat.lm.secret.-...}';
@@ -121,6 +130,7 @@ const VSCODE_API_KEY_INPUT = '${input:chat.lm.secret.-...}';
  */
 function vscodeSnippet(options: SnippetOptions): string {
   const { baseUrl, model } = resolve(options);
+  const limits = vscodeLimits(options.contextLength);
   return JSON.stringify(
     [
       {
@@ -134,8 +144,7 @@ function vscodeSnippet(options: SnippetOptions): string {
             url: `${baseUrl}/chat/completions`,
             toolCalling: true,
             vision: false,
-            maxInputTokens: VSCODE_MAX_INPUT_TOKENS,
-            maxOutputTokens: VSCODE_MAX_OUTPUT_TOKENS,
+            ...limits,
           },
         ],
       },
@@ -143,6 +152,22 @@ function vscodeSnippet(options: SnippetOptions): string {
     null,
     2,
   );
+}
+
+/**
+ * `contextWindow` is the catalogue's context length. `maxOutputTokens` stays
+ * inside it, so VS Code's derived input budget cannot overflow the window.
+ * No catalogue means no numbers: a hardcoded pair would be a lie about a model
+ * the snippet does not know.
+ */
+function vscodeLimits(
+  contextLength: number | undefined,
+): { contextWindow: number; maxOutputTokens: number } | undefined {
+  if (contextLength === undefined || !Number.isInteger(contextLength) || contextLength < 1) return undefined;
+  return {
+    contextWindow: contextLength,
+    maxOutputTokens: Math.max(1, Math.min(VSCODE_MAX_OUTPUT_TOKENS, Math.floor(contextLength / 2))),
+  };
 }
 
 /**
@@ -198,12 +223,10 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
     id: 'vscode',
     label: 'VS Code',
     steps: [
-      'Press Ctrl+Shift+P (Windows/Linux) or Cmd+Shift+P (Mac), start typing Open Language Models (JSON), press Enter, and paste this block.',
+      'Press Ctrl+Shift+P (Windows/Linux) or Cmd+Shift+P (Mac), start typing Chat: Open Language Models (JSON), press Enter, and paste this block.',
       'In the agent chat, open the model selector, click +, then the go-to-file icon in the top right, and paste this block into the file that opens.',
     ],
-    hint:
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
-      'Then click + in the model selector, open the gear on the Confidential Router group, choose Update API Key, paste the key, and press Enter. VS Code writes the apiKey reference above; the id differs, so leave that line. Do not paste the key into the file or use "${input:routerKey}".',
+    hint: 'Then click + in the model selector, open the gear on the Confidential Router group, choose Update API Key, paste the key, and press Enter. That writes the apiKey reference above; the id differs, so leave that line. Do not paste the key into the file.',
   },
   {
     id: 'opencode',

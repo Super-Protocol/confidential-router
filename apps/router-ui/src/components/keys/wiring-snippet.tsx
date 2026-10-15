@@ -61,7 +61,8 @@ function renderStep(step: string) {
 
 /**
  * VS Code's `go-to-file` codicon, the button in the top right of the
- * language-models editor the agent model picker opens.
+ * language-models editor the agent model picker opens. The path is from
+ * `@vscode/codicons` (CC BY 4.0); the attribution is in NOTICE.
  */
 function GoToFileIcon() {
   return (

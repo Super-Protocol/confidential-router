@@ -62,8 +62,6 @@ describe('wiringSnippet', () => {
             url: `${GATEKEEPER_BASE_URL}/chat/completions`,
             toolCalling: true,
             vision: false,
-            maxInputTokens: 100_000,
-            maxOutputTokens: 100_000,
           },
         ],
       },
@@ -95,9 +93,22 @@ describe('wiringSnippet', () => {
       expect.stringContaining('go-to-file icon'),
     ]);
     expect(vscode?.steps?.[1]).toContain('model selector');
+    expect(vscode?.steps?.[0]).toContain('Chat: Open Language Models (JSON)');
     expect(vscode?.hint).toContain('Update API Key');
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
-    expect(vscode?.hint).toContain('"${input:routerKey}"');
+    expect(vscode?.hint).not.toContain('routerKey');
+  });
+
+  it('sets the VS Code context window from the catalogue and keeps output inside it', () => {
+    const parsed = JSON.parse(wiringSnippet('vscode', { model: 'gpt-oss:tdx', contextLength: 131_072 }));
+    const limits = parsed[0].models[0];
+
+    expect(limits.contextWindow).toBe(131_072);
+    expect(limits.maxOutputTokens).toBe(8_192);
+    expect(limits.maxInputTokens).toBeUndefined();
+    expect(limits.maxOutputTokens).toBeLessThanOrEqual(limits.contextWindow);
+
+    const short = JSON.parse(wiringSnippet('vscode', { contextLength: 8_192 }));
+    expect(short[0].models[0]).toMatchObject({ contextWindow: 8_192, maxOutputTokens: 4_096 });
   });
 
   it('never writes a VS Code key into the file, even when one is supplied', () => {

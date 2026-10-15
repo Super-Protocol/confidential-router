@@ -48,7 +48,9 @@ export function APIKeysScreen() {
   // is listed and answers 503. The scope picker below still offers every model —
   // scoping a key to one that is currently unavailable is a reasonable thing to
   // do, and the key outlives the verdict.
-  const sampleModel = models.find((model) => model.available)?.id;
+  const sample = models.find((model) => model.available);
+  const sampleModel = sample?.id;
+  const sampleContextLength = sample?.contextLength;
   const newestActive = keys.find((apiKey) => apiKey.revokedAt === null);
 
   const header = (
@@ -97,7 +99,11 @@ export function APIKeysScreen() {
         <ApiKeyTable keys={keys} models={models} onEdit={setEditing} onRevoke={setRevoking} />
       )}
 
-      <HowToConnect apiKey={newestActive ? `${newestActive.prefix}…` : undefined} model={sampleModel} />
+      <HowToConnect
+        apiKey={newestActive ? `${newestActive.prefix}…` : undefined}
+        model={sampleModel}
+        contextLength={sampleContextLength}
+      />
 
       {workspaceId ? (
         <CreateKeyDialog
@@ -113,6 +119,7 @@ export function APIKeysScreen() {
         secret={created?.secret ?? null}
         name={created?.name ?? ''}
         model={sampleModel}
+        contextLength={sampleContextLength}
         onClose={() => setCreated(null)}
       />
 

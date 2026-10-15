@@ -55,7 +55,7 @@ type Documents = {
     "\n  query FeedbackOffer {\n    feedbackOffer {\n      eligible\n      reason\n      grantMicros\n      formUrl\n      granted {\n        creditTransactionId\n        grantMicros\n        appliedAt\n      }\n    }\n  }\n": typeof types.FeedbackOfferDocument,
     "\n  query InviteGrantStatus($code: String) {\n    inviteGrantStatus(code: $code) {\n      reason\n      grant {\n        creditTransactionId\n        grantMicros\n        campaign\n        redeemedAt\n      }\n    }\n  }\n": typeof types.InviteGrantStatusDocument,
     "\n  fragment ApiKeyFields on ApiKey {\n    id\n    name\n    prefix\n    modelScope\n    createdAt\n    expiresAt\n    lastUsedAt\n    revokedAt\n    spendLimitMicros\n    spentTotalMicros\n    requestsPerMinute\n    tokensPerMinute\n  }\n": typeof types.ApiKeyFieldsFragmentDoc,
-    "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n    }\n  }\n": typeof types.ApiKeysDocument,
+    "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n      contextLength\n    }\n  }\n": typeof types.ApiKeysDocument,
     "\n  mutation CreateApiKey($input: CreateApiKeyInput!) {\n    createApiKey(input: $input) {\n      secret\n      key {\n        ...ApiKeyFields\n      }\n    }\n  }\n": typeof types.CreateApiKeyDocument,
     "\n  mutation UpdateApiKey($id: ID!, $input: UpdateApiKeyInput!) {\n    updateApiKey(id: $id, input: $input) {\n      ...ApiKeyFields\n    }\n  }\n": typeof types.UpdateApiKeyDocument,
     "\n  mutation RevokeApiKey($id: ID!) {\n    revokeApiKey(id: $id) {\n      ...ApiKeyFields\n    }\n  }\n": typeof types.RevokeApiKeyDocument,
@@ -115,7 +115,7 @@ const documents: Documents = {
     "\n  query FeedbackOffer {\n    feedbackOffer {\n      eligible\n      reason\n      grantMicros\n      formUrl\n      granted {\n        creditTransactionId\n        grantMicros\n        appliedAt\n      }\n    }\n  }\n": types.FeedbackOfferDocument,
     "\n  query InviteGrantStatus($code: String) {\n    inviteGrantStatus(code: $code) {\n      reason\n      grant {\n        creditTransactionId\n        grantMicros\n        campaign\n        redeemedAt\n      }\n    }\n  }\n": types.InviteGrantStatusDocument,
     "\n  fragment ApiKeyFields on ApiKey {\n    id\n    name\n    prefix\n    modelScope\n    createdAt\n    expiresAt\n    lastUsedAt\n    revokedAt\n    spendLimitMicros\n    spentTotalMicros\n    requestsPerMinute\n    tokensPerMinute\n  }\n": types.ApiKeyFieldsFragmentDoc,
-    "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n    }\n  }\n": types.ApiKeysDocument,
+    "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n      contextLength\n    }\n  }\n": types.ApiKeysDocument,
     "\n  mutation CreateApiKey($input: CreateApiKeyInput!) {\n    createApiKey(input: $input) {\n      secret\n      key {\n        ...ApiKeyFields\n      }\n    }\n  }\n": types.CreateApiKeyDocument,
     "\n  mutation UpdateApiKey($id: ID!, $input: UpdateApiKeyInput!) {\n    updateApiKey(id: $id, input: $input) {\n      ...ApiKeyFields\n    }\n  }\n": types.UpdateApiKeyDocument,
     "\n  mutation RevokeApiKey($id: ID!) {\n    revokeApiKey(id: $id) {\n      ...ApiKeyFields\n    }\n  }\n": types.RevokeApiKeyDocument,
@@ -315,7 +315,7 @@ export function graphql(source: "\n  fragment ApiKeyFields on ApiKey {\n    id\n
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
-export function graphql(source: "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n    }\n  }\n"): (typeof documents)["\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n    }\n  }\n"];
+export function graphql(source: "\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n      contextLength\n    }\n  }\n"): (typeof documents)["\n  query ApiKeys($workspaceId: ID!) {\n    apiKeys(workspaceId: $workspaceId) {\n      ...ApiKeyFields\n    }\n    models {\n      id\n      name\n      available\n      contextLength\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
