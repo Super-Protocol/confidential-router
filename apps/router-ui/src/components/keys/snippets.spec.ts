@@ -46,9 +46,6 @@ describe('wiringSnippet', () => {
   // SUP-255: two more clients, both configured by a file rather than a call, so
   // what matters is that the file parses and names the gatekeeper where each
   // tool looks for it.
-  // SUP-326: a file is pasted once and forgotten, so neither file-shaped
-  // snippet carries a key-shaped placeholder — each names the tool's own secret
-  // reference, which is complete as it stands and cannot be mistaken for a key.
   it('writes VS Code a Custom Endpoint entry with the full chat-completions URL', () => {
     const parsed = JSON.parse(wiringSnippet('vscode', { apiKey: 'sk-tee-v1-4f7a', model: 'gpt-oss:tdx' }));
 
@@ -56,7 +53,7 @@ describe('wiringSnippet', () => {
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
-        apiKey: '${input:routerKey}',
+        apiKey: 'sk-tee-v1-4f7a',
         models: [
           {
             id: 'gpt-oss:tdx',
@@ -76,15 +73,9 @@ describe('wiringSnippet', () => {
     expect(parsed.provider['confidential-router']).toEqual({
       npm: '@ai-sdk/openai-compatible',
       name: 'Confidential Router',
-      options: { baseURL: GATEKEEPER_BASE_URL, apiKey: '{env:ROUTER_KEY}' },
+      options: { baseURL: GATEKEEPER_BASE_URL, apiKey: 'sk-tee-v1-4f7a' },
       models: { 'gpt-oss:tdx': { name: 'gpt-oss:tdx' } },
     });
-  });
-
-  it('never puts a key-shaped placeholder in a file the user pastes once', () => {
-    for (const id of ['vscode', 'opencode'] as const) {
-      expect(wiringSnippet(id, { apiKey: 'sk-tee-v1-4f7a' })).not.toContain('sk-tee-v1');
-    }
   });
 
   it('tells the reader where each file-shaped snippet goes', () => {

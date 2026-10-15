@@ -69,16 +69,18 @@ describe('looksLikeApiKey', () => {
 });
 
 /**
- * SUP-326: the strings that arrive as credentials having never been keys. Each
- * one is something the product itself printed where a key goes.
+ * SUP-326: the strings that arrive as credentials having never been keys —
+ * chiefly the `sk-tee-v1-…` a pasted command carries before its key is
+ * replaced. A client that forwards a `${…}` reference verbatim lands here too;
+ * the two IDEs we document do not, they send nothing at all.
  */
 describe('isCredentialPlaceholder', () => {
   it.each([
     ['the docs placeholder', 'sk-tee-v1-…'],
     ["the console's masked prefix", 'sk-tee-v1-4f…'],
     ['an ASCII ellipsis', 'sk-tee-v1-...'],
-    ["VS Code's unresolved input variable", '${input:routerKey}'],
-    ["OpenCode's unresolved env reference", '{env:ROUTER_KEY}'],
+    ['an unresolved input reference', '${input:routerKey}'],
+    ['an unresolved env reference', '{env:ROUTER_KEY}'],
   ])('recognises %s', (_case, value) => {
     expect(isCredentialPlaceholder(value)).toBe(true);
   });
