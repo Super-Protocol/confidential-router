@@ -9,6 +9,7 @@ import { openAiErrors } from './openai-error.js';
  */
 describe('authentication refusals', () => {
   const refusals = [
+    ['invalid_api_key', openAiErrors.missingApiKey()],
     ['invalid_api_key', openAiErrors.invalidApiKey()],
     ['api_key_placeholder', openAiErrors.apiKeyPlaceholder()],
     ['api_key_revoked', openAiErrors.apiKeyRevoked()],
@@ -31,9 +32,23 @@ describe('authentication refusals', () => {
     expect(openAiErrors.apiKeyPlaceholder().message).toMatch(/placeholder, not an API key/);
   });
 
-  it('points a dead key at the console rather than at a retry', () => {
+  /**
+   * The case a config file produces, and the one the whole change is for: a
+   * credential that never arrived must not be reported as a key that failed.
+   */
+  it('says that nothing was presented when nothing was, without blaming a key', () => {
+    const missing = openAiErrors.missingApiKey().message;
+
+    expect(missing).toMatch(/^No API key was provided/);
+    expect(missing).toMatch(/resolved to nothing/);
+    expect(missing).not.toMatch(/incorrect|no such key/i);
+    // Same code: a caller branching on it is asking one question.
+    expect(openAiErrors.missingApiKey().code).toBe(openAiErrors.invalidApiKey().code);
+  });
+
+  it('points a dead key at a new key rather than at a retry', () => {
     for (const error of [openAiErrors.apiKeyRevoked(), openAiErrors.apiKeyExpired()]) {
-      expect(error.message).toMatch(/issue a new one in the console/i);
+      expect(error.message).toMatch(/create a new key/i);
     }
   });
 

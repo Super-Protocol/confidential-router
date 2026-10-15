@@ -419,9 +419,10 @@ func (u *fakeUpstream) serveRefusal(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, routerRefusals[code])
 }
 
-// routerRefusals are the router's own `/v1` error bodies, copied from
-// `apps/router-api/src/app/api/v1/openai-error.ts`. A client branches on
-// `error.code`, so the test asserts the bytes rather than the status alone.
+// routerRefusals are bodies shaped like the router's own `/v1` errors
+// (`apps/router-api/src/app/api/v1/openai-error.ts`), abridged: what is being
+// pinned is that whatever the upstream wrote arrives byte for byte, so the
+// shape matters here and the exact prose does not.
 var routerRefusals = map[int]string{
 	http.StatusUnauthorized: `{"error":{"message":"Incorrect API key provided.",` +
 		`"type":"authentication_error","code":"invalid_api_key"}}`,

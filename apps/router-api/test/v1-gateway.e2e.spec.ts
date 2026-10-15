@@ -56,16 +56,30 @@ function generations() {
 const CHAT = { model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'Hello there' }] };
 
 describe('authentication', () => {
-  it('refuses a request with no credential, in the OpenAI error shape', async () => {
-    const response = await request(server()).post('/v1/chat/completions').send(CHAT).expect(401);
+  /**
+   * SUP-326: "no key arrived" and "that key is not ours" are different
+   * sentences. A VS Code Custom Endpoint whose `apiKey` is not in its secret
+   * storage sends `Bearer ` with nothing after it, and OpenCode substitutes an
+   * empty string for an unset `{env:…}` — so on both documented IDE paths this
+   * is the refusal the user actually gets, with a key that works in their
+   * terminal.
+   */
+  it.each([
+    ['no Authorization header', undefined],
+    ['an empty bearer', 'Bearer '],
+    ['another scheme', 'Basic dXNlcjpwYXNz'],
+  ])('refuses %s by saying none arrived, in the OpenAI error shape', async (_case, header) => {
+    const call = request(server()).post('/v1/chat/completions');
+    const response = await (header ? call.set('Authorization', header) : call).send(CHAT).expect(401);
 
     expect(response.body).toEqual({
       error: {
-        message: expect.stringContaining('Incorrect API key'),
+        message: expect.stringContaining('No API key was provided'),
         type: 'authentication_error',
         code: 'invalid_api_key',
       },
     });
+    expect(response.body.error.message).not.toContain('Incorrect API key');
   });
 
   it.each([
@@ -161,7 +175,9 @@ describe('authentication', () => {
     for (const body of [unknown.body, stale.body]) {
       expect(body.error.type).toBe('authentication_error');
       expect(body.error.message).toMatch(/never reached a model/);
-      expect(body.error.message).toMatch(/console/);
+      // Each one names the next move, rather than leaving a retry as the only
+      // obvious one.
+      expect(body.error.message).toMatch(/Send a full key|Create a new key/);
     }
     // A key this router never minted and a key it revoked are not the same
     // problem, and a tester acts on them differently.

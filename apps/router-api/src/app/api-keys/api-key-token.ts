@@ -51,17 +51,23 @@ export function looksLikeApiKey(value: string): boolean {
 /**
  * Whether a presented credential is a placeholder rather than a key.
  *
- * Three strings reach `/v1` as credentials without ever having been keys, and
- * all three are ones *we* put in front of the user: the `sk-tee-v1-…` the docs
- * and the console show where a key would go, and the `${input:…}` / `{env:…}`
- * references VS Code and OpenCode resolve from secret storage — left unresolved
- * when the file is pasted without the surrounding setup.
+ * The case this exists for is a *command* that was pasted and run before the
+ * key in it was replaced: the console's curl, Python and Node snippets carry
+ * `sk-tee-v1-…` where the key goes, and a shell sends it unexamined — a request
+ * with that credential reaches production today and is refused as a wrong key.
  *
- * They are worth telling apart from a wrong key because the failure is silent
- * in the other direction: the request is refused by the router, an IDE reports
- * it as a model failure (SUP-326), and the user's own `curl` — where they
- * pasted the real key — keeps working. "This is a placeholder" ends that in one
- * reading; "incorrect API key" does not.
+ * It is deliberately not the config-file case. Neither documented IDE path
+ * forwards an unresolved reference as text: VS Code resolves an `apiKey` it
+ * cannot find in its own secret storage to `undefined` and sends an empty
+ * bearer, and OpenCode substitutes an empty string for an unset `{env:…}`. Both
+ * arrive as no credential at all. The `${…}` shapes are still matched here
+ * because a client with no substitution of its own can forward one verbatim —
+ * not because an IDE does.
+ *
+ * Telling this apart from a wrong key matters because the failure is silent in
+ * the other direction: the router refuses it, an IDE reports it as a model
+ * failure (SUP-326), and the user's own `curl` — where they pasted the real
+ * key — keeps working.
  */
 export function isCredentialPlaceholder(value: string): boolean {
   if (/^\$\{[^}]*\}$/.test(value) || /^\{env:[^}]*\}$/.test(value)) {

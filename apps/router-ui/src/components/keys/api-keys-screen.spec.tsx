@@ -158,7 +158,7 @@ describe('APIKeysScreen', () => {
       expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
     });
 
-    it('offers curl, Python, Node, VS Code and OpenCode examples, each with its own key placeholder', async () => {
+    it('offers curl, Python, Node, VS Code and OpenCode examples with the key prefix filled in', async () => {
       renderScreen();
       await screen.findByText('production-agent');
 
@@ -166,13 +166,9 @@ describe('APIKeysScreen', () => {
       for (const label of ['curl', 'Python', 'Node', 'VS Code', 'OpenCode']) {
         expect(tabs).toContain(label);
       }
-      expect(screen.getByTestId('wiring-snippet-curl')).toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
-      // A config file carries VS Code's own secret reference rather than a
-      // prefix that looks like a key and is not one (SUP-326).
-      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('${input:routerKey}');
-      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1');
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
     });

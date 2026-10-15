@@ -29,7 +29,9 @@ export class ApiKeyGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<ApiKeyRequest>();
     const secret = bearerTokenOf(request.headers.authorization);
     if (!secret) {
-      throw openAiErrors.invalidApiKey();
+      // Not `invalidApiKey`: nothing was presented, and on the documented IDE
+      // paths that is the likeliest refusal of all (SUP-326).
+      throw openAiErrors.missingApiKey();
     }
     // Before the lookup: a placeholder is not a key that failed, and saying so
     // is the whole difference between a one-line fix and an outage report
@@ -60,7 +62,7 @@ const REJECTIONS = {
 /** Reads what `ApiKeyGuard` resolved. Only meaningful behind that guard. */
 export function apiKeyOf(request: ApiKeyRequest): AuthenticatedApiKey {
   if (!request.apiKey) {
-    throw openAiErrors.invalidApiKey();
+    throw openAiErrors.missingApiKey();
   }
   return request.apiKey;
 }
