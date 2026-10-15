@@ -43,6 +43,13 @@
           "type": "string",
           "default": "0.0.0.0",
           "description": "Interface to bind. 127.0.0.1 to keep the service off the network."
+        },
+        "maxInferenceRequestBytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 268435456,
+          "default": 8388608,
+          "description": "Largest /v1 request body the router accepts, in bytes. Its own limit, well above the 1 MiB the console surfaces keep: a prompt that fills the context_length the catalogue advertises is megabytes of JSON. Raise it for a deployment serving a larger context window, remembering that this number times the expected concurrency is memory."
         }
       }
     },
