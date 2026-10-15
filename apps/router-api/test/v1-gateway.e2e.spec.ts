@@ -114,6 +114,34 @@ describe('authentication', () => {
   });
 
   /**
+   * SUP-326. The config file a user pastes carries a placeholder where the key
+   * goes, and leaving it there is refused as "Incorrect API key provided" —
+   * which an IDE then reports as a model failure. The router can see that the
+   * value was never a key, and says so instead.
+   *
+   * Only the sendable placeholders are exercised here. `sk-tee-v1-…` with a
+   * real U+2026 never reaches any server from a Node or Electron client: the
+   * HTTP stack rejects the header before it is written ("Invalid character in
+   * header content"). The predicate still covers it — an ASCII `...`, a
+   * transcoding proxy, or a non-Node client can all put one on the wire — but
+   * it is not what an IDE on this path produces.
+   */
+  it.each([
+    ["VS Code's unresolved input variable", '${input:routerKey}'],
+    ['an ASCII-elided key', 'sk-tee-v1-...'],
+  ])('answers %s with its own code instead of blaming the key', async (_case, placeholder) => {
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(placeholder))
+      .send(CHAT)
+      .expect(401);
+
+    expect(response.body.error.code).toBe('api_key_placeholder');
+    expect(response.body.error.message).toMatch(/placeholder, not an API key/);
+    expect(response.body.error.message).toMatch(/never reached a model/);
+  });
+
+  /**
    * SUP-326. A client can reach `/v1` through a hop that keeps the message and
    * drops the status — VS Code's agent host re-stamps a BYOK failure as a 502,
    * which the user reads as "the model is down" and the runtime retries. The
