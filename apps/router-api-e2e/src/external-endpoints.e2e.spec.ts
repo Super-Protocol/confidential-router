@@ -31,6 +31,7 @@ import {
   type ExternalStand,
   externalEndpointEvents,
   pinExternalEndpointDigest,
+  type RegisteredExternalEndpoint,
   ROTATED_MEASUREMENT,
   registerExternalEndpoint,
   removeTrustedMeasurement,
@@ -41,7 +42,7 @@ import {
 } from '@confidential-router/demo';
 import OpenAI from 'openai';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 /** The upstream's own key — the registration token of decision 3. */
 const UPSTREAM_API_KEY = 'sk-upstream-partner-cloud-0123456789';
@@ -63,6 +64,9 @@ const PENDING = 'PENDING';
  * check is how the console learns what to approve.
  */
 const OTHER_CLOUD_MEASUREMENT = '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0';
+
+/** What the stand says when its hardware report stops verifying — asserted, so it is named once. */
+const WITHDRAWN_REPORT = 'the stand withdrew the hardware report';
 
 /**
  * Chunks every 400 ms, so a generation lives long enough for an admin to
@@ -271,10 +275,21 @@ describe('generation', () => {
 });
 
 describe('fail-closed', () => {
-  it('drops the model and refuses new traffic when the trust list no longer admits the cloud', async () => {
-    expect(await removeTrustedMeasurement(stand.admin, trustedId)).toBe(true);
+  /**
+   * Back to the image every case here starts from.
+   *
+   * Idempotent, and in a hook rather than in the cases that rotate, so that a
+   * case failing between its rotation and its own `restore()` cannot leave the
+   * stand on an image the next case's `VERIFIED` setup would never reach
+   * (SUP-329). The trust list is the other half of that, and
+   * `addTrustedMeasurement` is idempotent for the same reason.
+   */
+  afterEach(() => {
+    stand?.sidecar.restore();
+  });
 
-    const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
+  it('drops the model and refuses new traffic when the trust list no longer admits the cloud', async () => {
+    const denied = await withdrawCloud(trustedId);
     // The refused factor, not the generic `policy` stage: the console's fix for
     // it is "Add to trust list", and the stage is what tells it so.
     expect(denied.lastStage).toBe('measurement-not-trusted');
@@ -350,6 +365,14 @@ describe('fail-closed', () => {
     );
     const aborted = (await generationsOf(EXTERNAL_MODEL)).filter((row) => row.status === 'ABORTED');
     expect(aborted[0].errorCode).toBe('attestation_revoked');
+
+    // The withdrawal's own verdict, waited for rather than left in flight. The
+    // abort above is the gatekeeper cutting the stream; the endpoint's status is
+    // a projection a poll or two behind that, and a case that ended in between
+    // would hand the next one a `VERIFIED` about to be overwritten — which is
+    // how that case's "wait until VERIFIED" returned a row from before this
+    // withdrawal (SUP-329).
+    await cloudWithdrawnDenial();
   });
 
   it('denies when the trusted cloud redeploys on an image nobody listed', async () => {
@@ -360,7 +383,16 @@ describe('fail-closed', () => {
     // VM image, and only the gatekeeper's own re-attestation loop can notice.
     expect(stand.sidecar.rotateMeasurement()).toBe(ROTATED_MEASUREMENT);
 
-    const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
+    // The rotated image specifically, not merely "some non-allow status": the
+    // beats before this one leave denials of their own behind, and a wait that
+    // took any of them would be reading a verdict from before the redeploy
+    // (SUP-329).
+    const denied = await waitForExternalStatus(stand.admin, endpointId, {
+      status: [DENIED],
+      stage: 'measurement-not-trusted',
+      measurementSeen: ROTATED_MEASUREMENT,
+      reasonContains: ROTATED_MEASUREMENT,
+    });
     expect(denied.lastStage).toBe('measurement-not-trusted');
     expect(denied.lastReason).toContain(ROTATED_MEASUREMENT);
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
@@ -371,10 +403,13 @@ describe('fail-closed', () => {
     // Back to the listed image, and the same endpoint is admitted again without
     // anybody re-registering it: a verdict is about the upstream as it is now.
     stand.sidecar.restore();
-    const readmitted = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    const readmitted = await waitForExternalStatus(stand.admin, endpointId, {
+      status: [VERIFIED],
+      measurementSeen: STAND_MEASUREMENT,
+    });
     expect(readmitted.measurementSeen).toBe(STAND_MEASUREMENT);
     expect(await listedModels()).toContain(EXTERNAL_MODEL);
-    await removeTrustedMeasurement(stand.admin, trusted.id);
+    await withdrawCloud(trusted.id);
   });
 
   /**
@@ -392,7 +427,12 @@ describe('fail-closed', () => {
     // re-attestation loop can notice.
     const redeployed = await stand.upstream.evidenceHost.rotateDeployment('sup-252-redeploy');
 
-    const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
+    // The redeployed digest specifically, for the reason case 3 names.
+    const denied = await waitForExternalStatus(stand.admin, endpointId, {
+      status: [DENIED],
+      stage: 'digest-mismatch',
+      evidenceDigestSeen: redeployed,
+    });
     expect(denied.lastStage).toBe('digest-mismatch');
     expect(denied.pinnedEvidenceDigest).toBe(approvedDigest);
     expect(denied.evidenceDigestSeen).not.toBe(approvedDigest);
@@ -419,13 +459,16 @@ describe('fail-closed', () => {
     // again without anybody re-registering it.
     expect(dossier.evidenceDigestSeen).toBe(redeployed);
     await pinExternalEndpointDigest(stand.admin, endpointId, redeployed);
-    const readmitted = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    const readmitted = await waitForExternalStatus(stand.admin, endpointId, {
+      status: [VERIFIED],
+      evidenceDigestSeen: redeployed,
+    });
     expect(readmitted.pinnedEvidenceDigest).toBe(redeployed);
     expect(readmitted.evidenceDigestSeen).toBe(redeployed);
     expect(await listedModels()).toContain(EXTERNAL_MODEL);
     approvedDigest = readmitted.pinnedEvidenceDigest ?? '';
 
-    await removeTrustedMeasurement(stand.admin, trusted.id);
+    await withdrawCloud(trusted.id);
   });
 
   it("denies at untrusted-root when the upstream's own hardware report stops verifying", async () => {
@@ -437,17 +480,46 @@ describe('fail-closed', () => {
     const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
     await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
 
-    stand.sidecar.denyAttestation('the stand withdrew the hardware report');
+    stand.sidecar.denyAttestation(WITHDRAWN_REPORT);
 
-    const denied = await waitForExternalStatus(stand.admin, endpointId, [DENIED]);
+    const denied = await waitForExternalStatus(stand.admin, endpointId, {
+      status: [DENIED],
+      stage: 'untrusted-root',
+      reasonContains: WITHDRAWN_REPORT,
+    });
     expect(denied.lastStage).toBe('untrusted-root');
-    expect(denied.lastReason).toContain('the stand withdrew the hardware report');
+    expect(denied.lastReason).toContain(WITHDRAWN_REPORT);
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
 
     stand.sidecar.restore();
-    await removeTrustedMeasurement(stand.admin, trusted.id);
+    await withdrawCloud(trusted.id);
   });
 });
+
+/**
+ * Withdraws the stand's cloud and waits for the denial that causes.
+ *
+ * The wait is the point, and it belongs to the case doing the withdrawing: a
+ * verdict is in flight for a poll or two after an admin edit — the gatekeeper
+ * re-attests, then router-api projects — and leaving it there hands the next
+ * case a status about to be overwritten. Every case in `fail-closed` therefore
+ * ends on a state it has observed, which is what makes the next one's wait a
+ * wait for a transition rather than a read of the status quo (SUP-329).
+ */
+async function withdrawCloud(trustedMeasurementId: string): Promise<RegisteredExternalEndpoint> {
+  expect(await removeTrustedMeasurement(stand.admin, trustedMeasurementId)).toBe(true);
+  return cloudWithdrawnDenial();
+}
+
+/** The denial withdrawing the stand's cloud produces, once it is the observed state. */
+function cloudWithdrawnDenial(): Promise<RegisteredExternalEndpoint> {
+  return waitForExternalStatus(stand.admin, endpointId, {
+    status: [DENIED],
+    stage: 'measurement-not-trusted',
+    measurementSeen: STAND_MEASUREMENT,
+    reasonContains: STAND_MEASUREMENT,
+  });
+}
 
 /** Generations for the external model, once there are at least `atLeast` of them. */
 async function waitForGenerations(
