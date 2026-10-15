@@ -61,6 +61,8 @@ describe('wiringSnippet', () => {
             url: `${GATEKEEPER_BASE_URL}/chat/completions`,
             toolCalling: true,
             vision: false,
+            maxInputTokens: 100_000,
+            maxOutputTokens: 100_000,
           },
         ],
       },
@@ -82,5 +84,15 @@ describe('wiringSnippet', () => {
     for (const id of ['vscode', 'opencode'] as const) {
       expect(SNIPPET_LANGUAGES.find((language) => language.id === id)?.hint).toBeTruthy();
     }
+  });
+
+  it('names both ways to open the VS Code language-models file', () => {
+    const vscode = SNIPPET_LANGUAGES.find((language) => language.id === 'vscode');
+
+    expect(vscode?.steps).toEqual([
+      expect.stringContaining('Open Language Models (JSON)'),
+      expect.stringContaining('go-to-file icon'),
+    ]);
+    expect(vscode?.steps?.[1]).toContain('model selector');
   });
 });

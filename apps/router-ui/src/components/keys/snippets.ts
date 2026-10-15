@@ -100,11 +100,15 @@ function nodeSnippet(options: SnippetOptions): string {
   ].join('\n');
 }
 
+/** Token limits written into the VS Code language-models entry. */
+const VSCODE_MAX_INPUT_TOKENS = 100_000;
+const VSCODE_MAX_OUTPUT_TOKENS = 100_000;
+
 /**
- * VS Code's chat, through its Custom Endpoint provider: one entry of
- * `chatLanguageModels.json`, which the model picker's gear icon ▸ Add Models ▸
- * Custom Endpoint opens. `url` is the full chat-completions address, not a base
- * URL — that is how the provider is specified.
+ * VS Code's chat, through its Custom Endpoint provider: one entry of the
+ * language-models JSON the Command Palette or the agent model picker opens.
+ * `url` is the full chat-completions address, not a base URL — that is how the
+ * provider is specified.
  */
 function vscodeSnippet(options: SnippetOptions): string {
   const { baseUrl, apiKey, model } = resolve(options);
@@ -114,7 +118,17 @@ function vscodeSnippet(options: SnippetOptions): string {
         name: 'Confidential Router',
         vendor: 'customendpoint',
         apiKey,
-        models: [{ id: model, name: model, url: `${baseUrl}/chat/completions`, toolCalling: true, vision: false }],
+        models: [
+          {
+            id: model,
+            name: model,
+            url: `${baseUrl}/chat/completions`,
+            toolCalling: true,
+            vision: false,
+            maxInputTokens: VSCODE_MAX_INPUT_TOKENS,
+            maxOutputTokens: VSCODE_MAX_OUTPUT_TOKENS,
+          },
+        ],
       },
     ],
     null,
@@ -159,6 +173,12 @@ export interface SnippetLanguageEntry {
   label: string;
   /** One line under the code: where the snippet goes, for the two that are files rather than commands. */
   hint?: string;
+  /**
+   * Numbered ways to open the file the snippet is pasted into, when there is
+   * more than one. The phrase "go-to-file icon" is where the console draws the
+   * VS Code codicon of that name.
+   */
+  steps?: readonly string[];
 }
 
 export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
@@ -168,10 +188,13 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
   {
     id: 'vscode',
     label: 'VS Code',
+    steps: [
+      'Press Ctrl+Shift+P (Windows/Linux) or Cmd+Shift+P (Mac), start typing Open Language Models (JSON), press Enter, and paste this block.',
+      'In the agent chat, open the model selector, click +, then the go-to-file icon in the top right, and paste this block into the file that opens.',
+    ],
     hint:
-      'In the chat model picker open the gear icon ▸ Add Models ▸ Custom Endpoint, then paste this into the ' +
       // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
-      'chatLanguageModels.json it opens. Keep the key out of the file with "apiKey": "${input:routerKey}" and VS Code asks for it once.',
+      'To keep the key out of the file, set "apiKey" to "${input:routerKey}" and VS Code asks for it once.',
   },
   {
     id: 'opencode',
