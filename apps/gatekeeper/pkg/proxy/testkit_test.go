@@ -466,6 +466,10 @@ type configSpec struct {
 	adminSocket  string
 	auditFile    string
 	maxBundleAge string
+	// editable loads without the completeness check, which is how a reload
+	// reads a rendered file: a configuration with no endpoint left is what an
+	// admin disabling their last one asked for (ADR-008 §5).
+	editable bool
 }
 
 func writeConfig(t *testing.T, dir string, spec configSpec) *config.Config {
@@ -481,7 +485,9 @@ func writeConfig(t *testing.T, dir string, spec configSpec) *config.Config {
 	if spec.maxBundleAge != "" {
 		b.WriteString("defaults:\n  maxBundleAge: " + spec.maxBundleAge + "\n")
 	}
-	b.WriteString("endpoints:\n")
+	if len(spec.endpoints) > 0 {
+		b.WriteString("endpoints:\n")
+	}
 	for _, ep := range spec.endpoints {
 		b.WriteString("  - name: " + ep.name + "\n")
 		b.WriteString("    listen: " + ep.listen + "\n")
@@ -512,7 +518,7 @@ func writeConfig(t *testing.T, dir string, spec configSpec) *config.Config {
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(config.Options{Path: path, Environ: []string{}})
+	cfg, err := config.Load(config.Options{Path: path, Environ: []string{}, Editable: spec.editable})
 	if err != nil {
 		t.Fatalf("loading the generated config:\n%s\n%v", b.String(), err)
 	}

@@ -680,7 +680,9 @@ your measurement list. `gatekeeper verify <endpoint>` is what answers for one.
 - **`gatekeeper run`** opens the dashboard when it has a terminal; `--headless`
   streams log lines, which is what a container or a systemd unit wants.
 - **SIGHUP** reloads the configuration in place. A reload that fails to load or
-  validate changes nothing — a typo must not take the proxy down.
+  validate changes nothing — a typo must not take the proxy down. An endpoint
+  the reload added starts listening as part of it; one whose listener, upstream
+  and tuning are unchanged keeps its connections.
 - **SIGINT / SIGTERM** drain the listeners (`--drain-timeout`, 30s) and exit.
 - **`gatekeeper status`** reports on a gatekeeper running in another process,
   through the `admin` socket. Without an `admin:` section there is nothing to
