@@ -29,6 +29,7 @@ const MODELS: ModelFixture[] = [
   { id: 'mock/refuses:tdx', litellmModel: 'mock/refuses' },
   { id: 'mock/garbage:tdx', litellmModel: 'mock/garbage' },
   { id: 'mock/hangup:tdx', litellmModel: 'mock/hangup' },
+  { id: 'mock/thinking:tdx', litellmModel: 'mock/thinking' },
   { id: 'mock/stream-abort:tdx', litellmModel: 'mock/stream-abort' },
   { id: 'mock/stream-slow:tdx', litellmModel: 'mock/stream-slow' },
   { id: 'mock/covered:tdx', litellmModel: 'mock/chat', endpoint: 'mock-covered' },
