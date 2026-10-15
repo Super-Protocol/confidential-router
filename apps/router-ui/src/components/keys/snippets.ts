@@ -105,19 +105,28 @@ const VSCODE_MAX_INPUT_TOKENS = 100_000;
 const VSCODE_MAX_OUTPUT_TOKENS = 100_000;
 
 /**
+ * An example of the reference VS Code writes after the key is entered in its
+ * form. The id after `chat.lm.secret.` is generated; a literal key resolves to
+ * an empty bearer, and `${input:routerKey}` is not a reference VS Code creates.
+ */
+// biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, not a template.
+const VSCODE_API_KEY_INPUT = '${input:chat.lm.secret.-...}';
+
+/**
  * VS Code's chat, through its Custom Endpoint provider: one entry of the
  * language-models JSON the Command Palette or the agent model picker opens.
  * `url` is the full chat-completions address, not a base URL — that is how the
- * provider is specified.
+ * provider is specified. The key is never written here; `options.apiKey` is for
+ * the other clients.
  */
 function vscodeSnippet(options: SnippetOptions): string {
-  const { baseUrl, apiKey, model } = resolve(options);
+  const { baseUrl, model } = resolve(options);
   return JSON.stringify(
     [
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
-        apiKey,
+        apiKey: VSCODE_API_KEY_INPUT,
         models: [
           {
             id: model,
@@ -194,7 +203,7 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
     ],
     hint:
       // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
-      'To keep the key out of the file, set "apiKey" to "${input:routerKey}" and VS Code asks for it once.',
+      'The apiKey above is an example of the reference VS Code writes after you enter the key in its form. The ID is generated, so yours will differ — leave the line VS Code writes. Do not paste the key, and do not use "${input:routerKey}".',
   },
   {
     id: 'opencode',
