@@ -105,15 +105,32 @@ function nodeSnippet(options: SnippetOptions): string {
  * `chatLanguageModels.json`, which the model picker's gear icon ▸ Add Models ▸
  * Custom Endpoint opens. `url` is the full chat-completions address, not a base
  * URL — that is how the provider is specified.
+ *
+ * **There is deliberately no `apiKey` line.** VS Code does not read a key from
+ * this file: for vendor `customendpoint` the property is declared
+ * `"secret": true` (`extensions/copilot/package.json`), and a group loaded from
+ * the file resolves such a property by treating its value as a *secret-storage
+ * key* — `decodeSecretKey` then `secretStorageService.get` in
+ * `_resolveConfiguration` (`vs/workbench/contrib/chat/common/languageModels.ts`).
+ * A key written in plain text is not found there, resolves to `undefined`, and
+ * the provider sends `Bearer ` with an empty string: every request fails, the
+ * model still appears in the picker, and nothing says why. That is the incident
+ * this comes from (SUP-326); the behaviour is in every VS Code that has this
+ * file, verified at the `1.109.0` tag — where it was introduced — and on `main`.
+ *
+ * The key reaches VS Code one way only: it prompts for it (Add Models, or
+ * **Update API Key** on the group afterwards), stores it in secret storage, and
+ * writes the `${input:chat.lm.secret.…}` reference into the file itself. So the
+ * secret never belongs in a snippet — which is also the honest answer for a
+ * product that asks people not to put keys in settings files.
  */
 function vscodeSnippet(options: SnippetOptions): string {
-  const { baseUrl, apiKey, model } = resolve(options);
+  const { baseUrl, model } = resolve(options);
   return JSON.stringify(
     [
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
-        apiKey,
         models: [{ id: model, name: model, url: `${baseUrl}/chat/completions`, toolCalling: true, vision: false }],
       },
     ],
@@ -170,8 +187,8 @@ export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
     label: 'VS Code',
     hint:
       'In the chat model picker open the gear icon ▸ Add Models ▸ Custom Endpoint, then paste this into the ' +
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, quoted for the reader.
-      'chatLanguageModels.json it opens. Keep the key out of the file with "apiKey": "${input:routerKey}" and VS Code asks for it once.',
+      'chatLanguageModels.json it opens. The key is not in it: VS Code asks for the key itself and keeps it in ' +
+      'secret storage — use Update API Key on the group to set or change it.',
   },
   {
     id: 'opencode',

@@ -158,7 +158,7 @@ describe('APIKeysScreen', () => {
       expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
     });
 
-    it('offers curl, Python, Node, VS Code and OpenCode examples with the key prefix filled in', async () => {
+    it('offers curl, Python, Node, VS Code and OpenCode examples, with a key only where one belongs', async () => {
       renderScreen();
       await screen.findByText('production-agent');
 
@@ -166,9 +166,12 @@ describe('APIKeysScreen', () => {
       for (const label of ['curl', 'Python', 'Node', 'VS Code', 'OpenCode']) {
         expect(tabs).toContain(label);
       }
+      expect(screen.getByTestId('wiring-snippet-curl')).toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
-      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('sk-tee-v1-4f…');
+      // No key, not even a prefix: VS Code reads this file's `apiKey` as a
+      // secret-storage lookup and asks for the key itself (SUP-326).
+      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
     });
