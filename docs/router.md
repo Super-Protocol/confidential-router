@@ -840,6 +840,12 @@ deployment that wrote the file — its `server.publicBaseUrl`, router version an
 the evidence digest it last published for itself. Ids are the rows' own, instants
 are ISO-8601 UTC, money is integer micro-USD as a decimal string.
 
+`contentSha256` is a **checksum, not a signature**: it catches a truncated,
+damaged or half-written file, and the import re-derives it and refuses a
+mismatch — but nothing in the bundle proves who wrote it. The file is trusted
+because of where it was downloaded from and who carried it, not because of what
+it contains. Do not describe an export as signed.
+
 **Left behind, by design:** chats and messages, generations and activity,
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
@@ -901,24 +907,104 @@ Deployment import by admin@example.com — applied; from https://api.old.example
 
 ### Redeploy runbook
 
-1. **Announce the window.** Anything that happens on the old deployment after the
-   export is not in the file; there is no merge of a second export.
-2. **Export** on the old deployment (Administration → Export & import → Download
-   export). Note the SHA-256 the screen shows.
-3. **Delete the old deployment first**, then **deploy the new version** — the
-   order the marketplace needs for the hostnames to be free.
-4. **Claim the new deployment** with its bootstrap token (see *First sign-in on a
-   fresh deployment*), using the **same address** as the old operator so the two
-   accounts merge, and make sure that address is in `auth.adminEmails`. Do not
-   open sign-up to anyone else before the import.
-5. **Import**: Check file → confirm the source, the SHA-256 and the counts →
-   Import.
-6. **Verify:** the Invitations section shows the same codes and attribution; a
-   known user signs in with their address and sees their balance; an unredeemed
-   code still redeems; API Keys is empty for everyone (expected) and a new key
-   works; chat history is empty (expected). Re-enter upstream keys for any
-   external endpoint and enable it.
-7. **Delete the export file.**
+**The old deployment stays alive until the new one is verified serving.** It is
+the rollback: repointing hostnames back to a deployment that still holds the data
+takes a minute, restoring a deleted one is not possible at all. A deployment with
+real users on it is never deleted first — the rehearsal this procedure comes from
+is SUP-305.
+
+#### Phase 0 — before the window
+
+- The new listing is published and the charts its version pins are live on the
+  chart repository. Check the repository index rather than the listing.
+- The upstream API key of every registered external endpoint is to hand: they
+  arrive switched off and keyless, and only an operator can re-enter them.
+- One person writes the DNS records for the hostnames, and only one. Two writers
+  chasing a rotating verification token is how a deployment ends up unreachable.
+- The users are told, in advance, what a migration costs them: **chat history is
+  lost and every API key has to be re-issued**; balances, invitation codes and
+  signing in by emailed code are unaffected.
+
+#### Phase 1 — export first, while nothing has been touched
+
+1. **Export** on the old deployment (Administration → Export & import → Download
+   export), and the codes CSV too if the deployment issues invitations.
+2. **Verify the file before relying on it:** its `integrity.contentSha256` equals
+   the SHA-256 the screen showed, and its `counts` match what the console shows —
+   accounts in Sign-up statistics, rows in the Codes tab, a couple of balances,
+   and the seat count of any multi-seat code.
+3. Keep **two copies off the cluster**. The file holds personal data and live
+   redeemable codes: not an issue attachment, not a chat, not a shared bucket.
+
+**Go / no-go:** the export downloads, opens, and its counts match the live
+console. If not, stop — nothing has been touched and nobody has noticed.
+
+#### Phase 2 — build the new install beside the old one
+
+4. **Deploy the new version on temporary hostnames**, with the old deployment's
+   parameters copied exactly. Both deployments serve at once; users stay on the
+   old one throughout this phase.
+5. **Claim it** with its own bootstrap token (see *First sign-in on a fresh
+   deployment*), using the **same address** as the old operator so the two
+   accounts merge, and make sure that address is in `auth.adminEmails`. Nobody
+   else signs up on it: one stranger account makes the import refuse.
+6. **Check file** → confirm the source deployment, the SHA-256 and the counts,
+   and read the notes. Then **Import**.
+7. **Re-enter the upstream API key** of each external endpoint and enable it. It
+   re-attests within seconds; the pinned evidence digest survived the import, so
+   nothing has to be approved again.
+8. **Verify on the temporary names:** every code with its status and remaining
+   seats, Sign-up statistics, two or three balances, a real user signing in by
+   emailed code, and one generation with a freshly issued key.
+
+**Go / no-go:** every check in step 8 matches Phase 1. If not, stop and delete
+the new install — the old deployment is still serving its own hostnames and
+nothing has changed for anyone.
+
+#### Phase 3 — cutover
+
+9. **Announce the window and freeze use.** Anything that happens on the old
+   deployment after the Phase 1 export is not in the file, and a second import
+   into the install built in Phase 2 **adds rows it does not have and does not
+   update rows it already holds**. If the data moved in between, delete that
+   install and redo Phase 2 from a fresh export rather than importing twice.
+10. **Park the old deployment** on spare hostnames: unpublish → reconfigure the
+    hostnames → publish. A published deployment refuses to be reconfigured, which
+    is why every rename is that three-step; the real hostnames go dark here.
+11. **Move the new deployment onto the real hostnames** the same way, write or
+    refresh the verification records the platform asks for, and wait for both
+    hostnames to read verified and for the certificate.
+12. **Smoke test on the real names:** the console and the API answer, a user
+    signs in by emailed code and sees their balance, a code redeems, a generation
+    runs.
+13. **Withdraw the temporary records** by hand — a renamed deployment can leave
+    its old DNS records behind (SUP-310).
+14. Tell the group it is back, and name the two re-dos again: new API keys, chats
+    gone.
+
+**Budget 10–20 minutes of dark window, not one.** Each rename is an unpublish and
+a publish, hostname verification goes through the platform's own resolver with a
+cache, and a hostname it has never seen may need a fresh certificate issuance.
+The measured steps on a platform-managed zone were 7 s to reconfigure, ~60 s to
+serving; a hand-written zone is slower.
+
+#### Rollback, and afterwards
+
+- **Rollback is repointing:** move the real hostnames back to the parked
+  deployment — unpublish → reconfigure → publish. Its data is exactly as the
+  export left it.
+- Keep the bundle and the codes CSV until the new deployment has served for a
+  day; they are what makes a second attempt possible.
+- Delete the old deployment only then, and withdraw its parked records with it.
+- **Delete the export files** once they are no longer the rollback.
+
+#### What does not survive, whatever the procedure
+
+- Chats and generation history. Nothing carries them.
+- API keys — every user issues new ones.
+- The upstream API key of an external endpoint (step 7).
+- The deployment's own evidence digest changes, as on any redeploy: anyone who
+  pinned the old one — a gatekeeper, a tenant — has to approve the new one.
 
 ## Running it
 
