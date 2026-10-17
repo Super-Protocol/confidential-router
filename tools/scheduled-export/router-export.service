@@ -1,0 +1,27 @@
+# Takes the production export off the router and puts it somewhere the router
+# cannot take with it (SUP-317). Installed as a user unit on the agent host:
+#
+#   systemctl --user enable --now router-export.timer
+#
+[Unit]
+Description=Deployment export of the production confidential router
+Documentation=https://github.com/Super-Protocol/confidential-router/blob/main/tools/scheduled-export/README.md
+# Nothing here is reachable without the network, and a run that starts before it
+# exists fails for a reason that is not interesting.
+After=network-online.target
+# The script alerts on every refusal it can see. This covers the ones it cannot:
+# a missing interpreter, an OOM kill, a bad edit to this unit. It belongs in
+# [Unit] — systemd ignores it in [Service], silently, which is how an alert of
+# last resort comes to never fire.
+OnFailure=router-export-alert.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/router-export
+# The export is a few kilobytes; a run that has not finished in ten minutes is
+# hung on a socket, not slow.
+TimeoutStartSec=600
+Nice=10
+
+[Install]
+WantedBy=default.target
