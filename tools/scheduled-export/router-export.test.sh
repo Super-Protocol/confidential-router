@@ -197,6 +197,9 @@ PORT="$(cat "$workdir/port")"
 # never what a test reads or prunes.
 HOME_DIR="$workdir/home"
 
+# write_config [local_keep] [export_container]
+#   export_container 'unset' leaves EXPORT_CONTAINER out of the file entirely,
+#   which is how the fallback chain gets exercised.
 write_config() {
   cat > "$HOME_DIR/.config/router-export/env" << EOF
 ROUTER_API_ORIGIN=http://127.0.0.1:$PORT
@@ -206,6 +209,70 @@ BLOB_PREFIX=prod-exports
 LOCAL_KEEP=${1:-7}
 ALERT_ISSUE_ID=
 EOF
+  case "${2:-prod-exports}" in
+    unset) : ;;
+    *) printf 'EXPORT_CONTAINER=%s\n' "${2:-prod-exports}" >> "$HOME_DIR/.config/router-export/env" ;;
+  esac
+}
+
+# What the qa-publish env looks like: the account and key this tool borrows, and
+# an AZ_STORAGE_CONTAINER that has to keep meaning qa-artifacts for qa-publish.
+cat > "$workdir/blob-env" << 'EOF'
+AZ_STORAGE_ACCOUNT=notanaccount
+AZ_STORAGE_KEY=bm90YWtleQ==
+AZ_STORAGE_CONTAINER=qa-artifacts
+EOF
+
+# A stand-in for `az`, so the upload path is covered without a storage account
+# and without the real CLI's start-up and DNS retries — three seconds a call,
+# which is the difference between a suite that gets run and one that does not.
+# `$workdir/az-mode` chooses what it pretends happened.
+mkdir -p "$workdir/bin"
+cat > "$workdir/bin/az" << 'EOF'
+#!/usr/bin/env bash
+mode="$(cat "$AZ_FAKE_MODE" 2> /dev/null || echo ok)"
+action="$1 $2 $3"
+prefix=''
+while [ $# -gt 0 ]; do
+  [ "$1" = --prefix ] && prefix="$2"
+  shift
+done
+case "$action" in
+  'storage blob upload-batch')
+    [ "$mode" = upload-fails ] && exit 1
+    exit 0
+    ;;
+  'storage blob list')
+    [ "$mode" = list-fails ] && exit 1
+    # The objects the container would hold: whatever the run directory holds,
+    # found through the stamp at the tail of the prefix.
+    dir="$AZ_FAKE_EXPORT_DIR/$(basename "${prefix%/}")"
+    for f in "$dir"/*; do
+      size="$(stat -c%s "$f")"
+      [ "$mode" = wrong-size ] && size=$((size + 1))
+      [ "$mode" = missing-one ] && case "$f" in *manifest.json) continue ;; esac
+      printf '%s%s\t%s\n' "$prefix" "$(basename "$f")" "$size"
+    done
+    exit 0
+    ;;
+esac
+exit 0
+EOF
+chmod +x "$workdir/bin/az"
+az_mode() { printf '%s' "$1" > "$workdir/az-mode"; }
+az_mode ok
+
+# Resolving the container happens before any `az` call, so the container
+# refusals below are reached whether or not `az` can do anything.
+run_with_blob_env() {
+  HOME="$HOME_DIR" \
+    PATH="$workdir/bin:$PATH" \
+    AZ_FAKE_MODE="$workdir/az-mode" \
+    AZ_FAKE_EXPORT_DIR="$HOME_DIR/prod-exports" \
+    ROUTER_EXPORT_CONFIG="$HOME_DIR/.config/router-export/env" \
+    ROUTER_EXPORT_BLOB_CONFIG="$workdir/blob-env" \
+    EXPORT_DIR="$HOME_DIR/prod-exports" \
+    bash "$script" "$@" 2>&1
 }
 
 run() {
@@ -344,6 +411,56 @@ out="$(
 )"
 expect_eq 'no storage credentials exits non-zero' "$?" '1'
 expect_contains 'no storage credentials says where it looked' "$out" 'no readable storage credentials'
+
+# The container question (SUP-317 pre-review): the account is shared with
+# qa-publish, the container must not be.
+write_config 7 unset
+reset_state
+set_scenario '{"users":2,"codes":3}'
+out="$(run_with_blob_env --quiet)"
+expect_eq 'falling through to qa-artifacts exits non-zero' "$?" '1'
+expect_contains 'falling through to qa-artifacts is refused by name' "$out" "refusing to upload to 'qa-artifacts'"
+expect_contains 'the refusal says which knob fixes it' "$out" 'set EXPORT_CONTAINER'
+
+write_config 7 qa-artifacts
+reset_state
+out="$(run_with_blob_env --quiet)"
+expect_contains 'naming qa-artifacts outright is refused too' "$out" "refusing to upload to 'qa-artifacts'"
+
+# And EXPORT_CONTAINER wins over the AZ_STORAGE_CONTAINER that arrives with the
+# credentials — which is the whole point of the override.
+write_config 7 prod-exports
+reset_state
+az_mode ok
+out="$(run_with_blob_env --quiet)"
+expect_eq 'EXPORT_CONTAINER gets past the guard' "$?" '0'
+expect_contains 'the upload goes to EXPORT_CONTAINER, not the credentials one' \
+  "$(cat "$HOME_DIR/prod-exports/state.json")" '"uploadedTo": "prod-exports/'
+
+# The read-back after the upload is the only check standing between a lost
+# object and a run that reported success, so all three of its readings matter.
+reset_state
+az_mode upload-fails
+out="$(run_with_blob_env --quiet)"
+expect_eq 'an upload that fails exits non-zero' "$?" '1'
+expect_contains 'an upload that fails names the destination' "$out" 'the upload to prod-exports/'
+
+reset_state
+az_mode wrong-size
+out="$(run_with_blob_env --quiet)"
+expect_eq 'a container holding different bytes exits non-zero' "$?" '1'
+expect_contains 'a container holding different bytes is refused' "$out" 'does not match what was uploaded'
+
+reset_state
+az_mode missing-one
+out="$(run_with_blob_env --quiet)"
+expect_contains 'a container missing an object is refused' "$out" 'does not match what was uploaded'
+
+reset_state
+az_mode list-fails
+out="$(run_with_blob_env --quiet)"
+expect_contains 'objects that cannot be listed back are refused' "$out" 'could not be listed back'
+az_mode ok
 
 # Port 9 (discard) is reserved and nothing listens on it here, so curl reports
 # no response at all — the reading that used to be unreachable because the

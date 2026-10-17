@@ -23,18 +23,27 @@
 #   ROUTER_API_ORIGIN       https://api.router.superprotocol.com
 #   ROUTER_CONSOLE_ORIGIN   https://console.router.superprotocol.com
 #   ROUTER_BOOTSTRAP_TOKEN  auth.bootstrapToken — a password for the administrator
-#   BLOB_PREFIX             prod-exports   (prefix inside the container)
+#   EXPORT_CONTAINER        prod-exports   (container of its own; never qa-artifacts)
+#   BLOB_PREFIX             optional prefix inside that container; empty is fine
+#                           and is the point of a dedicated container
 #   LOCAL_KEEP              7              (run directories kept on this host)
 #   ALERT_ISSUE_ID          multica issue a failed run comments on; empty = no alert
 #   EXPORT_DIR              ~/prod-exports (optional)
 #
-# Storage credentials come from ~/.config/qa-publish/env, the key of the storage
-# account dedicated to artefacts — the only Azure credential an agent host uses.
+# Storage credentials come from ~/.config/qa-publish/env — the key of a storage
+# account dedicated to artefacts, and the only Azure credential an agent host
+# holds. The account is shared with qa-publish; the container is not, and must
+# not be: `qa-artifacts` has read-only SAS links minted off it and pasted into
+# issue comments every day, which is no place for a neighbour holding personal
+# data and live invitation codes.
 
 set -euo pipefail
 
 CONFIG="${ROUTER_EXPORT_CONFIG:-$HOME/.config/router-export/env}"
 BLOB_CONFIG="${ROUTER_EXPORT_BLOB_CONFIG:-$HOME/.config/qa-publish/env}"
+
+# The container this tool must never write to, whatever the configuration says.
+FORBIDDEN_CONTAINER='qa-artifacts'
 
 # `readlink -f` because the installed copy is a symlink into a checkout, and the
 # verifier beside the script has to be found through it.
@@ -92,7 +101,9 @@ set +a
 : "${ROUTER_BOOTSTRAP_TOKEN:?set ROUTER_BOOTSTRAP_TOKEN in $CONFIG}"
 CONSOLE_ORIGIN="${ROUTER_CONSOLE_ORIGIN:-$ROUTER_API_ORIGIN}"
 EXPORT_DIR="${EXPORT_DIR:-$HOME/prod-exports}"
-BLOB_PREFIX="${BLOB_PREFIX:-prod-exports}"
+# `${x-}` and not `${x:-…}`: a container of this tool's own needs no prefix at
+# all, so an explicitly empty value has to survive rather than be defaulted away.
+BLOB_PREFIX="${BLOB_PREFIX-}"
 LOCAL_KEEP="${LOCAL_KEEP:-7}"
 ALERT_ISSUE_ID="${ALERT_ISSUE_ID:-}"
 
@@ -289,10 +300,24 @@ else
   set +a
   : "${AZ_STORAGE_ACCOUNT:?set AZ_STORAGE_ACCOUNT in $BLOB_CONFIG}"
   : "${AZ_STORAGE_KEY:?set AZ_STORAGE_KEY in $BLOB_CONFIG}"
-  container="${AZ_STORAGE_CONTAINER:-qa-artifacts}"
+
+  # The account is shared with `qa-publish`; the container is not. This tool's
+  # own `EXPORT_CONTAINER` wins over the `AZ_STORAGE_CONTAINER` that arrives
+  # with the credentials, because that one has to keep meaning `qa-artifacts`
+  # for qa-publish.
+  container="${EXPORT_CONTAINER:-${AZ_STORAGE_CONTAINER:-prod-exports}}"
+
+  # `qa-artifacts` is where read-only SAS links are minted daily and pasted into
+  # issue comments. Personal data and live invitation codes must not sit one
+  # prefix away from that habit — so the one container this must never write to
+  # is named in the code, not left to whichever env file was sourced last. The
+  # fallback chain above reaches it the moment `EXPORT_CONTAINER` is forgotten,
+  # which is precisely when nobody is watching.
+  [ "$container" != "$FORBIDDEN_CONTAINER" ] || die "refusing to upload to '$FORBIDDEN_CONTAINER': that is the artefact container, where read-only SAS links are minted and pasted into issue comments. A production export holds personal data and live invitation codes — set EXPORT_CONTAINER in $CONFIG to a container of its own."
   need az
 
-  destination="$BLOB_PREFIX/$DAY/$STAMP"
+  destination="$DAY/$STAMP"
+  [ -z "$BLOB_PREFIX" ] || destination="${BLOB_PREFIX%/}/$destination"
   log "uploading to $container/$destination/"
   az storage blob upload-batch \
     --account-name "$AZ_STORAGE_ACCOUNT" --account-key "$AZ_STORAGE_KEY" \
