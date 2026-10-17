@@ -1,0 +1,17 @@
+{
+  "name": "scheduled-export",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "tools/scheduled-export",
+  "projectType": "application",
+  "tags": ["type:tooling", "lang:shell"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*"],
+      "options": {
+        "command": "bash tools/scheduled-export/router-export.test.sh"
+      }
+    }
+  }
+}

@@ -920,6 +920,28 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    external endpoint and enable it.
 7. **Delete the export file.**
 
+### Taking the export on a schedule
+
+Step 2 above is the step that is not there when it matters: production lost its
+data on 2026-10-13 because the only copy lived inside the deployment that died,
+and nobody had run an export (SUP-308, SUP-313). An export taken when somebody
+remembers is not a backup.
+
+[`tools/scheduled-export/`](../tools/scheduled-export/README.md) is a systemd
+timer for an operator's own machine that takes the bundle and the codes CSV once
+a day, verifies both against what the deployment declared, copies them to object
+storage, and says so loudly when a run fails or comes back empty. It signs in
+with `auth.bootstrapToken` — the only credential that works unattended, since
+every other sign-in path is a code mailed to a mailbox — so each run leaves a
+`Break-glass sign-in` line in the log.
+
+It is operator tooling and not part of the router: nothing in it deploys, and the
+deployment does not know it exists. The right version of this is the router
+pushing its own bundle to an export target given as a deployment parameter, the
+way the SMTP password is given, so the file never transits an operator's machine
+at all. Until that exists, the timer is what stands between an incident and a
+rebuild from an empty database.
+
 ## Running it
 
 ```bash
