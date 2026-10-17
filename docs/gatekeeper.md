@@ -8,7 +8,7 @@ learns whether, when, or by whom it was attested (ADR-002).
 One base-URL swap is the whole integration:
 
 ```python
-client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:8443/v1")
+client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:8787/v1")
 ```
 
 - [Install](#install)
@@ -40,7 +40,7 @@ From a clone: `pnpm nx run gatekeeper:build` → `apps/gatekeeper/bin/gatekeeper
 
 ```bash
 gatekeeper init                                             # write a starter config
-gatekeeper endpoint add <name> --listen 127.0.0.1:8443 \
+gatekeeper endpoint add <name> --listen 127.0.0.1:8787 \
                                --upstream https://<host>    # add a listener
 gatekeeper endpoint discover <name>                         # look at what it publishes
 gatekeeper endpoint trust add <name> --from-upstream        # pin it, after review
@@ -131,7 +131,7 @@ defaults:
 
 endpoints:
   - name: llama-33-70b
-    listen: 127.0.0.1:8443
+    listen: 127.0.0.1:8787
     upstream: https://llama-33-70b.tee.swarm.cloud
     # What this endpoint requires before it admits anything. `evidence-digest`
     # is the default and what every command writes; `cloud-measurement` is the
@@ -205,7 +205,7 @@ that case — an endpoint can declare a different question:
 ```yaml
 endpoints:
   - name: external-llama
-    listen: 127.0.0.1:8443
+    listen: 127.0.0.1:8787
     upstream: https://llama.other-cloud.example
     trust: cloud-measurement   # admits any deployment on an accepted cloud
     trustedEvidence: []        # must be empty: nothing here would be enforced
@@ -273,7 +273,7 @@ longer admits every deployment on it.
 ```yaml
 endpoints:
   - name: external-llama
-    listen: 127.0.0.1:8443
+    listen: 127.0.0.1:8787
     upstream: https://llama.other-cloud.example
     trust: measurement-and-digest
     trustedEvidence: []        # nothing approved yet — legal in this mode
@@ -708,7 +708,7 @@ nothing it does not need:
 ```bash
 docker run --rm --read-only --user 65532 \
   -v ./config.yaml:/etc/gatekeeper/config.yaml:ro \
-  -p 8443:8443 ghcr.io/super-protocol/confidential-router/gatekeeper@sha256:…
+  -p 8787:8787 ghcr.io/super-protocol/confidential-router/gatekeeper@sha256:…
 ```
 
 The entrypoint is not the gatekeeper itself but a supervisor, because in this

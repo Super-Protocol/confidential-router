@@ -144,7 +144,7 @@ $ gatekeeper config validate
 
 Nothing in the file is wrong — it is not finished.
 
-Next: front the endpoint you want to verify
+Next: finish the setup
   gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper endpoint add llama-33-70b \
@@ -227,7 +227,7 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  ENDPOINT          LISTEN            UPSTREAM          STATUS            LAST ATTEST   REQ/S   │
 │ ────────────────────────────────────────────────────────────────────────────────────────────── │
-│  llama-33-70b      127.0.0.1:8443    https://llama-3…  confidential      now           0.8     │
+│  llama-33-70b      127.0.0.1:8787    https://llama-3…  confidential      now           0.8     │
 │  qwen25-72b        127.0.0.1:8444    https://qwen25-…  non-confidential  now           2.5     │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -268,7 +268,7 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  ENDPOINT          LISTEN            UPSTREAM          STATUS            LAST ATTEST   REQ/S   │
 │ ────────────────────────────────────────────────────────────────────────────────────────────── │
-│  llama-33-70b      127.0.0.1:8443    https://llama-3…  confidential      now           0.8     │
+│  llama-33-70b      127.0.0.1:8787    https://llama-3…  confidential      now           0.8     │
 │  qwen25-72b        127.0.0.1:8444    https://qwen25-…  non-confidential  now           2.5     │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮

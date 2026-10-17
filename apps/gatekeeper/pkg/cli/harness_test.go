@@ -164,6 +164,9 @@ func (f *fakeVerifier) Verify(_ context.Context, req status.VerifyRequest) (*sta
 type fakeSupervisor struct {
 	snapshot status.Snapshot
 	stopped  []string
+	// startErr is the error Start returns for an endpoint, by name — an
+	// address already in use is the case `run` has to report honestly.
+	startErr map[string]error
 }
 
 func (f *fakeSupervisor) Snapshot(context.Context) status.Snapshot { return f.snapshot }
@@ -177,7 +180,9 @@ func (f *fakeSupervisor) Events(ctx context.Context) <-chan status.Event {
 	return out
 }
 
-func (f *fakeSupervisor) Start(context.Context, string) error { return nil }
+func (f *fakeSupervisor) Start(_ context.Context, endpoint string) error {
+	return f.startErr[endpoint]
+}
 
 func (f *fakeSupervisor) Stop(_ context.Context, endpoint string) error {
 	f.stopped = append(f.stopped, endpoint)

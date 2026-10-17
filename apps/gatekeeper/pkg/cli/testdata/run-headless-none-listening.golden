@@ -1,0 +1,8 @@
+starting llama-33-70b: listen tcp 127.0.0.1:8443: bind: address already in use
+gatekeeper started from $TMP/config.yaml, and nothing is listening: every endpoint failed to start.
+
+! not listening: llama-33-70b (127.0.0.1:8443) — the reason for each is above.
+
+Next: free the address, or change `listen:` for it in $TMP/config.yaml, then start again.
+Press Ctrl-C to stop.
+gatekeeper stopped
