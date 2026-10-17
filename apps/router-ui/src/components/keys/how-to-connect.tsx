@@ -52,8 +52,8 @@ export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps
             itself for you — a verdict is only worth something when the party you are trusting did not produce it. The
             gatekeeper is that party: it fetches the router’s evidence, checks the cloud’s measurement against the Super
             Protocol registry of signed measurements, pins the TLS certificate the evidence names, and refuses to
-            forward if any check fails. Nothing about that decision depends on the router being honest, and the router
-            is never told that anyone verified it.
+            forward if any check fails. Nothing about that decision depends on the router being honest, and no verdict
+            is ever sent back to the router.
           </p>
           <DataFlowDiagram />
         </Step>

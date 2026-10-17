@@ -118,7 +118,7 @@ describe('ProfileScreen', () => {
     renderWithSession(<ProfileScreen />, { mocks: [typedSessionMock(), profileMock()] });
 
     expect(await screen.findByText(/fresh evidence bundle published/)).toBeInTheDocument();
-    expect(screen.getByText(/this router never learns it/)).toBeInTheDocument();
+    expect(screen.getByText(/never sent to this router/)).toBeInTheDocument();
     // No square, badge or heading ever says a response was verified.
     expect(screen.queryByText(/^verified$/i)).not.toBeInTheDocument();
   });
