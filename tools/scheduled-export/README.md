@@ -206,14 +206,22 @@ bash tools/scheduled-export/router-export.test.sh   # or: pnpm nx run scheduled-
 ```
 
 A fake router on loopback, built by the same canonical form the real one hashes
-with, so "the hash matches" means something. 36 assertions, covering the good
-path, a refused token, a missing bootstrap endpoint, a sign-in that sets no
-cookie, a router that does not answer at all, a failing export, a truncated
-bundle, a hash the header disagrees with, a missing hash header, a foreign
-`format` and a newer `schemaVersion`, an empty export, a short and a malformed
-codes CSV, a shrinking export, a growing one, local rotation, the three
-container readings (`qa-artifacts` named outright, `qa-artifacts` reached by
-falling through, and `EXPORT_CONTAINER` winning over the credentials env), and
-both missing-configuration refusals. Nothing in the suite reaches the network or
-object storage — the container is resolved before any `az` call, which is what
-lets the refusal be tested without a storage account.
+with, so "the hash matches" means something, and a stand-in `az` in place of the
+real CLI. **45 assertions**, covering:
+
+| | |
+|---|---|
+| the good path | exit 0, manifest with the right counts, codes CSV beside the bundle, mode `600`, log line, counts remembered |
+| sign-in | a refused token, a missing bootstrap endpoint, a 200 that sets no cookie, a router that does not answer at all |
+| the file that arrived | a failing export, a truncated bundle, a hash the header disagrees with, a missing hash header, a foreign `format`, a newer `schemaVersion` |
+| what it carries | an empty export, a codes CSV shorter than the bundle's count, a codes CSV with the wrong header |
+| between runs | a shrinking export naming what shrank, a growing one accepted, local rotation to `LOCAL_KEEP` |
+| the container | `qa-artifacts` named outright, `qa-artifacts` reached by falling through, `EXPORT_CONTAINER` winning over the credentials env |
+| the read-back | an upload that fails, a container holding different bytes, a container missing an object, objects that cannot be listed back |
+| configuration | no config file, no storage credentials, an unknown argument |
+
+Nothing in the suite reaches the network or object storage. The container is
+resolved before any `az` call, which is what lets the refusal be tested without a
+storage account; everything past it goes through the stand-in, which is also why
+the suite costs 13 seconds instead of a minute — a slow suite is a suite that
+stops being run.
