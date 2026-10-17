@@ -3,7 +3,7 @@ import { loadCaseBody, loadConformanceManifest } from '@confidential-router/atte
 import { NotFoundException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSqliteFixture, type SqliteFixture } from '../../../test/sqlite.js';
 import type { routerConfig } from '../config.js';
 import { type RouterConfig, RouterConfigSchema } from '../config.schema.js';
@@ -136,6 +136,76 @@ describe('reading snapshots', () => {
 
     expect(latest.get(endpointId)?.id).toBe(newest.id);
     expect(latest.get(other)?.issuedAt.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+  });
+
+  /*
+   * The shape of the read, not only its answer. This used to be one `IN` query
+   * that loaded every publication of every endpoint named — `bundle` and `jws`
+   * per row — and chose the newest in JS. The table only grows: a row per
+   * issuance, and `evidence.retentionDays` prunes nothing today. The console's
+   * Overview paid all of it per load, so the cost had to stop scaling with
+   * history.
+   */
+  it('reads one indexed row per endpoint, whatever the history, and collapses repeated ids', async () => {
+    const other = await seedEndpoint(fixture.dataSource, 'second');
+    for (const day of ['01', '02', '03', '04']) {
+      await service.record(endpointId, parsed({ issuedAt: `2026-08-${day}T00:00:00.000Z` }));
+    }
+    const newest = await service.record(endpointId, parsed({ issuedAt: '2026-08-05T00:00:00.000Z' }));
+    await service.record(other, parsed({ issuedAt: '2026-07-01T00:00:00.000Z' }));
+    expect(await fixture.dataSource.getRepository(EvidenceSnapshot).count()).toBe(6);
+
+    const perEndpoint = vi.spyOn(service, 'latestFor');
+    // A caller holding a model list names one endpoint once per model it serves.
+    const latest = await service.latestForMany([endpointId, endpointId, other, endpointId]);
+
+    expect(latest.get(endpointId)?.id).toBe(newest.id);
+    expect(perEndpoint.mock.calls.map(([id]) => id)).toEqual([endpointId, other]);
+    perEndpoint.mockRestore();
+  });
+
+  /*
+   * The claim the comment on `latestForMany` makes, checked against the planner
+   * rather than asserted. An earlier draft of this change said the read was
+   * answered by `IDX_evidence_snapshots_endpointId`, which was not true: that
+   * index is one column, the ordering is `issuedAt DESC, fetchedAt DESC`, and
+   * SQLite answered it with `SEARCH … USING INDEX IDX_evidence_snapshots_endpointId`
+   * followed by `USE TEMP B-TREE FOR ORDER BY` — the endpoint's whole history
+   * sorted to return one row, on a table that only grows.
+   *
+   * So the index this pins is load-bearing, and so is the absence of the sort.
+   * SQLite-only because the fixture is; the PostgreSQL leg of `migrations.spec.ts`
+   * is what proves the same index exists there.
+   */
+  it('is answered by the index, without sorting the endpoint history', async () => {
+    const plan = async (sql: string, parameters: unknown[]): Promise<string> =>
+      ((await fixture.dataSource.query(`EXPLAIN QUERY PLAN ${sql}`, parameters)) as { detail: string }[])
+        .map((row) => row.detail)
+        .join(' | ');
+
+    const latest = await plan(
+      'SELECT * FROM evidence_snapshots WHERE endpointId = ? ORDER BY issuedAt DESC, fetchedAt DESC LIMIT 1',
+      [endpointId],
+    );
+    expect(latest).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(latest).not.toContain('TEMP B-TREE');
+
+    // `snapshots()` pages on the same key, so the same index has to carry it.
+    const page = await plan(
+      'SELECT * FROM evidence_snapshots WHERE endpointId = ? AND issuedAt < ? ORDER BY issuedAt DESC, fetchedAt DESC LIMIT 21',
+      [endpointId, 0],
+    );
+    expect(page).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(page).not.toContain('TEMP B-TREE');
+  });
+
+  it('answers an empty list without touching the table', async () => {
+    const perEndpoint = vi.spyOn(service, 'latestFor');
+
+    expect(await service.latestForMany([])).toEqual(new Map());
+
+    expect(perEndpoint).not.toHaveBeenCalled();
+    perEndpoint.mockRestore();
   });
 
   it('pages newest first', async () => {
