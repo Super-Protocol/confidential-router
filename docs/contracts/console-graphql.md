@@ -224,10 +224,11 @@ type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: 
 #   expiresAt?, note? }): IssuedInviteCodes!                     # { campaign, grantMicros, expiresAt, codes { id code url } }
 # Mutation.withdrawInviteCode(id: ID!): InviteWithdrawal!        # unspent only, by row id — the code never travels back
 #
-# BOOTSTRAP is derived, not stored: `/auth/bootstrap` only ever creates the first
-# account, under `auth.bootstrapEmail`, so it is the earliest account iff it has
-# that address. Codes are answered in full (issuing them is the section's job);
-# the console masks them until revealed, and no resolver logs one.
+# BOOTSTRAP is derived, not stored: `/auth/bootstrap` only ever creates an account
+# under `auth.bootstrapEmail`, so it is the account carrying that address — by
+# address and not by position, which a deployment import would hide (SUP-309).
+# Codes are answered in full (issuing them is the section's job); the console
+# masks them until revealed, and no resolver logs one.
 
 # ---------- the second grant, for feedback ----------
 
