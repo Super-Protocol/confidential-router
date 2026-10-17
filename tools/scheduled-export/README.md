@@ -117,6 +117,19 @@ off takes the export when it comes back rather than skipping the day.
 
 Run it by hand any time; `--local-only` skips the upload.
 
+**Point those symlinks at a checkout that will still be there.** Installing from
+a throwaway worktree works until somebody tidies the worktree up, and then the
+unit's `ExecStart` names a file that is gone. It fails loudly — the timer's
+`OnFailure=` still reaches a person, which is the design behaving — but it is a
+break nobody intended, so the long-lived clone is the right place to point at:
+
+```sh
+ln -sf ~/projects/sp/confidential-router/tools/scheduled-export/router-export.sh ~/bin/router-export
+```
+
+`verify-bundle.mjs` is found beside the script through `readlink -f`, so moving
+the checkout only ever means re-pointing these two symlinks.
+
 ### Accepting a legitimate shrink
 
 Not every fall in the counts is a loss. A withdrawn test account, a deleted
