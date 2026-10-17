@@ -6,6 +6,7 @@ import {
   bearerTokenOf,
   displayPrefixOf,
   hashApiKey,
+  isCredentialPlaceholder,
   looksLikeApiKey,
   mintApiKey,
 } from './api-key-token.js';
@@ -64,6 +65,34 @@ describe('looksLikeApiKey', () => {
     ['a session cookie', 'better-auth.session_token=abc'],
   ])('rejects %s', (_case, value) => {
     expect(looksLikeApiKey(value)).toBe(false);
+  });
+});
+
+/**
+ * SUP-326: the strings that arrive as credentials having never been keys —
+ * chiefly the `sk-tee-v1-…` a pasted command carries before its key is
+ * replaced. A client that forwards a `${…}` reference verbatim lands here too;
+ * the two IDEs we document do not, they send nothing at all.
+ */
+describe('isCredentialPlaceholder', () => {
+  it.each([
+    ['the docs placeholder', 'sk-tee-v1-…'],
+    ["the console's masked prefix", 'sk-tee-v1-4f…'],
+    ['an ASCII ellipsis', 'sk-tee-v1-...'],
+    ['an unresolved input reference', '${input:routerKey}'],
+    ['an unresolved env reference', '{env:ROUTER_KEY}'],
+  ])('recognises %s', (_case, value) => {
+    expect(isCredentialPlaceholder(value)).toBe(true);
+  });
+
+  it.each([
+    ['a minted key', mintApiKey().secret],
+    ['a wrong but plausible key', `${API_KEY_PREFIX}${'a'.repeat(43)}`],
+    ['a key from another vendor', 'sk-proj-abcdef'],
+    ['an ellipsis in the middle rather than the end', 'sk-tee-v1-…abc'],
+    ['empty', ''],
+  ])('leaves %s to the lookup', (_case, value) => {
+    expect(isCredentialPlaceholder(value)).toBe(false);
   });
 });
 

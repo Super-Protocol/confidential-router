@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -302,6 +303,7 @@ func newUpstream(t *testing.T, cert tls.Certificate, bundle []byte) *fakeUpstrea
 	mux.HandleFunc("/sse", u.serveSSE)
 	mux.HandleFunc("/echo", u.serveEcho)
 	mux.HandleFunc("/ws", u.serveUpgrade)
+	mux.HandleFunc("/refuse", u.serveRefusal)
 	mux.HandleFunc("/", u.serveHello)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -399,6 +401,35 @@ func (u *fakeUpstream) serveSSE(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, "data: {\"chunk\":2}\n\n")
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	_ = controller.Flush()
+}
+
+// serveRefusal answers the status named in `?status=` with the body the router
+// really writes for it. It is the far end of SUP-326: a refusal the upstream
+// decided, which the gatekeeper has no business restating.
+func (u *fakeUpstream) serveRefusal(w http.ResponseWriter, r *http.Request) {
+	code, err := strconv.Atoi(r.URL.Query().Get("status"))
+	if err != nil {
+		code = http.StatusUnauthorized
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if code == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "7")
+	}
+	w.WriteHeader(code)
+	_, _ = io.WriteString(w, routerRefusals[code])
+}
+
+// routerRefusals are bodies shaped like the router's own `/v1` errors
+// (`apps/router-api/src/app/api/v1/openai-error.ts`), abridged: what is being
+// pinned is that whatever the upstream wrote arrives byte for byte, so the
+// shape matters here and the exact prose does not.
+var routerRefusals = map[int]string{
+	http.StatusUnauthorized: `{"error":{"message":"Incorrect API key provided.",` +
+		`"type":"authentication_error","code":"invalid_api_key"}}`,
+	http.StatusForbidden: `{"error":{"message":"This API key is not scoped to model \"gpt-oss:tdx\".",` +
+		`"type":"permission_error","code":"model_not_in_key_scope","param":"model"}}`,
+	http.StatusTooManyRequests: `{"error":{"message":"Too many requests.",` +
+		`"type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
 }
 
 func (u *fakeUpstream) serveEcho(w http.ResponseWriter, r *http.Request) {

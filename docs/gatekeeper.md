@@ -504,6 +504,16 @@ string is on every response as `X-Gatekeeper-Verdict`.
 `failMode: open` proxies anyway, logs at warn, and marks the response. It is a
 per-endpoint opt-in and it is not a default for a reason.
 
+Only the gatekeeper's *own* refusals look like this. A status the upstream
+itself answered — a `401` for a key the router does not know, a `403`, a `429` —
+is forwarded untouched: same status, same body, same `Retry-After`. The one
+addition is `X-Gatekeeper-Verdict`. The gatekeeper writes a status of its own in
+exactly two cases: the 503 above, and a `502 upstream_unavailable` when the
+request never got an answer at all. Restating someone else's refusal in its own
+vocabulary would tell a client the router was unreachable when it had in fact
+replied — and turn a `401` nobody should retry into a 5xx every SDK does
+(SUP-326).
+
 ## Policies
 
 The gatekeeper generates a trust module from your configuration and loads a

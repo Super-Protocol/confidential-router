@@ -97,12 +97,82 @@ export const openAiErrors = {
       param: 'messages',
     }),
 
+  /**
+   * The authentication refusals read differently on purpose, and each one says
+   * that nothing was sent to a model (SUP-326).
+   *
+   * The status is the contract, but it is not always what the user is shown: an
+   * IDE that reaches the router through a local bridge can lose it — VS Code's
+   * agent host forwards a BYOK failure as a message with no status and
+   * re-stamps it 502, which reads as a model outage *and* earns a retry storm.
+   * The message is the only field that survives such a hop intact, so it
+   * carries the meaning the status was supposed to: which of these happened,
+   * that the request never reached a model, and what to do about it.
+   *
+   * Nothing here quotes `sk-tee-v1-…`. That literal is the placeholder our own
+   * docs and console put in a config file, so a user who sent it reads the
+   * example as a formatting hint and their own value as correct.
+   */
+
+  /**
+   * No credential arrived: no `Authorization` header, another scheme, or
+   * `Bearer` with nothing after it.
+   *
+   * The same `code` as {@link invalidApiKey} — a caller branching on it has one
+   * question, "is this about the key", and the answer is the same — but not the
+   * same sentence, because the causes are not. A config file whose secret
+   * reference resolved to nothing is the common one and the quiet one: the
+   * client sends `Bearer ` and the user is certain they configured a key. VS
+   * Code's Custom Endpoint does exactly that for any `apiKey` it cannot find in
+   * its own secret storage, and OpenCode substitutes an empty string for an
+   * unset `{env:…}` — so on both documented IDE paths, the first thing to check
+   * is not the key but whether one was sent at all.
+   */
+  missingApiKey: () =>
+    new OpenAiApiError({
+      status: 401,
+      type: 'authentication_error',
+      code: 'invalid_api_key',
+      message:
+        'No API key was provided: the request carried no bearer credential, so it never reached a model. ' +
+        'Send one as "Authorization: Bearer <key>". A client whose configuration holds a secret reference ' +
+        'that resolved to nothing sends exactly this — an empty credential rather than the key you set.',
+    }),
+
+  /** A credential arrived and no key matches it. */
   invalidApiKey: () =>
     new OpenAiApiError({
       status: 401,
       type: 'authentication_error',
       code: 'invalid_api_key',
-      message: 'Incorrect API key provided. Send it as "Authorization: Bearer sk-tee-v1-…".',
+      message:
+        'Incorrect API key provided: this router has no such key, so the request never reached a model. ' +
+        'Send a full key from the console as "Authorization: Bearer <key>".',
+    }),
+
+  /**
+   * The credential is a placeholder rather than a key
+   * ({@link isCredentialPlaceholder}).
+   *
+   * What this catches is a *command* that was pasted and run before the key in
+   * it was replaced — `curl` and the Python and Node snippets put
+   * `sk-tee-v1-…` on the wire unexamined. It is not the config-file case:
+   * neither documented IDE path forwards an unresolved reference as text (VS
+   * Code resolves an unknown `apiKey` to `undefined`, OpenCode substitutes an
+   * empty string), and both arrive here as {@link missingApiKey} instead.
+   *
+   * Its own code because it is its own fix — nothing was revoked, nothing
+   * expired, and re-issuing a key would not help: the value sent was never a
+   * key.
+   */
+  apiKeyPlaceholder: () =>
+    new OpenAiApiError({
+      status: 401,
+      type: 'authentication_error',
+      code: 'api_key_placeholder',
+      message:
+        'The credential sent is a configuration placeholder, not an API key, so the request never reached a ' +
+        'model. Replace it where you configured it with the full key shown when the key was created.',
     }),
 
   apiKeyRevoked: () =>
@@ -110,7 +180,9 @@ export const openAiErrors = {
       status: 401,
       type: 'authentication_error',
       code: 'api_key_revoked',
-      message: 'This API key has been revoked.',
+      message:
+        'This API key has been revoked, so the request never reached a model. Create a new key on the API keys ' +
+        'screen and use that one.',
     }),
 
   apiKeyExpired: () =>
@@ -118,7 +190,9 @@ export const openAiErrors = {
       status: 401,
       type: 'authentication_error',
       code: 'api_key_expired',
-      message: 'This API key has expired.',
+      message:
+        'This API key has expired, so the request never reached a model. Create a new key on the API keys screen ' +
+        'and use that one.',
     }),
 
   insufficientCredits: () =>

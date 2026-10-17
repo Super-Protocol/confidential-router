@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -405,6 +406,62 @@ func TestHopByHopHeadersDoNotReachTheUpstream(t *testing.T) {
 	}
 }
 
+// TestTheCredentialReachesTheUpstreamInEveryShape pins the other half of
+// SUP-326: a tester's key worked in curl straight to the router and failed from
+// an IDE pointed at a gatekeeper, with the router's own "Incorrect API key
+// provided" coming back. A dropped `Authorization` and a wrong key are the same
+// 401 from the far end, so the only question an answer can be read from is what
+// the *upstream received* — which is what this asserts, in the two shapes an
+// IDE sends: a POST with a body, and a streamed completion.
+//
+// TestHopByHopHeadersDoNotReachTheUpstream covers the plain GET.
+func TestTheCredentialReachesTheUpstreamInEveryShape(t *testing.T) {
+	const credential = "Bearer sk-tee-v1-" + "0123456789abcdef"
+	_, upstream, cfg := admitted(t)
+	listen := cfg.Endpoints[0].Listen
+
+	post, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		"http://"+listen+"/echo", strings.NewReader(`{"model":"m","messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post.Header.Set("Authorization", credential)
+	post.Header.Set("Content-Type", "application/json")
+	answer, err := localClient().Do(post)
+	if err != nil {
+		t.Fatalf("posting: %v", err)
+	}
+	_ = collect(t, answer)
+
+	stream, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listen+"/sse", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.Header.Set("Authorization", credential)
+	stream.Header.Set("Accept", "text/event-stream")
+	streamed, err := localClient().Do(stream)
+	if err != nil {
+		t.Fatalf("streaming request: %v", err)
+	}
+	defer streamed.Body.Close() //nolint:errcheck // test
+	// One frame is enough: the request headers crossed long before it.
+	if first := readEvent(t, bufio.NewReader(streamed.Body)); !strings.Contains(first, `"chunk":1`) {
+		t.Fatalf("first chunk = %q, want the first event", first)
+	}
+	close(upstream.release)
+
+	seen := upstream.seen()
+	if len(seen) != 2 {
+		t.Fatalf("upstream saw %d requests, want 2", len(seen))
+	}
+	for _, request := range seen {
+		if got := request.Header.Get("Authorization"); got != credential {
+			t.Errorf("%s %s reached the upstream with Authorization %q, want %q",
+				request.Method, request.Path, got, credential)
+		}
+	}
+}
+
 func TestTheFirstRequestWaitsForTheFirstVerdict(t *testing.T) {
 	pki := newPKI(t)
 	digest := digestOf("slow deployment")
@@ -643,6 +700,50 @@ func TestUpstreamFailureIsABadGateway(t *testing.T) {
 	}
 	if ep, _ := supervisor.Snapshot(t.Context()).Endpoint("router"); ep.Health != status.Confidential {
 		t.Errorf("health = %q, want the verdict unaffected by a backend outage", ep.Health)
+	}
+}
+
+// TestUpstreamRefusalsReachTheClientUnchanged pins SUP-326: a non-2xx the
+// upstream *answered* is the upstream's, and the gatekeeper forwards it
+// verbatim — status, body and the headers a client acts on.
+//
+// Only a transport failure is the gatekeeper's own 502
+// (TestUpstreamFailureIsABadGateway). Collapsing a refusal into one would tell
+// a client the router was unreachable when it had in fact replied, and turn a
+// 401 nobody should retry into a 5xx every SDK retries.
+func TestUpstreamRefusalsReachTheClientUnchanged(t *testing.T) {
+	_, _, cfg := admitted(t)
+	listen := cfg.Endpoints[0].Listen
+
+	for _, want := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(strconv.Itoa(want), func(t *testing.T) {
+			resp := get(t, listen, "/refuse?status="+strconv.Itoa(want), nil)
+
+			if resp.status != want {
+				t.Errorf("status = %d, want %d (body: %s)", resp.status, want, resp.body)
+			}
+			if resp.body != routerRefusals[want] {
+				t.Errorf("body = %s, want the upstream's own %s", resp.body, routerRefusals[want])
+			}
+			if got := resp.header.Get("Content-Type"); got != "application/json" {
+				t.Errorf("Content-Type = %q, want the upstream's own", got)
+			}
+			// The verdict header is the one addition: it is written on every
+			// client-facing response, refusals included.
+			if got := resp.header.Get(proxy.VerdictHeader); got != "allow" {
+				t.Errorf("%s = %q, want %q", proxy.VerdictHeader, got, "allow")
+			}
+			if strings.Contains(resp.body, "gatekeeper_error") {
+				t.Errorf("body = %s, want no gatekeeper vocabulary in an upstream refusal", resp.body)
+			}
+		})
+	}
+
+	// Retry-After is the one header a 429 is acted on by; dropping it would
+	// leave a client to guess.
+	resp := get(t, listen, "/refuse?status=429", nil)
+	if got := resp.header.Get("Retry-After"); got != "7" {
+		t.Errorf("Retry-After = %q, want the upstream's %q", got, "7")
 	}
 }
 

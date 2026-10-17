@@ -56,16 +56,30 @@ function generations() {
 const CHAT = { model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'Hello there' }] };
 
 describe('authentication', () => {
-  it('refuses a request with no credential, in the OpenAI error shape', async () => {
-    const response = await request(server()).post('/v1/chat/completions').send(CHAT).expect(401);
+  /**
+   * SUP-326: "no key arrived" and "that key is not ours" are different
+   * sentences. A VS Code Custom Endpoint whose `apiKey` is not in its secret
+   * storage sends `Bearer ` with nothing after it, and OpenCode substitutes an
+   * empty string for an unset `{env:…}` — so on both documented IDE paths this
+   * is the refusal the user actually gets, with a key that works in their
+   * terminal.
+   */
+  it.each([
+    ['no Authorization header', undefined],
+    ['an empty bearer', 'Bearer '],
+    ['another scheme', 'Basic dXNlcjpwYXNz'],
+  ])('refuses %s by saying none arrived, in the OpenAI error shape', async (_case, header) => {
+    const call = request(server()).post('/v1/chat/completions');
+    const response = await (header ? call.set('Authorization', header) : call).send(CHAT).expect(401);
 
     expect(response.body).toEqual({
       error: {
-        message: expect.stringContaining('Incorrect API key'),
+        message: expect.stringContaining('No API key was provided'),
         type: 'authentication_error',
         code: 'invalid_api_key',
       },
     });
+    expect(response.body.error.message).not.toContain('Incorrect API key');
   });
 
   it.each([
@@ -111,6 +125,63 @@ describe('authentication', () => {
       .expect(401);
 
     expect(response.body.error.code).toBe('api_key_expired');
+  });
+
+  /**
+   * SUP-326. The config file a user pastes carries a placeholder where the key
+   * goes, and leaving it there is refused as "Incorrect API key provided" —
+   * which an IDE then reports as a model failure. The router can see that the
+   * value was never a key, and says so instead.
+   *
+   * Only the sendable placeholders are exercised here. `sk-tee-v1-…` with a
+   * real U+2026 never reaches any server from a Node or Electron client: the
+   * HTTP stack rejects the header before it is written ("Invalid character in
+   * header content"). The predicate still covers it — an ASCII `...`, a
+   * transcoding proxy, or a non-Node client can all put one on the wire — but
+   * it is not what an IDE on this path produces.
+   */
+  it.each([
+    ["VS Code's unresolved input variable", '${input:routerKey}'],
+    ['an ASCII-elided key', 'sk-tee-v1-...'],
+  ])('answers %s with its own code instead of blaming the key', async (_case, placeholder) => {
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(placeholder))
+      .send(CHAT)
+      .expect(401);
+
+    expect(response.body.error.code).toBe('api_key_placeholder');
+    expect(response.body.error.message).toMatch(/placeholder, not an API key/);
+    expect(response.body.error.message).toMatch(/never reached a model/);
+  });
+
+  /**
+   * SUP-326. A client can reach `/v1` through a hop that keeps the message and
+   * drops the status — VS Code's agent host re-stamps a BYOK failure as a 502,
+   * which the user reads as "the model is down" and the runtime retries. The
+   * wording is the part that survives, so it has to carry the meaning.
+   */
+  it('says on the wire that an auth refusal never reached a model', async () => {
+    const revoked = await createKey(harness.app, workspaceId);
+    await harness.app.get(DataSource).getRepository(ApiKey).update({ id: revoked.id }, { revokedAt: new Date() });
+
+    const unknown = await request(server()).post('/v1/chat/completions').set(bearer('sk-tee-v1-nope')).send(CHAT);
+    const stale = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(revoked.secret))
+      .send(CHAT)
+      .expect(401);
+
+    for (const body of [unknown.body, stale.body]) {
+      expect(body.error.type).toBe('authentication_error');
+      expect(body.error.message).toMatch(/never reached a model/);
+      // Each one names the next move, rather than leaving a retry as the only
+      // obvious one.
+      expect(body.error.message).toMatch(/Send a full key|Create a new key/);
+    }
+    // A key this router never minted and a key it revoked are not the same
+    // problem, and a tester acts on them differently.
+    expect(unknown.body.error.message).not.toBe(stale.body.error.message);
   });
 
   it('records that an accepted key was used', async () => {
