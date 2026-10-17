@@ -1,5 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { CONSOLE_OPERATIONS } from './evidence-fixtures';
 import { mockGraphQL, signIn } from './fixtures';
 
@@ -10,21 +10,10 @@ import { mockGraphQL, signIn } from './fixtures';
  * gives the same coverage plus the thing a score cannot: which rule failed, on
  * which element. A Lighthouse run is recorded in the PR for the number itself.
  *
- * `serious` and `critical` are the impacts Lighthouse weights heavily enough
- * that a single one drops the score below 90 on a page this size.
+ * `blockingViolations` keeps only `serious` and `critical`, the impacts
+ * Lighthouse weights heavily enough that a single one drops the score below 90
+ * on a page this size.
  */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
-
-async function auditPage(page: import('@playwright/test').Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-
-  return results.violations.map((violation) => ({
-    id: violation.id,
-    impact: violation.impact,
-    help: violation.help,
-    nodes: violation.nodes.map((node) => node.target.join(' ')),
-  }));
-}
 
 /** The sign-in screen renders from this, so an audit of it has to say what it is. */
 async function signInOptions(
@@ -67,8 +56,7 @@ test.describe('accessibility', () => {
       await page.goto('/');
       await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
 
-      const violations = await auditPage(page);
-      expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
     });
   }
 
@@ -81,8 +69,7 @@ test.describe('accessibility', () => {
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Email me a code' })).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the code step has no serious axe violations', async ({ page }) => {
@@ -97,8 +84,7 @@ test.describe('accessibility', () => {
     await page.getByRole('button', { name: 'Email me a code' }).click();
     await expect(page.getByLabel('Code', { exact: true })).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the administrator sign-in screen has no serious axe violations', async ({ page }) => {
@@ -108,8 +94,7 @@ test.describe('accessibility', () => {
     await page.getByRole('button', { name: 'Administrator: use the first-sign-in token' }).click();
     await expect(page.getByLabel('First-sign-in token')).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the bootstrap screen has no serious axe violations', async ({ page }) => {
@@ -120,8 +105,7 @@ test.describe('accessibility', () => {
     await page.getByRole('button', { name: 'Have a bootstrap token?' }).click();
     await expect(page.getByLabel('Bootstrap token')).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the sign-up screen has no serious axe violations', async ({ page }) => {
@@ -131,16 +115,14 @@ test.describe('accessibility', () => {
     await page.goto('/signup');
     await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the component gallery has no serious axe violations', async ({ page }) => {
     await page.goto('/dev/components');
     await expect(page.getByRole('heading', { level: 1, name: 'Components' })).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   for (const theme of ['dark', 'light'] as const) {
@@ -162,8 +144,7 @@ test.describe('accessibility', () => {
       await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
       await expect(dialog.getByRole('button', { name: /^Ingress host/ }).first()).toBeVisible();
 
-      const violations = await auditPage(page);
-      expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
     });
   }
 
@@ -188,8 +169,7 @@ test.describe('accessibility', () => {
       await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
       await expect(dialog.getByRole('button', { name: /^Ingress host/ }).first()).toBeVisible();
 
-      const violations = await auditPage(page);
-      expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
     });
   }
 
@@ -266,7 +246,6 @@ test.describe('accessibility', () => {
     const drawer = page.getByRole('dialog', { name: 'Console navigation' });
     await expect(drawer.getByRole('navigation', { name: 'Console' })).toBeVisible();
 
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
