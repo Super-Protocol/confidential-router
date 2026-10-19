@@ -30,6 +30,12 @@ export interface InviteCampaignStats {
    * case and reads as one number, while a campaign that mixes two batches says
    * so instead of quoting whichever one a query happened to pick. Both are 0
    * when the campaign has no codes.
+   *
+   * Spans every code of the campaign, withdrawn ones included — the same
+   * population `issued` counts on the same row, and a withdrawal is reversible
+   * (`restoreInviteCodes`), so excluding one would make the face value flicker
+   * as an operator pulls and restores a leak. Said here because a field whose
+   * whole purpose is to not be misread cannot leave its population implied.
    */
   codeGrantMicrosMin: number;
   codeGrantMicrosMax: number;
@@ -73,7 +79,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * How a campaign did.
  *
- * Four aggregates over three tables, computed on demand rather than kept in a
+ * Five aggregates over three tables, computed on demand rather than kept in a
  * rollup: a campaign is read by an operator a handful of times a day, and a
  * cached counter would be a second source of truth to keep correct — the same
  * reasoning that left `activity_rollups` unwritten (`data-model.md`).

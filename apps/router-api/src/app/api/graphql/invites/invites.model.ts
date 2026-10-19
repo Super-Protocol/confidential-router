@@ -68,7 +68,7 @@ export class InviteCampaignStatsModel {
 
   @Field(() => String, {
     description:
-      'Micro-USD one redemption of this campaign grants — its face value. Equal to `codeGrantMicrosMax` unless the tag collects batches issued at different grants.',
+      'Micro-USD one redemption of this campaign grants — its face value. Equal to `codeGrantMicrosMax` unless the tag collects batches issued at different grants. Spans every code of the campaign, withdrawn ones included, as `issued` does.',
   })
   codeGrantMicrosMin!: string;
 

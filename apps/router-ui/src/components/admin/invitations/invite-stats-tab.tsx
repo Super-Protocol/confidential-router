@@ -44,11 +44,17 @@ const TILES = ['Codes issued', 'Redeemed', 'Redemption rate', 'Credit paid out',
  * `issueInviteCodes` takes the grant per batch and quoting whichever end a query
  * returned would be the same kind of half-truth this column exists to end
  * (SUP-390). Equal ends read as the one number an operator is after.
+ *
+ * Uniformity is decided on the micros, not on what they render as: the issue
+ * dialog accepts six decimals (`usdToMicros`) and `formatUsdShort` prints two,
+ * so `$25.123456` and `$25.123999` format alike and a genuinely mixed campaign
+ * would collapse to one number — this column's own failure mode, through our own
+ * UI. Both ends are canonical integer strings off the same `String(Number(…))`,
+ * so comparing them is exact.
  */
 function formatCodeGrant(campaign: Statistics['campaigns'][number]): string {
-  const low = formatUsdShort(campaign.codeGrantMicrosMin);
-  const high = formatUsdShort(campaign.codeGrantMicrosMax);
-  return low === high ? low : `${low}–${high}`;
+  if (campaign.codeGrantMicrosMin === campaign.codeGrantMicrosMax) return formatUsdShort(campaign.codeGrantMicrosMin);
+  return `${formatUsdShort(campaign.codeGrantMicrosMin)}–${formatUsdShort(campaign.codeGrantMicrosMax)}`;
 }
 
 /** `2026-10-09` → `9 Oct`, the console's chart axis shape. UTC, as the buckets are. */

@@ -92,6 +92,19 @@ function statisticsMock(days = 30): MockLink.MockedResponse {
               codeGrantMicrosMax: '100000000',
               grantedMicros: '25000000',
             },
+            // Two batches that differ below a cent — the issue dialog takes six
+            // decimals and the column prints two.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'subcent',
+              issued: 2,
+              redeemed: 0,
+              redemptionRate: 0,
+              activated: 0,
+              codeGrantMicrosMin: '25123456',
+              codeGrantMicrosMax: '25123999',
+              grantedMicros: '0',
+            },
           ],
         },
       },
@@ -181,6 +194,11 @@ describe('InvitationsScreen', () => {
     expect(cells(/launch/)).toEqual(['launch', '51', '3', '5.8%', '2', '$100', '$300']);
     // A tag whose batches were issued at different grants quotes neither end alone.
     expect(cells(/mixed/)).toEqual(['mixed', '4', '1', '25%', '0', '$25–$100', '$25']);
+    // Uniformity is decided on the micros, so batches differing below a cent
+    // still read as a range. Both ends print the same, and the dash is the point:
+    // deciding on the rendered string would collapse this to a flat "$25.12" and
+    // call a mixed campaign uniform — the misreading this column exists to end.
+    expect(cells(/subcent/)).toEqual(['subcent', '2', '0', '0%', '0', '$25.12–$25.12', '$0']);
   });
 
   it('no longer calls the cumulative payout a grant', async () => {
