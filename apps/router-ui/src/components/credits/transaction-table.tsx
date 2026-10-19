@@ -83,7 +83,7 @@ export function TransactionTable({ transactions }: { transactions: readonly Tran
                 {descriptionTextOf(entry.description) || entry.reference || '—'}
               </TableCell>
               <TableCell
-                className={`text-right font-mono whitespace-nowrap ${credit ? 'text-brand' : 'text-foreground'}`}
+                className={`text-right font-mono whitespace-nowrap ${credit ? 'text-brand-emphasis' : 'text-foreground'}`}
               >
                 {credit ? '+' : ''}
                 {formatUsd(entry.amountMicros)}
