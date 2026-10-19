@@ -328,6 +328,25 @@ describe('planImport', () => {
     });
   });
 
+  it('refuses a live redemption this deployment already holds as a carried one', () => {
+    // The mirror of the case above: an older export of the same source, taken
+    // after a newer one whose account was already gone. Writing the live row
+    // would be a second record of one spent seat; skipping it would leave the
+    // account without the row that attributes its code.
+    const data = exported();
+    const live = data.inviteRedemptions[0] as ExportData['inviteRedemptions'][number];
+
+    const plan = planImport(bundleOf(data), { ...EMPTY, carriedRedemptions: [{ id: live.id }] }, options);
+
+    expect(planIsClean(plan)).toBe(false);
+    expect(plan.sections.find((section) => section.section === 'inviteRedemptions')).toMatchObject({
+      inBundle: 1,
+      toCreate: 0,
+      conflicts: [`Redemption ${live.id} is already recorded here as carried from another deployment.`],
+    });
+    expect(plan.writes.inviteRedemptions).toEqual([]);
+  });
+
   it('notes that imported endpoints arrive switched off and without a key', () => {
     const data = exported();
     data.externalEndpoints.push({
@@ -373,6 +392,21 @@ describe('bundleInconsistencies', () => {
     });
 
     expect(bundleInconsistencies(data).join(' ')).toContain('carried redemption(s) name a code');
+    expect(planIsClean(planImport(bundleOf(data), EMPTY, options))).toBe(false);
+  });
+
+  it('refuses a file that tells one redemption twice, live and carried', () => {
+    const data = exported();
+    const live = data.inviteRedemptions[0] as ExportData['inviteRedemptions'][number];
+    data.inviteCarriedRedemptions.push({
+      id: live.id,
+      inviteCodeId: live.inviteCodeId,
+      email: null,
+      redeemedAt: AT,
+      importedAt: AT,
+    });
+
+    expect(bundleInconsistencies(data).join(' ')).toContain('same redemption more than once');
     expect(planIsClean(planImport(bundleOf(data), EMPTY, options))).toBe(false);
   });
 

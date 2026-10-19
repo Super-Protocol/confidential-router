@@ -36,7 +36,10 @@ export interface LocalState {
   redemptions: readonly { id: string; userId: string }[];
   /**
    * Redemptions carried from another deployment; they have no account here to
-   * collide on. Judged against `redemptions` as well — see `planImport`.
+   * collide on. Matched against `redemptions` as well, and in both directions:
+   * a degraded redemption travels under the id of the `invite_redemptions` row
+   * it came from, so the same id in either table is the same redemption. See
+   * `planImport` for why one direction skips and the other refuses.
    */
   carriedRedemptions: readonly { id: string }[];
   externalEndpoints: readonly { id: string; name: string }[];
@@ -181,10 +184,14 @@ export function bundleInconsistencies(data: ExportData): string[] {
     'invitation code',
     data.inviteCodes.map((code) => code.id),
   );
-  duplicated(
-    'carried redemption',
-    data.inviteCarriedRedemptions.map((row) => row.id),
-  );
+  // Live and carried ids in one set: a redemption is one or the other, never
+  // both — the export degrades it or keeps it, and both forms use its own id —
+  // so a repeat within either section, or across the two, is the same
+  // redemption told twice, and would import as two redeemers of one seat.
+  duplicated('redemption', [
+    ...data.inviteRedemptions.map((row) => row.id),
+    ...data.inviteCarriedRedemptions.map((row) => row.id),
+  ]);
   return problems;
 }
 
@@ -359,12 +366,24 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
 
   const redemptions = new Section('inviteRedemptions', data.inviteRedemptions.length);
   const localRedemptionIds = new Set(local.redemptions.map((row) => row.id));
+  const localCarriedIds = new Set(local.carriedRedemptions.map((row) => row.id));
   const localRedeemers = new Set(local.redemptions.map((row) => row.userId));
   const redemptionWrites: ExportData['inviteRedemptions'] = [];
   for (const row of data.inviteRedemptions) {
     const userId = userIdOf(row.userId);
     if (localRedemptionIds.has(row.id)) {
       redemptions.alreadyPresent += 1;
+    } else if (localCarriedIds.has(row.id)) {
+      // The mirror of the carried section below, and a refusal rather than a
+      // skip. This deployment already holds this redemption as a carried row —
+      // it took an export of the same source that had lost the account — and
+      // writing the live one too would name two redeemers for one spent seat.
+      // Skipping it would be worse than refusing: the account comes across
+      // without the row that both attributes its code and *is* the
+      // one-grant-per-account index. Resolving it means deciding which of the
+      // two records to drop, which an import that only ever inserts cannot do,
+      // so it says so and writes nothing.
+      redemptions.conflicts.push(`Redemption ${row.id} is already recorded here as carried from another deployment.`);
     } else if (localRedeemers.has(userId)) {
       redemptions.conflicts.push(`Account ${userId} has already redeemed an invitation on this deployment.`);
     } else {
@@ -391,16 +410,14 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
    * deployment that still holds that row already holds this redemption — in the
    * other table. Matching only the carried ones would write the same redemption
    * a second time, and the code would then name two redeemers for one spent
-   * seat.
+   * seat. Here that is a skip, because a carried row carries nothing the live
+   * one does not; the mirror case, above, is a refusal for the opposite reason.
    */
   const carried = new Section('inviteCarriedRedemptions', data.inviteCarriedRedemptions.length);
-  const localCarriedIds = new Set([
-    ...local.carriedRedemptions.map((row) => row.id),
-    ...local.redemptions.map((row) => row.id),
-  ]);
+  const recordedIds = new Set([...localCarriedIds, ...localRedemptionIds]);
   const carriedWrites: ExportData['inviteCarriedRedemptions'] = [];
   for (const row of data.inviteCarriedRedemptions) {
-    if (localCarriedIds.has(row.id)) {
+    if (recordedIds.has(row.id)) {
       carried.alreadyPresent += 1;
     } else {
       carried.toCreate += 1;
