@@ -90,6 +90,25 @@ export function toAutoTopUpInput(values: AutoTopUpFormValues): AutoTopUpSettings
 }
 
 /**
+ * `reference` on a credit an operator wrote by hand (`credit-grant.service.ts`,
+ * SUP-406). Mirrors `OPERATOR_GRANT_REFERENCE` on the API.
+ */
+export const OPERATOR_GRANT_REFERENCE = 'operator';
+
+/**
+ * Whether this row's `description` is provider output, and so subject to the
+ * receipt convention below.
+ *
+ * An operator grant is the one row whose description a *person* typed: the API
+ * composes it as `label · note` and the note is the operator's own words,
+ * written to be read by the account holder. Everything else in the ledger has
+ * its description composed by this codebase or by Stripe.
+ */
+function isProviderWritten(reference: string | null | undefined): boolean {
+  return reference !== OPERATOR_GRANT_REFERENCE;
+}
+
+/**
  * The receipt or invoice link a provider left on a ledger entry.
  *
  * The ledger has no receipt column: `CreditTransaction.description` is a
@@ -97,16 +116,35 @@ export function toAutoTopUpInput(values: AutoTopUpFormValues): AutoTopUpSettings
  * (`docs/contracts/console-graphql.md`). Only `https` is accepted — a
  * description is provider-supplied text, and rendering whatever scheme it named
  * as a link is how a `javascript:` URL ends up in the console.
+ *
+ * `reference` is required rather than optional because the convention is only
+ * true of rows a provider wrote (SUP-406). An operator granting goodwill after
+ * an incident will link the incident — that is the ordinary note for this
+ * feature, not a contrived one — and reading it as a receipt would put a status
+ * page under a **Receipt** heading on someone's billing screen. Making the
+ * argument mandatory is what stops a future caller from reintroducing that by
+ * omission.
  */
-export function receiptUrlOf(description: string | null | undefined): string | null {
-  if (!description) return null;
+export function receiptUrlOf(
+  description: string | null | undefined,
+  reference: string | null | undefined,
+): string | null {
+  if (!description || !isProviderWritten(reference)) return null;
   const match = description.match(/https:\/\/[^\s<>"']+/);
   return match ? match[0] : null;
 }
 
-/** The description with its link removed, so the note does not repeat the URL. */
-export function descriptionTextOf(description: string | null | undefined): string {
+/**
+ * The description as the Description column should show it: a provider's with
+ * its receipt link removed, so the note does not repeat the URL — and an
+ * operator's exactly as they typed it, because nothing was lifted out of it.
+ */
+export function descriptionTextOf(
+  description: string | null | undefined,
+  reference: string | null | undefined,
+): string {
   if (!description) return '';
+  if (!isProviderWritten(reference)) return description;
   return description
     .replace(/https:\/\/[^\s<>"']+/g, '')
     .replace(/\s{2,}/g, ' ')

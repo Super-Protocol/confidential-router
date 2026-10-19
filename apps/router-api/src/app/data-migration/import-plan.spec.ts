@@ -195,6 +195,26 @@ describe('planImport', () => {
     ).toBe(true);
   });
 
+  it('keeps the source id for an operator who has no account on this deployment', () => {
+    const data = exported();
+    data.creditLedger.push({
+      ...entry('tx-op-grant', 'ws-ada', ['50000000', 'operator:someone-else:decision-1']),
+      kind: 'adjustment',
+      reference: 'operator',
+      description: 'Credit granted by an operator · goodwill',
+      grantedByUserId: 'an-operator-who-never-signed-up-here',
+    });
+    (data.workspaces[1] as { balanceMicros: string }).balanceMicros = '150000000';
+
+    const plan = planImport(bundleOf(data), CLAIMED, options);
+
+    // The other half of `userIdOrNull`: nothing maps, so the id stands as it was.
+    // Null would read as "nobody granted this", which is what the row denies.
+    expect(plan.writes.creditLedger.find((row) => row.id === 'tx-op-grant')?.grantedByUserId).toBe(
+      'an-operator-who-never-signed-up-here',
+    );
+  });
+
   it('lands a mapped operator’s other ledger entries in the workspace they own here', () => {
     const data = exported();
     data.creditLedger.push(entry('tx-op-2', 'ws-op', ['5000000', 'adjustment:manual-1']));

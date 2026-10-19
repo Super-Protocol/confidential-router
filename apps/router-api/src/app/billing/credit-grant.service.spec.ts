@@ -251,6 +251,17 @@ describe('naming the account', () => {
     expect(result.workspaceId).toBe(workspaceId);
   });
 
+  it('refuses an address two accounts share but for its case, rather than picking one', async () => {
+    await account(TESTER);
+    await account('Tester@example.com', '');
+
+    await expect(
+      grant({ accountEmail: TESTER, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR }),
+    ).rejects.toThrow(/differ only in the case/);
+
+    expect(await balanceOf()).toBe(0);
+  });
+
   it('fails cleanly on an account that does not exist', async () => {
     await expect(
       grant({ accountEmail: 'nobody@example.com', kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR }),
@@ -278,13 +289,38 @@ describe('naming the account', () => {
     ).rejects.toThrow(/owns no workspace/);
   });
 
-  it('refuses a call that names both, or neither', async () => {
+  it('refuses a call that names both, or neither, and says which', async () => {
     await account(TESTER);
 
     await expect(
       grant({ workspaceId, accountEmail: TESTER, kind: 'grant', amountMicros: 1, operator: OPERATOR }),
-    ).rejects.toThrow(BadRequestException);
-    await expect(grant({ kind: 'grant', amountMicros: 1, operator: OPERATOR })).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(/not both/);
+    // Naming neither is the opposite mistake and used to be told it had named both.
+    await expect(grant({ kind: 'grant', amountMicros: 1, operator: OPERATOR })).rejects.toThrow(
+      /Name the account to credit, by either/,
+    );
+  });
+
+  it('reports the workspace the replayed row actually credited, not the one this call named', async () => {
+    const other = (await seedCatalog(dataSource)).workspaceId;
+    const requestId = randomUUID();
+    const first = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR, requestId });
+
+    // The same submission pointed at a different workspace: the row that stands
+    // is the first one, so the balance and the workspace it belongs to must agree.
+    const replay = await grant({
+      workspaceId: other,
+      kind: 'grant',
+      amountMicros: 1_000_000,
+      operator: OPERATOR,
+      requestId,
+    });
+
+    expect(replay.replayed).toBe(true);
+    expect(replay.creditTransactionId).toBe(first.creditTransactionId);
+    expect(replay.workspaceId).toBe(workspaceId);
+    expect(replay.balanceMicros).toBe(1_000_000);
+    expect(await balanceOf(other)).toBe(0);
   });
 });
 

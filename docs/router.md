@@ -527,6 +527,14 @@ mints one UUID when the dialog opens and keeps it across retries.
 A correction is a new row, never an edit — the ledger has no update path at all
 (`docs/contracts/data-model.md` invariant 3).
 
+The reason reaches the account holder **as the operator wrote it**. That needs
+saying because `description` is not free text anywhere else in the ledger: it
+"carries the receipt link when there is one", and the Credits screen pulls the
+first `https://…` out of it to render a **Receipt** link. A goodwill note citing
+an incident would otherwise arrive as a truncated sentence next to a Receipt
+pointing at a status page, so the screen scopes that convention by `reference`
+and leaves an operator's row alone (`credits/amounts.ts`).
+
 ## Invitation codes
 
 A mailed campaign hands out credit without the recipient ever typing a code
@@ -998,6 +1006,15 @@ SQLite applies migrations at boot (`database.migrationsRun: true`, the
 development default). PostgreSQL deployments run the migration CLI **once**,
 from a job or an init container, and leave `migrationsRun` off — otherwise
 every replica races the others at startup.
+
+**The migration runs before the new image serves, not after.** TypeORM writes
+every column the entities declare, so an image started against a schema it is
+newer than fails on *writes it did not change*. The current example is
+`credit_transactions.grantedByUserId` (SUP-406): a router booted before that
+migration lands rejects every ledger write — purchases and usage debits
+included, not merely the operator grants the column was added for. Order the
+rollout `router-api-migrate` → router, and treat any release that adds a column
+to a hot table as one that cannot go image-first.
 
 Container image: `router-api.dockerfile`, published to ghcr by the release
 workflow. `docker/docker-compose.yml` runs the API, the console and PostgreSQL
