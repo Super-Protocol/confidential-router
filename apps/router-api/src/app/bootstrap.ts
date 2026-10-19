@@ -12,6 +12,7 @@ import {
   INVITE_CODES_IMPORT_PATH,
   MAX_INVITE_CODES_CSV_BYTES,
 } from './api/invite-codes/invite-codes-csv.controller.js';
+import { V1_BASE_PATH } from './api/v1/gateway.types.js';
 import { jsonErrorMiddleware } from './api/v1/openai-exception.filter.js';
 import { AUTH_BASE_PATH, AuthService } from './auth/index.js';
 import { STRIPE_WEBHOOK_PATH } from './billing/index.js';
@@ -118,9 +119,15 @@ export function configureApp(app: NestExpressApplication, config: ConfigType<typ
     INVITE_CODES_IMPORT_PATH,
     express.text({ type: INVITE_CODES_CSV_CONTENT_TYPE, limit: MAX_INVITE_CODES_CSV_BYTES }),
   );
+  // `/v1` is parsed first, under its own limit: an inference request carries a
+  // prompt sized against the context window the catalogue advertises, which is
+  // megabytes where a console mutation is kilobytes (SUP-339). Mounted before the
+  // global parser, which then skips an already-parsed body.
+  app.use(V1_BASE_PATH, express.json({ limit: config.server.maxInferenceRequestBytes }));
   app.use(express.json({ limit: '1mb' }));
   // Body-parser failures are thrown in middleware and never reach a Nest
-  // exception filter, so `/v1` gets its OpenAI-shaped `invalid_json` here.
+  // exception filter, so `/v1` gets its OpenAI-shaped `invalid_json` and
+  // `request_too_large` here.
   app.use(jsonErrorMiddleware);
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());

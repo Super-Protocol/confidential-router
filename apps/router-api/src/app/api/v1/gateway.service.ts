@@ -11,6 +11,7 @@ import { LiteLlmClient } from './litellm.client.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import { readUsage, shapeResponse } from './response-shaping.js';
 import { extensionFor, relayStream, type StreamFailure } from './stream-relay.js';
+import { UpstreamTimeoutError } from './upstream-fetch.js';
 
 /** A model resolved to the external leg, narrowed so `external` is not optional. */
 type ExternalModel = RoutedModel & { external: ExternalRoute };
@@ -95,14 +96,9 @@ export class GatewayService {
             signal: abort.signal,
           });
     } catch (error) {
-      // A leg that already decided what this is keeps its own answer; only a raw
-      // transport failure becomes `backend_unavailable`. Wrapping an
-      // `OpenAiApiError` here would turn the egress leg's "this router is
-      // misconfigured" into "the backend is down", and put the reason in the body.
-      throw await this.fail(
-        context,
-        error instanceof OpenAiApiError ? error : openAiErrors.backendUnavailable(messageOf(error)),
-      );
+      // Nothing was forwarded, and which failure this was decides who the caller
+      // is told to look at — see `transportFailureOf`.
+      throw await this.fail(context, transportFailureOf(error));
     }
 
     if (!upstreamResponse.ok) {
@@ -261,8 +257,28 @@ function finishReasonOfBody(payload: unknown): string | null {
   return typeof reason === 'string' ? reason : null;
 }
 
-function messageOf(error: unknown): string {
-  return `The model backend is unreachable: ${error instanceof Error ? error.message : String(error)}`;
+/**
+ * Which party a failure before the response headers belongs to.
+ *
+ * Three answers, and keeping them apart is the whole point (SUP-339). A leg that
+ * already decided — the egress sidecar's refusal, an unopenable envelope — keeps
+ * its own; wrapping that would turn "this router is misconfigured" into "the
+ * backend is down". A deadline expiry says the router stopped waiting, so it must
+ * not read "unreachable": the upstream took the request and may be generating, and
+ * calling that unreachable is what sent operators to inspect a model deployment
+ * that was answering the same prompt fine one hop over. Only a genuine transport
+ * failure — refused, reset, unresolvable — is `backend_unavailable`.
+ */
+function transportFailureOf(error: unknown): OpenAiApiError {
+  if (error instanceof OpenAiApiError) {
+    return error;
+  }
+  if (error instanceof UpstreamTimeoutError) {
+    return openAiErrors.upstreamTimeout(error.message);
+  }
+  return openAiErrors.backendUnavailable(
+    `The model backend is unreachable: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 
 async function readErrorDetail(upstream: Response): Promise<string> {

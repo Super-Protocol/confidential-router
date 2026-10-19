@@ -163,6 +163,25 @@ export const openAiErrors = {
       message: 'Unknown endpoint.',
     }),
 
+  /**
+   * The body is over the `/v1` parser's limit, so nothing was parsed.
+   *
+   * Its own code rather than `invalid_json`: the JSON was fine and the client can
+   * act on this one by sending less. The limit is named because the number is a
+   * deployment's choice (`server.maxInferenceRequestBytes`) and a client has no
+   * other way to learn it — SUP-339, where this arrived as Nest's bare
+   * `{"statusCode":413}` and an SDK saw neither the shape nor the reason.
+   */
+  requestTooLarge: (limitBytes: number | null) =>
+    new OpenAiApiError({
+      status: 413,
+      type: 'invalid_request_error',
+      code: 'request_too_large',
+      message: limitBytes
+        ? `Request body is larger than the ${mebibytes(limitBytes)} this router accepts.`
+        : 'Request body is larger than this router accepts.',
+    }),
+
   rateLimited: (message: string, headers: Record<string, string>) =>
     new OpenAiApiError({ status: 429, type: 'rate_limit_error', code: 'rate_limit_exceeded', message, headers }),
 
@@ -171,6 +190,20 @@ export const openAiErrors = {
 
   backendError: (message: string) =>
     new OpenAiApiError({ status: 502, type: 'upstream_error', code: 'backend_error', message }),
+
+  /**
+   * The router stopped waiting for the upstream; the upstream itself never failed.
+   *
+   * A separate code from {@link backendUnavailable} because it names a different
+   * party. `backend_unavailable` says the backend could not be reached, and SUP-339
+   * is what that costs when it is not true: a long prompt and a concurrent burst
+   * both answered perfectly on the direct path, and an operator reading
+   * "unreachable" went and looked at a model deployment that was fine. 504, not
+   * 502: a deadline on a healthy upstream is a gateway timeout, and the request is
+   * worth retrying as-is once the queue drains.
+   */
+  upstreamTimeout: (message: string) =>
+    new OpenAiApiError({ status: 504, type: 'upstream_error', code: 'upstream_timeout', message }),
 
   /**
    * No live verdict admits the upstream this model lives on, so nothing was sent
@@ -224,4 +257,10 @@ export const openAiErrors = {
  */
 export function asOpenAiError(error: unknown): OpenAiApiError {
   return error instanceof OpenAiApiError ? error : openAiErrors.internal();
+}
+
+/** A byte limit as the client is likelier to recognise it: `8 MiB`, `1.5 MiB`. */
+function mebibytes(bytes: number): string {
+  const value = bytes / 1024 / 1024;
+  return `${Number.isInteger(value) ? value : value.toFixed(1)} MiB`;
 }

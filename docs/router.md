@@ -51,6 +51,7 @@ server:
   publicBaseUrl: https://console.tee.swarm.cloud   # what the API builds links against
   validClientOrigins:                              # CORS + Better Auth trusted origins
     - https://console.tee.swarm.cloud
+  maxInferenceRequestBytes: 8388608                # /v1 only; the console keeps 1 MiB
 
 database:
   type: postgres                # `sqlite` for development
@@ -74,6 +75,14 @@ backends:
     connectTimeout: 5s
     readTimeout: 120s
 ```
+
+The two timeouts add up to the longest the router waits for a backend's response
+headers, and for a non-streaming completion those headers *are* the finished
+generation — so the sum has to cover a full prefill, not just a handshake. A
+262 144-token prompt takes a vLLM worker about eleven seconds before it answers at
+all, and a concurrent burst queues behind it; 5 s alone would abort both while the
+worker was busy serving them (SUP-339). A deadline that does expire answers `504
+upstream_timeout`, never `backend_unavailable` — the backend was reached.
 
 **`endpoints[]`** are the router's own hostnames — the things a gatekeeper
 attests. The platform publishes `/.well-known/swarm-evidence` for each of them;
