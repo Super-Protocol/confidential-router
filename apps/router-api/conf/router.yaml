@@ -15,6 +15,9 @@ server:
   publicBaseUrl: http://localhost:3000
   validClientOrigins:
     - http://localhost:4200
+  # /v1 only. The console surfaces keep 1 MiB; a prompt sized against an
+  # advertised context window needs megabytes (SUP-339).
+  maxInferenceRequestBytes: 8388608
 
 database:
   type: sqlite

@@ -31,6 +31,24 @@ const ServerSchema = z
     host: z.string().prefault('0.0.0.0'),
     publicBaseUrl: z.url().prefault('http://localhost:3000'),
     validClientOrigins: stringArrayish().prefault([]),
+    /**
+     * Largest `/v1` request body the router accepts, in bytes.
+     *
+     * Its own limit, well above the 1 MiB the console surfaces keep, because the
+     * two carry different things: a console mutation is a form, and a prompt that
+     * fills the context window `GET /v1/models` advertises is megabytes of JSON.
+     * Sharing the console's 1 MiB is what made the advertised `context_length` a
+     * figure no client could spend (SUP-339): prod advertises 262 144 tokens and
+     * serves them, and at the ~6 bytes per token prose measures that is ~1.6 MiB
+     * of body — refused by the parser before any model saw it.
+     *
+     * 8 MiB by default: five times the window prod advertises today, which leaves
+     * room for JSON escaping, long tool schemas and a bigger window later, while
+     * still bounding what one request can buffer. Raise it for a deployment
+     * serving a larger context or base64 attachments, and keep the arithmetic in
+     * mind — this number times the concurrency the deployment expects is memory.
+     */
+    maxInferenceRequestBytes: integerish().pipe(z.number().int().min(1_048_576).max(268_435_456)).prefault(8_388_608),
   })
   .prefault({});
 

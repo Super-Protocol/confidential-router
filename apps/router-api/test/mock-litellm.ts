@@ -142,6 +142,12 @@ export class MockLiteLlm {
         // the only failure the client is allowed to retry.
         response.socket?.destroy();
         return;
+      case 'mock/thinking':
+        // Took the request and never answered — a long prefill or a queued burst
+        // as the router sees it. The connection is up and the upstream is fine,
+        // so whatever the router says about this must not be "unreachable"
+        // (SUP-339). Left to the harness's own teardown to close.
+        return;
       case 'mock/embed':
         json(response, 200, {
           object: 'list',
