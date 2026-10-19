@@ -997,7 +997,7 @@ enum GenerationStatus {
 """How one invitation campaign converted. Operators only."""
 type InviteCampaignStats {
   """
-  Redeeming accounts that went on to send at least one request — the number worth reading.
+  Redemptions whose redeemer went on to send at least one request — the number worth reading. One per redemption, so never greater than `redeemed`.
   """
   activated: Int!
   campaign: String!

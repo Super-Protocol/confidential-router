@@ -64,7 +64,8 @@ export class InviteCampaignStatsModel {
   redemptionRate!: number;
 
   @Field(() => Int, {
-    description: 'Redeeming accounts that went on to send at least one request — the number worth reading.',
+    description:
+      'Redemptions whose redeemer went on to send at least one request — the number worth reading. One per redemption, so never greater than `redeemed`.',
   })
   activated!: number;
 
