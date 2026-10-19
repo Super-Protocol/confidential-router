@@ -10,7 +10,7 @@ import {
 import { ExternalLink } from 'lucide-react';
 import type { CreditTransactionKind } from '../../generated/graphql';
 import { formatDate, formatUsd } from '../../lib/format';
-import { descriptionTextOf, receiptUrlOf } from './amounts';
+import { descriptionTextOf, OPERATOR_GRANT_REFERENCE, receiptUrlOf } from './amounts';
 
 export interface TransactionRow {
   id: string;
@@ -51,6 +51,11 @@ function kindLabelOf(entry: TransactionRow): string {
   if (entry.kind === 'GRANT' && entry.reference === SIGNUP_GRANT_REFERENCE) {
     return 'Sign-up credit';
   }
+  // An operator's own credit or correction (SUP-406). Without this a hand-written
+  // grant reads as "Invitation credit", naming a campaign that never existed.
+  if (entry.reference === OPERATOR_GRANT_REFERENCE) {
+    return entry.kind === 'GRANT' ? 'Operator credit' : 'Operator adjustment';
+  }
   return KIND_LABELS[entry.kind];
 }
 
@@ -68,7 +73,7 @@ export function TransactionTable({ transactions }: { transactions: readonly Tran
       </TableHeader>
       <TableBody>
         {transactions.map((entry) => {
-          const receipt = receiptUrlOf(entry.description);
+          const receipt = receiptUrlOf(entry.description, entry.reference);
           // Signed micro-USD: credits positive, usage negative. The sign is what
           // says which way the money moved, so it is never dropped.
           const credit = !entry.amountMicros.startsWith('-');
@@ -80,7 +85,7 @@ export function TransactionTable({ transactions }: { transactions: readonly Tran
                 <Badge variant="outline">{kindLabelOf(entry)}</Badge>
               </TableCell>
               <TableCell className="text-muted-foreground">
-                {descriptionTextOf(entry.description) || entry.reference || '—'}
+                {descriptionTextOf(entry.description, entry.reference) || entry.reference || '—'}
               </TableCell>
               <TableCell
                 className={`text-right font-mono whitespace-nowrap ${credit ? 'text-brand' : 'text-foreground'}`}

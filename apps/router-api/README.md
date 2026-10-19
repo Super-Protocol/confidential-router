@@ -312,10 +312,33 @@ hand-written entry needs and an automatic one does not:
   `billing.allowCreditDebits` — **off by default**, so the operation a deployment gets can only ever add
   — and must carry a note. On top of that `adjustment` is absent from the ledger's `MAY_OVERDRAW`, so no
   sequence of calls can push a balance below zero.
+- **A required reason.** `grantedByUserId` says who and `reference` says it was by hand, so `description`
+  is the only field left that says *why* — and an operator entry is the one ledger row with no outside
+  event to explain it.
 
-Deliberately **not** idempotent, unlike every other ledger writer: a redelivered webhook is two reports of
-one outside event, and an operator pressing the button twice is two decisions. The key is fresh per call
-and the console's dialog is what stops a double-click.
+**Idempotency is the caller's to name.** `requestId` is a UUID the console mints when the dialog opens
+and holds across retries; the ledger key is `operator:<operatorId>:<requestId>`, operator-scoped so two
+callers cannot collide on the same value. The same submission arriving twice replays the first row and
+answers `replayed: true` — the case that matters is not a double-click but a write that succeeded behind
+a proxy that timed out, where the obvious retry used to credit twice. A second *deliberate* grant opens
+the dialog again and gets a new id, so two decisions still make two entries. The result is read off the
+stored row, so a retry carrying an edited amount is shown what stands, and a replay reports the workspace
+that row credited rather than the one the retry pointed at.
+
+`grantedByUserId` travels with the deployment export (`data-migration/`): a redeploy is exactly what that
+bundle is for, and a round trip that dropped the operator would answer "who granted this" until the
+restore and `null` — which the column reads as "nobody did" — for ever after. An import remaps it the way
+it remaps `issuedByUserId`: to the operator's id on the importing deployment when they have an account
+there, and otherwise to the id they had on the source.
+
+The note is the operator's own words and reaches the account holder as written. That is why the Credits
+screen scopes its receipt convention by `reference`: `description` "carries the receipt link when there is
+one", and a goodwill note citing an incident URL would otherwise be rendered as a **Receipt** on a
+customer's billing screen with the sentence it came from truncated (`credits/amounts.ts`).
+
+**Deploy ordering.** On PostgreSQL `database.migrationsRun` is off, so `router-api-migrate` must land
+before the new image serves. A router that boots first rejects *every* ledger write, not only grants —
+TypeORM writes `grantedByUserId` on each insert. See [`docs/router.md`](../../docs/router.md#running-it).
 
 ## Invitation codes
 

@@ -158,8 +158,12 @@ export class CreditGrantService {
     // retried with an edited amount has to be shown that, not their edit.
     return {
       creditTransactionId: recorded.id,
-      workspaceId: target.workspaceId,
-      accountEmail: target.accountEmail,
+      // The recorded row's workspace, not the one this call resolved: a
+      // `requestId` replayed against a different target would otherwise report
+      // one workspace's id beside another's balance. The two are the same
+      // workspace on every write that actually happened.
+      workspaceId: recorded.workspaceId,
+      accountEmail: recorded.workspaceId === target.workspaceId ? target.accountEmail : null,
       kind: recorded.kind as CreditGrantKind,
       amountMicros: recorded.amountMicros,
       balanceMicros: entry.balanceMicros,
@@ -218,8 +222,11 @@ export class CreditGrantService {
     const email = request.accountEmail?.trim() ? request.accountEmail.trim() : null;
     const workspaceId = request.workspaceId?.trim() ? request.workspaceId.trim() : null;
 
-    if (Boolean(email) === Boolean(workspaceId)) {
-      throw new BadRequestException('Name the account to credit by either accountEmail or workspaceId, not both.');
+    if (email && workspaceId) {
+      throw new BadRequestException('Name the account to credit by accountEmail or by workspaceId, not both.');
+    }
+    if (!email && !workspaceId) {
+      throw new BadRequestException('Name the account to credit, by either accountEmail or workspaceId.');
     }
 
     if (workspaceId) {
@@ -255,14 +262,28 @@ export class CreditGrantService {
    * Better Auth stores what the person typed and neither database has a
    * case-insensitive type both of them share (`data-model.md`), so the
    * comparison is lowered on both sides rather than relying on an index hit.
+   *
+   * Which means the match can be ambiguous: two accounts differing only in case
+   * are two different people here, and taking the older one would credit a
+   * stranger with nothing to say a choice had been made. An ambiguous address is
+   * refused instead, and the operator names the workspace. Only a GraphQL-client
+   * caller reaches it — the console always sends `workspaceId`.
    */
   private async accountOf(email: string): Promise<User | null> {
-    return this.dataSource
+    const accounts = await this.dataSource
       .getRepository(User)
       .createQueryBuilder('account')
       .where('LOWER(account.email) = :email', { email: email.toLowerCase() })
       .orderBy('account.createdAt', 'ASC')
-      .getOne();
+      .getMany();
+
+    if (accounts.length > 1) {
+      throw new BadRequestException(
+        `${accounts.length} accounts differ only in the case of ${email}. ` +
+          'Name the workspace to credit with workspaceId instead.',
+      );
+    }
+    return accounts[0] ?? null;
   }
 
   /** The leading half of the row's description — what kind of movement this was. */

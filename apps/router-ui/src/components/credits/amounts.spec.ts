@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   descriptionTextOf,
+  OPERATOR_GRANT_REFERENCE,
   PRESET_TOP_UP_MICROS,
   parseTopUpAmount,
   receiptUrlOf,
@@ -95,31 +96,49 @@ describe('toAutoTopUpInput', () => {
 
 describe('receiptUrlOf', () => {
   it('finds the provider link in the note', () => {
-    expect(receiptUrlOf('Credit purchase of $25.00 https://pay.stripe.com/receipts/abc')).toBe(
+    expect(receiptUrlOf('Credit purchase of $25.00 https://pay.stripe.com/receipts/abc', 'pi_123')).toBe(
       'https://pay.stripe.com/receipts/abc',
     );
   });
 
   it('has no link for a note that carries none', () => {
-    expect(receiptUrlOf('Automatic top-up of $25.00')).toBeNull();
-    expect(receiptUrlOf(null)).toBeNull();
+    expect(receiptUrlOf('Automatic top-up of $25.00', 'pi_123')).toBeNull();
+    expect(receiptUrlOf(null, 'pi_123')).toBeNull();
   });
 
   it('refuses a scheme other than https, which a description is free to name', () => {
-    expect(receiptUrlOf('javascript:alert(1)')).toBeNull();
-    expect(receiptUrlOf('See http://pay.example.com/receipt')).toBeNull();
+    expect(receiptUrlOf('javascript:alert(1)', 'pi_123')).toBeNull();
+    expect(receiptUrlOf('See http://pay.example.com/receipt', 'pi_123')).toBeNull();
+  });
+
+  it('never reads an operator’s note as a receipt (SUP-406)', () => {
+    // The ordinary note for a goodwill credit. As a receipt it would put a
+    // status page under the Receipt heading of someone's billing screen.
+    const note = 'Credit granted by an operator · goodwill after the 14 Oct outage, see https://status.example.com/42';
+
+    expect(receiptUrlOf(note, OPERATOR_GRANT_REFERENCE)).toBeNull();
+    // The same text on a row a provider wrote is still a receipt.
+    expect(receiptUrlOf(note, 'pi_123')).toBe('https://status.example.com/42');
   });
 });
 
 describe('descriptionTextOf', () => {
   it('drops the link so the note does not repeat it', () => {
-    expect(descriptionTextOf('Credit purchase of $25.00 https://pay.stripe.com/receipts/abc')).toBe(
+    expect(descriptionTextOf('Credit purchase of $25.00 https://pay.stripe.com/receipts/abc', 'pi_123')).toBe(
       'Credit purchase of $25.00',
     );
   });
 
   it('leaves a note without a link alone', () => {
-    expect(descriptionTextOf('Automatic top-up of $25.00')).toBe('Automatic top-up of $25.00');
-    expect(descriptionTextOf(null)).toBe('');
+    expect(descriptionTextOf('Automatic top-up of $25.00', 'pi_123')).toBe('Automatic top-up of $25.00');
+    expect(descriptionTextOf(null, 'pi_123')).toBe('');
+  });
+
+  it('shows an operator’s note exactly as they wrote it, link and all (SUP-406)', () => {
+    const note = 'Credit granted by an operator · goodwill after the 14 Oct outage, see https://status.example.com/42';
+
+    // Nothing was lifted out of it, so nothing should be stripped from it: the
+    // alternative is a truncated sentence ending in "see".
+    expect(descriptionTextOf(note, OPERATOR_GRANT_REFERENCE)).toBe(note);
   });
 });

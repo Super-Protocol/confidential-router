@@ -139,11 +139,12 @@ type CreditGrant {
   kind: AdminCreditGrantKind!
   amountMicros: Micros!                 # signed, as written
   balanceMicros: Micros!                # the balance after the entry
-  note: String
+  note: String!                         # the reason recorded — the first call's, on a replay
+  replayed: Boolean!                    # this requestId was already recorded; nothing was written
   createdAt: DateTime!
 }
 # Mutation.grantCredit(input: { accountEmail | workspaceId (exactly one), amountMicros (signed),
-#   kind = GRANT, note? }): CreditGrant!              # auth.adminEmails only
+#   kind = GRANT, note!, requestId! }): CreditGrant!   # auth.adminEmails only
 #
 # The only way credit reaches an account that already exists: before it, a balance
 # could be raised by a checkout the user paid for or by a code redeemed *at
@@ -160,9 +161,26 @@ type CreditGrant {
 #    (off by default) and a note; and `adjustment` may not overdraw, so no call
 #    can push a balance below zero.
 #
-# Not idempotent on purpose: unlike a redelivered webhook there is no outside
-# event two calls could be two reports of, so the key is fresh per call and an
-# operator asking twice means twice.
+# `note` is required in both directions: `grantedByUserId` says who and
+# `reference` says it was by hand, so `description` is the only field left that
+# says *why*, and an operator entry is the one ledger row with no outside event
+# to explain it.
+#
+# Idempotency is the caller's to name. `requestId` is a UUID the console mints
+# when the dialog opens and holds across retries, and the ledger key is
+# `operator:<operatorId>:<requestId>` — operator-scoped, so two callers cannot
+# collide on the same value. The same submission arriving twice replays the
+# first row and answers `replayed: true`; a second *deliberate* grant opens the
+# dialog again and sends a new id, so two decisions still make two entries. The
+# result is read off the stored row, so a retry carrying an edited amount is
+# shown what actually stands, and a replay names the workspace that row credited
+# rather than the one the retry pointed at.
+#
+# `grantedByUserId` is carried by the deployment export and remapped on import
+# the way `issuedByUserId` is, so a redeploy does not turn every operator row
+# into "nobody granted this". The note reaches the account holder verbatim: the
+# Credits screen applies the `description`-carries-the-receipt-link convention
+# only to rows a provider wrote, so an incident URL in a note is not a receipt.
 
 # ---------- invitations ----------
 
