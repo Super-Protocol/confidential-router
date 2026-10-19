@@ -521,6 +521,12 @@ ever logging a code. The file holds live codes: handle it like the mailing itsel
   redeemed on the new deployment — and who redeemed it is kept on the code,
   matched to an account by email whenever that address exists here. No credit is
   granted for a carried redemption, and nobody's balance moves.
+- The **Statistics** tab counts a carried redemption as a redemption (SUP-396):
+  `redeemed`, `redemptionRate` and `activated` include it, and a campaign row names
+  the imported share — `3 (1 imported)` — so the two tabs cannot disagree about
+  whether a code was used. `activated` picks up a carried redeemer once their
+  address has an account here that sent a request. `grantedMicros` stays this
+  deployment's ledger only, because the credit was paid on the other one.
 - A code already present is skipped and reported, never overwritten.
 - `url` is rebuilt from this deployment's `invites.landingBaseUrl` on every
   export; the import does not read it. Who issued a code does not travel — the

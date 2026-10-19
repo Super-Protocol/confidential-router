@@ -36,7 +36,8 @@ function day(date: string, values: Partial<Record<string, number>> = {}) {
   };
 }
 
-function statisticsMock(days = 30): MockLink.MockedResponse {
+/** `carried` is how many of the three redemptions a CSV import brought over. */
+function statisticsMock(days = 30, carried = 0): MockLink.MockedResponse {
   return {
     request: { query: INVITE_STATISTICS_QUERY, variables: { days } },
     result: {
@@ -47,6 +48,7 @@ function statisticsMock(days = 30): MockLink.MockedResponse {
             __typename: 'InviteTotals',
             issued: 51,
             redeemed: 3,
+            carried,
             withdrawn: 1,
             redemptionRate: 3 / 51,
             grantedMicros: '300000000',
@@ -62,6 +64,7 @@ function statisticsMock(days = 30): MockLink.MockedResponse {
               campaign: 'launch',
               issued: 51,
               redeemed: 3,
+              carried,
               redemptionRate: 3 / 51,
               activated: 2,
               grantedMicros: '300000000',
@@ -106,9 +109,17 @@ function codesMock(nodes: unknown[]): MockLink.MockedResponse {
   };
 }
 
-function renderScreen({ admin = true, mocks = [] }: { admin?: boolean; mocks?: MockLink.MockedResponse[] } = {}) {
+function renderScreen({
+  admin = true,
+  mocks = [],
+  carried = 0,
+}: {
+  admin?: boolean;
+  mocks?: MockLink.MockedResponse[];
+  carried?: number;
+} = {}) {
   return renderWithSession(<InvitationsScreen />, {
-    mocks: [sessionMock(), isAdminMock(admin), statisticsMock(), ...mocks],
+    mocks: [sessionMock(), isAdminMock(admin), statisticsMock(30, carried), ...mocks],
   });
 }
 
@@ -134,6 +145,24 @@ describe('InvitationsScreen', () => {
     expect(screen.getAllByText('$300')).toHaveLength(2);
     const campaigns = screen.getByRole('table', { name: 'Campaigns' });
     expect(within(campaigns).getByRole('row', { name: /launch/ })).toHaveTextContent('5.8%');
+    // Nothing imported: no parenthetical to explain, and the plain hint.
+    expect(within(campaigns).getByRole('row', { name: /launch/ })).not.toHaveTextContent('imported');
+    expect(screen.getByText('Accounts created with a code')).toBeInTheDocument();
+  });
+
+  /**
+   * SUP-396: before the fix the campaign row read `Redeemed 0 · Rate 0%` for a
+   * campaign whose redemptions had all arrived with a codes CSV import, while the
+   * Codes tab showed the very same codes as used.
+   */
+  it('counts redemptions carried over by an import, and says how many were', async () => {
+    renderScreen({ carried: 2 });
+
+    const campaigns = await screen.findByRole('table', { name: 'Campaigns' });
+    const row = within(campaigns).getByRole('row', { name: /launch/ });
+    expect(row).toHaveTextContent('5.8%');
+    expect(row).toHaveTextContent(/3\s*\(2 imported\)/);
+    expect(screen.getByText('Includes 2 imported')).toBeInTheDocument();
   });
 
   it('masks codes until asked, and copies or reveals one row at a time', async () => {

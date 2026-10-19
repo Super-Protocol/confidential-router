@@ -170,8 +170,11 @@ export class InviteTotalsModel {
   @Field(() => Int, { description: 'Codes ever issued.' })
   issued!: number;
 
-  @Field(() => Int, { description: 'Redemptions — one per invited account.' })
+  @Field(() => Int, { description: 'Redemptions — one per invited account, import-carried ones included.' })
   redeemed!: number;
+
+  @Field(() => Int, { description: 'How many of `redeemed` a codes CSV import carried over from another deployment.' })
+  carried!: number;
 
   @Field(() => Int, { description: 'Codes an operator withdrew.' })
   withdrawn!: number;
@@ -179,7 +182,9 @@ export class InviteTotalsModel {
   @Field(() => Float, { description: '`redeemed / issued`; 0 when nothing was issued.' })
   redemptionRate!: number;
 
-  @Field(() => String, { description: 'Micro-USD granted through invitations.' })
+  @Field(() => String, {
+    description: 'Micro-USD granted through invitations. This deployment’s ledger only.',
+  })
   grantedMicros!: string;
 
   @Field(() => Int, { description: 'Accounts on the deployment, however they arrived.' })

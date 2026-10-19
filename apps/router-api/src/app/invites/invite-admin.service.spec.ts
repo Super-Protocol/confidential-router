@@ -245,6 +245,7 @@ describe('the deployment-wide numbers', () => {
     expect(await stats.totals()).toEqual({
       issued: 4,
       redeemed: 2,
+      carried: 0,
       withdrawn: 2,
       redemptionRate: 0.5,
       grantedMicros: 50_000_000,
@@ -256,6 +257,7 @@ describe('the deployment-wide numbers', () => {
     expect(await stats.totals()).toEqual({
       issued: 0,
       redeemed: 0,
+      carried: 0,
       withdrawn: 0,
       redemptionRate: 0,
       grantedMicros: 0,
