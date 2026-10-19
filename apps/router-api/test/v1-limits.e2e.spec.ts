@@ -2,6 +2,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
+import { IncompleteGenerationSweeper, NO_RESPONSE_CODE } from '../src/app/metering/index.js';
 import { createHarness, type Harness } from './app-harness.js';
 import { bearer, createKey, routerConfigFor, seedWorkspace } from './gateway-fixture.js';
 import { MockLiteLlm } from './mock-litellm.js';
@@ -293,6 +294,35 @@ describe('backend failures', () => {
     expect(response.body.error.message).not.toContain('unreachable');
     // Not retried: the socket was accepted, so the generation may be running.
     expect(upstream.requests).toHaveLength(1);
+  });
+
+  /**
+   * The failure SUP-423 reported: a stream that burned sixty seconds and was
+   * answered 502 by something in front of this process, leaving the account
+   * that paid for it nothing in Logs. The row is now opened at admission, and
+   * this is the pass that gives it an `errorCode` when the router never came
+   * back to close it — the same treatment `backend_unavailable` gets, two rows
+   * above.
+   */
+  it('closes a generation the router never finished, with an errorCode the user can read', async () => {
+    const admitted = await post(secret, chat('mock/chat:tdx')).expect(200);
+    const id = admitted.body.id as string;
+    const generations = harness.app.get(DataSource).getRepository(Generation);
+    // Back to the state a process that died mid-request would have left: the
+    // admission row, never closed, and old enough for the sweep to act on.
+    await generations.update(
+      { id },
+      { status: 'pending', errorCode: null, costMicros: 0, promptTokens: 0, completionTokens: 0 },
+    );
+    await generations.update({ id }, { createdAt: new Date(Date.now() - 60 * 60 * 1000) });
+
+    await harness.app.get(IncompleteGenerationSweeper).sweepOnce();
+
+    expect(await generations.findOneByOrFail({ id })).toMatchObject({
+      status: 'error',
+      errorCode: NO_RESPONSE_CODE,
+      costMicros: 0,
+    });
   });
 
   it('does not charge a refused request', async () => {

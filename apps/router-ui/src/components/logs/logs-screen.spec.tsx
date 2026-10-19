@@ -96,6 +96,33 @@ describe('LogsScreen', () => {
     expect(screen.getByText(/Prompt content is never stored/)).toBeInTheDocument();
   });
 
+  /**
+   * SUP-423: both halves of a request that produced no tokens. A row the gateway
+   * has not closed yet reads as in flight rather than as a result, and one the
+   * router never came back to close carries `no_response` — the same treatment
+   * `backend_unavailable` gets, where before there was no row to read at all.
+   */
+  it('shows a generation still in flight as in flight, and one nobody closed by its errorCode', async () => {
+    const nothing = { promptTokens: 0, completionTokens: 0, costMicros: '0', tokensPerSecond: null };
+    renderWithSession(<LogsScreen />, {
+      mocks: [
+        sessionMock(),
+        optionsMock,
+        logMock(
+          unfiltered,
+          connection([
+            generation('gen-open', { status: 'PENDING', timeToFirstTokenMs: null, ...nothing }),
+            generation('gen-lost', { status: 'ERROR', errorCode: 'no_response', ...nothing }),
+          ]),
+        ),
+      ],
+    });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('In flight')).toBeInTheDocument();
+    expect(within(table).getByText('no_response')).toBeInTheDocument();
+  });
+
   it('shows no evidence column — a per-request verdict is not a fact the router has', async () => {
     renderWithSession(<LogsScreen />, {
       mocks: [sessionMock(), optionsMock, logMock(unfiltered, connection([generation('gen-1')]))],

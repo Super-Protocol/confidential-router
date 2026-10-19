@@ -114,6 +114,13 @@ externalEndpoints:
   connectTimeout: 5s                            # loopback: a refusal means the listener is not up yet
   readTimeout: 120s                             # patience for an upstream in another cloud
 
+# A generations row is opened when a request is admitted and closed when it ends.
+# incompleteAfter is how long a row may stay `pending` before the sweeper calls it
+# `no_response` — the case where the second write never happened because the router
+# did not survive the request. Longer than the longest generation served here.
+metering:
+  incompleteAfter: 15m
+
 rateLimits:
   requestsPerMinute: 600
   tokensPerMinute: 2000000

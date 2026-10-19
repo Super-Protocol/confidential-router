@@ -38,9 +38,9 @@ export class GenerationCsvQueryDto {
   @IsString({ each: true })
   apiKeyIds?: string[];
 
-  @ApiPropertyOptional({ enum: ['ok', 'error', 'aborted'], isArray: true })
+  @ApiPropertyOptional({ enum: ['pending', 'ok', 'error', 'aborted'], isArray: true })
   @IsOptional()
   @Transform(toList)
-  @IsIn(['ok', 'error', 'aborted'], { each: true })
+  @IsIn(['pending', 'ok', 'error', 'aborted'], { each: true })
   status?: GenerationStatus[];
 }
