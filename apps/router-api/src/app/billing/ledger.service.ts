@@ -18,6 +18,11 @@ export interface LedgerEntryInput {
   idempotencyKey: string;
   reference?: string | null;
   description?: string | null;
+  /**
+   * The operator who wrote this entry by hand, if one did (SUP-406). Left unset
+   * by everything a user, a provider or a worker triggers.
+   */
+  grantedByUserId?: string | null;
 }
 
 export interface LedgerEntry {
@@ -311,6 +316,7 @@ export class LedgerService {
       amountMicros: input.amountMicros,
       reference: input.reference ?? null,
       description: input.description ?? null,
+      grantedByUserId: input.grantedByUserId ?? null,
       idempotencyKey: input.idempotencyKey,
       createdAt: new Date(),
     };

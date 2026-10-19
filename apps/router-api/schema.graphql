@@ -49,6 +49,14 @@ input AddTrustedMeasurementInput {
   note: String
 }
 
+"""
+How an operator credit movement is recorded in the ledger. GRANT is credit nobody paid for; ADJUSTMENT is a correction and the only kind that may remove credit.
+"""
+enum AdminCreditGrantKind {
+  ADJUSTMENT
+  GRANT
+}
+
 """One invitation code, as an operator sees it."""
 type AdminInviteCode {
   campaign: String!
@@ -88,6 +96,10 @@ type AdminInviteCodePage {
 
 """One account, and how it came to exist."""
 type AdminSignUp {
+  """
+  That workspace’s balance in micro-USD, so the operator can see who has run out. Null with no workspace.
+  """
+  balanceMicros: String
   campaign: String
   createdAt: DateTime!
   email: String!
@@ -100,6 +112,11 @@ type AdminSignUp {
   origin: SignUpOrigin!
   redeemedAt: DateTime
   userId: ID!
+
+  """
+  The workspace this account owns — what `grantCredit` credits. Null when it owns none.
+  """
+  workspaceId: ID
 }
 
 type AdminSignUpPage {
@@ -348,6 +365,25 @@ type CreditBalance {
 
   """False once `/v1` starts answering 402 insufficient_credits."""
   spendable: Boolean!
+  workspaceId: ID!
+}
+
+"""The ledger entry an operator grant wrote, and the balance it produced."""
+type CreditGrant {
+  """Set when the workspace was named by its account holder."""
+  accountEmail: String
+
+  """Signed micro-USD, as written."""
+  amountMicros: String!
+
+  """The workspace balance after the entry, in micro-USD."""
+  balanceMicros: String!
+  createdAt: DateTime!
+
+  """The `credit_transactions` row."""
+  creditTransactionId: ID!
+  kind: AdminCreditGrantKind!
+  note: String
   workspaceId: ID!
 }
 
@@ -994,6 +1030,27 @@ enum GenerationStatus {
   OK
 }
 
+input GrantCreditInput {
+  """The account holder to credit. Exactly one of this and `workspaceId`."""
+  accountEmail: String
+
+  """
+  Signed micro-USD as an integer string, bounded by `billing.maxCreditGrantMicros`. A negative amount removes credit and needs kind ADJUSTMENT and `billing.allowCreditDebits`.
+  """
+  amountMicros: String!
+  kind: AdminCreditGrantKind! = GRANT
+
+  """
+  Why, kept on the ledger row and shown to the account holder. Required when removing credit.
+  """
+  note: String
+
+  """
+  The workspace to credit, when the caller already has its id. Exactly one of this and `accountEmail`.
+  """
+  workspaceId: ID
+}
+
 """How one invitation campaign converted. Operators only."""
 type InviteCampaignStats {
   """
@@ -1340,6 +1397,11 @@ type Mutation {
 
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
+
+  """
+  Puts credit on an existing account, or corrects a balance, as one audited ledger entry naming the operator. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.
+  """
+  grantCredit(input: GrantCreditInput!): CreditGrant!
 
   """Issues invitation codes. Restricted to auth.adminEmails."""
   issueInviteCodes(input: IssueInviteCodesInput!): IssuedInviteCodes!

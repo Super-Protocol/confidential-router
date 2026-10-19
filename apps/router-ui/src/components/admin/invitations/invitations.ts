@@ -1,4 +1,5 @@
 import type { InviteCodeStatus, SignUpOrigin } from '../../../generated/graphql';
+import { formatUsdShort, usdToMicros } from '../../../lib/format';
 
 /**
  * The pure parts of the Invitations section (SUP-268): masking, the CSV, the
@@ -14,6 +15,81 @@ export const MAX_ISSUE_COUNT = 1000;
 
 /** Credit per code, in USD — the API's fat-finger ceiling (`MAX_ISSUE_GRANT_MICROS`). */
 export const MAX_ISSUE_GRANT_USD = 10_000;
+
+/**
+ * One operator credit grant, in USD — `billing.maxCreditGrantMicros`'s default
+ * (SUP-406).
+ *
+ * The *default*, not the deployment's value, which the console cannot see. So
+ * this says the form's rule before the round trip and the API says the
+ * deployment's after it; a deployment that lowered the ceiling answers with its
+ * own number, which the dialog shows.
+ */
+export const MAX_GRANT_CREDIT_USD = 10_000;
+
+/** What an operator is doing to a balance. The API's `kind` plus the sign. */
+export type CreditMovement = 'GRANT' | 'ADJUSTMENT_ADD' | 'ADJUSTMENT_REMOVE';
+
+export const MOVEMENT_LABEL: Record<CreditMovement, string> = {
+  GRANT: 'Grant credit',
+  ADJUSTMENT_ADD: 'Correction — add credit',
+  ADJUSTMENT_REMOVE: 'Correction — remove credit',
+};
+
+export const MOVEMENT_HELP: Record<CreditMovement, string> = {
+  GRANT: 'New credit nobody paid for: a top-up for a tester, goodwill after an incident.',
+  ADJUSTMENT_ADD: 'Puts right a balance that is short — recorded as a correction, not as a new grant.',
+  ADJUSTMENT_REMOVE:
+    'Takes credit back. Needs billing.allowCreditDebits on the deployment, and can never take a balance below zero.',
+};
+
+/** `GRANT` is positive; the two corrections carry the sign. */
+export function signOf(movement: CreditMovement): 1 | -1 {
+  return movement === 'ADJUSTMENT_REMOVE' ? -1 : 1;
+}
+
+export function kindOf(movement: CreditMovement): 'GRANT' | 'ADJUSTMENT' {
+  return movement === 'GRANT' ? 'GRANT' : 'ADJUSTMENT';
+}
+
+export interface GrantCreditForm {
+  /** USD, unsigned — the sign comes from the movement. */
+  amount: string;
+  movement: CreditMovement;
+  note: string;
+}
+
+export type GrantCreditErrors = Partial<Record<keyof GrantCreditForm, string>>;
+
+/**
+ * The grant form's rules — the API's, said before the round trip rather than
+ * after it (`CreditGrantService.assertAmount`).
+ *
+ * `balanceMicros` is what the account holds, so an operator sees "they only have
+ * $40" before the server says it. Null means the account owns no workspace,
+ * which the dialog refuses to open on at all.
+ */
+export function validateGrantForm(form: GrantCreditForm, balanceMicros: string | null): GrantCreditErrors {
+  const errors: GrantCreditErrors = {};
+  const micros = usdToMicros(form.amount);
+
+  if (micros === null || BigInt(micros) <= 0n) {
+    errors.amount = 'A dollar amount above $0.';
+  } else if (BigInt(micros) > BigInt(MAX_GRANT_CREDIT_USD) * 1_000_000n) {
+    errors.amount = `At most $${MAX_GRANT_CREDIT_USD.toLocaleString('en-US')} in one go.`;
+  } else if (
+    form.movement === 'ADJUSTMENT_REMOVE' &&
+    balanceMicros !== null &&
+    BigInt(micros) > BigInt(balanceMicros)
+  ) {
+    errors.amount = `More than the ${formatUsdShort(balanceMicros)} on this account; a balance cannot go below zero.`;
+  }
+
+  if (form.movement === 'ADJUSTMENT_REMOVE' && form.note.trim() === '') {
+    errors.note = 'Say why the credit is being taken away.';
+  }
+  return errors;
+}
 
 /** The API's campaign-tag rule (`INVITE_CAMPAIGN_PATTERN`). */
 export const CAMPAIGN_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
