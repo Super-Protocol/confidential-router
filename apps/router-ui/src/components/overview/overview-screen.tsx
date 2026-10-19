@@ -17,6 +17,7 @@ import Link from 'next/link';
 import * as React from 'react';
 import { graphql } from '../../generated';
 import { formatBucketLabel, lastUtcDays } from '../../lib/date-range';
+import { readCoverage } from '../../lib/evidence-coverage';
 import { formatCompact, formatPercent, formatUsd, microsToUsd } from '../../lib/format';
 import { DigestValue } from '../evidence/digest-value';
 import { EvidenceBadge } from '../evidence/evidence-badge';
@@ -34,6 +35,7 @@ export const OVERVIEW_QUERY = graphql(`
       promptTokens
       completionTokens
       coveredRequests
+      coverableRequests
       evidenceCoverage
     }
     activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: DAY) {
@@ -105,6 +107,7 @@ export function OverviewScreen() {
 
   const { activitySummary: summary, activitySeries: series, endpoints } = data;
   const tokens = summary.promptTokens + summary.completionTokens;
+  const coverage = readCoverage(summary);
 
   const bars = series.map((point) => ({ label: formatBucketLabel(point.bucket), point }));
 
@@ -146,18 +149,16 @@ export function OverviewScreen() {
             Coverage is a fact about publication, never a verification rate
             (ADR-002): of the generations served this week, how many were served
             while the platform had a fresh bundle up for the endpoint serving
-            them.
+            them. Which generations those are, and what to show when there are
+            none of them, is `readCoverage` — the tile renders its reading and
+            invents no sentence of its own.
           */}
           <StatTile
             label="Evidence coverage"
-            value={formatPercent(summary.evidenceCoverage)}
-            tone={summary.requests > 0 && summary.evidenceCoverage === 1 ? 'success' : 'default'}
-            meter={summary.evidenceCoverage}
-            footnote={
-              summary.requests === 0
-                ? 'No generations were served in this period.'
-                : `${formatCompact(summary.coveredRequests)} of ${formatCompact(summary.requests)} generations were served while the endpoint had a fresh bundle published.`
-            }
+            value={coverage.ratio === null ? '—' : formatPercent(coverage.ratio)}
+            tone={coverage.ratio === 1 ? 'success' : 'default'}
+            meter={coverage.ratio ?? undefined}
+            footnote={coverage.detail}
           />
         </div>
       </section>

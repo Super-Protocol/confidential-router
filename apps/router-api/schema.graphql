@@ -4,13 +4,18 @@ type ActivityPoint {
   bucket: DateTime!
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
   requests: Int!
 
@@ -25,13 +30,18 @@ type ActivitySummary {
   avgTokensPerSecond: Float
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
   requests: Int!
 
@@ -1199,13 +1209,18 @@ type KeyUsage {
   apiKeyId: ID
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   name: String!
   prefix: String
   promptTokens: Int!
@@ -1283,13 +1298,18 @@ enum ModelOrigin {
 type ModelUsage {
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   modelId: ID!
   name: String!
   promptTokens: Int!

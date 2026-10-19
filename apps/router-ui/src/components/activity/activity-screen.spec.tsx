@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { renderWithSession, sessionMock } from '../../test-utils';
 import { ACTIVITY_QUERY, ACTIVITY_USAGE_BY_MODEL_QUERY, ActivityScreen } from './activity-screen';
+import type { ModelUsageRow } from './usage-by-model-card';
 
 // `SessionProvider` reaches for the app router to bounce an expired session.
 vi.mock('next/navigation', () => ({
@@ -27,6 +28,7 @@ function summary(overrides: Record<string, unknown> = {}) {
     promptTokens: 640_000,
     completionTokens: 160_000,
     coveredRequests: 800,
+    coverableRequests: 842,
     evidenceCoverage: 0.95,
     avgTimeToFirstTokenMs: 312,
     avgTokensPerSecond: 48.23,
@@ -66,7 +68,7 @@ const TOP_KEYS = [
   },
 ];
 
-const USAGE_BY_MODEL = [
+const USAGE_BY_MODEL: ModelUsageRow[] = [
   {
     modelId: 'meta/llama-3.3-70b-instruct:tdx',
     name: 'Llama 3.3 70B Instruct',
@@ -74,6 +76,8 @@ const USAGE_BY_MODEL = [
     promptTokens: 500_000,
     completionTokens: 98_000,
     spendMicros: '1000000',
+    coveredRequests: 700,
+    coverableRequests: 700,
     evidenceCoverage: 1,
   },
   {
@@ -83,6 +87,8 @@ const USAGE_BY_MODEL = [
     promptTokens: 140_000,
     completionTokens: 42_000,
     spendMicros: '234500',
+    coveredRequests: 71,
+    coverableRequests: 142,
     evidenceCoverage: 0.5,
   },
 ];
@@ -104,7 +110,7 @@ function activityMock(hours: number, data: Record<string, unknown>): MockLink.Mo
   };
 }
 
-function usageMock(models = USAGE_BY_MODEL): MockLink.MockedResponse {
+function usageMock(models: ModelUsageRow[] = USAGE_BY_MODEL): MockLink.MockedResponse {
   return {
     request: { query: ACTIVITY_USAGE_BY_MODEL_QUERY, variables: () => true },
     result: { data: { usageByModel: models } },
@@ -131,6 +137,56 @@ describe('ActivityScreen', () => {
     expect(screen.getByText('312 ms')).toBeInTheDocument();
     expect(screen.getByText('95%')).toBeInTheDocument();
     expect(screen.getByText('800 of 842 served with published evidence')).toBeInTheDocument();
+  });
+
+  it('says coverage is not applicable, not 0%, when every generation went to an external endpoint', async () => {
+    // SUP-421: 34 generations, all external and all carrying the digest this
+    // router's own verdict observed. The tile said "0%" over `requests`.
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, {
+          activitySummary: summary({ requests: 34, coveredRequests: 0, coverableRequests: 0, evidenceCoverage: null }),
+          activitySeries: [],
+        }),
+        usageMock(),
+      ],
+    });
+
+    await screen.findByText('$1.23');
+
+    const tile = screen.getByText('Not applicable · all 34 served by external endpoints').closest('[data-slot="card"]');
+    expect(tile).toHaveTextContent('—');
+    expect(tile).not.toHaveTextContent('%');
+    // And nothing to draw: a sparkline of zeroes is the same wrong claim.
+    expect(screen.queryByRole('img', { name: 'Evidence coverage trend' })).not.toBeInTheDocument();
+  });
+
+  it('shows an em dash for an external model’s coverage column, with the reason on hover', async () => {
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, { activitySummary: summary() }),
+        usageMock([
+          {
+            modelId: 'qwen/qwen3-coder-next',
+            name: 'Qwen3 Coder Next',
+            requests: 34,
+            promptTokens: 1_000,
+            completionTokens: 500,
+            spendMicros: '100738',
+            coveredRequests: 0,
+            coverableRequests: 0,
+            evidenceCoverage: null,
+          },
+        ]),
+      ],
+    });
+
+    // The model's name is also a row header of the chart's accessible table, so
+    // the cell is addressed by the explanation it carries.
+    expect(await screen.findByTitle(/coverage does not apply here/)).toHaveTextContent('—');
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 
   it('re-queries and repaints the tiles when the range changes', async () => {

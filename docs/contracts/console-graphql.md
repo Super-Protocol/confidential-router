@@ -106,8 +106,8 @@ input GenerationFilter { from: DateTime, to: DateTime, modelIds: [ID!], apiKeyId
 extend type Query { generations(workspaceId: ID!, filter: GenerationFilter, first: Int = 50, after: String): GenerationConnection! }
 
 # ---------- activity aggregates ----------
-type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, evidenceCoverage: Float!, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float }
-type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, evidenceCoverage: Float! }
+type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, coverableRequests: Int!, evidenceCoverage: Float, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float }   # evidenceCoverage is null when coverableRequests is 0 — no ratio, not 0%
+type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, coverableRequests: Int!, evidenceCoverage: Float }
 type KeyUsage { apiKey: ApiKey!, spend: Micros!, requests: Int! }
 type ModelUsage { model: Model!, spend: Micros!, requests: Int!, tokens: Int! }
 enum Bucket { HOUR DAY }
@@ -300,8 +300,15 @@ and small:
   id and the payload travel together — that pair is what the membership check reads.
 - **`generations` gains `sort:`**, and `usageByModel` an optional `limit:` (which is the "top models by
   spend" list).
-- **`activitySummary`/`activitySeries` also return `coveredRequests`**, so a client can render the ratio
-  and its numerator without a second query.
+- **`activitySummary`/`activitySeries` also return `coveredRequests` and `coverableRequests`**, so a
+  client can render the ratio with both of its own halves and without a second query — and
+  `evidenceCoverage` is **nullable**. `coverableRequests` is the denominator: generations this
+  deployment's own endpoints served. An external-endpoint generation counts in `requests`, tokens and
+  spend, and in neither half of the ratio (ADR-008 §4) — it has no bundle of ours to have been covered
+  by, and the router verified that upstream itself, which is reported in the other vocabulary. So a
+  window with no coverable request has **no ratio** (`null`), never `0`: pairing `coveredRequests` with
+  `requests` is what made the console tell a production account "0 of 34 generations were served with
+  published evidence" about 34 generations each carrying a verified endpoint's digest (SUP-421).
 - **Downloads are REST, not GraphQL**, because a download is a browser navigation with a filename and a
   content type:
   - `GET /activity/generations.csv?workspaceId=&from=&to=&modelIds=&apiKeyIds=&status=` — session
