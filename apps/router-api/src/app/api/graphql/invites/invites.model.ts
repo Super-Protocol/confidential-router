@@ -54,18 +54,24 @@ export class InviteCampaignStatsModel {
   @Field(() => Int, { description: 'Codes generated.' })
   issued!: number;
 
-  @Field(() => Int, { description: 'Accounts that redeemed one.' })
+  @Field(() => Int, { description: 'People who used one, import-carried redemptions included.' })
   redeemed!: number;
+
+  @Field(() => Int, { description: 'How many of `redeemed` a codes CSV import carried over from another deployment.' })
+  carried!: number;
 
   @Field(() => Float, { description: '`redeemed / issued`; 0 when nothing was issued.' })
   redemptionRate!: number;
 
   @Field(() => Int, {
-    description: 'Redeeming accounts that went on to send at least one request — the number worth reading.',
+    description:
+      'Redemptions whose redeemer went on to send at least one request — the number worth reading. One per redemption, so never greater than `redeemed`.',
   })
   activated!: number;
 
-  @Field(() => String, { description: 'Micro-USD handed out so far.' })
+  @Field(() => String, {
+    description: 'Micro-USD handed out so far. This deployment’s ledger only, so carried redemptions add nothing.',
+  })
   grantedMicros!: string;
 }
 

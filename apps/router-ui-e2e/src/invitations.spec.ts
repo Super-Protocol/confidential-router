@@ -52,6 +52,7 @@ const INVITATION_OPERATIONS = {
         __typename: 'InviteTotals',
         issued: 51,
         redeemed: 3,
+        carried: 1,
         withdrawn: 1,
         redemptionRate: 3 / 51,
         grantedMicros: '300000000',
@@ -73,6 +74,9 @@ const INVITATION_OPERATIONS = {
           campaign: 'launch-2026-10',
           issued: 50,
           redeemed: 3,
+          // One of the three arrived with a codes CSV import (SUP-396), so the
+          // screenshot shows the imported share the way an operator sees it.
+          carried: 1,
           redemptionRate: 0.06,
           activated: 2,
           grantedMicros: '300000000',
@@ -82,6 +86,7 @@ const INVITATION_OPERATIONS = {
           campaign: 'vip',
           issued: 1,
           redeemed: 0,
+          carried: 0,
           redemptionRate: 0,
           activated: 0,
           grantedMicros: '0',
@@ -192,6 +197,24 @@ test.describe('the Invitations section', () => {
     await expect(page.getByTestId('invitations-restricted')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Invitations' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Issue codes' })).toHaveCount(0);
+  });
+
+  /**
+   * SUP-396. The Statistics tab used to read `Redeemed 0 · Rate 0%` for a campaign
+   * whose redemptions had arrived with a codes CSV import, while the Codes tab
+   * showed the same codes as used — the one screen an owner judges a launch on.
+   */
+  test('reads an imported redemption as redeemed, and names the imported share', async ({
+    page,
+    baseURL,
+  }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+
+    const row = page.getByRole('table', { name: 'Campaigns' }).getByRole('row', { name: /launch-2026-10/ });
+    await expect(row).toContainText('(1 imported)');
+    await expect(row).not.toContainText('0%');
+    await expect(page.getByText('Includes 1 imported')).toBeVisible();
+    await shot(page, testInfo, 'invitations-statistics-imported');
   });
 
   test('masks every code until an operator reveals one', async ({ page, baseURL }) => {
