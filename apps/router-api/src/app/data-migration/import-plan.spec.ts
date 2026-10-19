@@ -298,6 +298,36 @@ describe('planImport', () => {
     });
   });
 
+  it('does not re-record a degraded redemption the deployment still holds live', () => {
+    // What `DataExportService` writes when an account is gone: the redemption
+    // travels as a carried row under the id it has in `invite_redemptions`.
+    const data = exported();
+    const live = data.inviteRedemptions[0] as ExportData['inviteRedemptions'][number];
+    data.inviteRedemptions = [];
+    data.inviteCarriedRedemptions.push({
+      id: live.id,
+      inviteCodeId: live.inviteCodeId,
+      email: null,
+      redeemedAt: AT,
+      importedAt: AT,
+    });
+    data.users = data.users.filter((user) => user.id !== live.userId);
+    data.workspaceMembers = data.workspaceMembers.filter((row) => row.userId !== live.userId);
+
+    // Applied back to a deployment that still has the live row: it is the same
+    // redemption, so nothing is written and the code keeps one redeemer.
+    const plan = planImport(bundleOf(data), { ...EMPTY, redemptions: [{ id: live.id, userId: live.userId }] }, options);
+
+    expect(planIsClean(plan)).toBe(true);
+    expect(plan.writes.inviteCarriedRedemptions.map((row) => row.id)).toEqual(['car-1']);
+    expect(plan.sections.find((section) => section.section === 'inviteCarriedRedemptions')).toMatchObject({
+      inBundle: 2,
+      toCreate: 1,
+      alreadyPresent: 1,
+      conflicts: [],
+    });
+  });
+
   it('notes that imported endpoints arrive switched off and without a key', () => {
     const data = exported();
     data.externalEndpoints.push({

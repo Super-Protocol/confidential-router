@@ -134,7 +134,11 @@ const InviteCarriedRedemptionSchema = z.object({
   email: z.string().min(3).max(320).nullable(),
   /** When it was redeemed on the deployment it happened on. */
   redeemedAt: iso,
-  /** When it first arrived on a deployment that was not that one. */
+  /**
+   * When it first arrived on a deployment that is not the one it happened on.
+   * Equal to `redeemedAt` for a row that never travelled — a redemption the
+   * export degraded because its account was gone (`DataExportService`).
+   */
   importedAt: iso,
 });
 

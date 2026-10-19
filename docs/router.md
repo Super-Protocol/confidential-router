@@ -861,6 +861,14 @@ that can still be redeemed: keep it private, and delete it once the new
 deployment is verified. A bundle with a credential-shaped field in it is refused
 on both sides — the export will not write one and the import will not read one.
 
+**Import into a build at least as new as the one that wrote the file.** A
+version this build does not know is refused outright, but a *section* it does
+not know is dropped in silence — that is what makes a new section additive, and
+it is also how an older build would read a newer file: everything it knows, and
+nothing of what it does not. Across a redeploy that direction never comes up;
+if you have to take an export into an older build, check the section list above
+against that build first.
+
 The import takes the file **only into a fresh deployment**, and always in two
 steps:
 

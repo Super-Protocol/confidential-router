@@ -34,7 +34,10 @@ export interface LocalState {
   ledger: readonly { id: string; idempotencyKey: string }[];
   inviteCodes: readonly { id: string; code: string }[];
   redemptions: readonly { id: string; userId: string }[];
-  /** Redemptions carried from another deployment; they have no account here to collide on. */
+  /**
+   * Redemptions carried from another deployment; they have no account here to
+   * collide on. Judged against `redemptions` as well — see `planImport`.
+   */
   carriedRedemptions: readonly { id: string }[];
   externalEndpoints: readonly { id: string; name: string }[];
   models: readonly { id: string; externalEndpointId: string | null }[];
@@ -381,9 +384,20 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
    * belongs to has already been judged above — a value reissued here is a
    * conflict that refuses the whole import. So a row is either new or a retry
    * of one already written, recognised by its own id.
+   *
+   * That id is matched against the **live** redemptions too, not only the
+   * carried ones. A redemption the export could not carry travels as a carried
+   * row under the id it has in `invite_redemptions` (`DataExportService`), so a
+   * deployment that still holds that row already holds this redemption — in the
+   * other table. Matching only the carried ones would write the same redemption
+   * a second time, and the code would then name two redeemers for one spent
+   * seat.
    */
   const carried = new Section('inviteCarriedRedemptions', data.inviteCarriedRedemptions.length);
-  const localCarriedIds = new Set(local.carriedRedemptions.map((row) => row.id));
+  const localCarriedIds = new Set([
+    ...local.carriedRedemptions.map((row) => row.id),
+    ...local.redemptions.map((row) => row.id),
+  ]);
   const carriedWrites: ExportData['inviteCarriedRedemptions'] = [];
   for (const row of data.inviteCarriedRedemptions) {
     if (localCarriedIds.has(row.id)) {
