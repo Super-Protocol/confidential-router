@@ -200,10 +200,10 @@ export function ActivityScreen() {
               value={coverage?.ratio == null ? '—' : formatRatio(coverage.ratio)}
               hint={coverage?.headline}
               accent="success"
-              // Only the buckets that had a ratio. A bucket whose whole traffic
-              // was external has none, and drawing it at zero would put a dip
-              // in the line for an hour in which nothing went uncovered.
-              series={series.flatMap((point) => (point.evidenceCoverage === null ? [] : [point.evidenceCoverage]))}
+              // Nulls travel as nulls: a bucket whose whole traffic was
+              // external has no ratio, and `Sparkline` breaks the line there
+              // rather than drawing a dip the hour never had.
+              series={series.map((point) => point.evidenceCoverage ?? null)}
             />
           </>
         )}

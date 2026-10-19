@@ -80,6 +80,51 @@ describe('Sparkline', () => {
     expect(container.querySelector('polyline')).toBeNull();
     expect(screen.getByRole('img', { name: 'No data' })).toBeInTheDocument();
   });
+
+  it('breaks the line at a gap and leaves the gap its place on the axis', () => {
+    // SUP-421: dropping the bucket instead would re-time every bucket after it —
+    // four readings over five buckets would be drawn as four over four.
+    const { container } = render(<Sparkline values={[0, 10, null, 0, 10]} label="Trend" width={100} height={20} />);
+    const lines = [...container.querySelectorAll('polyline')];
+
+    expect(lines).toHaveLength(2);
+    expect(
+      lines[0]
+        .getAttribute('points')
+        ?.split(' ')
+        .map((pair) => pair.split(',')[0]),
+    ).toEqual(['0.00', '25.00']);
+    // The third bucket is absent from the path, and the fourth still starts at
+    // its own 75% of the width rather than sliding back to 50%.
+    expect(
+      lines[1]
+        .getAttribute('points')
+        ?.split(' ')
+        .map((pair) => pair.split(',')[0]),
+    ).toEqual(['75.00', '100.00']);
+  });
+
+  it('draws a lone reading between gaps as a dot, which a one-point line would not', () => {
+    const { container } = render(<Sparkline values={[null, 5, null]} label="Trend" width={100} height={20} />);
+
+    expect(container.querySelector('polyline')).toBeNull();
+    expect(container.querySelector('circle')?.getAttribute('cx')).toBe('50');
+  });
+
+  it('renders nothing but its label when every bucket is a gap', () => {
+    const { container } = render(<Sparkline values={[null, null]} label="No data" />);
+
+    expect(container.querySelector('polyline')).toBeNull();
+    expect(container.querySelector('circle')).toBeNull();
+  });
+
+  it('scales over the readings it has, ignoring the gaps', () => {
+    const { container } = render(<Sparkline values={[null, 5, 5, null]} label="Flat" height={20} strokeWidth={2} />);
+    const ys = pointsOf(container).map(([, y]) => y);
+
+    // inset 2 + 0.5 * (20 - 4) = 10, as for a flat series with no gaps at all.
+    expect(new Set(ys)).toEqual(new Set([10]));
+  });
 });
 
 describe('Heatmap', () => {

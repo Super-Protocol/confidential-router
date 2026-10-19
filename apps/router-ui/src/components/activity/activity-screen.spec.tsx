@@ -36,14 +36,14 @@ function summary(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function point(bucket: string, requests: number) {
+function point(bucket: string, requests: number, evidenceCoverage: number | null = 1) {
   return {
     bucket,
     spendMicros: `${requests * 1000}`,
     requests,
     promptTokens: requests * 10,
     completionTokens: requests * 4,
-    evidenceCoverage: 1,
+    evidenceCoverage,
   };
 }
 
@@ -147,7 +147,7 @@ describe('ActivityScreen', () => {
         sessionMock(),
         activityMock(24, {
           activitySummary: summary({ requests: 34, coveredRequests: 0, coverableRequests: 0, evidenceCoverage: null }),
-          activitySeries: [],
+          activitySeries: [point('2026-08-31T10:00:00.000Z', 17, null), point('2026-08-31T11:00:00.000Z', 17, null)],
         }),
         usageMock(),
       ],
@@ -158,8 +158,34 @@ describe('ActivityScreen', () => {
     const tile = screen.getByText('Not applicable · all 34 served by external endpoints').closest('[data-slot="card"]');
     expect(tile).toHaveTextContent('—');
     expect(tile).not.toHaveTextContent('%');
-    // And nothing to draw: a sparkline of zeroes is the same wrong claim.
+    // And nothing to draw: every bucket is a gap, and a sparkline of zeroes
+    // would be the same wrong claim one dimension down.
     expect(screen.queryByRole('img', { name: 'Evidence coverage trend' })).not.toBeInTheDocument();
+  });
+
+  it('breaks the coverage sparkline at an all-external bucket instead of dropping it', async () => {
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, {
+          activitySummary: summary({ requests: 200, coveredRequests: 4, coverableRequests: 5, evidenceCoverage: 0.8 }),
+          activitySeries: [
+            point('2026-08-31T09:00:00.000Z', 100, 1),
+            point('2026-08-31T10:00:00.000Z', 80, null),
+            point('2026-08-31T11:00:00.000Z', 20, 0.5),
+          ],
+        }),
+        usageMock(),
+      ],
+    });
+
+    const trend = await screen.findByRole('img', { name: 'Evidence coverage trend' });
+    const segments = [...trend.querySelectorAll('polyline, circle')];
+
+    // Two readings either side of a gap: two dots, not a line drawn straight
+    // through the hour that had no ratio.
+    expect(segments).toHaveLength(2);
+    expect(segments.map((segment) => segment.getAttribute('cx'))).toEqual(['0', '52']);
   });
 
   it('shows an em dash for an external model’s coverage column, with the reason on hover', async () => {
