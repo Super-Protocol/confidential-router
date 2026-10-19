@@ -2,7 +2,7 @@
 # Takes a deployment export off a running router and keeps it somewhere the
 # router cannot take with it when it dies (SUP-317).
 #
-#   router-export.sh [--local-only] [--quiet]
+#   router-export.sh [--local-only] [--quiet] [--accept-shrink '<reason>']
 #
 # Read by a systemd timer once a day; safe to run by hand at any time. One run
 # is one directory, locally and in object storage:
@@ -17,6 +17,14 @@
 # the response header, the uploaded bytes against the local ones, this run's row
 # counts against the last run's — and any refusal both exits non-zero and says
 # so on the issue named by ALERT_ISSUE_ID.
+#
+# The one refusal a re-run cannot clear is the shrink guard: the baseline it
+# compares against is only rewritten by a successful run, so a true shrink
+# refuses identically forever. `--accept-shrink '<reason>'` is the front door —
+# it takes this smaller reading as the new baseline, says the old → new counts
+# whatever --quiet asked for, and appends the reason to shrink-acceptances.log,
+# which nothing in this script ever truncates. Use it only after finding out
+# where the rows went; blessing a real loss rotates it out of the backups.
 #
 # Configuration: ~/.config/router-export/env, mode 0600.
 #
@@ -51,10 +59,28 @@ here="$(CDPATH='' cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)"
 
 local_only=0
 quiet=0
-for arg in "$@"; do
-  case "$arg" in
+accept_shrink=0
+accept_reason=''
+while [ $# -gt 0 ]; do
+  case "$1" in
     --local-only) local_only=1 ;;
     --quiet) quiet=1 ;;
+    --accept-shrink)
+      accept_reason="${2:-}"
+      # The reason is the whole point of the flag — it is what the acceptance
+      # log has to show a month later — so a missing or blank one is an error
+      # and not an empty field. A reason starting with `--` is a forgotten
+      # argument: `--accept-shrink --local-only` would otherwise swallow
+      # --local-only and upload the shrunk bundle the operator meant to keep on
+      # this host. Only `--`, so a reason may still begin with a single dash —
+      # "-2 rehearsal accounts" is a perfectly good thing to write.
+      if [[ -z "${accept_reason//[[:space:]]/}" || "$accept_reason" == --* ]]; then
+        echo "router-export: --accept-shrink needs a reason that is neither blank nor a flag, e.g. --accept-shrink 'the SUP-359 rehearsal account was withdrawn'" >&2
+        exit 2
+      fi
+      accept_shrink=1
+      shift
+      ;;
     -h | --help)
       # The header block, minus the shebang and the comment markers, so the
       # usage text cannot drift from the file that documents itself.
@@ -62,10 +88,11 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      echo "router-export: unknown argument: $arg" >&2
+      echo "router-export: unknown argument: $1" >&2
       exit 2
       ;;
   esac
+  shift
 done
 
 log() { [ "$quiet" = 1 ] || printf '%s router-export: %s\n' "$(date -u '+%FT%TZ')" "$1" >&2; }
@@ -112,6 +139,10 @@ DAY="${STAMP%T*}"
 RUN_DIR="$EXPORT_DIR/$STAMP"
 LOG_FILE="$EXPORT_DIR/router-export.log"
 STATE_FILE="$EXPORT_DIR/state.json"
+# Append-only, and deliberately not inside state.json: the state file is
+# rewritten wholesale by every successful run, which is exactly how the first
+# hand-made acceptance record was erased by the run that followed it (SUP-432).
+ACCEPT_LOG="$EXPORT_DIR/shrink-acceptances.log"
 
 mkdir -p "$EXPORT_DIR"
 chmod 700 "$EXPORT_DIR"
@@ -141,7 +172,11 @@ die() {
       printf '> %s\n\n' "$reason"
       printf 'Nothing was uploaded for this run, so the newest good copy is whatever the previous run left. '
       printf 'Until this is fixed the production data has one copy again, inside the deployment.\n\n'
-      printf 'Local log: `%s`. Re-run by hand with `router-export.sh` on the agent host.\n' "$LOG_FILE"
+      # Not a bare "re-run": a transport failure clears on the next attempt, but
+      # a refusal about the data itself does not — the shrink guard compares
+      # against a baseline only a successful run rewrites, so re-running it
+      # unchanged refuses identically (SUP-432). The reason above says which.
+      printf 'Local log: `%s`. Re-run by hand with `router-export.sh` on the agent host once the cause above is addressed — a re-run clears a failure to reach the router, but not a refusal about what the export holds.\n' "$LOG_FILE"
     } > "$EXPORT_DIR/.alert.md"
     # From `$EXPORT_DIR`, with a relative path: the CLI refuses a
     # `--content-file` outside its working directory, and a directory with no
@@ -265,8 +300,51 @@ if [ -r "$STATE_FILE" ]; then
   previous_users="${previous%%$'\t'*}"
   previous_codes="${previous##*$'\t'}"
   if [ "$users" -lt "$previous_users" ] || [ "$invite_codes" -lt "$previous_codes" ]; then
-    die "the export shrank: $previous_users → $users account(s), $previous_codes → $invite_codes invitation code(s). The bundle is kept locally at $RUN_DIR but was not uploaded — check whether the deployment lost data or was restored from an older copy, then re-run."
+    shrank="$previous_users → $users account(s), $previous_codes → $invite_codes invitation code(s)"
+    # "then re-run" was the old advice here and it was wrong: $STATE_FILE is
+    # only rewritten after a successful upload, so a refused run leaves the
+    # baseline untouched and the next run refuses identically. The remedy is to
+    # find out where the rows went and then say so with --accept-shrink.
+    # No angle-bracket placeholder in the remedy: `die` pastes this reason into
+    # a Markdown blockquote in the alert comment, and a renderer reads
+    # `<reason>` as a raw HTML tag and drops it, leaving the operator looking at
+    # an empty pair of quotes.
+    [ "$accept_shrink" = 1 ] || die "the export shrank: $shrank. The bundle is kept locally at $RUN_DIR but was not uploaded. Re-running on its own changes nothing — $STATE_FILE still holds the old counts, so the next run compares against the same baseline and refuses the same way. Find out where the rows went first: $LOG_FILE holds every previous run's counts, and the last uploaded bundle holds the rows themselves. If the fall is understood and right, re-run with --accept-shrink 'why the counts fell' to take this reading as the new baseline."
+
+    # Both logs below are one line per entry, so one entry stays one grep hit:
+    # a reason pasted in with a newline or a tab in it would otherwise look
+    # like two, and in the tab-separated run log like a different shape.
+    reason_1line="$(printf '%s' "$accept_reason" | tr '\n\t' '  ')"
+
+    # Said through `say`, not `log`: an overruled data-loss alarm is the last
+    # thing a --quiet timer run should be able to swallow.
+    say "ACCEPTING A SHRINK — $shrank. Reason: $reason_1line"
+    # Written here, where the guard is overruled, and not after the upload: the
+    # operator overruled a data-loss alarm whether or not the run that followed
+    # went on to succeed, and the `ok`/`FAILED` line this run adds to
+    # $LOG_FILE right below says which it was.
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$(date -u '+%FT%TZ')" "$STAMP" "$shrank" \
+      "$(id -un 2> /dev/null || echo "${USER:-unknown}")" "$reason_1line" >> "$ACCEPT_LOG"
+    chmod 600 "$ACCEPT_LOG" 2> /dev/null || true
+    # And into the run directory, which is what gets uploaded: a record that
+    # only ever exists on this host is one host away from the fate it exists to
+    # document. The file is append-only, so the copy an accepting run carries
+    # off is the whole history up to and including its own acceptance.
+    cp "$ACCEPT_LOG" "$RUN_DIR/shrink-acceptances.log"
+    chmod 600 "$RUN_DIR/shrink-acceptances.log"
+    # And in the run log too, so the day-by-day story of the backup does not go
+    # quiet about the day the guard was overruled.
+    record 'ACCEPTED-SHRINK' "$shrank — $reason_1line"
   fi
+fi
+
+# `${shrank:-}` is set only by the branch above, so this is "the flag was passed
+# and there was nothing to use it on". Through `say` and not `log`: an operator
+# who believes they just blessed a shrink is wrong about the state of the
+# deployment, and --quiet is not a reason to leave them believing it.
+if [ "$accept_shrink" = 1 ] && [ -z "${shrank:-}" ]; then
+  say 'nothing shrank — --accept-shrink was not needed and nothing was accepted'
 fi
 
 cat > "$RUN_DIR/manifest.json" << JSON

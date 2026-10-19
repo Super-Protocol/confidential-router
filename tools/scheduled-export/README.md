@@ -19,7 +19,7 @@ when that ships, this goes away.
 ## What it does
 
 ```
-router-export.sh [--local-only] [--quiet]
+router-export.sh [--local-only] [--quiet] [--accept-shrink '<reason>']
 ```
 
 1. signs in at `POST /auth/bootstrap` with the deployment's `auth.bootstrapToken`
@@ -37,7 +37,8 @@ router-export.sh [--local-only] [--quiet]
    reading of a live deployment, and counts that fall between two runs mean
    either a loss or a restore from something older. Either way the bundle is kept
    locally and not uploaded, so it cannot take the last good copy's place
-   (*Accepting a legitimate shrink*, below, is how an operator overrules this);
+   (`--accept-shrink '<reason>'` is how an operator overrules this, and the only
+   way — see *Accepting a legitimate shrink*, below);
 6. uploads the run directory to a container of its own — never the shared
    artefact container; see *Configuration* — and **reads back what that container
    holds**, comparing names and byte counts against the local files, because the
@@ -60,9 +61,10 @@ One run is one directory, named for the UTC instant it started:
   manifest.json
 ```
 
-and the same three objects under `<date>/<stamp>/` in the container — prefixed
+and the same objects under `<date>/<stamp>/` in the container — prefixed
 by `BLOB_PREFIX` if one is set, which a container of this tool's own does not
-need.
+need. A run that overruled the shrink guard carries a fourth file,
+`shrink-acceptances.log`; see *Accepting a legitimate shrink*.
 
 ## Configuration
 
@@ -135,20 +137,51 @@ the checkout only ever means re-pointing these two symlinks.
 Not every fall in the counts is a loss. A withdrawn test account, a deleted
 campaign, a cleaned-up endpoint — each one makes the next export smaller than the
 last, and the script refuses it on principle because it cannot tell that apart
-from a deployment that came back from an older copy. The refusal is **sticky**:
-`state.json` still holds the old counts, so every re-run refuses again until a
-person says the new reading is the right one.
+from a deployment that came back from an older copy.
 
-That person's move is to edit `~/prod-exports/state.json` — lower `users` and
-`inviteCodes` to what the deployment really holds now, or delete the file to make
-the next run the new baseline — and then re-run `router-export`. Deleting it
-costs only the comparison for one run; nothing else reads it.
+The refusal is **sticky, and re-running does not clear it**: `state.json` is
+rewritten only by a run that succeeded, so a refused run leaves the old counts in
+place and the next run compares against the same baseline and refuses the same
+way. Only a person can end that loop, by saying the new reading is the right one:
 
-Check the *reason* for the shrink before doing that. `router-export.log` holds the
-counts of every previous run, and the last uploaded bundle holds the rows
-themselves, so "which accounts went away" is an answerable question and worth
-answering first. Blessing a shrink is how a real loss gets rotated out of the
-backups a week later.
+```sh
+router-export --accept-shrink 'the SUP-359 rehearsal account was withdrawn'
+```
+
+The reason is required, and must be neither blank nor another flag — mistyping
+`--accept-shrink --local-only` would otherwise record "--local-only" as the
+justification and upload the bundle you meant to keep on this host. The run then
+says the old → new counts on stderr whatever `--quiet` asked for, appends the
+reason, the counts, the run stamp and the invoking user to
+`shrink-acceptances.log`, and goes on to upload and to make this smaller reading
+the new baseline. Passing the flag when nothing shrank accepts nothing and says
+so, also whatever `--quiet` asked for.
+
+**That log is the record, and `state.json` is not.** Every successful run
+rewrites `state.json` wholesale, so anything written into it to explain an
+acceptance is gone one run later — which is precisely what happened to the first
+acceptance, hand-edited in on 2026-10-19 and erased by the run that followed
+(SUP-432). `shrink-acceptances.log` is append-only and nothing in this script
+truncates it, so `cat ~/prod-exports/shrink-acceptances.log` answers "has anyone
+ever overruled the loss alarm, and why" for the life of the host — and because
+that is one host, an accepting run also copies the log into its run directory,
+so the record goes to object storage with the bundle it vouches for. The
+accepting run leaves an `ACCEPTED-SHRINK` line in `router-export.log` too,
+between the ordinary `ok` lines, so the day-by-day story does not go quiet
+about it.
+
+Find out *why* the counts fell before reaching for the flag. `router-export.log`
+holds the counts of every previous run, and the last uploaded bundle holds the
+rows themselves, so "which accounts went away" is an answerable question —
+
+```sh
+zcat ~/prod-exports/<stamp>/router-export-<stamp>.json.gz \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(
+      JSON.parse(s).data.users.map(u=>u.email).sort().join("\n")))'
+```
+
+— and worth answering first. Blessing a shrink is how a real loss gets rotated
+out of the backups a week later.
 
 ### The lifecycle rule is a human's job
 
@@ -220,7 +253,7 @@ bash tools/scheduled-export/router-export.test.sh   # or: pnpm nx run scheduled-
 
 A fake router on loopback, built by the same canonical form the real one hashes
 with, so "the hash matches" means something, and a stand-in `az` in place of the
-real CLI. **45 assertions**, covering:
+real CLI. **75 assertions**, covering:
 
 | | |
 |---|---|
@@ -229,6 +262,7 @@ real CLI. **45 assertions**, covering:
 | the file that arrived | a failing export, a truncated bundle, a hash the header disagrees with, a missing hash header, a foreign `format`, a newer `schemaVersion` |
 | what it carries | an empty export, a codes CSV shorter than the bundle's count, a codes CSV with the wrong header |
 | between runs | a shrinking export naming what shrank, a growing one accepted, local rotation to `LOCAL_KEEP` |
+| overruling the shrink guard | a bare re-run refusing identically, the refusal naming the flag in text a Markdown renderer cannot eat, `--accept-shrink` getting through and becoming the new baseline, the acceptance said even under `--quiet`, the acceptance log surviving the next successful run, appending rather than replacing, keeping one acceptance to one line through a reason with a newline in it, travelling with the upload and passing the read-back, the flag as a no-op when nothing shrank, a missing reason, a blank one and a flag-shaped one refused, a single-dash one accepted |
 | the container | `qa-artifacts` named outright, `qa-artifacts` reached by falling through, `EXPORT_CONTAINER` winning over the credentials env |
 | the read-back | an upload that fails, a container holding different bytes, a container missing an object, objects that cannot be listed back |
 | configuration | no config file, no storage credentials, an unknown argument |

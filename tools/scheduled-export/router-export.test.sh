@@ -389,6 +389,124 @@ set_scenario '{"users":4,"codes":12}'
 out="$(run --local-only --quiet)"
 expect_eq 'a growing export is fine' "$?" '0'
 
+# --- the way out of a shrink (SUP-432) ----------------------------------------
+#
+# The refusal above is sticky by design, and that used to be a dead end: the
+# baseline lives in state.json, which only a successful run rewrites, so the
+# advice to "re-run" could never clear a true shrink. These cover the front door
+# out of the loop, and that the record of having used it outlives the next run.
+
+reset_state
+set_scenario '{"users":3,"codes":9}'
+run --local-only --quiet > /dev/null
+set_scenario '{"users":1,"codes":9}'
+out="$(run --local-only --quiet)"
+expect_contains 'a shrinking export does not advise a bare re-run' "$out" 'Re-running on its own changes nothing'
+expect_contains 'a shrinking export names the flag that clears it' "$out" "re-run with --accept-shrink 'why the counts fell'"
+# `die` pastes the reason into a Markdown blockquote on the alert issue, where a
+# renderer would read an angle-bracket placeholder as a raw HTML tag and drop it.
+case "$out" in
+  *'<'*) fail 'the remedy survives a Markdown renderer' "the refusal carries an angle bracket: $out" ;;
+  *) pass 'the remedy survives a Markdown renderer' ;;
+esac
+
+# The loop the message warns about: without the flag, the second run compares
+# against the same baseline and refuses the same way.
+out="$(run --local-only --quiet)"
+expect_eq 'a bare re-run refuses again' "$?" '1'
+expect_contains 'a bare re-run compares against the same baseline' "$out" 'the export shrank: 3 → 1 account(s)'
+
+acceptances="$HOME_DIR/prod-exports/shrink-acceptances.log"
+out="$(run --local-only --quiet --accept-shrink 'the SUP-359 rehearsal account was withdrawn')"
+expect_eq 'an accepted shrink exits 0' "$?" '0'
+expect_contains 'an accepted shrink is loud even under --quiet' "$out" 'ACCEPTING A SHRINK — 3 → 1 account(s)'
+expect_contains 'the acceptance log records what shrank' \
+  "$(cat "$acceptances")" '3 → 1 account(s), 9 → 9 invitation code(s)'
+expect_contains 'the acceptance log records the reason' \
+  "$(cat "$acceptances")" 'the SUP-359 rehearsal account was withdrawn'
+expect_eq 'one acceptance is one line' "$(grep -c '' "$acceptances")" '1'
+expect_contains 'the run log shows the day the alarm was overruled' \
+  "$(cat "$HOME_DIR/prod-exports/router-export.log")" 'ACCEPTED-SHRINK'
+expect_contains 'an accepted shrink becomes the new baseline' \
+  "$(cat "$HOME_DIR/prod-exports/state.json")" '"users": 1'
+# The record has to leave the host too — only the run directory is uploaded.
+accepted_run=("$HOME_DIR"/prod-exports/*T*Z)
+if [ -f "${accepted_run[${#accepted_run[@]} - 1]}/shrink-acceptances.log" ]; then
+  pass 'the acceptance is copied into the directory that gets uploaded'
+else
+  fail 'the acceptance is copied into the directory that gets uploaded' \
+    "no shrink-acceptances.log under ${accepted_run[${#accepted_run[@]} - 1]}"
+fi
+
+# The whole reason the acceptance is not a field in state.json: the next good
+# run rewrites that file wholesale, which is what erased the first acceptance
+# when it was hand-edited in during the SUP-366 restore.
+set_scenario '{"users":2,"codes":9}'
+run --local-only --quiet > /dev/null
+expect_contains 'the acceptance survives the next successful run' \
+  "$(cat "$acceptances")" 'the SUP-359 rehearsal account was withdrawn'
+
+# And a later acceptance appends to the record rather than replacing it. A
+# reason pasted in off a comment thread can carry newlines; one acceptance has
+# to stay one grep hit anyway.
+set_scenario '{"users":1,"codes":9}'
+run --local-only --quiet --accept-shrink 'withdrawn in SUP-366,
+see the thread' > /dev/null
+expect_eq 'a second acceptance appends' "$(grep -c '' "$acceptances")" '2'
+expect_contains 'a reason with a newline in it stays one line' \
+  "$(tail -1 "$acceptances")" 'withdrawn in SUP-366, see the thread'
+expect_eq 'and so does the run log line' \
+  "$(grep -c 'ACCEPTED-SHRINK' "$HOME_DIR/prod-exports/router-export.log")" '2'
+
+# Nothing to accept: the flag is a no-op on a healthy run, not a licence that
+# lingers in the state file. Said even under --quiet, because an operator who
+# thinks they just blessed a shrink is wrong about the deployment.
+set_scenario '{"users":5,"codes":9}'
+out="$(run --local-only --quiet --accept-shrink 'nothing actually fell')"
+expect_eq 'the flag with nothing to accept exits 0' "$?" '0'
+expect_contains 'the flag with nothing to accept says so even under --quiet' "$out" 'nothing shrank'
+expect_eq 'the flag with nothing to accept writes no acceptance' "$(grep -c '' "$acceptances")" '2'
+
+# The reason is the entire value of the record, so a missing or blank one is an
+# error rather than an empty field in the log.
+out="$(run --local-only --quiet --accept-shrink)"
+expect_eq 'a reasonless acceptance exits 2' "$?" '2'
+expect_contains 'a reasonless acceptance says it needs a reason' "$out" 'needs a reason'
+
+out="$(run --local-only --quiet --accept-shrink '   ')"
+expect_eq 'a blank reason exits 2' "$?" '2'
+expect_contains 'a blank reason says it needs a reason' "$out" 'needs a reason'
+
+# `--accept-shrink --local-only` must not swallow --local-only as the reason:
+# that would upload a shrunk bundle the operator meant to keep on this host.
+out="$(run --quiet --accept-shrink --local-only)"
+expect_eq 'a flag where the reason should be exits 2' "$?" '2'
+expect_contains 'a flag where the reason should be is not taken as one' "$out" 'needs a reason'
+
+# But only `--` is a flag. A reason is prose, and prose starts with whatever it
+# starts with — refusing "-2 accounts" would send the operator back to editing
+# state.json by hand, which is the habit this flag exists to replace.
+set_scenario '{"users":3,"codes":9}'
+run --local-only --quiet > /dev/null
+set_scenario '{"users":2,"codes":9}'
+out="$(run --local-only --quiet --accept-shrink '-1 rehearsal account, withdrawn')"
+expect_eq 'a reason starting with a single dash is a reason' "$?" '0'
+expect_contains 'a reason starting with a single dash is recorded verbatim' \
+  "$(tail -1 "$acceptances")" '-1 rehearsal account, withdrawn'
+
+# The read-back compares the container's objects against the run directory's,
+# so the copy an accepting run adds has to be on both sides of that comparison
+# — a fourth file would otherwise turn every accepted shrink into a refusal.
+reset_state
+az_mode ok
+set_scenario '{"users":3,"codes":9}'
+run_with_blob_env --quiet > /dev/null
+set_scenario '{"users":2,"codes":9}'
+out="$(run_with_blob_env --quiet --accept-shrink 'the rehearsal account was withdrawn')"
+expect_eq 'an accepted shrink uploads and passes the read-back' "$?" '0'
+expect_contains 'an accepted shrink records where it was uploaded' \
+  "$(cat "$HOME_DIR/prod-exports/state.json")" '"uploadedTo": "prod-exports/'
+
 reset_state
 write_config 2
 for _ in 1 2 3 4; do
