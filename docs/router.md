@@ -841,6 +841,7 @@ built for the request that asked for it and kept nowhere on the server:
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
 | `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `inviteCarriedRedemptions` | who spent a code on a deployment this one is not — carried in by a codes CSV import (SUP-272) and carried on from here, so a code that arrives already spent still names its redeemers. A redemption whose account this deployment no longer has travels as one of these rather than being dropped |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
 `counts`, `totalBalanceMicros` and `integrity.contentSha256` (SHA-256 over the

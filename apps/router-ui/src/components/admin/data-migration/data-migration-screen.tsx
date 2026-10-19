@@ -46,6 +46,7 @@ const SECTION_LABELS: Record<ImportSectionName, string> = {
   creditLedger: 'Credit ledger entries',
   inviteCodes: 'Invitation codes',
   inviteRedemptions: 'Invitation redemptions',
+  inviteCarriedRedemptions: 'Redemptions carried from another deployment',
   externalEndpoints: 'External endpoints',
   externalModels: 'External models',
   trustedMeasurements: 'Trusted measurements',
