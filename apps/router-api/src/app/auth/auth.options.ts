@@ -7,7 +7,7 @@ import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
-import { signUpMailGate } from './sign-up-mail-gate.plugin.js';
+import { mayMailSignUp, signUpInviteCarrier } from './sign-up-mail-gate.plugin.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
 /** Session cookie name fixed by ADR-004 §4. */
@@ -111,11 +111,11 @@ export interface AuthOptionsDeps {
    * The same decision as `onBeforeUserCreated`, asked one step earlier and
    * answered rather than thrown (`SignUpGate.admits`, SUP-410).
    *
-   * Without it the two routes that mail an address — a sign-in code and a magic
+   * Without it the two steps that mail an address — a sign-in code and a magic
    * link — would send to any address a stranger named, on a deployment that
    * then refuses the account: nothing created, the mail gone out, and the
    * deployment's verified sender available to whoever found the hostname. See
-   * `sign-up-mail-gate.plugin.ts`.
+   * `mayMailSignUp` in `sign-up-mail-gate.plugin.ts`.
    *
    * Only consulted on an invite-only deployment, which is the only one that
    * refuses a sign-up at all.
@@ -225,6 +225,15 @@ function authPlugins(
 ): BetterAuthPlugin[] {
   const { auth } = config;
   const plugins: BetterAuthPlugin[] = [];
+  /**
+   * The invitation requirement, applied to the mail a sign-up is sent and not
+   * only to the account it creates (SUP-410, `sign-up-mail-gate.plugin.ts`).
+   *
+   * Set only on an invite-only deployment: nowhere else is a sign-up refused at
+   * all, so nowhere else is there a mail to withhold, and an open deployment
+   * does not pay a lookup per send either.
+   */
+  const mailGate = auth.requireInviteForSignUp ? admitsSignUp : undefined;
 
   if (emailCodeEnabled(config)) {
     plugins.push(
@@ -239,10 +248,17 @@ function authPlugins(
         // is created when the code comes back — subject to `SignUpGate`, which
         // is where an invite-only deployment refuses. That is also what makes
         // the send route answer identically for every address, and it is why an
-        // invite-only deployment has to decide whether to *send* as well:
-        // `sign-up-mail-gate.plugin.ts`.
+        // invite-only deployment has to apply the same decision to the *mail*:
+        // `mayMailSignUp` below.
         disableSignUp: false,
-        sendVerificationOTP: async ({ email, otp, type }) => {
+        sendVerificationOTP: async ({ email, otp, type }, context) => {
+          // First, and for every type: an invite-only deployment mails nothing
+          // to an address it would refuse an account to. Asked here, where the
+          // credential would leave the process, so no route, body shape or
+          // code type can get past it — see `mayMailSignUp`.
+          if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
+            return;
+          }
           // The send route accepts three types and this deployment uses one;
           // the other two belong to flows whose routes are disabled above, and
           // mailing a code nothing will accept would only be noise.
@@ -258,7 +274,14 @@ function authPlugins(
   if (magicLinkEnabled(config)) {
     plugins.push(
       magicLink({
-        sendMagicLink: async ({ email, url }) => {
+        sendMagicLink: async ({ email, url }, context) => {
+          // The same gate as the code above: a link is a sign-in credential
+          // too, and this route checks nothing about the address at all
+          // (SUP-410). The code rides the `callbackURL` the console names,
+          // which this route's schema keeps.
+          if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
+            return;
+          }
           await mail.sendMagicLink(email, url);
         },
       }),
@@ -269,12 +292,11 @@ function authPlugins(
     plugins.push(bootstrapAdmin({ token: auth.bootstrapToken, email: auth.bootstrapEmail }));
   }
 
-  // Last, and only where there is something to refuse: on an invite-only
-  // deployment the two send routes above are gated by the same decision the
-  // insert is (SUP-410). An open deployment registers nothing, so its send
-  // routes are exactly what they always were.
-  if (admitsSignUp && auth.requireInviteForSignUp) {
-    plugins.push(signUpMailGate({ admits: admitsSignUp }));
+  // Not a gate — the gate is in the two callbacks above. This only carries the
+  // invitation past the code route's body schema so they can still read it
+  // (SUP-410), which is worth a hook only where the gate is asked at all.
+  if (mailGate) {
+    plugins.push(signUpInviteCarrier());
   }
 
   return plugins;

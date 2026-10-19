@@ -648,8 +648,8 @@ a deployment that then refused the account one request later. Nothing was
 created; the mail had gone out, which made the deployment's verified sender an
 open relay for whoever found the hostname.
 
-So on an invite-only deployment both send routes ask the same question the
-insert asks, before they send:
+So on an invite-only deployment both mail steps ask the same question the insert
+asks, before they send:
 
 - the address **has an account** → a sign-in, mailed as always. The invitation
   requirement is about accounts coming into existence and has nothing to say
@@ -659,11 +659,28 @@ insert asks, before they send:
   the `callbackURL` of the magic-link request, which is where the console puts
   it on both.
 
-A withheld send is **indistinguishable from a sent one** — the route's own
-`200 {"success": true}` (`{"status": true}` for the link), no mail, no stored
-code. Answering differently would turn either route into an oracle for which
-addresses have accounts, which is exactly what the uniform 200 is for. The
-reason is in the log (`Sign-up mail withheld: …`) and nowhere else.
+**Asked at the mail, not in front of the route.** The check lives in the one
+statement that hands a credential to the outside world — Better Auth's
+`sendVerificationOTP` / `sendMagicLink` callback — rather than in a hook that
+answers the request early. A hook would have to say which requests it covers,
+and every answer to that is a list: list the code `type`s that can mail and an
+upstream default quietly adds one outside the list; list the paths and the one
+request that slips the list is answered by *us* instead of by the route, so our
+200 for an unknown address differs from the route's 400 for a known one — an
+account-existence oracle inside the fix meant to prevent one. From the mail
+callback there is no list: every send of every type on both routes passes
+through it. One `before` hook remains, and it decides nothing — it moves an
+`inviteCode` from the body, which the code route's schema is about to drop, into
+the query, which it does not validate.
+
+A withheld send is therefore **indistinguishable from a sent one**: the route
+runs to completion and answers exactly as it always did — `200 {"success":
+true}`, or `{"status": true}` for the link, or whatever 400 the body earned —
+and the only difference is that nothing left the process. The reason is in the
+log (`Sign-up mail withheld: …`) and nowhere else. A sign-in code is still
+*generated* and stored hashed for a withheld send, as it is for every other type
+the route accepts; it was never delivered, and the sign-up it would belong to is
+refused by the gate in any case.
 
 One consequence worth knowing: an unusable invitation can no longer buy a mailed
 code, so on this deployment the typed refusals below are reached only by a

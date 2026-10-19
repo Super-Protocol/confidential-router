@@ -46,6 +46,11 @@ function requestCode(current: Harness, email: string, inviteCode?: string) {
     .send({ email, type: 'sign-in', ...(inviteCode ? { inviteCode } : {}) });
 }
 
+/** The send route with whatever body a caller felt like posting. */
+function send(current: Harness, body: Record<string, unknown>) {
+  return request(server(current)).post('/auth/email-otp/send-verification-otp').send(body);
+}
+
 function signIn(current: Harness, email: string, otp: string) {
   return request(server(current)).post('/auth/sign-in/email-otp').send({ email, otp });
 }
@@ -302,6 +307,43 @@ describe('an invite-only deployment', () => {
     await current.settleMail();
 
     expect(current.mailer.ofKind('sign-in-code').map((mail) => mail.to)).toEqual(['first@example.com']);
+  });
+
+  /**
+   * The gate is asked where the credential would leave the process, so no body
+   * shape routes around it and none of them changes what the route answers
+   * (CTO review on #131). Both halves matter: an uninvited stranger is mailed
+   * nothing whatever `type` says, and the answer never depends on whether the
+   * address has an account — which it would if a hook in front of the route
+   * answered some of these itself.
+   */
+  it('mails nothing for any body shape, and answers each one as the route always did', async () => {
+    const { current, code } = await inviteOnly();
+    // EMAIL has an account from here on; the other address has none.
+    await signInWithCode(current, EMAIL, { inviteCode: code });
+    const mailed = current.mailer.ofKind('sign-in-code').length;
+    const shapes: Record<string, unknown>[] = [
+      {},
+      { type: 'sign-in' },
+      { type: 'email-verification' },
+      { type: 'forget-password' },
+      { type: 'change-email' },
+      { type: 'not-a-type' },
+    ];
+
+    for (const shape of shapes) {
+      const known = await send(current, { email: EMAIL, ...shape });
+      const unknown = await send(current, { email: 'uninvited@example.com', ...shape });
+
+      expect(unknown.status, JSON.stringify(shape)).toBe(known.status);
+      expect(unknown.body, JSON.stringify(shape)).toEqual(known.body);
+    }
+    await current.settleMail();
+
+    // The account got its codes — `sign-in` is the one type that mails — and the
+    // uninvited address got nothing at all.
+    expect(current.mailer.ofKind('sign-in-code').length).toBeGreaterThan(mailed);
+    expect(current.mailer.ofKind('sign-in-code').filter((mail) => mail.to === 'uninvited@example.com')).toEqual([]);
   });
 
   it('answers a withheld request exactly as it answers one it sent', async () => {

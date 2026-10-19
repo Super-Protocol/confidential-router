@@ -1,6 +1,6 @@
 import type { BetterAuthPlugin } from 'better-auth';
 import { createAuthMiddleware } from 'better-auth/api';
-import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
+import { INVITE_QUERY_PARAM, type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { EMAIL_CODE_SEND_PATH } from '../mail/email-code-throttle.js';
 
 /**
@@ -10,67 +10,108 @@ import { EMAIL_CODE_SEND_PATH } from '../mail/email-code-throttle.js';
  */
 export const MAGIC_LINK_SEND_PATH = '/sign-in/magic-link';
 
-export interface SignUpMailGateOptions {
-  /**
-   * `SignUpGate.admits` — the invite-only decision as a read that answers
-   * instead of throwing.
-   */
-  admits: (invite: SignUpInvite) => Promise<boolean>;
-}
+/** `SignUpGate.admits` — the invite-only decision as a read that answers instead of throwing. */
+export type AdmitsSignUp = (invite: SignUpInvite) => Promise<boolean>;
 
 /**
- * The invitation requirement, one step earlier: a deployment that will not
- * create the account does not mail it a credential either (SUP-410).
+ * Whether this deployment may mail the address a sign-in credential (SUP-410).
  *
- * `SignUpGate` holds the account — it runs in `databaseHooks.user.create.before`,
- * where nothing can be created without a usable code. The two routes that *mail*
- * something are one step in front of that hook, and they ran without it: an
- * unauthenticated caller could post any address to
- * `/auth/email-otp/send-verification-otp` and have a sign-in code delivered to
- * it, on a deployment whose invitation gate then refused the account one request
- * later. Nothing was created, so the gate was never wrong; the mail had already
- * gone out. That made the deployment's verified sender an open mail relay for
- * whoever found the hostname — a spent quota, and our domain in strangers'
- * inboxes and spam complaints.
+ * `SignUpGate` holds the account: it runs in `databaseHooks.user.create.before`,
+ * where nothing can be created without a usable code. It does not, by itself,
+ * hold the **mail** — and the two requests that send some are one step in front
+ * of that hook, so they ran without it. An unauthenticated caller could post any
+ * address to `/auth/email-otp/send-verification-otp` (or to
+ * `/auth/sign-in/magic-link`) and have a sign-in credential delivered to it on a
+ * deployment whose invitation gate then refused the account one request later.
+ * Nothing was created, so the gate was never wrong; the mail had already gone
+ * out, which made the deployment's verified sender an open relay for whoever
+ * found the hostname.
  *
- * So both send routes ask the same question the insert asks, before they send:
+ * So both mail steps ask the same question the insert asks, before they send:
  *
  *  - **the address has an account** → a sign-in, and untouched. The invitation
  *    requirement is about accounts coming into existence and has never had
  *    anything to say about this request.
- *  - **it does not** → this is the first half of a sign-up, and it goes ahead
- *    only while the request carries a code `SignUpGate` would admit.
+ *  - **it does not** → this is the first half of a sign-up, and the mail goes
+ *    out only while the request carries a code `SignUpGate` would admit.
  *
- * **A refusal is indistinguishable from a send.** The route's own success body is
- * returned, from this hook, without the handler running: no mail, no code
- * stored, and the same `200` either way. That is the point — answering
- * differently would turn the endpoint into an oracle for which addresses have
- * accounts, which is precisely what `disableSignUp: false` and the uniform 200
- * were chosen to avoid. The reason lives in the log (`SignUpGate.admits`) and
- * nowhere else.
+ * **Where this is asked is the whole design.** It is the mail callback — the one
+ * statement that hands a credential to the outside world — and not a hook in
+ * front of the route. A hook that answered early would have to decide which
+ * requests it covers, and every answer to that question is a list: list the
+ * `type`s that can mail and an upstream default silently adds one outside the
+ * list; list the paths and the request that gets past the list is answered by
+ * *us* rather than by the route, which makes our 200 for an unknown address
+ * differ from the route's 400 for a known one — an account-existence oracle in
+ * the fix that exists to prevent exactly that. From here there is no list:
+ * every send of every type on both routes passes through, and the route answers
+ * every request exactly as it always did.
  *
- * Registered only on an invite-only deployment, so an open one keeps the routes
- * it always had, with no extra read per request and nothing to reason about.
+ * **A refusal is therefore indistinguishable from a send.** The route runs to
+ * completion and returns its own body — `200 {"success": true}` for the code,
+ * `{"status": true}` for the link — and the only difference is that nothing left
+ * the process. The reason lives in the log (`SignUpGate.admits`) and nowhere
+ * else.
+ *
+ * Only consulted on an invite-only deployment: nowhere else is a sign-up refused
+ * at all, so nowhere else is there a mail to withhold.
  */
-export function signUpMailGate({ admits }: SignUpMailGateOptions): BetterAuthPlugin {
+export async function mayMailSignUp(
+  email: string,
+  context: MailGateContext | null | undefined,
+  admits: AdmitsSignUp,
+): Promise<boolean> {
+  const address = email.trim().toLowerCase();
+  // No context means no request to read: no adapter to ask whether the address
+  // has an account, and no invitation either. Nothing in the application calls
+  // `auth.api.sendVerificationOTP` or `auth.api.signInMagicLink` directly, so
+  // this is unreachable today — and the safe reading of it is the one that lets
+  // the gate refuse.
+  const adapter = context?.context?.internalAdapter;
+  if (adapter && (await adapter.findUserByEmail(address))) {
+    return true;
+  }
+  return admits(signUpInviteOf(context));
+}
+
+/**
+ * Carries the invitation past the send route's body schema, so
+ * {@link mayMailSignUp} can still see it.
+ *
+ * `POST /auth/email-otp/send-verification-otp` declares a strict body of
+ * `{ email, type }`, and Better Call replaces the request body with the
+ * validated value — so an `inviteCode` the console sends is gone by the time the
+ * mail callback runs. A `before` hook sees the body as it arrived, which makes
+ * it the one place that can hand the code forward; it puts it in the query,
+ * which this route does not validate and which `sign-up-invite.ts` already reads
+ * as one of the five places a code can be.
+ *
+ * **Carrying only.** It makes no decision and refuses nothing, so it is not a
+ * security boundary and its matcher cannot become one: a request it fails to
+ * match arrives at the gate with no invitation on it, which is refused. The
+ * failure mode of this hook is an invited sign-up that stops working — loudly,
+ * and pinned by `email-code.e2e.spec.ts` — rather than an open relay.
+ *
+ * The magic-link route needs no such help: it declares `callbackURL`, so the
+ * code the console puts on that URL survives validation and the gate reads it
+ * there.
+ */
+export function signUpInviteCarrier(): BetterAuthPlugin {
   return {
-    id: 'sign-up-mail-gate',
+    id: 'sign-up-invite-carrier',
     hooks: {
       before: [
         {
-          // `sign-in` is the only type this deployment mails at all; the routes
-          // behind the other two are disabled (`UNUSED_EMAIL_OTP_PATHS`), and
-          // none of them creates an account.
-          matcher: (context) => context.path === EMAIL_CODE_SEND_PATH && typeOf(context.body) === 'sign-in',
-          handler: createAuthMiddleware(async (context) =>
-            (await mayMailSignUp(context, admits)) ? undefined : context.json({ success: true }),
-          ),
-        },
-        {
-          matcher: (context) => context.path === MAGIC_LINK_SEND_PATH,
-          handler: createAuthMiddleware(async (context) =>
-            (await mayMailSignUp(context, admits)) ? undefined : context.json({ status: true }),
-          ),
+          matcher: (context) => context.path === EMAIL_CODE_SEND_PATH,
+          handler: createAuthMiddleware(async (context) => {
+            const { code } = signUpInviteOf(context);
+            if (!code) {
+              return;
+            }
+            // Better Auth's own way for a hook to amend the request. The body is
+            // not an option: the route's schema is about to replace it.
+            return { context: { query: { ...asRecord(context.query), [INVITE_QUERY_PARAM]: code } } };
+          }),
         },
       ],
     },
@@ -78,58 +119,21 @@ export function signUpMailGate({ admits }: SignUpMailGateOptions): BetterAuthPlu
 }
 
 /**
- * Whether this request may be mailed — the whole decision, and the part worth
- * testing on its own.
- *
- * Everything it reads is on the request Better Auth is already handling: a
- * `before` hook sees the body as it arrived, which is where an invitation code
- * rides on the email-code route (`inviteCode`) and inside `callbackURL` on the
- * magic-link one — see `sign-up-invite.ts` for the four places a code can be.
- */
-export async function mayMailSignUp(
-  context: MailGateContext,
-  admits: SignUpMailGateOptions['admits'],
-): Promise<boolean> {
-  const email = emailOf(context.body);
-  if (!email) {
-    // Not a request this can judge — the route's own validation answers it.
-    return true;
-  }
-  if (await context.context.internalAdapter.findUserByEmail(email)) {
-    return true;
-  }
-  return admits(signUpInviteOf(context));
-}
-
-/**
- * What the decision needs from Better Auth's hook context, declared
+ * What the decision needs from Better Auth's endpoint context, declared
  * structurally so it can be tested without constructing one — the same reading
- * `sign-up-invite.ts` takes of the context it extracts an invitation from.
+ * `sign-up-invite.ts` takes of the context it extracts an invitation from, plus
+ * the adapter the account lookup goes through.
  */
 export interface MailGateContext {
   body?: unknown;
   query?: unknown;
   headers?: { get(name: string): string | null } | null;
   request?: { headers?: { get(name: string): string | null } | null } | null;
-  context: {
-    internalAdapter: {
+  context?: {
+    internalAdapter?: {
       findUserByEmail(email: string): Promise<unknown>;
     };
   };
-}
-
-/**
- * The address this request is about, lower-cased as both routes and the `user`
- * table hold it, or nothing when the body does not carry one.
- */
-function emailOf(body: unknown): string | null {
-  const email = asRecord(body)?.email;
-  return typeof email === 'string' && email.trim().length > 0 ? email.trim().toLowerCase() : null;
-}
-
-/** The email-code route's `type`, which decides whether this is a sign-in code at all. */
-function typeOf(body: unknown): unknown {
-  return asRecord(body)?.type;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
