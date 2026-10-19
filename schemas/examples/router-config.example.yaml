@@ -155,6 +155,7 @@ mail:
   provider: smtp                   # none | console (not in production) | resend | smtp
   from: no-reply@tee.swarm.cloud
   fromName: Confidential Router
+  replyTo: support@tee.swarm.cloud   # where a reply goes; `from` receives nothing
   # consoleUrl defaults to the first entry of server.validClientOrigins.
   smtp:
     host: smtp.example.com
