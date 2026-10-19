@@ -147,6 +147,73 @@ describe('streaming responses', () => {
     expect(row.status).toBe('error');
   });
 
+  /**
+   * SUP-423. The row used to be written only when the request ended, so a
+   * request that never ended — the process restarted under it, the pod evicted,
+   * something in front of the router answering the client 502 and tearing the
+   * socket down — left no row at all. The account that paid for sixty seconds of
+   * a dead stream had nothing in Logs to point at. Now the request is in Logs
+   * from the moment it is admitted, as `pending`, at zero.
+   */
+  it('is in Logs while it is still streaming, not only once it has ended', async () => {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer(secret) },
+      body: JSON.stringify({ ...CHAT, model: 'mock/stream-slow:tdx', stream: true }),
+    });
+    const id = response.headers.get('x-confidential-router-generation-id') as string;
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    await reader.read();
+
+    const inFlight = await generations().findOneByOrFail({ id });
+    expect(inFlight).toMatchObject({ status: 'pending', completionTokens: 0, costMicros: 0, streamed: true });
+    // Everything the admission already knew is on the row, so a `pending` line
+    // is a readable one rather than a placeholder.
+    expect(inFlight.modelId).toBe('mock/stream-slow:tdx');
+    expect(inFlight.promptPer1mMicros).toBeGreaterThan(0);
+
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) {
+        break;
+      }
+    }
+
+    const closed = await eventually(() => closedGeneration(id));
+    expect(closed?.status).toBe('ok');
+    expect(closed?.completionTokens ?? 0).toBeGreaterThan(0);
+  });
+
+  /**
+   * The admission write is allowed to fail — `MeteringService.open` swallows its
+   * own errors rather than refusing a completion over a database hiccup — so the
+   * close has to cope with there being nothing to close. Deleting the row under
+   * a running stream is the cheapest way to be in that state.
+   */
+  it('still meters a generation whose admission row went missing', async () => {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer(secret) },
+      body: JSON.stringify({ ...CHAT, model: 'mock/stream-slow:tdx', stream: true }),
+    });
+    const id = response.headers.get('x-confidential-router-generation-id') as string;
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    await reader.read();
+    await generations().delete({ id });
+
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) {
+        break;
+      }
+    }
+
+    const row = await eventually(() => closedGeneration(id));
+    expect(row?.status).toBe('ok');
+    expect(row?.completionTokens ?? 0).toBeGreaterThan(0);
+    expect(row?.modelId).toBe('mock/stream-slow:tdx');
+  });
+
   it('stops paying for a generation the client walked away from', async () => {
     const controller = new AbortController();
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -161,12 +228,25 @@ describe('streaming responses', () => {
     await reader.read();
     controller.abort();
 
-    const row = await eventually(() => generations().findOneBy({ id }));
+    const row = await eventually(() => closedGeneration(id));
     expect(row?.status).toBe('aborted');
     // Whatever arrived before the hang-up is still metered, never more.
     expect(row?.completionTokens ?? 0).toBeLessThan(7);
   });
 });
+
+/**
+ * The generation as the meter finally left it, or null while it is still open.
+ *
+ * The row exists from the moment the request is admitted (SUP-423), so its
+ * presence no longer means its outcome is known — a test that reads it right
+ * after the client hangs up sees `pending`, which is exactly the state this
+ * change exists to make visible.
+ */
+async function closedGeneration(id: string): Promise<Generation | null> {
+  const row = await generations().findOneBy({ id });
+  return row && row.status !== 'pending' ? row : null;
+}
 
 /** Metering completes after the response is gone; give it a moment to land. */
 async function eventually<T>(read: () => Promise<T | null>): Promise<T | null> {

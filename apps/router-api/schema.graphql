@@ -992,6 +992,7 @@ enum GenerationStatus {
   ABORTED
   ERROR
   OK
+  PENDING
 }
 
 """How one invitation campaign converted. Operators only."""

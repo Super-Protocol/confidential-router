@@ -5,10 +5,31 @@ import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
 import { Model } from './model.entity.js';
 import { Workspace } from './workspace.entity.js';
 
-export type GenerationStatus = 'ok' | 'error' | 'aborted';
+/**
+ * The life of one metered request.
+ *
+ * `pending` is the row as it exists *while* the request is in flight: written
+ * at admission, before anything is forwarded, and replaced by one of the three
+ * terminal values when the gateway closes it. It is what makes a request that
+ * the router never got to close — the process was restarted under it, the pod
+ * was evicted, the edge answered the client 502 and tore the socket down —
+ * visible at all instead of absent (SUP-423). `IncompleteGenerationSweeper`
+ * closes a row left pending past `metering.incompleteAfter` as
+ * `error` / `no_response`.
+ */
+export type GenerationStatus = 'pending' | 'ok' | 'error' | 'aborted';
 
 /**
- * One metered request. **No prompt or completion content, ever** — the router
+ * One metered request, written in two phases.
+ *
+ * The row is inserted when the request is admitted (`status: 'pending'`) and
+ * updated when it ends. Before SUP-423 it was inserted only at the end, which
+ * meant any request the router did not live to finish left no trace at all: the
+ * account that paid for sixty seconds of a failed stream had nothing in Logs to
+ * point at. The insert costs one write on the hot path and buys the invariant
+ * that an admitted request is always visible to the workspace that made it.
+ *
+ * **No prompt or completion content, ever** — the router
  * forwards bodies to LiteLLM and never inspects or persists them
  * (`docs/threat-model.md`). `invariants.spec.ts` walks this entity's metadata
  * and fails the build if a column capable of holding message text is added —
@@ -85,6 +106,12 @@ export class Generation {
   @Column({ type: 'boolean', default: false })
   streamed!: boolean;
 
+  /**
+   * Defaults to `ok` for the benefit of nothing in this codebase — every write
+   * sets it — but the column is what the Logs screen filters on, so the two
+   * phases of the row both have to be representable here. See
+   * {@link GenerationStatus}.
+   */
   @Column({ type: 'varchar', length: 16, default: 'ok' })
   status!: GenerationStatus;
 
