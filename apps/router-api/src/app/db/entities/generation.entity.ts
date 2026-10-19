@@ -37,6 +37,19 @@ export type GenerationStatus = 'pending' | 'ok' | 'error' | 'aborted';
  */
 @Entity({ name: 'generations' })
 @Index('IDX_generations_workspaceId_createdAt', ['workspaceId', 'createdAt'])
+/**
+ * The sweeper's predicate, and nothing else: `status = 'pending' AND createdAt <
+ * cutoff`.
+ *
+ * Partial on purpose. The rows it has to find are a vanishing fraction of the
+ * table — a handful at any moment, none at all most of the time — so an index
+ * over the whole of `createdAt` would be paid for on every insert to answer a
+ * question about almost no rows. Without it each replica sequentially scans the
+ * fastest-growing table in the schema once a minute, forever; `generations` is
+ * small today and `CREATE INDEX` here only ever gets more awkward, which is the
+ * argument for adding it in the same change that adds the query.
+ */
+@Index('IDX_generations_pending', ['createdAt'], { where: "status = 'pending'" })
 export class Generation {
   /** `gen-<ulid>`; also the `id` of the OpenAI-shaped response. */
   @PrimaryColumn({ type: 'varchar', length: 64 })

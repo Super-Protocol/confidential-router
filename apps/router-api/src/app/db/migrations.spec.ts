@@ -59,6 +59,21 @@ async function isNullable(queryRunner: QueryRunner, table: string, column: strin
   return found.isNullable;
 }
 
+/**
+ * Whether one named index exists, read back from the live schema.
+ *
+ * Through table introspection for the same reason as {@link isNullable}: the
+ * migration is written against the dialect-neutral `Table` API, so the assertion
+ * about it should be dialect-neutral too.
+ */
+async function hasIndex(queryRunner: QueryRunner, table: string, index: string): Promise<boolean> {
+  const found = await queryRunner.getTable(table);
+  if (!found) {
+    throw new Error(`${table} does not exist, so nothing can be concluded about its indices.`);
+  }
+  return found.indices.some((candidate) => candidate.name === index);
+}
+
 async function sqliteDataSource(): Promise<DataSource> {
   const dataSource = new DataSource(
     buildDataSourceOptions({
@@ -111,8 +126,16 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-423's partial index over the pending generations is the newest
+      // migration; the first undo drops that one index and leaves the two the
+      // Logs and Activity queries run on.
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(false);
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_workspaceId_createdAt')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

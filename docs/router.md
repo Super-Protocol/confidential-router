@@ -450,7 +450,7 @@ threshold, no more often than `autoTopUpCooldown`.
 POST /v1/chat/completions      streaming and not
 POST /v1/completions
 GET  /v1/models
-GET  /v1/generation?id=…       what one request cost, after the fact
+GET  /v1/generation?id=…       what one request cost, after the fact (`status: pending` = not yet)
 ```
 
 Full contract: `docs/contracts/router-api.md`, and Swagger at `/docs` when
