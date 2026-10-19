@@ -26,13 +26,16 @@ export interface InviteCampaignStats {
   /** `redeemed / issued`, 0 when nothing was issued. */
   redemptionRate: number;
   /**
-   * Redeeming accounts whose workspace went on to send at least one request.
+   * Redemptions whose redeemer went on to send at least one request.
    *
    * The number a campaign is actually judged on: a redemption is a sign-up, and
    * a sign-up that never sends a token bought nothing. A carried redeemer counts
    * once the address matches an account here — the same read-time match the Codes
    * tab shows — and cannot before, since there is no workspace to have sent
    * anything.
+   *
+   * One per redemption, so this is always `<= redeemed`, however many workspaces
+   * a redeemer turns out to belong to.
    */
   activated: number;
   /**
@@ -134,11 +137,15 @@ export class InviteStatsService {
       .select('redemption.workspaceId', 'workspaceId')
       .getRawMany<{ workspaceId: string }>();
     const carried = await this.carriedOf(campaign);
+    const byAddress = await this.workspacesOfAddresses(carried.flatMap((row) => (row.email ? [row.email] : [])));
 
     const redeemed = redemptions.length + carried.length;
-    const workspaceIds = [
-      ...redemptions.map((row) => row.workspaceId),
-      ...(await this.workspacesOfAddresses(carried.flatMap((row) => (row.email ? [row.email] : [])))),
+    // One entry per redemption, holding the workspaces that redemption could
+    // have sent a request from — the shape `countActivated` needs to stay a
+    // subset of `redeemed`.
+    const perRedemption = [
+      ...redemptions.map((row) => [row.workspaceId]),
+      ...carried.map((row) => (row.email ? (byAddress.get(row.email.toLowerCase()) ?? []) : [])),
     ];
     return {
       campaign,
@@ -146,7 +153,7 @@ export class InviteStatsService {
       redeemed,
       carried: carried.length,
       redemptionRate: issued === 0 ? 0 : redeemed / issued,
-      activated: await this.countActivated(workspaceIds),
+      activated: await this.countActivated(perRedemption),
       grantedMicros: await this.sumGranted(campaign),
     };
   }
@@ -163,19 +170,19 @@ export class InviteStatsService {
   }
 
   /**
-   * The workspaces of the accounts behind these addresses — how a carried
-   * redemption reaches `activated` at all, since the row names an address and not
-   * a workspace.
+   * Every workspace each of these addresses can send from, keyed by address — how
+   * a carried redemption reaches `activated` at all, since the row names an
+   * address and not a workspace.
    *
    * Matched on every read rather than stored, exactly as the Codes tab matches
-   * them (`InviteAdminService.accountsOf`): someone who signs up here after
-   * the import starts counting the moment they do, without anything being
-   * rewritten. An address with no account yields nothing, which is right — there
-   * is no workspace that could have sent a request.
+   * them (`InviteAdminService.accountsOf`): someone who signs up here after the
+   * import starts counting the moment they do, without anything being rewritten.
+   * An address with no account is absent from the map, which is right — there is
+   * no workspace that could have sent a request.
    */
-  private async workspacesOfAddresses(addresses: readonly string[]): Promise<string[]> {
+  private async workspacesOfAddresses(addresses: readonly string[]): Promise<Map<string, string[]>> {
     const unique = [...new Set(addresses)];
-    const workspaceIds: string[] = [];
+    const byAddress = new Map<string, string[]>();
     for (let at = 0; at < unique.length; at += CHUNK) {
       const rows = await this.dataSource
         .getRepository(WorkspaceMember)
@@ -183,36 +190,56 @@ export class InviteStatsService {
         .innerJoin(User, 'account', 'account.id = member.userId')
         .where('account.email IN (:...addresses)', { addresses: unique.slice(at, at + CHUNK) })
         .select('member.workspaceId', 'workspaceId')
-        .getRawMany<{ workspaceId: string }>();
-      workspaceIds.push(...rows.map((row) => row.workspaceId));
+        .addSelect('account.email', 'email')
+        .getRawMany<{ workspaceId: string; email: string }>();
+      for (const row of rows) {
+        const address = row.email.toLowerCase();
+        byAddress.set(address, [...(byAddress.get(address) ?? []), row.workspaceId]);
+      }
     }
-    return workspaceIds;
+    return byAddress;
   }
 
   /**
-   * How many of those workspaces have a generation.
+   * How many of those redemptions came from someone who sent a request.
    *
-   * Deduplicated first: the list is two lists concatenated, and an account that
-   * redeemed here *and* matches a carried address would otherwise be activated
-   * twice. Chunked because a launch campaign can have thousands of redeemers:
-   * SQLite refuses a statement with more than 999 bound parameters, and a single
-   * `IN` over every one of them would hit it.
+   * Counted per redemption rather than per workspace, which is what keeps
+   * `activated <= redeemed` true by construction. A live redemption names one
+   * workspace and could not break it; a carried one is matched to an account, and
+   * an account may belong to several — `workspace_members` exists so that team
+   * workspaces stay an additive change (ADR-004 §5), and the day they land,
+   * counting workspaces would activate one carried redeemer with three busy
+   * workspaces three times and print a number larger than its own denominator on
+   * the very screen this is read on.
    */
-  private async countActivated(workspaceIds: readonly string[]): Promise<number> {
+  private async countActivated(perRedemption: readonly (readonly string[])[]): Promise<number> {
+    const active = await this.activeWorkspaces(perRedemption.flat());
+    return perRedemption.filter((workspaceIds) => workspaceIds.some((id) => active.has(id))).length;
+  }
+
+  /**
+   * Which of these workspaces have a generation.
+   *
+   * Deduplicated and chunked: a launch campaign can have thousands of redeemers,
+   * SQLite refuses a statement with more than 999 bound parameters, and a single
+   * `IN` over every one of them would hit that ceiling.
+   */
+  private async activeWorkspaces(workspaceIds: readonly string[]): Promise<Set<string>> {
     const unique = [...new Set(workspaceIds)];
-    let activated = 0;
+    const active = new Set<string>();
     for (let at = 0; at < unique.length; at += CHUNK) {
-      const chunk = unique.slice(at, at + CHUNK);
       const rows = await this.dataSource
         .getRepository(Generation)
         .createQueryBuilder('generation')
         .select('generation.workspaceId', 'workspaceId')
-        .where('generation.workspaceId IN (:...workspaceIds)', { workspaceIds: chunk })
+        .where('generation.workspaceId IN (:...workspaceIds)', { workspaceIds: unique.slice(at, at + CHUNK) })
         .groupBy('generation.workspaceId')
         .getRawMany<{ workspaceId: string }>();
-      activated += rows.length;
+      for (const row of rows) {
+        active.add(row.workspaceId);
+      }
     }
-    return activated;
+    return active;
   }
 
   private async sumGranted(campaign: string): Promise<number> {
@@ -268,6 +295,15 @@ export class InviteStatsService {
    *
    * `bootstrapId` is the account `/auth/bootstrap` created, if any
    * (`InviteAdminService.bootstrapAccountId`).
+   *
+   * The sign-up origin split is deliberately about redemptions made *here*, and
+   * a carried one does not make an account `invited` (SUP-396). An address the
+   * import carried over belongs to someone who spent their code on the other
+   * deployment: signing up here afterwards grants them nothing — the code is
+   * already spent, `inviteGrant` is null — so on this deployment they arrived as
+   * an open sign-up, which is what `signUpOrigin` and the Accounts tab's `origin`
+   * column also say. Counting them as `invited` here and `open` there would be
+   * this issue's own bug, one surface further on.
    */
   async daily(days: number, bootstrapId: string | null, now: Date = new Date()): Promise<InviteDay[]> {
     const firstDay = Math.floor(now.getTime() / DAY_MS) - (days - 1);
