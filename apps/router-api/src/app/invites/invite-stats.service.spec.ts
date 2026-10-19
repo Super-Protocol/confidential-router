@@ -24,10 +24,10 @@ afterEach(async () => {
   await dataSource.destroy();
 });
 
-async function issue(campaign: string, count: number): Promise<string[]> {
+async function issue(campaign: string, count: number, grantMicros = 100_000_000): Promise<string[]> {
   await generateInvites(dataSource, {
     count,
-    grantMicros: 100_000_000,
+    grantMicros,
     campaign,
     maxRedemptions: 1,
     expiresAt: null,
@@ -56,7 +56,13 @@ async function signUpWith(code: string): Promise<Catalog> {
 }
 
 describe('a campaign nobody redeemed', () => {
-  it('reports the codes it issued and nothing else', async () => {
+  /**
+   * The state that made `grantedMicros` read as a face value on the console
+   * (SUP-390): fifty codes worth $100 each, nothing paid out yet. Nothing has
+   * been granted, and each code is still worth what it was issued for — two
+   * facts the campaign row has to be able to state at once.
+   */
+  it('reports the codes it issued, their face value, and nothing paid out', async () => {
     await issue('launch-2026-10', 5);
 
     expect(await stats.campaigns('launch-2026-10')).toEqual([
@@ -66,9 +72,38 @@ describe('a campaign nobody redeemed', () => {
         redeemed: 0,
         redemptionRate: 0,
         activated: 0,
+        codeGrantMicrosMin: 100_000_000,
+        codeGrantMicrosMax: 100_000_000,
         grantedMicros: 0,
       },
     ]);
+  });
+});
+
+describe('a campaign tag that collects two batches', () => {
+  it('reports the face value as the span the batches cover', async () => {
+    await issue('launch-2026-10', 2, 25_000_000);
+    await issue('launch-2026-10', 3, 100_000_000);
+
+    expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({
+      issued: 5,
+      codeGrantMicrosMin: 25_000_000,
+      codeGrantMicrosMax: 100_000_000,
+      grantedMicros: 0,
+    });
+  });
+
+  it('pays out what the redeemed code was worth, not the span', async () => {
+    const cheap = await issue('launch-2026-10', 1, 25_000_000);
+    await issue('launch-2026-10', 1, 100_000_000);
+    await signUpWith(cheap[0]);
+
+    expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({
+      redeemed: 1,
+      codeGrantMicrosMin: 25_000_000,
+      codeGrantMicrosMax: 100_000_000,
+      grantedMicros: 25_000_000,
+    });
   });
 });
 
@@ -88,6 +123,8 @@ describe('a campaign in flight', () => {
       redemptionRate: 0.5,
       // The number the campaign is judged on: two sign-ups, one of which is a user.
       activated: 1,
+      codeGrantMicrosMin: 100_000_000,
+      codeGrantMicrosMax: 100_000_000,
       grantedMicros: 200_000_000,
     });
   });
@@ -140,7 +177,16 @@ describe('several campaigns', () => {
 
   it('reports an unknown campaign as an empty one rather than failing', async () => {
     expect(await stats.campaigns('never-ran')).toEqual([
-      { campaign: 'never-ran', issued: 0, redeemed: 0, redemptionRate: 0, activated: 0, grantedMicros: 0 },
+      {
+        campaign: 'never-ran',
+        issued: 0,
+        redeemed: 0,
+        redemptionRate: 0,
+        activated: 0,
+        codeGrantMicrosMin: 0,
+        codeGrantMicrosMax: 0,
+        grantedMicros: 0,
+      },
     ]);
   });
 });

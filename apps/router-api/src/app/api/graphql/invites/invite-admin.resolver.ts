@@ -29,7 +29,7 @@ import {
   SignUpOriginEnum,
   WithdrawInviteCodeArgs,
 } from './invite-admin.model.js';
-import { InviteWithdrawalModel } from './invites.model.js';
+import { campaignStatsOf, InviteWithdrawalModel } from './invites.model.js';
 
 /**
  * The admin console's Invitations section: issue codes, see who redeemed which,
@@ -95,7 +95,7 @@ export class InviteAdminResolver {
     return {
       totals: { ...totals, grantedMicros: String(totals.grantedMicros) },
       daily,
-      campaigns: campaigns.map((entry) => ({ ...entry, grantedMicros: String(entry.grantedMicros) })),
+      campaigns: campaigns.map(campaignStatsOf),
     };
   }
 

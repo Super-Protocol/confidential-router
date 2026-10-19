@@ -64,7 +64,46 @@ function statisticsMock(days = 30): MockLink.MockedResponse {
               redeemed: 3,
               redemptionRate: 3 / 51,
               activated: 2,
+              codeGrantMicrosMin: '100000000',
+              codeGrantMicrosMax: '100000000',
               grantedMicros: '300000000',
+            },
+            // Issued and untouched — the state SUP-390 was filed over.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'vip',
+              issued: 2,
+              redeemed: 0,
+              redemptionRate: 0,
+              activated: 0,
+              codeGrantMicrosMin: '500000000',
+              codeGrantMicrosMax: '500000000',
+              grantedMicros: '0',
+            },
+            // One tag, two batches at different grants.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'mixed',
+              issued: 4,
+              redeemed: 1,
+              redemptionRate: 0.25,
+              activated: 0,
+              codeGrantMicrosMin: '25000000',
+              codeGrantMicrosMax: '100000000',
+              grantedMicros: '25000000',
+            },
+            // Two batches that differ below a cent — the issue dialog takes six
+            // decimals and the column prints two.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'subcent',
+              issued: 2,
+              redeemed: 0,
+              redemptionRate: 0,
+              activated: 0,
+              codeGrantMicrosMin: '25123456',
+              codeGrantMicrosMax: '25123999',
+              grantedMicros: '0',
             },
           ],
         },
@@ -134,6 +173,43 @@ describe('InvitationsScreen', () => {
     expect(screen.getAllByText('$300')).toHaveLength(2);
     const campaigns = screen.getByRole('table', { name: 'Campaigns' });
     expect(within(campaigns).getByRole('row', { name: /launch/ })).toHaveTextContent('5.8%');
+  });
+
+  it("keeps a code's face value and the campaign's payout in separate columns", async () => {
+    renderScreen();
+
+    const campaigns = await screen.findByRole('table', { name: 'Campaigns' });
+    const headers = within(campaigns)
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent);
+    expect(headers).toEqual(['Campaign', 'Issued', 'Redeemed', 'Rate', 'Activated', 'Per code', 'Paid out']);
+
+    const cells = (name: RegExp) =>
+      within(within(campaigns).getByRole('row', { name }))
+        .getAllByRole('cell')
+        .map((cell) => cell.textContent);
+    // Two codes out, none redeemed: $0 paid out — and now the $500 each one is
+    // worth, beside it, so the row cannot be read as "these codes grant nothing".
+    expect(cells(/vip/)).toEqual(['vip', '2', '0', '0%', '0', '$500', '$0']);
+    expect(cells(/launch/)).toEqual(['launch', '51', '3', '5.8%', '2', '$100', '$300']);
+    // A tag whose batches were issued at different grants quotes neither end alone.
+    expect(cells(/mixed/)).toEqual(['mixed', '4', '1', '25%', '0', '$25–$100', '$25']);
+    // Uniformity is decided on the micros, so batches differing below a cent
+    // still read as a range. Both ends print the same, and the dash is the point:
+    // deciding on the rendered string would collapse this to a flat "$25.12" and
+    // call a mixed campaign uniform — the misreading this column exists to end.
+    expect(cells(/subcent/)).toEqual(['subcent', '2', '0', '0%', '0', '$25.12–$25.12', '$0']);
+  });
+
+  it('no longer calls the cumulative payout a grant', async () => {
+    renderScreen();
+
+    // The table is what tells the tiles apart from their skeletons, which carry
+    // the same labels and no hint.
+    await screen.findByRole('table', { name: 'Campaigns' });
+    expect(screen.getByText('Credit paid out')).toBeInTheDocument();
+    expect(screen.getByText('Granted by redemptions so far')).toBeInTheDocument();
+    expect(screen.queryByText('Credit granted')).not.toBeInTheDocument();
   });
 
   it('masks codes until asked, and copies or reveals one row at a time', async () => {

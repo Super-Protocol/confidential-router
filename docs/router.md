@@ -499,6 +499,14 @@ with its origin (invitation / bootstrap / open sign-up), and charts sign-ups and
 redemptions from this database. No code value is ever logged: the audit lines name
 the operator, the campaign and the row id.
 
+The statistics tab keeps a campaign's **face value** and its **payout** apart
+(SUP-390): *Per code* is what one redemption grants — a span when the tag collects
+batches issued at different grants — and *Paid out* (the *Credit paid out* tile) is
+the cumulative total redemptions have actually written. A mailed campaign nobody has
+redeemed yet has paid out $0 and is still worth every dollar it was issued for; the
+column that used to say "Credit granted" reported only the second and was read as the
+first.
+
 **Moving codes between deployments** (SUP-272). A redeploy starts from an empty
 database, and codes that were already mailed have to keep working on it. The Codes
 tab has **Export CSV** and **Import CSV** for that — both behind
