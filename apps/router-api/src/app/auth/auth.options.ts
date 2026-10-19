@@ -7,6 +7,7 @@ import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
+import { signUpMailGate } from './sign-up-mail-gate.plugin.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
 /** Session cookie name fixed by ADR-004 §4. */
@@ -106,6 +107,20 @@ export interface AuthOptionsDeps {
    * either both wired or neither is.
    */
   onBeforeUserCreated?: (invite: SignUpInvite, bootstrap: boolean) => Promise<void>;
+  /**
+   * The same decision as `onBeforeUserCreated`, asked one step earlier and
+   * answered rather than thrown (`SignUpGate.admits`, SUP-410).
+   *
+   * Without it the two routes that mail an address — a sign-in code and a magic
+   * link — would send to any address a stranger named, on a deployment that
+   * then refuses the account: nothing created, the mail gone out, and the
+   * deployment's verified sender available to whoever found the hostname. See
+   * `sign-up-mail-gate.plugin.ts`.
+   *
+   * Only consulted on an invite-only deployment, which is the only one that
+   * refuses a sign-up at all.
+   */
+  admitsSignUp?: (invite: SignUpInvite) => Promise<boolean>;
 }
 
 /**
@@ -127,6 +142,7 @@ export function buildAuthOptions({
   database,
   onUserCreated,
   onBeforeUserCreated,
+  admitsSignUp,
 }: AuthOptionsDeps): BetterAuthOptions {
   const { auth, server } = config;
 
@@ -189,7 +205,7 @@ export function buildAuthOptions({
           },
         }
       : undefined,
-    plugins: authPlugins(config, mail),
+    plugins: authPlugins(config, mail, admitsSignUp),
   };
 }
 
@@ -202,7 +218,11 @@ export function buildAuthOptions({
  * that configured no token, and no `/auth/email-otp/send-verification-otp` to
  * request a mail from on one that has no mailer.
  */
-function authPlugins(config: RouterConfig, mail: AuthMail): BetterAuthPlugin[] {
+function authPlugins(
+  config: RouterConfig,
+  mail: AuthMail,
+  admitsSignUp: AuthOptionsDeps['admitsSignUp'],
+): BetterAuthPlugin[] {
   const { auth } = config;
   const plugins: BetterAuthPlugin[] = [];
 
@@ -218,7 +238,9 @@ function authPlugins(config: RouterConfig, mail: AuthMail): BetterAuthPlugin[] {
         // An unknown address is mailed a code like any other, and the account
         // is created when the code comes back — subject to `SignUpGate`, which
         // is where an invite-only deployment refuses. That is also what makes
-        // the send route answer identically for every address.
+        // the send route answer identically for every address, and it is why an
+        // invite-only deployment has to decide whether to *send* as well:
+        // `sign-up-mail-gate.plugin.ts`.
         disableSignUp: false,
         sendVerificationOTP: async ({ email, otp, type }) => {
           // The send route accepts three types and this deployment uses one;
@@ -245,6 +267,14 @@ function authPlugins(config: RouterConfig, mail: AuthMail): BetterAuthPlugin[] {
 
   if (auth.bootstrapToken !== undefined) {
     plugins.push(bootstrapAdmin({ token: auth.bootstrapToken, email: auth.bootstrapEmail }));
+  }
+
+  // Last, and only where there is something to refuse: on an invite-only
+  // deployment the two send routes above are gated by the same decision the
+  // insert is (SUP-410). An open deployment registers nothing, so its send
+  // routes are exactly what they always were.
+  if (admitsSignUp && auth.requireInviteForSignUp) {
+    plugins.push(signUpMailGate({ admits: admitsSignUp }));
   }
 
   return plugins;

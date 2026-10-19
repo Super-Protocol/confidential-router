@@ -3,7 +3,7 @@ import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { formatInviteCode, generateInvites, mintInviteCode } from '../src/app/invites/index.js';
-import { createHarness, type Harness, pathOf, signUpWithCode } from './app-harness.js';
+import { createHarness, type Harness, lastCodeFor, pathOf, signUpWithCode } from './app-harness.js';
 import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
 /**
@@ -85,6 +85,31 @@ function lookup(code: string) {
 
 function signUp(body: Record<string, unknown>, query = '') {
   return signUpWithCode(harness, body, query);
+}
+
+/** Asks for a mailed code, with the invitation an invite-only deployment needs to send one. */
+function sendCode(email: string, inviteCode?: string) {
+  return request(server())
+    .post('/auth/email-otp/send-verification-otp')
+    .send({ email, type: 'sign-in', ...(inviteCode ? { inviteCode } : {}) });
+}
+
+/**
+ * A sign-up whose mailed code was asked for with one invitation and handed back
+ * with whatever `body` carries.
+ *
+ * The only way a typed refusal reaches this path now (SUP-410): an invite-only
+ * deployment will not mail an address it has no account for unless the request
+ * carries a code it would admit, so every refusal a visitor can still see is one
+ * the invitation earned between the mail and the submit — taken by somebody
+ * else, withdrawn by an operator, or a different code on the submit.
+ */
+async function signUpMailedWith(mailInvite: string, body: Record<string, unknown>): Promise<request.Response> {
+  const email = String(body.email);
+  await sendCode(email, mailInvite).expect(200);
+  return request(server())
+    .post('/auth/sign-in/email-otp')
+    .send({ ...body, otp: lastCodeFor(harness, email) });
 }
 
 function sessionCookiesOf(response: request.Response): string[] {
@@ -730,11 +755,23 @@ describe('a deployment that requires an invitation to sign up', () => {
       expect(grant.inviteGrant).toMatchObject({ grantMicros: String(GRANT_MICROS), campaign: CAMPAIGN });
     });
 
-    it('refuses a sign-up with no code at all, and creates nothing', async () => {
+    it('mails nothing to an address with no account and no invitation, and creates nothing', async () => {
       const before = await users();
 
-      const refused = await signUp({ email: 'uninvited@example.com', name: 'Uninvited' }).expect(403);
+      await sendCode('uninvited@example.com').expect(200);
+      await harness.settleMail();
 
+      expect(harness.mailer.ofKind('sign-in-code')).toEqual([]);
+      expect(await users()).toBe(before);
+    });
+
+    it('refuses a sign-up whose submit carries no code, even though the mail was earned', async () => {
+      const [invite] = await issue(dataSourceOf(harness));
+      const before = await users();
+
+      const refused = await signUpMailedWith(invite.code, { email: 'uninvited@example.com', name: 'Uninvited' });
+
+      expect(refused.status).toBe(403);
       expect(refused.body.code).toBe('invite_required');
       expect(await users()).toBe(before);
     });
@@ -755,15 +792,20 @@ describe('a deployment that requires an invitation to sign up', () => {
         ['not-a-code-at-all', 'invite_expired_or_unknown'],
       ];
 
+      // One usable code mails every one of them: a code is spent by creating an
+      // account, and none of these submits creates one.
+      const [mailable] = await issue(dataSource, { campaign: 'mailable-c' });
+
       const before = await users();
       let index = 0;
       for (const [code, expected] of cases) {
-        const refused = await signUp({
+        const refused = await signUpMailedWith(mailable.code, {
           email: `refused-${index}@example.com`,
           name: 'Refused',
           inviteCode: code,
-        }).expect(403);
+        });
         index += 1;
+        expect(refused.status, code).toBe(403);
         expect(refused.body.code, code).toBe(expected);
       }
       expect(await users()).toBe(before);
@@ -771,14 +813,21 @@ describe('a deployment that requires an invitation to sign up', () => {
 
     it('spends the code exactly once, so the second person to try it is turned away', async () => {
       const [invite] = await issue(dataSourceOf(harness));
+      // Both are mailed while the invitation still has its seat — after the
+      // first account takes it, the send route would not mail the second at all.
+      await sendCode('first@example.com', invite.code).expect(200);
+      await sendCode('second@example.com', invite.code).expect(200);
+      const codes = ['first@example.com', 'second@example.com'].map((email) => lastCodeFor(harness, email));
 
-      await signUp({ email: 'first@example.com', inviteCode: invite.code, name: 'First' }).expect(200);
+      await request(server())
+        .post('/auth/sign-in/email-otp')
+        .send({ email: 'first@example.com', otp: codes[0], inviteCode: invite.code, name: 'First' })
+        .expect(200);
       const before = await users();
-      const second = await signUp({
-        email: 'second@example.com',
-        inviteCode: invite.code,
-        name: 'Second',
-      }).expect(403);
+      const second = await request(server())
+        .post('/auth/sign-in/email-otp')
+        .send({ email: 'second@example.com', otp: codes[1], inviteCode: invite.code, name: 'Second' })
+        .expect(403);
 
       expect(second.body.code).toBe('invite_already_claimed');
       expect(await users()).toBe(before);
@@ -817,33 +866,52 @@ describe('a deployment that requires an invitation to sign up', () => {
      * as `?error=` on the error callback — the same three codes the password path
      * puts in its body, which is what lets the console have one set of copy.
      */
-    it('redirects to the error callback with the code, and creates nothing', async () => {
+    /**
+     * The link is mail too, and it was being sent to any address a stranger
+     * named on a deployment that would then refuse the account (SUP-410). So the
+     * request that asks for one is gated the same way, by the code on its
+     * `callbackURL` — the one thing it carries through to the verification.
+     */
+    it('mails no link to an address with no account and no invitation, and creates nothing', async () => {
+      const before = await users();
+      const sent = harness.mailer.ofKind('magic-link').length;
+
+      const answer = await request(server())
+        .post('/auth/sign-in/magic-link')
+        .send({ email: 'nocode@example.com', callbackURL: '/', errorCallbackURL: '/signup' })
+        .expect(200);
+      await harness.settleMail();
+
+      expect(answer.body).toEqual({ status: true });
+      expect(harness.mailer.ofKind('magic-link')).toHaveLength(sent);
+      expect(await users()).toBe(before);
+    });
+
+    /**
+     * A navigation cannot be answered with a 403 body, so the refusal comes back
+     * as `?error=` on the error callback — the same three codes the emailed-code
+     * path puts in its body, which is what lets the console have one set of copy.
+     * Reachable for a link that was earned and spent before it was opened.
+     */
+    it('redirects to the error callback with the code when the invitation went bad in between', async () => {
+      const dataSource = dataSourceOf(harness);
+      const [invite] = await issue(dataSource);
       const before = await users();
 
       await request(server())
         .post('/auth/sign-in/magic-link')
-        .send({ email: 'nocode@example.com', callbackURL: '/', errorCallbackURL: '/signup' });
+        .send({ email: 'spent@example.com', callbackURL: `/?invite=${invite.code}`, errorCallbackURL: '/signup' })
+        .expect(200);
+      // Claimed by somebody else between the mail and the click.
+      await dataSource
+        .getRepository(InviteCode)
+        .update({ code: invite.code.replace(/-/g, '') }, { redemptionCount: 1 });
       const verified = await request(server()).get(pathOf(harness.mailer.last.url)).expect(302);
 
       const location = new URL(verified.headers.location, 'http://localhost:3000');
       expect(location.pathname).toBe('/signup');
-      expect(location.searchParams.get('error')).toBe('invite_required');
+      expect(location.searchParams.get('error')).toBe('invite_already_claimed');
       expect(await users()).toBe(before);
-    });
-
-    it('carries the claimed-already refusal the same way', async () => {
-      const dataSource = dataSourceOf(harness);
-      const [spent] = await issue(dataSource);
-      await dataSource.getRepository(InviteCode).update({ code: spent.code.replace(/-/g, '') }, { redemptionCount: 1 });
-
-      await request(server())
-        .post('/auth/sign-in/magic-link')
-        .send({ email: 'spent@example.com', callbackURL: `/?invite=${spent.code}`, errorCallbackURL: '/signup' });
-      const verified = await request(server()).get(pathOf(harness.mailer.last.url)).expect(302);
-
-      expect(new URL(verified.headers.location, 'http://localhost:3000').searchParams.get('error')).toBe(
-        'invite_already_claimed',
-      );
     });
   });
 

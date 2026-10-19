@@ -150,7 +150,11 @@ export function SignInForm() {
     setError(null);
     setPending(kind);
     try {
-      await requestSignInCode(email);
+      // The invitation goes with it: on an invite-only deployment an address
+      // with no account is only mailed a code while the request carries one
+      // (SUP-410), and this screen registers an invited visitor who never
+      // opened `/signup`.
+      await requestSignInCode(email, inviteCode);
       if (kind === 'code-resend') {
         // The code on screen may still be good, but the one in the newest mail
         // is the one the viewer is about to read — so the field starts over.
