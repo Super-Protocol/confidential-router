@@ -5,7 +5,7 @@ import { type Catalog, createTestDataSource, seedCatalog, seedGeneration, testCo
 import { LedgerService } from '../billing/ledger.service.js';
 import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
-import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
+import { WorkspaceMember, type WorkspaceRole } from '../db/entities/workspace-member.entity.js';
 import { generateInvites } from './invite-generator.js';
 import { InviteStatsService } from './invite-stats.service.js';
 import { InvitesService } from './invites.service.js';
@@ -81,10 +81,10 @@ async function carry(code: string, email: string | null, redeemedAt: Date): Prom
 }
 
 /** Puts an account in a workspace, so a carried redeemer has one to have used. */
-async function own(userId: string, workspaceId: string): Promise<void> {
+async function own(userId: string, workspaceId: string, role: WorkspaceRole = 'owner'): Promise<void> {
   await dataSource
     .getRepository(WorkspaceMember)
-    .insert({ workspaceId, userId, role: 'owner', createdAt: new Date('2026-10-02T00:00:00Z') });
+    .insert({ workspaceId, userId, role, createdAt: new Date('2026-10-02T00:00:00Z') });
 }
 
 /** One sign-up: its own workspace, redeeming one code. */
@@ -250,14 +250,43 @@ describe('a campaign whose redemptions were carried over by an import', () => {
     expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({ redeemed: 2, carried: 2, activated: 0 });
   });
 
-  it('counts an account that both redeemed here and matches a carried address once', async () => {
+  /**
+   * A live redemption names one workspace, so it could never do this; a carried
+   * one is matched to an *account*, and `workspace_members` exists so that team
+   * workspaces stay an additive change (ADR-004 §5). Counting workspaces rather
+   * than redemptions would print `activated` larger than `redeemed` the day they
+   * land — on the screen this issue is about.
+   */
+  it('counts a carried redeemer once however many workspaces they belong to', async () => {
+    const codes = await issue('launch-2026-10', 2);
+    await carry(codes[0], 'imported@example.com', new Date('2026-10-14T10:00:00Z'));
+    const redeemer = await account('imported@example.com');
+    for (const name of ['personal', 'team']) {
+      const workspace = await seedCatalog(dataSource);
+      await own(redeemer, workspace.workspaceId, name === 'personal' ? 'owner' : 'member');
+      await seedGeneration(dataSource, workspace, { createdAt: new Date('2026-10-18T10:00:00Z') });
+    }
+
+    expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({ redeemed: 1, carried: 1, activated: 1 });
+  });
+
+  it('never reports more activations than redemptions, mixing live and carried redeemers', async () => {
     const codes = await issue('launch-2026-10', 2);
     const sent = await signUpWith(codes[0]);
-    await own(await account('both@example.com'), sent.workspaceId);
-    await carry(codes[1], 'both@example.com', new Date('2026-10-14T10:00:00Z'));
     await seedGeneration(dataSource, sent, { createdAt: new Date('2026-10-18T10:00:00Z') });
+    await carry(codes[1], 'imported@example.com', new Date('2026-10-14T10:00:00Z'));
+    const redeemer = await account('imported@example.com');
+    for (const _ of [0, 1]) {
+      const workspace = await seedCatalog(dataSource);
+      await own(redeemer, workspace.workspaceId);
+      await seedGeneration(dataSource, workspace, { createdAt: new Date('2026-10-18T11:00:00Z') });
+    }
 
-    expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({ redeemed: 2, carried: 1, activated: 1 });
+    const [campaign] = await stats.campaigns('launch-2026-10');
+
+    // Three busy workspaces, two redemptions: counting workspaces would say 3.
+    expect(campaign).toMatchObject({ redeemed: 2, carried: 1, activated: 2 });
+    expect(campaign.activated).toBeLessThanOrEqual(campaign.redeemed);
   });
 });
 
