@@ -11,6 +11,7 @@ export const INVITE_STATISTICS_QUERY = graphql(`
       totals {
         issued
         redeemed
+        carried
         withdrawn
         redemptionRate
         grantedMicros
@@ -28,6 +29,7 @@ export const INVITE_STATISTICS_QUERY = graphql(`
         campaign
         issued
         redeemed
+        carried
         redemptionRate
         activated
         grantedMicros
