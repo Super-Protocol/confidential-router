@@ -633,7 +633,10 @@ built-in of the same name, so policies move over unchanged.
 forwarded only if that endpoint holds a verdict admitting it; the very first
 request waits for the first verdict (`initialTimeout`), and every later one is
 decided against the last one the background loop produced (`reattestInterval`).
-Verification never happens on the request path.
+Admitted traffic never waits for a verification — but a request the verdict in
+force would *refuse* re-attests on the spot, bounded to one check every two
+seconds per endpoint, so an upstream that came back seconds ago is admitted on
+the next request instead of at the next `reattestInterval` tick (ADR-003 §7).
 
 Three things make it more than a reverse proxy with a check in front:
 
@@ -659,14 +662,22 @@ Without a verdict, `failMode: closed` (the default) answers `503` with
   "error": { "type": "gatekeeper_error", "code": "attestation_failed",
              "message": "untrusted-root: the chain terminates in …" },
   "stage": "untrusted-root",
-  "reason": "the chain terminates in …"
+  "reason": "the chain terminates in …",
+  "checkedAt": "2026-10-19T20:05:00Z"
 }
 ```
 
-and never opens an upstream connection. `failMode: open` forwards anyway, logs
-at `warn`, tags the client-facing response `X-Gatekeeper-Verdict: deny <stage>:
-<reason>`, and carries that traffic on a *separate* connection pool, so nothing
-a verdict covered is ever reused for traffic it did not.
+and never opens an upstream connection. `checkedAt` — also on the response as
+`X-Gatekeeper-Checked-At` — dates the verdict the refusal came from, so a reason
+is never read as describing the present. The code is `attestation_unreachable`
+rather than `attestation_failed` when the evidence fetch never completed: a
+dial, handshake or read failure means no check ran at all, and calling a brief
+network outage an attestation failure sends its reader after the wrong thing.
+
+`failMode: open` forwards anyway, logs at `warn`, tags the client-facing
+response `X-Gatekeeper-Verdict: deny <stage>: <reason>`, and carries that
+traffic on a *separate* connection pool, so nothing a verdict covered is ever
+reused for traffic it did not.
 
 ### Admin socket
 

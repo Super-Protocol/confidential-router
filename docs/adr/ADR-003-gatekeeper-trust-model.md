@@ -155,7 +155,12 @@ package's result — the `data.gatekeeper.trust` module is generated from the sa
 `failMode: closed` (default): while the endpoint has no valid verdict — never verified, denied, or
 re-attestation failed — the local listener answers **503** with an OpenAI-style error body
 (`{"error":{"type":"gatekeeper_error","code":"attestation_failed","message":"<stage>: <reason>"}}`) and
-does **not** open an upstream connection. `failMode: open` proxies anyway, logs at `warn`, sets
+does **not** open an upstream connection. Two additions, both SUP-422: the body carries `checkedAt`
+(RFC 3339, also on the response as `X-Gatekeeper-Checked-At`) — a refusal is answered from the verdict
+in force, and undated it reads as describing the present — and the code is
+**`attestation_unreachable`** when the evidence fetch never completed (dial, handshake or read), because
+no check ran and nothing failed attestation. Every stage that *did* run, including a `fetch`-stage denial
+the upstream answered with (a 404, a malformed bundle), stays `attestation_failed`. `failMode: open` proxies anyway, logs at `warn`, sets
 `X-Gatekeeper-Verdict: deny` on the **client-facing** response, and the TUI paints the endpoint amber.
 Verdict headers are added on the way back to the local client only; **nothing about the verdict is ever
 sent upstream** (no request header, no query parameter, no separate call).
@@ -165,10 +170,25 @@ sent upstream** (no request header, no query parameter, no separate call).
 - `reattestInterval` (default `5m`): a background loop per endpoint re-runs the full pipeline (fresh TLS
   handshake, fresh bundle fetch). Requests are admitted against the **last verdict**; the data plane never
   blocks on verification except for the very first request, which waits for the initial verdict
-  (`initialTimeout`, default `15s`).
+  (`initialTimeout`, default `15s`), and a request the verdict in force would refuse — see the next
+  bullet.
+- **On-demand re-attestation of a denial** (`2s`, not configurable; SUP-422): a request that arrives while
+  the last verdict is a denial triggers a re-check and is decided on its result. Without it a failed
+  re-attestation latches the endpoint closed until the next `reattestInterval` tick — measured: a
+  6-second network blip became a 5-minute outage for the client, with requests arriving throughout and
+  not one of them retrying the check that was refusing them. The 2 seconds bound it in both directions:
+  no new check starts within that of the last, and the request waits no longer than that before being
+  answered on the verdict already in force (a check still running installs its verdict for the requests
+  behind it). A healthy upstream answers the evidence fetch in milliseconds, so recovery costs the first
+  request nothing worth measuring, while a dead one is neither hammered nor allowed to turn a fast
+  refusal into a slow one. Under `failMode: open` the re-check never delays the request: traffic is
+  flowing already, so it runs behind it.
 - `verdictCacheTtl` (default `60s`): a re-check the data plane triggers **on its own** — the first request
   of an endpoint's life, or a connection whose certificate did not match the pin — reuses a verdict younger
-  than the TTL, so a burst of failures cannot become a burst of handshakes against the upstream. An
+  than the TTL, so a burst of failures cannot become a burst of handshakes against the upstream. The
+  on-demand re-check above is the one case that does not use it, and deliberately: the verdict it would
+  reuse is the one refusing the request, so a 60-second window would be most of the outage it exists to
+  end. An
   **explicit** re-check does not: `gatekeeper verify` and the dashboard's "Re-attest now" bypass the cache,
   which is what `status.Supervisor.Reattest` promises and what a user who has just edited a pin is asking
   for. *(Amended 2026-08-31, SUP-71: this bullet previously had the explicit re-check reusing the cached

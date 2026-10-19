@@ -26,6 +26,9 @@ type verdict struct {
 	Admitted bool
 	Stage    string
 	Reason   string
+	// Unreachable marks a denial the upstream never answered: the evidence
+	// fetch itself failed, so no check ran (SUP-422).
+	Unreachable bool
 	// Leaf is the TLS certificate the verification observed. Every proxied
 	// connection is held to it.
 	Leaf string
@@ -52,6 +55,20 @@ func (v *verdict) denial() (stage, reason string) {
 // yet. It is not one of the pipeline's own stages (ADR-003 §1) because no stage
 // has run.
 const stageAttesting = "attesting"
+
+// forceAttest is the reuse window of a check that must not reuse anything: an
+// explicit re-attestation and the background loop both pass it.
+const forceAttest = time.Duration(0)
+
+// onDemandRetry is the budget of the re-attestation a refused request triggers
+// (ADR-003 §7, SUP-422): a request that meets a denial waits at most this long
+// for a fresh verdict, and no new check is started within this of the last one.
+//
+// It is deliberately short. The point is to catch an upstream that recovered a
+// moment ago — the evidence fetch of a healthy one takes milliseconds — and not
+// to turn a fast refusal into a slow one while it is still down, nor to let a
+// burst of refused requests become a burst of handshakes against it.
+const onDemandRetry = 2 * time.Second
 
 // endpoint is one configured endpoint at runtime: its listener, its verdict,
 // and the two connection pools its traffic can take.
@@ -251,7 +268,7 @@ func (e *endpoint) stop(ctx context.Context) error {
 func (e *endpoint) attestLoop(ctx context.Context, done chan struct{}) {
 	defer close(done)
 
-	e.attest(ctx, true)
+	e.attest(ctx, forceAttest)
 	ticker := time.NewTicker(e.tuning.ReattestInterval)
 	defer ticker.Stop()
 	for {
@@ -259,20 +276,23 @@ func (e *endpoint) attestLoop(ctx context.Context, done chan struct{}) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.attest(ctx, true)
+			e.attest(ctx, forceAttest)
 		}
 	}
 }
 
 // attest runs one verification and installs the verdict it produced.
 //
-// force skips the verdict cache. The background loop and an explicit
-// "re-attest now" both force; the checks the data plane triggers on its own —
-// the first request, a connection whose certificate did not match — do not, so
-// a burst of them cannot turn into a burst of handshakes against the upstream.
-func (e *endpoint) attest(ctx context.Context, force bool) *verdict {
+// reuse is how young the verdict in force has to be for the check to be skipped
+// and that verdict returned instead; [forceAttest] skips nothing. The
+// background loop and an explicit "re-attest now" force; the checks the data
+// plane triggers on its own pass a window, so a burst of them cannot turn into
+// a burst of handshakes against the upstream — `verdictCacheTtl` for a
+// connection whose certificate did not match, [onDemandRetry] for a request
+// that met a denial.
+func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
 	e.mu.Lock()
-	if !force && e.verdict != nil && e.sup.now().Sub(e.verdict.At) < e.tuning.VerdictCacheTTL {
+	if reuse > 0 && e.verdict != nil && e.sup.now().Sub(e.verdict.At) < reuse {
 		current := e.verdict
 		e.mu.Unlock()
 		return current
@@ -347,8 +367,50 @@ func (e *endpoint) verify(ctx context.Context) *verdict {
 	}
 	return &verdict{
 		Report: report, At: now, Admitted: report.Admitted,
-		Stage: stage, Reason: reason, Leaf: report.ObservedTLSFingerprint,
+		Stage: stage, Reason: reason, Unreachable: report.Unreachable,
+		Leaf: report.ObservedTLSFingerprint,
 	}
+}
+
+// retryDenied re-attests on the way through a request that met a denial, and
+// returns the verdict the request is then admitted against.
+//
+// Without it the endpoint stays closed until the next `reattestInterval` tick,
+// so a few seconds of a flaky network become minutes of refused traffic even
+// though every arriving request is evidence that someone wants the check redone
+// (SUP-422). The retry is bounded twice over: by [onDemandRetry], which is both
+// how long the request waits and how often a new check may start, and by the
+// single-flight guard in [endpoint.attest], which collapses a burst of refused
+// requests into one verification.
+//
+// Under `failMode: open` the request is not held up at all: traffic is already
+// flowing, so the re-check runs in the background and upgrades the endpoint for
+// the requests after this one.
+func (e *endpoint) retryDenied(ctx context.Context, current *verdict) *verdict {
+	if e.sup.now().Sub(current.At) < onDemandRetry {
+		return current
+	}
+	// Not the request's own context: it is about to be answered either way, and
+	// a check that outlives it still installs a verdict the next request uses.
+	detached := context.WithoutCancel(ctx)
+	if e.tuning.FailMode == config.FailOpen {
+		go e.attest(detached, onDemandRetry)
+		return current
+	}
+
+	fresh := make(chan *verdict, 1)
+	go func() { fresh <- e.attest(detached, onDemandRetry) }()
+	timer := time.NewTimer(onDemandRetry)
+	defer timer.Stop()
+	select {
+	case result := <-fresh:
+		if result != nil {
+			return result
+		}
+	case <-timer.C: // still running; answer on what is in force and let it land
+	case <-ctx.Done(): // the client hung up
+	}
+	return current
 }
 
 // applyVerdict moves the data plane to a new verdict: it re-pins the connection

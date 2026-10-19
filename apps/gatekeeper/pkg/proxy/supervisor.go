@@ -202,7 +202,7 @@ func (s *Supervisor) Reattest(ctx context.Context, name string) (*status.Report,
 	if err != nil {
 		return nil, err
 	}
-	result := ep.attest(ctx, true)
+	result := ep.attest(ctx, forceAttest)
 	if result == nil {
 		return nil, errors.New("re-attestation produced no verdict")
 	}
@@ -278,7 +278,7 @@ func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
 	// so its verdict is re-formed rather than carried over.
 	for _, ep := range kept {
 		if ep.isRunning() {
-			go ep.attest(context.WithoutCancel(ctx), true)
+			go ep.attest(context.WithoutCancel(ctx), forceAttest)
 		}
 	}
 

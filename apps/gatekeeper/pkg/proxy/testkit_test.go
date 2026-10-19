@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 
 	"io"
 	"math/big"
@@ -272,6 +273,12 @@ type fakeUpstream struct {
 	// handshaken yet when http.Server hands it over.
 	sni atomic.Pointer[string]
 
+	// blocked, when set, makes every dial fail the way an unreachable upstream
+	// does. Both the evidence fetch and the proxied traffic go through dial, so
+	// setting it is what a firewall appearing between the gatekeeper and the
+	// router looks like from in here.
+	blocked atomic.Bool
+
 	// release gates the event stream between chunks, which is how a test proves
 	// the proxy is not buffering: the second chunk is not written until the
 	// first has been read through the proxy.
@@ -331,8 +338,15 @@ func (u *fakeUpstream) addr() string { return u.listener.Addr().String() }
 
 // dial is proxy.Options.Dial: every upstream address resolves to this server.
 func (u *fakeUpstream) dial(ctx context.Context, network, _ string) (net.Conn, error) {
+	if u.blocked.Load() {
+		return nil, &net.OpError{Op: "dial", Net: network, Addr: u.listener.Addr(),
+			Err: errors.New("connect: connection refused")}
+	}
 	return (&net.Dialer{}).DialContext(ctx, network, u.addr())
 }
+
+// block cuts the upstream off, or restores it.
+func (u *fakeUpstream) block(on bool) { u.blocked.Store(on) }
 
 // serverName is the SNI of the most recent handshake.
 func (u *fakeUpstream) serverName() string {
@@ -340,6 +354,20 @@ func (u *fakeUpstream) serverName() string {
 		return *name
 	}
 	return ""
+}
+
+// evidenceFetches counts the verifier's own requests, which is how a test
+// proves a burst of refused traffic did not become a burst of handshakes.
+func (u *fakeUpstream) evidenceFetches() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	count := 0
+	for _, r := range u.requests {
+		if r.Path == attestation.EvidencePath {
+			count++
+		}
+	}
+	return count
 }
 
 func (u *fakeUpstream) setCertificate(cert tls.Certificate) { u.cert.Store(&cert) }
@@ -667,8 +695,9 @@ func decodeDenial(t *testing.T, body string) struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
-	Stage  string `json:"stage"`
-	Reason string `json:"reason"`
+	Stage     string `json:"stage"`
+	Reason    string `json:"reason"`
+	CheckedAt string `json:"checkedAt"`
 } {
 	t.Helper()
 	var out struct {
@@ -677,8 +706,9 @@ func decodeDenial(t *testing.T, body string) struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
-		Stage  string `json:"stage"`
-		Reason string `json:"reason"`
+		Stage     string `json:"stage"`
+		Reason    string `json:"reason"`
+		CheckedAt string `json:"checkedAt"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("the denial body is not JSON (%v): %s", err, body)

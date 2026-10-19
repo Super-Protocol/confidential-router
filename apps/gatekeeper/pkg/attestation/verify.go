@@ -73,7 +73,12 @@ func VerifyHostname(ctx context.Context, params Params) Result {
 	}
 	fetched, err := fetcher(ctx, params.Hostname, params.Fetch)
 	if err != nil {
-		return fail(StageFetch, "%v", err)
+		// The document never arrived, so nothing was judged. The caller needs
+		// that apart from every other fetch-stage denial: it is the only one
+		// that is about the network rather than about the endpoint.
+		result := fail(StageFetch, "%v", err)
+		result.Unreachable = true
+		return result
 	}
 	if fetched.StatusCode < 200 || fetched.StatusCode >= 300 {
 		result := fail(StageFetch, "unexpected status %d from %s", fetched.StatusCode, fetched.URL)

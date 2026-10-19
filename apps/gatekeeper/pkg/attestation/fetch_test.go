@@ -78,6 +78,11 @@ func TestFetchRejectsNonSuccessStatus(t *testing.T) {
 		!strings.Contains(verdict.Reason, "unexpected status 404") {
 		t.Fatalf("verdict = %+v, want a fetch-stage denial naming the status", verdict)
 	}
+	// The endpoint answered, so this is a judgement about it — not the "we
+	// could not reach it" that would excuse the denial as weather.
+	if verdict.Unreachable {
+		t.Error("a 404 from the endpoint is reported as unreachable")
+	}
 }
 
 func TestFetchRefusesRedirects(t *testing.T) {
@@ -242,6 +247,11 @@ func TestVerifyHostnameReportsUnreachableEndpointsAtTheFetchStage(t *testing.T) 
 	})
 	if result.OK || result.Stage != attestation.StageFetch {
 		t.Fatalf("result = %+v, want a fetch-stage denial", result)
+	}
+	// No check ran: the evidence never arrived. Callers key the difference
+	// between "attestation failed" and "attestation unreachable" off this.
+	if !result.Unreachable {
+		t.Error("a refused dial is not marked unreachable, so a network blip reads as an attestation failure")
 	}
 }
 
