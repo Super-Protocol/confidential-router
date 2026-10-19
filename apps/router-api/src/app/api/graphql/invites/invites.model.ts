@@ -1,5 +1,6 @@
 import { Field, Float, GraphQLISODateTime, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
 import { IsBoolean, IsOptional, IsString, Length } from 'class-validator';
+import type { InviteCampaignStats } from '../../../invites/invite-stats.service.js';
 
 /**
  * Why an account that presented a code has no grant.
@@ -65,8 +66,35 @@ export class InviteCampaignStatsModel {
   })
   activated!: number;
 
-  @Field(() => String, { description: 'Micro-USD handed out so far.' })
+  @Field(() => String, {
+    description:
+      'Micro-USD one redemption of this campaign grants — its face value. Equal to `codeGrantMicrosMax` unless the tag collects batches issued at different grants.',
+  })
+  codeGrantMicrosMin!: string;
+
+  @Field(() => String, { description: 'The high end of the same range; equal to `codeGrantMicrosMin` as a rule.' })
+  codeGrantMicrosMax!: string;
+
+  @Field(() => String, {
+    description:
+      'Micro-USD handed out so far — a cumulative payout, not a code\u2019s face value. A campaign whose codes are all unredeemed reads 0 however much each one grants.',
+  })
   grantedMicros!: string;
+}
+
+/**
+ * A campaign's numbers as the console reads them.
+ *
+ * Every micro-USD figure crosses GraphQL as a String: a grant in micro-USD
+ * passes `Int`'s ceiling at $2,148, and a campaign's cumulative payout sooner.
+ */
+export function campaignStatsOf(entry: InviteCampaignStats): InviteCampaignStatsModel {
+  return {
+    ...entry,
+    codeGrantMicrosMin: String(entry.codeGrantMicrosMin),
+    codeGrantMicrosMax: String(entry.codeGrantMicrosMax),
+    grantedMicros: String(entry.grantedMicros),
+  };
 }
 
 @ObjectType('InviteGrantStatus', {

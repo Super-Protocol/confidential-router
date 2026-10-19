@@ -21,7 +21,23 @@ export interface InviteCampaignStats {
    * a sign-up that never sends a token bought nothing.
    */
   activated: number;
-  /** Micro-USD handed out so far. */
+  /**
+   * What one redemption of this campaign grants, in micro-USD — its face value,
+   * and the number an operator reasons about when deciding what to send out.
+   *
+   * A range rather than a single figure because a campaign tag collects batches
+   * and `issueInviteCodes` takes the grant per batch: `min === max` is the usual
+   * case and reads as one number, while a campaign that mixes two batches says
+   * so instead of quoting whichever one a query happened to pick. Both are 0
+   * when the campaign has no codes.
+   */
+  codeGrantMicrosMin: number;
+  codeGrantMicrosMax: number;
+  /**
+   * Micro-USD handed out so far — the running total of what redemptions have
+   * actually paid out, which is 0 for a campaign whose codes are all unredeemed
+   * however much each one is worth (SUP-390).
+   */
   grantedMicros: number;
 }
 
@@ -110,8 +126,31 @@ export class InviteStatsService {
       redeemed: redemptions.length,
       redemptionRate: issued === 0 ? 0 : redemptions.length / issued,
       activated: await this.countActivated(workspaceIds),
+      ...(await this.codeGrantRange(campaign)),
       grantedMicros: await this.sumGranted(campaign),
     };
+  }
+
+  /**
+   * The face value of the campaign's codes, as a range.
+   *
+   * MIN/MAX rather than a DISTINCT list: the console shows one figure or a span,
+   * and the codes tab is where an operator goes to see which batch is which.
+   */
+  private async codeGrantRange(campaign: string): Promise<{
+    codeGrantMicrosMin: number;
+    codeGrantMicrosMax: number;
+  }> {
+    const row = await this.dataSource
+      .getRepository(InviteCode)
+      .createQueryBuilder('code')
+      .where('code.campaign = :campaign', { campaign })
+      .select('MIN(code.grantMicros)', 'low')
+      .addSelect('MAX(code.grantMicros)', 'high')
+      .getRawOne<{ low: string | number | null; high: string | number | null }>();
+    // A raw aggregate bypasses the entity's bigint transformer, and PostgreSQL
+    // hands a bigint back as a string.
+    return { codeGrantMicrosMin: Number(row?.low ?? 0), codeGrantMicrosMax: Number(row?.high ?? 0) };
   }
 
   /**

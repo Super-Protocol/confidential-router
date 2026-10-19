@@ -1002,7 +1002,19 @@ type InviteCampaignStats {
   activated: Int!
   campaign: String!
 
-  """Micro-USD handed out so far."""
+  """
+  The high end of the same range; equal to `codeGrantMicrosMin` as a rule.
+  """
+  codeGrantMicrosMax: String!
+
+  """
+  Micro-USD one redemption of this campaign grants — its face value. Equal to `codeGrantMicrosMax` unless the tag collects batches issued at different grants.
+  """
+  codeGrantMicrosMin: String!
+
+  """
+  Micro-USD handed out so far — a cumulative payout, not a code’s face value. A campaign whose codes are all unredeemed reads 0 however much each one grants.
+  """
   grantedMicros: String!
 
   """Codes generated."""

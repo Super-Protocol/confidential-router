@@ -144,7 +144,9 @@ type InviteCampaignStats {              # auth.adminEmails only
   redeemed: Int!
   redemptionRate: Float!
   activated: Int!                       # redeemers that went on to send a request
-  grantedMicros: String!
+  codeGrantMicrosMin: String!           # face value: what one redemption grants
+  codeGrantMicrosMax: String!           # the high end, when the tag mixes batches
+  grantedMicros: String!                # cumulative payout, not a face value
 }
 
 enum InviteRefusalReason { NOT_FOUND, EXPIRED, EXHAUSTED, DISABLED, ALREADY_REDEEMED, ERROR }
