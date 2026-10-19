@@ -36,7 +36,9 @@ const LEDGER = `
 `;
 const CAMPAIGNS = `
   query Campaigns($campaign: String) {
-    inviteCampaigns(campaign: $campaign) { campaign issued redeemed redemptionRate activated grantedMicros }
+    inviteCampaigns(campaign: $campaign) {
+      campaign issued redeemed redemptionRate activated codeGrantMicrosMin codeGrantMicrosMax grantedMicros
+    }
   }
 `;
 
@@ -515,6 +517,9 @@ describe('the campaign stats query', () => {
         redemptionRate: 0.25,
         // Redeemed, but has not sent a request yet.
         activated: 0,
+        // Four codes at one grant: each is worth a grant, one grant has been paid.
+        codeGrantMicrosMin: String(GRANT_MICROS),
+        codeGrantMicrosMax: String(GRANT_MICROS),
         grantedMicros: String(GRANT_MICROS),
       },
     ]);
