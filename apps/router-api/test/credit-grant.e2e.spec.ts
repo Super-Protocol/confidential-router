@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OPERATOR_GRANT_REFERENCE } from '../src/app/billing/credit-grant.service.js';
@@ -32,6 +33,7 @@ const GRANT = `
       amountMicros
       balanceMicros
       note
+      replayed
     }
   }
 `;
@@ -83,8 +85,22 @@ afterEach(async () => {
   await harness?.close();
 });
 
+/**
+ * One call, with the fields every call must carry defaulted (SUP-398): a reason,
+ * and a `requestId` fresh per call so each is its own decision. A test about a
+ * retry passes the id itself.
+ */
+function inputOf(fields: Record<string, unknown>): Record<string, unknown> {
+  return { note: 'Internal tester top-up', requestId: randomUUID(), ...fields };
+}
+
 async function grant(input: Record<string, unknown>, as: ConsoleSession = operator) {
-  return expectData(as, GRANT, { input });
+  return expectData(as, GRANT, { input: inputOf(input) });
+}
+
+/** The raw body, for the cases whose subject is the error. */
+async function attempt(input: Record<string, unknown>, as: ConsoleSession = operator) {
+  return graphql(as, GRANT, { input: inputOf(input) });
 }
 
 describe('an operator crediting an existing account', () => {
@@ -138,16 +154,14 @@ describe('an operator crediting an existing account', () => {
 
 describe('who may call it', () => {
   it('refuses a member who is not in auth.adminEmails', async () => {
-    const body = await graphql(tester, GRANT, { input: { accountEmail: TESTER, amountMicros: '100000000' } });
+    const body = await attempt({ accountEmail: TESTER, amountMicros: '100000000' }, tester);
 
     expect(body.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
     expect(await rowCount()).toBe(0);
   });
 
   it('refuses a caller with no session at all', async () => {
-    const body = await graphql(anonymous(harness), GRANT, {
-      input: { accountEmail: TESTER, amountMicros: '100000000' },
-    });
+    const body = await attempt({ accountEmail: TESTER, amountMicros: '100000000' }, anonymous(harness));
 
     expect(body.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
     expect(await rowCount()).toBe(0);
@@ -156,26 +170,25 @@ describe('who may call it', () => {
 
 describe('what it refuses', () => {
   it('fails cleanly on an account nobody has', async () => {
-    const body = await graphql(operator, GRANT, {
-      input: { accountEmail: 'nobody@example.com', amountMicros: '1000000' },
-    });
+    const body = await attempt({ accountEmail: 'nobody@example.com', amountMicros: '1000000' });
 
     expect(body.errors?.[0]?.message).toMatch(/No account for nobody@example.com/);
     expect(await rowCount()).toBe(0);
   });
 
   it('holds the ceiling on one call', async () => {
-    const body = await graphql(operator, GRANT, {
-      input: { accountEmail: TESTER, amountMicros: String(CEILING + 1) },
-    });
+    const body = await attempt({ accountEmail: TESTER, amountMicros: String(CEILING + 1) });
 
     expect(body.errors?.[0]?.message).toMatch(/billing\.maxCreditGrantMicros/);
     expect(await rowCount()).toBe(0);
   });
 
   it('refuses a debit on a deployment that has not allowed one', async () => {
-    const body = await graphql(operator, GRANT, {
-      input: { accountEmail: TESTER, amountMicros: '-1000000', kind: 'ADJUSTMENT', note: 'Clawback' },
+    const body = await attempt({
+      accountEmail: TESTER,
+      amountMicros: '-1000000',
+      kind: 'ADJUSTMENT',
+      note: 'Clawback',
     });
 
     expect(body.errors?.[0]?.message).toMatch(/allowCreditDebits/);
@@ -183,9 +196,7 @@ describe('what it refuses', () => {
   });
 
   it('names the field on an amount past the safe integer range, rather than masking a 500', async () => {
-    const body = await graphql(operator, GRANT, {
-      input: { accountEmail: TESTER, amountMicros: '99999999999999999999' },
-    });
+    const body = await attempt({ accountEmail: TESTER, amountMicros: '99999999999999999999' });
 
     expect(body.errors?.[0]?.extensions?.code).not.toBe('INTERNAL_SERVER_ERROR');
     expect(body.errors?.[0]?.message).toMatch(/amountMicros/);
@@ -193,11 +204,70 @@ describe('what it refuses', () => {
   });
 
   it('refuses a negative GRANT, whatever the deployment allows', async () => {
-    const body = await graphql(operator, GRANT, {
-      input: { accountEmail: TESTER, amountMicros: '-1000000', note: 'Clawback' },
-    });
+    const body = await attempt({ accountEmail: TESTER, amountMicros: '-1000000', note: 'Clawback' });
 
     expect(body.errors?.[0]?.message).toMatch(/ADJUSTMENT/);
+  });
+});
+
+describe('a submission that arrives twice', () => {
+  it('replays the first row rather than crediting again', async () => {
+    const requestId = randomUUID();
+    const first = await grant({ accountEmail: TESTER, amountMicros: '100000000', requestId });
+    const again = await grant({ accountEmail: TESTER, amountMicros: '100000000', requestId });
+
+    expect(first.grantCredit.replayed).toBe(false);
+    expect(again.grantCredit).toMatchObject({
+      replayed: true,
+      creditTransactionId: first.grantCredit.creditTransactionId,
+      balanceMicros: '100000000',
+    });
+    expect(await rowCount()).toBe(1);
+
+    const balance = await expectData(tester, BALANCE, { workspaceId: tester.workspaceId });
+    expect(balance.creditBalance.balanceMicros).toBe('100000000');
+  });
+
+  it('still lets a second deliberate grant through', async () => {
+    await grant({ accountEmail: TESTER, amountMicros: '10000000' });
+    const second = await grant({ accountEmail: TESTER, amountMicros: '10000000' });
+
+    expect(second.grantCredit).toMatchObject({ replayed: false, balanceMicros: '20000000' });
+    expect(await rowCount()).toBe(2);
+  });
+
+  it('refuses a call with no requestId at the schema, before any resolver runs', async () => {
+    // A missing non-null input field is a validation failure, so this one never
+    // reaches a resolver and answers 400 rather than a 200 carrying `errors`.
+    const response = await request(harness.app.getHttpServer())
+      .post('/graphql')
+      .set('Cookie', operator.cookies)
+      .send({
+        query: GRANT,
+        variables: { input: { accountEmail: TESTER, amountMicros: '1000000', note: 'No request id' } },
+      })
+      .expect(400);
+
+    expect(JSON.stringify(response.body)).toMatch(/requestId/);
+    expect(await rowCount()).toBe(0);
+  });
+});
+
+describe('the reason', () => {
+  it('is required on a grant, not only on a debit', async () => {
+    const body = await attempt({ accountEmail: TESTER, amountMicros: '1000000', note: '   ' });
+
+    expect(body.errors?.[0]?.message).toMatch(/reason|note/i);
+    expect(await rowCount()).toBe(0);
+  });
+
+  it('reaches the account holder’s Credits screen on the row', async () => {
+    await grant({ accountEmail: TESTER, amountMicros: '1000000', note: 'SUP-389: topped up' });
+
+    const ledger = await expectData(tester, LEDGER, { workspaceId: tester.workspaceId });
+    expect(ledger.creditTransactions.edges[0].node.description).toBe(
+      'Credit granted by an operator · SUP-389: topped up',
+    );
   });
 });
 
@@ -236,13 +306,11 @@ describe('a deployment that allows debits', () => {
     });
     expect(corrected.grantCredit).toMatchObject({ kind: 'ADJUSTMENT', balanceMicros: '60000000' });
 
-    const refused = await graphql(operator, GRANT, {
-      input: {
-        accountEmail: TESTER,
-        amountMicros: '-60000001',
-        kind: 'ADJUSTMENT',
-        note: 'More than they hold',
-      },
+    const refused = await attempt({
+      accountEmail: TESTER,
+      amountMicros: '-60000001',
+      kind: 'ADJUSTMENT',
+      note: 'More than they hold',
     });
     expect(refused.errors?.[0]).toBeDefined();
 

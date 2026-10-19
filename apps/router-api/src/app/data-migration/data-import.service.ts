@@ -200,6 +200,7 @@ export class DataImportService {
         reference: entry.reference,
         description: entry.description,
         idempotencyKey: entry.idempotencyKey,
+        grantedByUserId: entry.grantedByUserId,
         createdAt: dateOf(entry.createdAt),
       })),
     );

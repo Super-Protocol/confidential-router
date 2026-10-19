@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -21,8 +20,14 @@ export interface CreditGrantRequest {
   kind: CreditGrantKind;
   /** Signed micro-USD. Negative is a debit and only `adjustment` may carry one. */
   amountMicros: number;
-  /** Why. Mandatory on a debit; the ledger keeps it verbatim. */
-  note?: string | null;
+  /** Why. Mandatory, whichever direction the credit moves; the ledger keeps it verbatim. */
+  note: string;
+  /**
+   * The caller's name for this decision, unique per decision and stable across
+   * its retries. One submission sent twice carries the same one and writes one
+   * row; a second deliberate grant carries a new one (SUP-398).
+   */
+  requestId: string;
   operator: { id: string; email: string };
 }
 
@@ -35,8 +40,13 @@ export interface CreditGrantResult {
   amountMicros: number;
   /** The workspace balance after the entry. */
   balanceMicros: number;
-  note: string | null;
+  note: string;
   createdAt: Date;
+  /**
+   * True when this `requestId` had already been recorded and nothing was
+   * written: the row, the amount and the balance are the first call's.
+   */
+  replayed: boolean;
 }
 
 /**
@@ -62,7 +72,7 @@ export const OPERATOR_GRANT_REFERENCE = 'operator';
  * `adjustment`) entry through {@link LedgerService.record}, exactly as the
  * invitation and sign-up grants do, so invariant 3 — the cached balance is the
  * sum of the ledger — holds by the same construction. What this class adds is
- * the three things a hand-written entry needs and an automatic one does not:
+ * the things a hand-written entry needs and an automatic one does not:
  *
  *  - **A named operator on the row.** `grantedByUserId`, so the ledger answers
  *    "who granted this" without a log search. The caller is already known to be
@@ -72,9 +82,16 @@ export const OPERATOR_GRANT_REFERENCE = 'operator';
  *    call the way `maxTopUpMicros` bounds one checkout: what this accepts is
  *    what a single fat finger, or a single stolen operator session, can do.
  *  - **A separate guard on taking credit away.** A negative amount has to be an
- *    `adjustment`, needs `billing.allowCreditDebits` to be on, and must carry a
- *    note. On top of that the ledger refuses to overdraw an `adjustment`, so no
- *    sequence of calls here can push a balance below zero.
+ *    `adjustment` and needs `billing.allowCreditDebits` to be on. On top of that
+ *    the ledger refuses to overdraw an `adjustment`, so no sequence of calls
+ *    here can push a balance below zero.
+ *  - **A reason, always.** `grantedByUserId` says who and `reference` says it was
+ *    by hand; `description` is the only field that says why, and an operator
+ *    grant is the one ledger row with no outside event to explain it (SUP-398).
+ *  - **A key the caller names.** `operator:<operator>:<requestId>`, so a
+ *    submission that arrives twice — a proxy timeout, then the obvious retry —
+ *    writes one row and reports `replayed`, while a second deliberate grant
+ *    carries a second `requestId` and lands as a second row.
  */
 @Injectable()
 export class CreditGrantService {
@@ -88,9 +105,17 @@ export class CreditGrantService {
 
   async grant(request: CreditGrantRequest): Promise<CreditGrantResult> {
     const amountMicros = this.assertAmount(request);
-    const note = request.note?.trim() ? request.note.trim() : null;
-    if (amountMicros < 0 && !note) {
-      throw new BadRequestException('A debit needs a note saying why the credit is being taken away.');
+    const note = request.note.trim();
+    if (!note) {
+      // Every other field on the row says what happened; only this one says why.
+      // An unexplained $100 is what opened SUP-389 — neither reclaimable nor
+      // accountable — and a reason costs a sentence at the time and is
+      // unrecoverable afterwards.
+      throw new BadRequestException('Say why the credit is moving; the reason is kept on the ledger row.');
+    }
+    const requestId = request.requestId.trim();
+    if (!requestId) {
+      throw new BadRequestException('A requestId naming this decision is required.');
     }
 
     const target = await this.resolveTarget(request);
@@ -105,33 +130,42 @@ export class CreditGrantService {
       // is saying it to them — and the operator's own address is deliberately
       // not in here: it belongs on `grantedByUserId`, where a rewrite of this
       // text cannot lose it.
-      description: note
-        ? `${this.label(request.kind, amountMicros)} · ${note}`
-        : this.label(request.kind, amountMicros),
+      description: `${this.label(request.kind, amountMicros)}${REASON_SEPARATOR}${note}`,
       grantedByUserId: request.operator.id,
-      // A deliberate operator action, repeated deliberately, is a second entry —
-      // unlike a redelivered webhook, there is no outside event two calls could
-      // be two reports of. So the key is fresh per call, and the console's own
-      // dialog is what stops a double-click from becoming a double grant.
-      idempotencyKey: `operator:${randomUUID()}`,
+      // Keyed on the operator's decision, which is the real-world event here the
+      // way a generation or a Stripe event is elsewhere (SUP-398). Two deliberate
+      // grants still both land, because a second decision arrives with a second
+      // `requestId` — what this refuses to do twice is the *same* submission,
+      // which no operator ever intends. A 504 after the row is written, then the
+      // obvious retry, is the path that double-credited without it.
+      idempotencyKey: `operator:${request.operator.id}:${requestId}`,
     });
 
+    const recorded = entry.transaction;
     this.logger.warn(
-      `Credit ${amountMicros < 0 ? 'removed' : 'granted'} by ${request.operator.email} — ` +
-        `${microsToUsdString(amountMicros)} USD as a ${request.kind} on workspace ${target.workspaceId}` +
-        `${target.accountEmail ? ` (${target.accountEmail})` : ''}, ` +
-        `balance now ${microsToUsdString(entry.balanceMicros)} USD${note ? `: ${note}` : ''}.`,
+      entry.replayed
+        ? `Credit movement replayed for ${request.operator.email} — request ${requestId} was already recorded ` +
+            `as ${recorded.id} on workspace ${target.workspaceId}; nothing written, balance stays ` +
+            `${microsToUsdString(entry.balanceMicros)} USD.`
+        : `Credit ${amountMicros < 0 ? 'removed' : 'granted'} by ${request.operator.email} — ` +
+            `${microsToUsdString(amountMicros)} USD as a ${request.kind} on workspace ${target.workspaceId}` +
+            `${target.accountEmail ? ` (${target.accountEmail})` : ''}, ` +
+            `balance now ${microsToUsdString(entry.balanceMicros)} USD: ${note}.`,
     );
 
+    // Read off the row rather than echoing the arguments: on a replay the first
+    // call's amount, kind and reason are what stands, and an operator who
+    // retried with an edited amount has to be shown that, not their edit.
     return {
-      creditTransactionId: entry.transaction.id,
+      creditTransactionId: recorded.id,
       workspaceId: target.workspaceId,
       accountEmail: target.accountEmail,
-      kind: request.kind,
-      amountMicros,
+      kind: recorded.kind as CreditGrantKind,
+      amountMicros: recorded.amountMicros,
       balanceMicros: entry.balanceMicros,
-      note,
-      createdAt: entry.transaction.createdAt,
+      note: reasonOf(recorded.description) ?? note,
+      createdAt: recorded.createdAt,
+      replayed: entry.replayed,
     };
   }
 
@@ -238,4 +272,22 @@ export class CreditGrantService {
     }
     return amountMicros < 0 ? 'Credit removed by an operator' : 'Credit adjusted by an operator';
   }
+}
+
+/** The separator between the label and the operator's reason in `description`. */
+const REASON_SEPARATOR = ' · ';
+
+/**
+ * The operator's reason back out of a row's `description`.
+ *
+ * Needed on a replay, where the reason that stands is the one written the first
+ * time, and safe because this service composed the string. Null for a row
+ * written by anything else, none of which carries a reason.
+ */
+function reasonOf(description: string | null): string | null {
+  if (!description) {
+    return null;
+  }
+  const at = description.indexOf(REASON_SEPARATOR);
+  return at === -1 ? null : description.slice(at + REASON_SEPARATOR.length);
 }

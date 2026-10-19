@@ -1,5 +1,6 @@
 import { booleanish, durationMs, integerish, stringArrayish } from '@confidential-router/server-common';
 import { z } from 'zod';
+import { MAX_OPERATOR_CREDIT_MICROS } from './billing/money.js';
 
 /**
  * Runtime shape of `conf/router.yaml`. It is the Zod mirror of
@@ -390,9 +391,10 @@ const BillingSchema = z
      * (SUP-406), the same kind of bound `maxTopUpMicros` puts on a checkout:
      * not a policy on what an operator may grant in total, but the blast radius
      * of a single call — from a fat finger, or from a stolen operator session.
-     * $10 000, matching the console's invitation-issuing guard.
+     * Defaults to {@link MAX_OPERATOR_CREDIT_MICROS}, the one definition of that
+     * bound, which the console's invitation-issuing guard reads too (SUP-398).
      */
-    maxCreditGrantMicros: integerish().pipe(z.number().int().positive()).prefault(10_000_000_000),
+    maxCreditGrantMicros: integerish().pipe(z.number().int().positive()).prefault(MAX_OPERATOR_CREDIT_MICROS),
     /**
      * Whether `grantCredit` may also *remove* credit — a negative `adjustment`
      * (SUP-406).

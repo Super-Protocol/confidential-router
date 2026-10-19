@@ -85,10 +85,29 @@ export function validateGrantForm(form: GrantCreditForm, balanceMicros: string |
     errors.amount = `More than the ${formatUsdShort(balanceMicros)} on this account; a balance cannot go below zero.`;
   }
 
-  if (form.movement === 'ADJUSTMENT_REMOVE' && form.note.trim() === '') {
-    errors.note = 'Say why the credit is being taken away.';
+  if (form.note.trim() === '') {
+    errors.note =
+      form.movement === 'ADJUSTMENT_REMOVE'
+        ? 'Say why the credit is being taken away.'
+        : 'Say why this credit is being added.';
   }
   return errors;
+}
+
+/**
+ * A fresh name for one operator decision, minted when the dialog opens and kept
+ * across its retries (SUP-398).
+ *
+ * The API keys the ledger entry on it, so the same submission arriving twice
+ * writes one row. Uniqueness only has to hold per operator — the key is
+ * `operator:<id>:<requestId>` — and `randomUUID` is unavailable on an insecure
+ * origin, which a developer's `http://localhost` console is.
+ */
+export function newRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /** The API's campaign-tag rule (`INVITE_CAMPAIGN_PATTERN`). */

@@ -44,6 +44,7 @@ function entry(id: string, workspaceId: string, [amountMicros, idempotencyKey]: 
     reference: null,
     description: null,
     idempotencyKey,
+    grantedByUserId: null,
     createdAt: AT,
   };
 }
@@ -166,6 +167,32 @@ describe('planImport', () => {
     // Attribution follows the operator to the id they have here.
     expect(plan.writes.inviteCodes.every((code) => code.issuedByUserId === 'op-new')).toBe(true);
     expect(plan.writes.trustedMeasurements[0]?.addedByUserId).toBe('op-new');
+  });
+
+  it('follows a hand-written entry’s operator to the id they have here', () => {
+    const data = exported();
+    // An operator grant on the invited account, the way `grantCredit` writes one.
+    data.creditLedger.push({
+      ...entry('tx-op-grant', 'ws-ada', ['50000000', 'operator:op-old:decision-1']),
+      kind: 'adjustment',
+      reference: 'operator',
+      description: 'Credit granted by an operator · SUP-389: topped up',
+      grantedByUserId: 'op-old',
+    });
+    // The bundle has to add up: the workspace balance is the sum of its ledger.
+    (data.workspaces[1] as { balanceMicros: string }).balanceMicros = '150000000';
+
+    const plan = planImport(bundleOf(data), CLAIMED, options);
+
+    expect(planIsClean(plan)).toBe(true);
+    const written = plan.writes.creditLedger.find((row) => row.id === 'tx-op-grant');
+    // `op-old` names nobody on this deployment; without the remap the row would
+    // answer "who granted this" with a dead id — or, before SUP-398, with null.
+    expect(written?.grantedByUserId).toBe('op-new');
+    // Every other entry stays what it was: nobody granted those by hand.
+    expect(
+      plan.writes.creditLedger.filter((row) => row.id !== 'tx-op-grant').every((row) => row.grantedByUserId === null),
+    ).toBe(true);
   });
 
   it('lands a mapped operator’s other ledger entries in the workspace they own here', () => {

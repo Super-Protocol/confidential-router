@@ -6,7 +6,12 @@ import { createTestDataSource, seedCatalog, testConfig } from '../../../test/see
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
-import { CreditGrantService, OPERATOR_GRANT_REFERENCE } from './credit-grant.service.js';
+import {
+  type CreditGrantRequest,
+  type CreditGrantResult,
+  CreditGrantService,
+  OPERATOR_GRANT_REFERENCE,
+} from './credit-grant.service.js';
 import { LedgerService } from './ledger.service.js';
 
 /**
@@ -65,6 +70,25 @@ async function account(email: string, owns = workspaceId): Promise<string> {
   return id;
 }
 
+/**
+ * One call, with the two fields every call must now carry defaulted (SUP-398).
+ *
+ * `requestId` is fresh per call, so a test that means two decisions gets two
+ * rows; a test about a *retry* says so by passing the same id itself, which is
+ * the distinction the service exists to draw.
+ */
+async function grant(
+  input: Omit<CreditGrantRequest, 'note' | 'requestId' | 'operator'> &
+    Partial<Pick<CreditGrantRequest, 'note' | 'requestId' | 'operator'>>,
+): Promise<CreditGrantResult> {
+  return grants.grant({
+    note: 'Internal tester top-up',
+    requestId: randomUUID(),
+    operator: OPERATOR,
+    ...input,
+  });
+}
+
 async function balanceOf(id = workspaceId): Promise<number> {
   const workspace = await dataSource.getRepository(Workspace).findOneByOrFail({ id });
   const entries = await dataSource.getRepository(CreditTransaction).findBy({ workspaceId: id });
@@ -76,7 +100,7 @@ async function balanceOf(id = workspaceId): Promise<number> {
 
 describe('granting credit to an existing account', () => {
   it('moves the balance by exactly the amount granted', async () => {
-    const result = await grants.grant({
+    const result = await grant({
       workspaceId,
       kind: 'grant',
       amountMicros: 100_000_000,
@@ -90,7 +114,7 @@ describe('granting credit to an existing account', () => {
   });
 
   it('records the operator, the kind, the amount and the note on the ledger row', async () => {
-    const result = await grants.grant({
+    const result = await grant({
       workspaceId,
       kind: 'grant',
       amountMicros: 25_000_000,
@@ -122,18 +146,80 @@ describe('granting credit to an existing account', () => {
   });
 
   it('adds to a balance rather than replacing it, and stacks', async () => {
-    await grants.grant({ workspaceId, kind: 'grant', amountMicros: 10_000_000, operator: OPERATOR });
-    await grants.grant({ workspaceId, kind: 'grant', amountMicros: 7_000_000, operator: OPERATOR });
+    await grant({ workspaceId, kind: 'grant', amountMicros: 10_000_000, operator: OPERATOR });
+    await grant({ workspaceId, kind: 'grant', amountMicros: 7_000_000, operator: OPERATOR });
 
     expect(await balanceOf()).toBe(17_000_000);
   });
+});
 
-  it('keeps a repeated grant as a second entry — an operator asking twice means twice', async () => {
-    const first = await grants.grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR });
-    const second = await grants.grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR });
+/**
+ * The same decision sent twice against a second decision (SUP-398).
+ *
+ * The failure this closes is ordinary: the mutation writes the row, the proxy
+ * times out at 504, the dialog reports a failure over a balance that already
+ * moved, and the operator presses the button again. Both calls carry the
+ * `requestId` the dialog minted when it opened, so the second one replays.
+ */
+describe('a submission that arrives twice', () => {
+  it('writes one row, and says it replayed', async () => {
+    const requestId = 'ff2f1e2a-0c4d-4f18-9a2b-7c6d5e4f3a21';
+    const first = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId });
+    const second = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId });
+
+    expect(first.replayed).toBe(false);
+    expect(second.replayed).toBe(true);
+    expect(second.creditTransactionId).toBe(first.creditTransactionId);
+    expect(second.balanceMicros).toBe(1_000_000);
+    expect(await balanceOf()).toBe(1_000_000);
+    expect(await dataSource.getRepository(CreditTransaction).count()).toBe(1);
+  });
+
+  it('shows what stands, not what the retry asked for', async () => {
+    const requestId = 'retry-with-an-edit';
+    await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId, note: 'As agreed' });
+    const retried = await grant({
+      workspaceId,
+      kind: 'grant',
+      amountMicros: 9_000_000,
+      requestId,
+      note: 'Actually nine',
+    });
+
+    expect(retried).toMatchObject({ replayed: true, amountMicros: 1_000_000, note: 'As agreed' });
+    expect(await balanceOf()).toBe(1_000_000);
+  });
+
+  it('lets a second deliberate grant through, because it carries a second requestId', async () => {
+    const first = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId: 'decision-1' });
+    const second = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId: 'decision-2' });
 
     expect(second.creditTransactionId).not.toBe(first.creditTransactionId);
+    expect(second.replayed).toBe(false);
     expect(await balanceOf()).toBe(2_000_000);
+  });
+
+  it('is scoped to the operator, so two of them cannot collide on one id', async () => {
+    const requestId = '1';
+    await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId });
+    const other = await grant({
+      workspaceId,
+      kind: 'grant',
+      amountMicros: 1_000_000,
+      requestId,
+      operator: { id: 'operator-2', email: 'other@superprotocol.com' },
+    });
+
+    expect(other.replayed).toBe(false);
+    expect(await balanceOf()).toBe(2_000_000);
+  });
+
+  it('refuses a blank requestId rather than inventing one', async () => {
+    await expect(grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId: '  ' })).rejects.toThrow(
+      /requestId/,
+    );
+
+    expect(await balanceOf()).toBe(0);
   });
 });
 
@@ -141,7 +227,7 @@ describe('naming the account', () => {
   it('credits the workspace the address owns', async () => {
     await account(TESTER);
 
-    const result = await grants.grant({
+    const result = await grant({
       accountEmail: TESTER,
       kind: 'grant',
       amountMicros: 50_000_000,
@@ -155,7 +241,7 @@ describe('naming the account', () => {
   it('matches the address whatever its case', async () => {
     await account(TESTER);
 
-    const result = await grants.grant({
+    const result = await grant({
       accountEmail: ' Tester@Example.COM ',
       kind: 'grant',
       amountMicros: 1_000_000,
@@ -167,7 +253,7 @@ describe('naming the account', () => {
 
   it('fails cleanly on an account that does not exist', async () => {
     await expect(
-      grants.grant({ accountEmail: 'nobody@example.com', kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR }),
+      grant({ accountEmail: 'nobody@example.com', kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR }),
     ).rejects.toThrow(NotFoundException);
 
     expect(await balanceOf()).toBe(0);
@@ -175,7 +261,7 @@ describe('naming the account', () => {
 
   it('fails cleanly on a workspace that does not exist', async () => {
     await expect(
-      grants.grant({ workspaceId: randomUUID(), kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR }),
+      grant({ workspaceId: randomUUID(), kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR }),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -183,7 +269,7 @@ describe('naming the account', () => {
     await account('homeless@example.com', '');
 
     await expect(
-      grants.grant({
+      grant({
         accountEmail: 'homeless@example.com',
         kind: 'grant',
         amountMicros: 1_000_000,
@@ -196,25 +282,23 @@ describe('naming the account', () => {
     await account(TESTER);
 
     await expect(
-      grants.grant({ workspaceId, accountEmail: TESTER, kind: 'grant', amountMicros: 1, operator: OPERATOR }),
+      grant({ workspaceId, accountEmail: TESTER, kind: 'grant', amountMicros: 1, operator: OPERATOR }),
     ).rejects.toThrow(BadRequestException);
-    await expect(grants.grant({ kind: 'grant', amountMicros: 1, operator: OPERATOR })).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(grant({ kind: 'grant', amountMicros: 1, operator: OPERATOR })).rejects.toThrow(BadRequestException);
   });
 });
 
 describe('the bound on one call', () => {
   it('allows exactly the ceiling', async () => {
-    await grants.grant({ workspaceId, kind: 'grant', amountMicros: CEILING, operator: OPERATOR });
+    await grant({ workspaceId, kind: 'grant', amountMicros: CEILING, operator: OPERATOR });
 
     expect(await balanceOf()).toBe(CEILING);
   });
 
   it('refuses one micro-USD over it, and writes nothing', async () => {
-    await expect(
-      grants.grant({ workspaceId, kind: 'grant', amountMicros: CEILING + 1, operator: OPERATOR }),
-    ).rejects.toThrow(/billing.maxCreditGrantMicros/);
+    await expect(grant({ workspaceId, kind: 'grant', amountMicros: CEILING + 1, operator: OPERATOR })).rejects.toThrow(
+      /billing.maxCreditGrantMicros/,
+    );
 
     expect(await balanceOf()).toBe(0);
     expect(await dataSource.getRepository(CreditTransaction).count()).toBe(0);
@@ -223,32 +307,66 @@ describe('the bound on one call', () => {
   it('holds at whatever the deployment configured', async () => {
     await build({ CR_API_BILLING__MAX_CREDIT_GRANT_MICROS: '5000000' });
 
-    await expect(
-      grants.grant({ workspaceId, kind: 'grant', amountMicros: 5_000_001, operator: OPERATOR }),
-    ).rejects.toThrow(/billing.maxCreditGrantMicros/);
-    await grants.grant({ workspaceId, kind: 'grant', amountMicros: 5_000_000, operator: OPERATOR });
+    await expect(grant({ workspaceId, kind: 'grant', amountMicros: 5_000_001, operator: OPERATOR })).rejects.toThrow(
+      /billing.maxCreditGrantMicros/,
+    );
+    await grant({ workspaceId, kind: 'grant', amountMicros: 5_000_000, operator: OPERATOR });
 
     expect(await balanceOf()).toBe(5_000_000);
   });
 
   it('refuses a zero, which would be a ledger row that says nothing', async () => {
-    await expect(grants.grant({ workspaceId, kind: 'grant', amountMicros: 0, operator: OPERATOR })).rejects.toThrow(
-      BadRequestException,
+    await expect(grant({ workspaceId, kind: 'grant', amountMicros: 0 })).rejects.toThrow(BadRequestException);
+  });
+});
+
+/**
+ * Why, on every call (SUP-398).
+ *
+ * `grantedByUserId` says who moved the credit and `reference` says it was by
+ * hand; `description` is the only field that says why, and an operator entry is
+ * the one ledger row with no outside event to explain it. SUP-389's $100 was
+ * unexplainable as well as unreclaimable.
+ */
+describe('the reason', () => {
+  it('is required on a grant, not only on a debit', async () => {
+    await expect(grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, note: '' })).rejects.toThrow(/reason/);
+
+    expect(await balanceOf()).toBe(0);
+    expect(await dataSource.getRepository(CreditTransaction).count()).toBe(0);
+  });
+
+  it('is required on an upward correction too', async () => {
+    await expect(grant({ workspaceId, kind: 'adjustment', amountMicros: 1_000_000, note: '  ' })).rejects.toThrow(
+      /reason/,
     );
+  });
+
+  it('lands on the row trimmed, and comes back as written', async () => {
+    const result = await grant({
+      workspaceId,
+      kind: 'grant',
+      amountMicros: 1_000_000,
+      note: '  SUP-389: topped up after the verification grant  ',
+    });
+
+    const row = await dataSource.getRepository(CreditTransaction).findOneByOrFail({ id: result.creditTransactionId });
+    expect(row.description).toBe('Credit granted by an operator · SUP-389: topped up after the verification grant');
+    expect(result.note).toBe('SUP-389: topped up after the verification grant');
   });
 });
 
 describe('taking credit away', () => {
   beforeEach(async () => {
     await build({ CR_API_BILLING__ALLOW_CREDIT_DEBITS: 'true' });
-    await grants.grant({ workspaceId, kind: 'grant', amountMicros: 100_000_000, operator: OPERATOR });
+    await grant({ workspaceId, kind: 'grant', amountMicros: 100_000_000, operator: OPERATOR });
   });
 
   it('is off unless the deployment turned it on', async () => {
     await build();
 
     await expect(
-      grants.grant({ workspaceId, kind: 'adjustment', amountMicros: -1_000_000, note: 'Clawback', operator: OPERATOR }),
+      grant({ workspaceId, kind: 'adjustment', amountMicros: -1_000_000, note: 'Clawback', operator: OPERATOR }),
     ).rejects.toThrow(/allowCreditDebits/);
 
     expect(await balanceOf()).toBe(100_000_000);
@@ -256,18 +374,18 @@ describe('taking credit away', () => {
 
   it('is an adjustment, never a grant', async () => {
     await expect(
-      grants.grant({ workspaceId, kind: 'grant', amountMicros: -1_000_000, note: 'Clawback', operator: OPERATOR }),
+      grant({ workspaceId, kind: 'grant', amountMicros: -1_000_000, note: 'Clawback', operator: OPERATOR }),
     ).rejects.toThrow(/ADJUSTMENT/);
   });
 
-  it('needs a note saying why', async () => {
-    await expect(
-      grants.grant({ workspaceId, kind: 'adjustment', amountMicros: -1_000_000, note: '   ', operator: OPERATOR }),
-    ).rejects.toThrow(/note/);
+  it('needs a reason saying why', async () => {
+    await expect(grant({ workspaceId, kind: 'adjustment', amountMicros: -1_000_000, note: '   ' })).rejects.toThrow(
+      /reason/,
+    );
   });
 
   it('removes exactly the amount, on an audited row', async () => {
-    const result = await grants.grant({
+    const result = await grant({
       workspaceId,
       kind: 'adjustment',
       amountMicros: -40_000_000,
@@ -282,7 +400,7 @@ describe('taking credit away', () => {
 
   it('cannot take a balance below zero, so no call can quietly clear one', async () => {
     await expect(
-      grants.grant({
+      grant({
         workspaceId,
         kind: 'adjustment',
         amountMicros: -100_000_001,
@@ -295,7 +413,7 @@ describe('taking credit away', () => {
   });
 
   it('corrects upward as an adjustment too', async () => {
-    const result = await grants.grant({
+    const result = await grant({
       workspaceId,
       kind: 'adjustment',
       amountMicros: 5_000_000,

@@ -64,13 +64,25 @@ export class GrantCreditInputModel {
   kind!: AdminCreditGrantKindEnum;
 
   @Field(() => String, {
-    nullable: true,
-    description: 'Why, kept on the ledger row and shown to the account holder. Required when removing credit.',
+    description:
+      'Why the credit is moving, kept on the ledger row and shown to the account holder. Required: it is the ' +
+      'only field that explains an entry nobody paid for.',
   })
-  @IsOptional()
   @IsString()
-  @Length(0, 400)
-  note?: string | null;
+  @Length(1, 400)
+  note!: string;
+
+  @Field(() => String, {
+    description:
+      "The caller's name for this decision — a UUID the console mints when the dialog opens. The same value " +
+      'replays the first call instead of crediting twice; a second deliberate grant sends a new one.',
+  })
+  @IsString()
+  @Length(1, 64)
+  @Matches(/^[A-Za-z0-9_.-]+$/, {
+    message: 'requestId may contain letters, digits, dot, dash and underscore only.',
+  })
+  requestId!: string;
 }
 
 @ObjectType('CreditGrant', { description: 'The ledger entry an operator grant wrote, and the balance it produced.' })
@@ -93,9 +105,16 @@ export class CreditGrantModel {
   @Field(() => String, { description: 'The workspace balance after the entry, in micro-USD.' })
   balanceMicros!: string;
 
-  @Field(() => String, { nullable: true })
-  note!: string | null;
+  @Field(() => String, { description: 'The reason recorded on the row — the first call’s, on a replay.' })
+  note!: string;
 
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
+
+  @Field(() => Boolean, {
+    description:
+      'True when this requestId had already been recorded: nothing was written and the balance is unchanged. ' +
+      'The console says “already recorded” rather than reporting a second success.',
+  })
+  replayed!: boolean;
 }

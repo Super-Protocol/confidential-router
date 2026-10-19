@@ -27,7 +27,8 @@ export class CreditGrantResolver {
   @Mutation(() => CreditGrantModel, {
     description:
       'Puts credit on an existing account, or corrects a balance, as one audited ledger entry naming the ' +
-      'operator. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.',
+      'operator and the reason. Idempotent on `requestId`, so a retried submission replays rather than ' +
+      'credits twice. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.',
   })
   async grantCredit(
     @CurrentUser() user: SessionUser,
@@ -38,7 +39,8 @@ export class CreditGrantResolver {
       workspaceId: input.workspaceId ?? null,
       kind: input.kind as CreditGrantKind,
       amountMicros: amountOf(input.amountMicros),
-      note: input.note ?? null,
+      note: input.note,
+      requestId: input.requestId,
       operator: { id: user.id, email: user.email },
     });
     return {
@@ -50,6 +52,7 @@ export class CreditGrantResolver {
       balanceMicros: String(result.balanceMicros),
       note: result.note,
       createdAt: result.createdAt,
+      replayed: result.replayed,
     };
   }
 }
