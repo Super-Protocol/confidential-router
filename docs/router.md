@@ -524,6 +524,15 @@ rather than reporting a second success. A second deliberate grant is a second
 decision and carries a new `requestId`, so it lands as a second row. The console
 mints one UUID when the dialog opens and keeps it across retries.
 
+One decision moves credit on **one** account: the same `requestId` sent against a
+different account is refused rather than answered, because the alternative is
+telling an operator that somebody was credited who was not. That is the mistake a
+hand-written mutation makes — copy the call for the next person, change the
+address, forget the `requestId`. The composed key has to fit
+`credit_transactions.idempotencyKey` (`varchar(128)`), so a `requestId` and an
+operator id that together overflow it are refused too; PostgreSQL would answer
+`22001` where SQLite would not, and the refusal makes the two agree.
+
 A correction is a new row, never an edit — the ledger has no update path at all
 (`docs/contracts/data-model.md` invariant 3).
 

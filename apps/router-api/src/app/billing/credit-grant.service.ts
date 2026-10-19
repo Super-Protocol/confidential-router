@@ -91,7 +91,9 @@ export const OPERATOR_GRANT_REFERENCE = 'operator';
  *  - **A key the caller names.** `operator:<operator>:<requestId>`, so a
  *    submission that arrives twice — a proxy timeout, then the obvious retry —
  *    writes one row and reports `replayed`, while a second deliberate grant
- *    carries a second `requestId` and lands as a second row.
+ *    carries a second `requestId` and lands as a second row. A `requestId`
+ *    reused against a *different* account is refused rather than answered: one
+ *    decision moves credit on one account.
  */
 @Injectable()
 export class CreditGrantService {
@@ -120,6 +122,18 @@ export class CreditGrantService {
 
     const target = await this.resolveTarget(request);
 
+    const idempotencyKey = `operator:${request.operator.id}:${requestId}`;
+    if (idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+      // `credit_transactions.idempotencyKey` is a `varchar(128)`, and so is the
+      // export bundle's. PostgreSQL would answer `22001` on an over-long key
+      // while SQLite would store it whole, so the two drivers would disagree
+      // about whether this call is even possible — refused here instead, where
+      // the answer is the same on both.
+      throw new BadRequestException(
+        `The operator id and requestId together exceed the ${MAX_IDEMPOTENCY_KEY_LENGTH}-character ledger key; use a shorter requestId.`,
+      );
+    }
+
     const entry = await this.ledger.record({
       workspaceId: target.workspaceId,
       kind: request.kind,
@@ -138,10 +152,23 @@ export class CreditGrantService {
       // `requestId` — what this refuses to do twice is the *same* submission,
       // which no operator ever intends. A 504 after the row is written, then the
       // obvious retry, is the path that double-credited without it.
-      idempotencyKey: `operator:${request.operator.id}:${requestId}`,
+      idempotencyKey,
     });
 
     const recorded = entry.transaction;
+    if (entry.replayed && recorded.workspaceId !== target.workspaceId) {
+      // A `requestId` names one decision, and one decision moves credit on one
+      // account. Reused against a second account the two disagree, and the only
+      // honest answers are a refusal or a second row — the ledger has already
+      // chosen not to write one, so this is the refusal. Papering over it with a
+      // success would report a credit on an account that never got one: the
+      // caller sent A's key with B's address and would read the first call's
+      // amount, balance and reason back as if B had been credited (SUP-398).
+      throw new BadRequestException(
+        `requestId ${requestId} already recorded a credit movement on another account; ` +
+          'a second account needs its own requestId.',
+      );
+    }
     this.logger.warn(
       entry.replayed
         ? `Credit movement replayed for ${request.operator.email} — request ${requestId} was already recorded ` +
@@ -158,12 +185,11 @@ export class CreditGrantService {
     // retried with an edited amount has to be shown that, not their edit.
     return {
       creditTransactionId: recorded.id,
-      // The recorded row's workspace, not the one this call resolved: a
-      // `requestId` replayed against a different target would otherwise report
-      // one workspace's id beside another's balance. The two are the same
-      // workspace on every write that actually happened.
+      // The row, not the request: the refusal above means the two can only ever
+      // be the same workspace, and reading it from one place is what keeps that
+      // true rather than merely likely.
       workspaceId: recorded.workspaceId,
-      accountEmail: recorded.workspaceId === target.workspaceId ? target.accountEmail : null,
+      accountEmail: target.accountEmail,
       kind: recorded.kind as CreditGrantKind,
       amountMicros: recorded.amountMicros,
       balanceMicros: entry.balanceMicros,
@@ -297,6 +323,9 @@ export class CreditGrantService {
 
 /** The separator between the label and the operator's reason in `description`. */
 const REASON_SEPARATOR = ' · ';
+
+/** `credit_transactions.idempotencyKey`, and the export bundle's copy of it. */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
 
 /**
  * The operator's reason back out of a row's `description`.

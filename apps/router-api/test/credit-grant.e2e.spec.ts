@@ -253,6 +253,25 @@ describe('a submission that arrives twice', () => {
   });
 });
 
+describe('a requestId aimed at a second account', () => {
+  it('is refused, rather than reporting a credit that account never got', async () => {
+    // The hand-written path the issue names: credit one person, copy the
+    // mutation for the next, change the address, forget the requestId.
+    const requestId = randomUUID();
+    await grant({ accountEmail: TESTER, amountMicros: '100000000', requestId });
+    const body = await attempt({ accountEmail: OPERATOR, amountMicros: '100000000', requestId });
+
+    expect(body.errors?.[0]?.message).toMatch(/another account/);
+    expect(await rowCount()).toBe(1);
+
+    // The operator's own balance is untouched, and the tester's is the one grant.
+    const balance = await expectData(operator, BALANCE, { workspaceId: operator.workspaceId });
+    expect(balance.creditBalance.balanceMicros).toBe('0');
+    const theirs = await expectData(tester, BALANCE, { workspaceId: tester.workspaceId });
+    expect(theirs.creditBalance.balanceMicros).toBe('100000000');
+  });
+});
+
 describe('the reason', () => {
   it('is required on a grant, not only on a debit', async () => {
     const body = await attempt({ accountEmail: TESTER, amountMicros: '1000000', note: '   ' });

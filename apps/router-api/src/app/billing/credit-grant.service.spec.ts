@@ -214,6 +214,52 @@ describe('a submission that arrives twice', () => {
     expect(await balanceOf()).toBe(2_000_000);
   });
 
+  it('refuses the same requestId aimed at a second account, rather than answering about it', async () => {
+    const other = await seedCatalog(dataSource);
+    const requestId = 'copied-the-mutation-and-changed-the-email';
+    await grant({ workspaceId, kind: 'grant', amountMicros: 100_000_000, requestId, note: 'Top up A' });
+
+    // The path the issue names for the first production use: credit one person,
+    // copy the mutation for the next, change the address, forget the requestId.
+    await expect(
+      grant({ workspaceId: other.workspaceId, kind: 'grant', amountMicros: 100_000_000, requestId, note: 'Top up B' }),
+    ).rejects.toThrow(/another account/);
+
+    // Neither side moved: A keeps its one entry, B was never credited.
+    expect(await balanceOf()).toBe(100_000_000);
+    expect(await balanceOf(other.workspaceId)).toBe(0);
+    expect(await dataSource.getRepository(CreditTransaction).count()).toBe(1);
+  });
+
+  it('answers with the workspace on the row, so a payload is never two accounts', async () => {
+    await account(TESTER);
+    const requestId = 'one-decision';
+    const first = await grant({ accountEmail: TESTER, kind: 'grant', amountMicros: 1_000_000, requestId });
+    const again = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId });
+
+    // Both name the same workspace — one by address, one by id — so this is the
+    // same decision, and the reply is the stored row throughout. With the
+    // refusal above in place the two can no longer differ, which is the point:
+    // this pins the payload to one source so that stays true if the refusal is
+    // ever softened.
+    expect(again).toMatchObject({ replayed: true, workspaceId: first.workspaceId });
+    expect(again.creditTransactionId).toBe(first.creditTransactionId);
+  });
+
+  it('refuses a requestId that would overflow the ledger’s key, on every driver', async () => {
+    await expect(
+      grant({
+        workspaceId,
+        kind: 'grant',
+        amountMicros: 1_000_000,
+        requestId: 'x'.repeat(64),
+        operator: { id: 'o'.repeat(64), email: OPERATOR.email },
+      }),
+    ).rejects.toThrow(/128-character ledger key/);
+
+    expect(await dataSource.getRepository(CreditTransaction).count()).toBe(0);
+  });
+
   it('refuses a blank requestId rather than inventing one', async () => {
     await expect(grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, requestId: '  ' })).rejects.toThrow(
       /requestId/,
@@ -301,25 +347,19 @@ describe('naming the account', () => {
     );
   });
 
-  it('reports the workspace the replayed row actually credited, not the one this call named', async () => {
+  it('never answers a replay with a workspace the stored row did not credit', async () => {
     const other = (await seedCatalog(dataSource)).workspaceId;
     const requestId = randomUUID();
-    const first = await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR, requestId });
+    await grant({ workspaceId, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR, requestId });
 
-    // The same submission pointed at a different workspace: the row that stands
-    // is the first one, so the balance and the workspace it belongs to must agree.
-    const replay = await grant({
-      workspaceId: other,
-      kind: 'grant',
-      amountMicros: 1_000_000,
-      operator: OPERATOR,
-      requestId,
-    });
+    // The same submission pointed at a different workspace is refused outright
+    // (see the cross-account case above), so there is no path on which the
+    // reported workspace and the reported balance can come from two rows.
+    await expect(
+      grant({ workspaceId: other, kind: 'grant', amountMicros: 1_000_000, operator: OPERATOR, requestId }),
+    ).rejects.toThrow(/another account/);
 
-    expect(replay.replayed).toBe(true);
-    expect(replay.creditTransactionId).toBe(first.creditTransactionId);
-    expect(replay.workspaceId).toBe(workspaceId);
-    expect(replay.balanceMicros).toBe(1_000_000);
+    expect(await balanceOf()).toBe(1_000_000);
     expect(await balanceOf(other)).toBe(0);
   });
 });
