@@ -34,6 +34,8 @@ export interface LocalState {
   ledger: readonly { id: string; idempotencyKey: string }[];
   inviteCodes: readonly { id: string; code: string }[];
   redemptions: readonly { id: string; userId: string }[];
+  /** Redemptions carried from another deployment; they have no account here to collide on. */
+  carriedRedemptions: readonly { id: string }[];
   externalEndpoints: readonly { id: string; name: string }[];
   models: readonly { id: string; externalEndpointId: string | null }[];
   trustedMeasurements: readonly { id: string; measurement: string }[];
@@ -51,6 +53,7 @@ export type SectionName =
   | 'creditLedger'
   | 'inviteCodes'
   | 'inviteRedemptions'
+  | 'inviteCarriedRedemptions'
   | 'externalEndpoints'
   | 'externalModels'
   | 'trustedMeasurements';
@@ -136,6 +139,11 @@ export function bundleInconsistencies(data: ExportData): string[] {
     ).length,
   );
 
+  missing(
+    'carried redemption(s) name a code the export does not carry.',
+    data.inviteCarriedRedemptions.filter((row) => !codes.has(row.inviteCodeId)).length,
+  );
+
   const sums = new Map<string, bigint>();
   for (const entry of data.creditLedger) {
     sums.set(entry.workspaceId, (sums.get(entry.workspaceId) ?? 0n) + BigInt(entry.amountMicros));
@@ -169,6 +177,10 @@ export function bundleInconsistencies(data: ExportData): string[] {
   duplicated(
     'invitation code',
     data.inviteCodes.map((code) => code.id),
+  );
+  duplicated(
+    'carried redemption',
+    data.inviteCarriedRedemptions.map((row) => row.id),
   );
   return problems;
 }
@@ -363,6 +375,25 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     }
   }
 
+  /**
+   * Who spent a code elsewhere (SUP-403). Nothing here can collide: the row
+   * names no account and no ledger entry of this deployment's, and the code it
+   * belongs to has already been judged above — a value reissued here is a
+   * conflict that refuses the whole import. So a row is either new or a retry
+   * of one already written, recognised by its own id.
+   */
+  const carried = new Section('inviteCarriedRedemptions', data.inviteCarriedRedemptions.length);
+  const localCarriedIds = new Set(local.carriedRedemptions.map((row) => row.id));
+  const carriedWrites: ExportData['inviteCarriedRedemptions'] = [];
+  for (const row of data.inviteCarriedRedemptions) {
+    if (localCarriedIds.has(row.id)) {
+      carried.alreadyPresent += 1;
+    } else {
+      carried.toCreate += 1;
+      carriedWrites.push(row);
+    }
+  }
+
   // ── external endpoints and trust ────────────────────────────────────────
   const endpoints = new Section('externalEndpoints', data.externalEndpoints.length);
   const models = new Section(
@@ -418,8 +449,8 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   return {
     refusals,
     notes,
-    sections: [users, workspaces, members, ledger, codes, redemptions, endpoints, models, measurements].map((section) =>
-      section.done(),
+    sections: [users, workspaces, members, ledger, codes, redemptions, carried, endpoints, models, measurements].map(
+      (section) => section.done(),
     ),
     writes: {
       users: userWrites,
@@ -428,6 +459,7 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
       creditLedger: ledgerWrites,
       inviteCodes: codeWrites,
       inviteRedemptions: redemptionWrites,
+      inviteCarriedRedemptions: carriedWrites,
       externalEndpoints: endpointWrites,
       trustedMeasurements: measurementWrites,
     },

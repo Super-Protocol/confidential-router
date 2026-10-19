@@ -58,9 +58,31 @@ function data(): ExportData {
     ],
     inviteCodes: [],
     inviteRedemptions: [],
+    inviteCarriedRedemptions: [],
     externalEndpoints: [],
     trustedMeasurements: [],
   };
+}
+
+function code(): ExportData['inviteCodes'][number] {
+  return {
+    id: 'code-1',
+    value: 'AAAABBBBCCCC',
+    campaign: 'launch',
+    grantMicros: '100000000',
+    maxRedemptions: 2,
+    redemptionCount: 2,
+    status: 'redeemed',
+    expiresAt: null,
+    withdrawnAt: null,
+    note: null,
+    issuedByUserId: null,
+    createdAt: AT,
+  };
+}
+
+function carriedRedemption(id: string): ExportData['inviteCarriedRedemptions'][number] {
+  return { id, inviteCodeId: 'code-1', email: `${id}@example.test`, redeemedAt: AT, importedAt: AT };
 }
 
 const source = { publicBaseUrl: 'https://old.router.test', routerVersion: '0.17.0', evidenceDigest: 'sha256/abc' };
@@ -94,6 +116,17 @@ describe('buildBundle', () => {
     expect(built.integrity.contentSha256).toBe(contentSha256(built.data));
   });
 
+  it('counts the carried redemptions it carries', () => {
+    const carried = data();
+    carried.inviteCodes.push(code());
+    carried.inviteCarriedRedemptions.push(carriedRedemption('cr-1'), carriedRedemption('cr-2'));
+
+    const built = buildBundle({ data: carried, source, exportedAt: new Date(AT) });
+
+    expect(built.counts.inviteCarriedRedemptions).toBe(2);
+    expect(decodeBundle(encodeBundle(built)).data.inviteCarriedRedemptions).toHaveLength(2);
+  });
+
   it('refuses to write a credential-shaped field, whatever section it is in', () => {
     const leaking = data();
     (leaking.users[0] as Record<string, unknown>).passwordHash = 'argon2…';
@@ -124,6 +157,19 @@ describe('decodeBundle', () => {
     raw.integrity.contentSha256 = contentSha256(raw.data);
 
     expect(decodeBundle(repack(raw)).data.users[0]).not.toHaveProperty('locale');
+  });
+
+  it('still reads a bundle written before carried redemptions were a section', () => {
+    const raw = JSON.parse(gunzipSync(encodeBundle(bundle())).toString('utf8'));
+    delete raw.data.inviteCarriedRedemptions;
+    delete raw.counts.inviteCarriedRedemptions;
+    raw.integrity.contentSha256 = contentSha256(raw.data);
+
+    // Version 1 with one section fewer: an additive field, so it is not another
+    // version, and its absence must not read as a damaged manifest.
+    const read = decodeBundle(repack(raw));
+    expect(read.data.inviteCarriedRedemptions).toEqual([]);
+    expect(read.counts.inviteCarriedRedemptions).toBe(0);
   });
 
   it('refuses another schema version before it reads anything else', () => {
