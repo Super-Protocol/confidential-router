@@ -133,12 +133,21 @@ describe('IncompleteGenerationSweeper', () => {
     expect((await statusOf(id)).costMicros).toBe(0);
   });
 
-  it('is a no-op when the sweep is disabled', async () => {
-    const id = await generation({ status: 'pending', ageMs: 10 * 60 * MINUTE });
+  /**
+   * `incompleteAfter: 0` has to mean "disabled" wherever the sweep is entered
+   * from, not only from the bootstrap hook. Without the guard beside the
+   * arithmetic, `cutoff` becomes `now` and the pass closes every pending row in
+   * the table, live requests included.
+   */
+  it('is a no-op when the sweep is disabled, and does not close everything instead', async () => {
+    const old = await generation({ status: 'pending', ageMs: 10 * 60 * MINUTE });
+    const live = await generation({ status: 'pending', ageMs: 200 });
     const disabled = withIncompleteAfter(0);
     disabled.onApplicationBootstrap();
 
-    expect((await statusOf(id)).status).toBe('pending');
+    expect(await disabled.sweepOnce(NOW)).toBe(0);
+    expect((await statusOf(old)).status).toBe('pending');
+    expect((await statusOf(live)).status).toBe('pending');
   });
 
   it('sweeps every overdue row in one pass, whoever owns them', async () => {

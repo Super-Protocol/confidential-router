@@ -380,6 +380,23 @@ describe('GET /v1/generation', () => {
     expect(JSON.stringify(response.body)).not.toContain('Hello there');
   });
 
+  /**
+   * SUP-423 traded a `404` here for a readable in-flight row, and
+   * `docs/contracts/router-api.md` says so: the zeros beside `pending` mean "not
+   * known yet", and an integrator reconciles only on a terminal status. This is
+   * the assertion that keeps the route and that paragraph in step.
+   */
+  it('answers with the pending record of a generation that has not been closed yet', async () => {
+    const completion = await request(server()).post('/v1/chat/completions').set(bearer(secret)).send(CHAT).expect(200);
+    const id = completion.body.id as string;
+    // Back to the state the route sees while the request is still in flight.
+    await generations().update({ id }, { status: 'pending', costMicros: 0, promptTokens: 0, completionTokens: 0 });
+
+    const response = await request(server()).get('/v1/generation').query({ id }).set(bearer(secret)).expect(200);
+
+    expect(response.body.data).toMatchObject({ id, status: 'pending', cost_micros: 0, total_tokens: 0 });
+  });
+
   it('does not reveal another workspace s generation', async () => {
     const completion = await request(server()).post('/v1/chat/completions').set(bearer(secret)).send(CHAT).expect(200);
     const other = await seedWorkspace(harness.app);

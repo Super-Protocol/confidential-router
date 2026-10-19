@@ -39,7 +39,14 @@ const SWEEP_INTERVAL_MS = 60_000;
  * The cutoff is `metering.incompleteAfter` and must stay comfortably longer than
  * the longest generation a deployment serves — a sweep that fires under a
  * running stream would mark a live request failed and then be overwritten by the
- * truth, which is a worse lie than the delay it saves.
+ * truth, which is a worse lie than the delay it saves. `0` turns the sweep off
+ * entirely, and that has to mean the same thing from every entry point, which is
+ * why the guard sits next to the arithmetic rather than only in the boot hook.
+ *
+ * The predicate has an index of its own — `IDX_generations_pending`, partial on
+ * `status = 'pending'` — so a pass that finds nothing, which is the normal case,
+ * does not sequentially scan the largest table in the schema once a minute on
+ * every replica.
  */
 @Injectable()
 export class IncompleteGenerationSweeper implements OnApplicationBootstrap, OnModuleDestroy {
@@ -53,7 +60,7 @@ export class IncompleteGenerationSweeper implements OnApplicationBootstrap, OnMo
   ) {}
 
   onApplicationBootstrap(): void {
-    if (this.config.metering.incompleteAfter <= 0) {
+    if (!this.enabled) {
       this.logger.log(
         'Incomplete generations will not be closed (metering.incompleteAfter is 0); a request the router does not ' +
           'live to finish will stay pending in Logs.',
@@ -74,22 +81,35 @@ export class IncompleteGenerationSweeper implements OnApplicationBootstrap, OnMo
     }
   }
 
+  /** `metering.incompleteAfter: 0` turns the sweep off, on every entry point. */
+  private get enabled(): boolean {
+    return this.config.metering.incompleteAfter > 0;
+  }
+
   /** One pass, exposed so a test can await it rather than sleep for one. */
   async sweepOnce(now: Date = new Date()): Promise<number> {
-    if (this.running) {
+    // The guard belongs here, with the arithmetic it protects: `incompleteAfter:
+    // 0` would otherwise compute `cutoff = now` and close every pending row in
+    // the table, live requests included — the exact opposite of "disabled".
+    if (!this.enabled || this.running) {
       return 0;
     }
     this.running = true;
     try {
+      const column = (name: string): string => this.dataSource.driver.escape(name);
       const cutoff = now.getTime() - this.config.metering.incompleteAfter;
       const closed = await this.dataSource
         .createQueryBuilder()
         .update(Generation)
         .set({ status: 'error', errorCode: NO_RESPONSE_CODE })
-        .where('status = :pending', { pending: 'pending' })
+        .where(`${column('status')} = :pending`, { pending: 'pending' })
         // `createdAt` is epoch milliseconds on both drivers (`timestampColumn`),
         // so the bound value is a number, exactly as the activity queries bind it.
-        .andWhere('createdAt < :cutoff', { cutoff })
+        // Escaped like `LedgerService`'s raw predicates rather than left bare:
+        // TypeORM does happen to rewrite a bare name in an `UPDATE … WHERE` into
+        // a quoted identifier, but relying on that is relying on an internal of
+        // the query builder to keep a camelCase column working on PostgreSQL.
+        .andWhere(`${column('createdAt')} < :cutoff`, { cutoff })
         .execute();
 
       const affected = closed.affected ?? 0;

@@ -260,6 +260,14 @@ signature whichever copy it got.
 Returns the `Generation` record (tokens, cost, model, endpoint, timings, `evidence_digest`) for a
 generation owned by the key's workspace. Never any content.
 
+**`status` may be `pending`, and then the record is not final.** A row exists from the moment the
+request is admitted (see *Metering*), so a client that polls this route while the generation is still
+running — or in the window between the last byte of a stream and the close, which is exactly when a
+client polls — gets `200` with `status: "pending"`, `cost_micros: 0`, `total_tokens: 0`, `latency_ms: 0`.
+Those zeros are "not known yet", not "free". **Reconcile only on `ok`, `error` or `aborted`**; on
+`pending`, poll again. Before SUP-423 this route answered `404` until the meter had settled, so a client
+written against the old behaviour must treat `pending` the way it used to treat that `404`.
+
 ## Errors
 
 OpenAI shape, always JSON, always `Content-Type: application/json`:

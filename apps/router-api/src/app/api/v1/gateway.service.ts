@@ -130,8 +130,15 @@ export class GatewayService {
         })
       : await this.completeOnce(context, upstreamResponse, response);
 
-    await this.policy.settle(auth.key, outcome.promptTokens + outcome.completionTokens);
+    // The meter first, the rate limiter second. `settle` writes to a store that
+    // can be unavailable, and a throw there used to lose the row of a request
+    // that had already been served in full; now it would leave a `pending` row
+    // for the sweeper to label `no_response` — which is a false statement about
+    // a request the client got every token of, and a worse one than the silence
+    // SUP-423 is about. `finish` swallows its own failures, so the settle below
+    // still runs whatever the meter did.
     await this.recorder.finish(context, outcome);
+    await this.policy.settle(auth.key, outcome.promptTokens + outcome.completionTokens);
   }
 
   /**
