@@ -168,7 +168,9 @@ export class DataExportService {
       // rather than being dropped: no credit can follow an account that is gone,
       // but that the seat was taken is still true, and it is what makes
       // `redemptionCount` add up on the other side. Its own id comes with it, so
-      // a second export of the same row is the same row.
+      // a second export of the same row is the same row — and an import into a
+      // deployment that still holds the live row recognises it by that id
+      // instead of recording the redemption twice (`planImport`).
       inviteCarriedRedemptions: [
         ...carried.map((row) => ({
           id: row.id,
@@ -183,8 +185,12 @@ export class DataExportService {
           // The account is gone from this deployment; there is no address left to name.
           email: null,
           redeemedAt: isoOf(row.redeemedAt),
-          // It stops being a redemption of this deployment's as the file is written.
-          importedAt: isoOf(now),
+          // Nowhere to read an arrival from: this row was never imported, it has
+          // been here since it was redeemed. Not the export instant — every
+          // other field in `data` comes from the database, and one that did not
+          // would give an unchanged deployment a different `contentSha256` on
+          // every export.
+          importedAt: isoOf(row.redeemedAt),
         })),
       ].sort((left, right) => compare(left.redeemedAt, right.redeemedAt) || compare(left.id, right.id)),
       // The registration and the operator's trust decisions — the pinned digest

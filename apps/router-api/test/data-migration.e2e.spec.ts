@@ -254,9 +254,13 @@ async function importCarriedCode(session: ConsoleSession): Promise<void> {
   expect((await upload({ apply: 'true', expect: preview.sha256 }).expect(200)).body).toMatchObject({ applied: true });
 }
 
-async function carriedCodeOn(session: ConsoleSession) {
+async function codeOn(session: ConsoleSession, code: string) {
   const page = await expectData(session, CODES);
-  return page.adminInviteCodes.nodes.find((node: { code: string }) => node.code === CARRIED.code);
+  return page.adminInviteCodes.nodes.find((node: { code: string }) => node.code === code);
+}
+
+function carriedCodeOn(session: ConsoleSession) {
+  return codeOn(session, CARRIED.code);
 }
 
 async function balancesByEmail(harness: Harness): Promise<Map<string, number>> {
@@ -556,6 +560,40 @@ describe('deployment import', () => {
     // And the record survives the next rebuild too: B's own export carries it on.
     const onwards = decodeBundle(await exportFile(b.operator));
     expect(onwards.data.inviteCarriedRedemptions).toEqual(exported.data.inviteCarriedRedemptions);
+  });
+
+  it('does not re-record a degraded redemption on a deployment that still holds it live', async () => {
+    const { a, codes, spender } = await usedDeployment();
+    const target = dataSourceOf(a.harness);
+    await target.getRepository(User).delete({ email: spender.email });
+
+    // The file carries that redemption as a carried one; this deployment still
+    // holds the row it came from, so taking the file back is not a new fact.
+    const file = await exportFile(a.operator);
+    const preview = await dryRun(a.operator, file);
+    expect(preview).toMatchObject({ ok: true, refusals: [] });
+    expect(section(preview, 'inviteCarriedRedemptions')).toMatchObject({
+      inBundle: 1,
+      toCreate: 0,
+      alreadyPresent: 1,
+      conflicts: [],
+    });
+
+    const report = await apply(a.operator, file, preview.contentSha256);
+    expect(report).toMatchObject({ applied: true, ok: true });
+    expect(await target.getRepository(InviteCarriedRedemption).count()).toBe(0);
+    expect(await target.getRepository(InviteRedemption).count()).toBe(3);
+
+    // One seat spent, one redeemer — not the same redemption told twice.
+    const spent = await codeOn(a.operator, codes[0]?.code as string);
+    expect(spent).toMatchObject({ redemptionCount: 1 });
+    expect(spent.redeemers).toEqual([
+      // The account is gone, so there is no address to show against the row it left.
+      { userId: expect.any(String), email: null, redeemedAt: expect.any(String), carried: false },
+    ]);
+
+    // And two exports of an unchanged deployment are still the same file.
+    expect(decodeBundle(await exportFile(a.operator)).integrity.contentSha256).toBe(preview.contentSha256);
   });
 
   it('is idempotent: importing the same file again creates nothing and changes no balance', async () => {
