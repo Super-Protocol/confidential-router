@@ -1,7 +1,7 @@
 import type { MockLink } from '@apollo/client/testing';
 import { configure, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithApollo } from '../../../test-utils';
 import { GrantCreditDialog, type GrantCreditTarget } from './grant-credit-dialog';
 import { GRANT_CREDIT } from './operations';
@@ -11,6 +11,10 @@ import { GRANT_CREDIT } from './operations';
  * it refuses before the round trip, and that the API's refusal reaches the
  * operator verbatim — a `billing.allowCreditDebits` message is the only way the
  * console can learn that setting.
+ *
+ * Since SUP-398 it also carries the `requestId` that makes a retry a replay, so
+ * the id is stubbed here: the mock link matches variables exactly, and the tests
+ * about retrying are tests about that value staying put.
  */
 
 configure({ asyncUtilTimeout: 5_000 });
@@ -21,11 +25,20 @@ const TARGET: GrantCreditTarget = {
   balanceMicros: '40000000',
 };
 
+const REQUEST_ID = '11111111-2222-4333-8444-555555555555';
+const REASON = 'Internal tester top-up';
+
+beforeEach(() => {
+  vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(REQUEST_ID);
+});
+
 function grantMock(
   input: Record<string, unknown>,
   result: Partial<Record<string, unknown>> | { message: string },
 ): MockLink.MockedResponse {
-  const variables = { input: { workspaceId: TARGET.workspaceId, kind: 'GRANT', note: null, ...input } };
+  const variables = {
+    input: { workspaceId: TARGET.workspaceId, kind: 'GRANT', note: REASON, requestId: REQUEST_ID, ...input },
+  };
   if ('message' in result) {
     return { request: { query: GRANT_CREDIT, variables }, result: { errors: [{ message: result.message }] } as never };
   }
@@ -41,7 +54,8 @@ function grantMock(
           kind: 'GRANT',
           amountMicros: '100000000',
           balanceMicros: '140000000',
-          note: null,
+          note: REASON,
+          replayed: false,
           ...result,
         },
       },
@@ -61,6 +75,17 @@ async function type(label: string, value: string) {
   await userEvent.type(input, value);
 }
 
+/** The two fields every movement needs: an amount and a reason. */
+async function fill(amount: string, reason = REASON) {
+  await type('Amount (USD)', amount);
+  await type('Reason', reason);
+}
+
+async function pick(movement: string) {
+  await userEvent.click(screen.getByRole('combobox', { name: 'Movement' }));
+  await userEvent.click(await screen.findByRole('option', { name: movement }));
+}
+
 describe('GrantCreditDialog', () => {
   it('shows what the account holds today, so the operator is not guessing', async () => {
     renderDialog();
@@ -71,7 +96,7 @@ describe('GrantCreditDialog', () => {
   it('grants the typed amount as a positive GRANT and reports the new balance', async () => {
     renderDialog([grantMock({ amountMicros: '100000000' }, {})]);
 
-    await type('Amount (USD)', '100');
+    await fill('100');
     await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
 
     expect(await screen.findByTestId('grant-credit-done')).toHaveTextContent(
@@ -82,13 +107,13 @@ describe('GrantCreditDialog', () => {
   it('sends cents as cents', async () => {
     renderDialog([grantMock({ amountMicros: '2500000' }, { amountMicros: '2500000', balanceMicros: '42500000' })]);
 
-    await type('Amount (USD)', '2.50');
+    await fill('2.50');
     await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
 
     expect(await screen.findByTestId('grant-credit-done')).toHaveTextContent('$2.50 added');
   });
 
-  it('records a removal as a negative ADJUSTMENT carrying the note', async () => {
+  it('records a removal as a negative ADJUSTMENT carrying the reason', async () => {
     renderDialog([
       grantMock(
         { amountMicros: '-10000000', kind: 'ADJUSTMENT', note: 'Duplicate grant' },
@@ -96,10 +121,8 @@ describe('GrantCreditDialog', () => {
       ),
     ]);
 
-    await userEvent.click(screen.getByRole('combobox', { name: 'Movement' }));
-    await userEvent.click(await screen.findByRole('option', { name: 'Correction — remove credit' }));
-    await type('Amount (USD)', '10');
-    await type('Note', 'Duplicate grant');
+    await pick('Correction — remove credit');
+    await fill('10', 'Duplicate grant');
     await userEvent.click(screen.getByRole('button', { name: 'Correction — remove credit' }));
 
     expect(await screen.findByTestId('grant-credit-done')).toHaveTextContent(
@@ -107,11 +130,19 @@ describe('GrantCreditDialog', () => {
     );
   });
 
-  it('refuses a removal with no note, before asking the server', async () => {
+  it('refuses a grant with no reason, before asking the server', async () => {
     renderDialog();
 
-    await userEvent.click(screen.getByRole('combobox', { name: 'Movement' }));
-    await userEvent.click(await screen.findByRole('option', { name: 'Correction — remove credit' }));
+    await type('Amount (USD)', '100');
+    await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Say why this credit is being added.');
+  });
+
+  it('refuses a removal with no reason, before asking the server', async () => {
+    renderDialog();
+
+    await pick('Correction — remove credit');
     await type('Amount (USD)', '10');
     await userEvent.click(screen.getByRole('button', { name: 'Correction — remove credit' }));
 
@@ -121,10 +152,8 @@ describe('GrantCreditDialog', () => {
   it('refuses a removal larger than the balance, before asking the server', async () => {
     renderDialog();
 
-    await userEvent.click(screen.getByRole('combobox', { name: 'Movement' }));
-    await userEvent.click(await screen.findByRole('option', { name: 'Correction — remove credit' }));
-    await type('Amount (USD)', '41');
-    await type('Note', 'Clawback');
+    await pick('Correction — remove credit');
+    await fill('41', 'Clawback');
     await userEvent.click(screen.getByRole('button', { name: 'Correction — remove credit' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('More than the $40 on this account');
@@ -133,7 +162,7 @@ describe('GrantCreditDialog', () => {
   it('refuses a zero or a non-amount', async () => {
     renderDialog();
 
-    await type('Amount (USD)', '0');
+    await fill('0');
     await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('A dollar amount above $0.');
@@ -149,10 +178,8 @@ describe('GrantCreditDialog', () => {
       ),
     ]);
 
-    await userEvent.click(screen.getByRole('combobox', { name: 'Movement' }));
-    await userEvent.click(await screen.findByRole('option', { name: 'Correction — remove credit' }));
-    await type('Amount (USD)', '10');
-    await type('Note', 'Clawback');
+    await pick('Correction — remove credit');
+    await fill('10', 'Clawback');
     await userEvent.click(screen.getByRole('button', { name: 'Correction — remove credit' }));
 
     await waitFor(() =>
@@ -168,8 +195,7 @@ describe('GrantCreditDialog', () => {
 
     // Not the initial $100, so the field being back at $100 below is the reset
     // rather than a coincidence.
-    await type('Amount (USD)', '250');
-    await type('Note (optional)', 'Tester top-up');
+    await fill('250', 'Tester top-up');
     await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
     expect(await screen.findByTestId('grant-credit-done')).toBeInTheDocument();
 
@@ -187,13 +213,13 @@ describe('GrantCreditDialog', () => {
     expect(await screen.findByText('Credit other@example.com')).toBeInTheDocument();
     expect(screen.queryByTestId('grant-credit-done')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Amount (USD)')).toHaveValue('100');
-    expect(screen.getByLabelText('Note (optional)')).toHaveValue('');
+    expect(screen.getByLabelText('Reason')).toHaveValue('');
   });
 
-  it('grants once when the button is double-clicked — the service keys each call freshly', async () => {
+  it('grants once when the button is double-clicked', async () => {
     renderDialog([grantMock({ amountMicros: '100000000' }, {})]);
 
-    await type('Amount (USD)', '100');
+    await fill('100');
     const button = screen.getByRole('button', { name: 'Grant credit' });
     // Two clicks inside one render window: `loading` has not flipped yet.
     await userEvent.dblClick(button);
@@ -207,5 +233,87 @@ describe('GrantCreditDialog', () => {
     renderDialog([], null);
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The retry path (SUP-398).
+ *
+ * A 504 over a row that was in fact written leaves the form filled, the button
+ * enabled and the operator about to press it again. The id minted when the
+ * dialog opened has to survive that, and the second answer has to read as "this
+ * was already recorded" rather than as a second success.
+ */
+describe('retrying a submission', () => {
+  it('sends the same requestId, and says the entry was already recorded', async () => {
+    renderDialog([
+      grantMock({ amountMicros: '100000000' }, { message: 'Gateway timeout' }),
+      grantMock({ amountMicros: '100000000' }, { replayed: true, balanceMicros: '140000000' }),
+    ]);
+
+    await fill('100');
+    await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Gateway timeout'));
+
+    // The form is still filled and the button still live — the operator presses
+    // it again, which is exactly the path that used to double-credit.
+    await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
+
+    expect(await screen.findByText('Already recorded')).toBeInTheDocument();
+    expect(screen.getByTestId('grant-credit-done')).toHaveTextContent(
+      'This request was already recorded, so nothing was written a second time.',
+    );
+    expect(screen.getByTestId('grant-credit-done')).toHaveTextContent('balance stands at $140.00');
+  });
+
+  it('mints a new requestId for the next account, so it is not read as a replay', async () => {
+    const second = '99999999-8888-4777-8666-555555555555';
+    vi.spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValueOnce(REQUEST_ID)
+      .mockReturnValueOnce(second as `${string}-${string}-${string}-${string}-${string}`);
+    const onOpenChange = vi.fn();
+    const other = { email: 'other@example.com', workspaceId: 'ws-other', balanceMicros: '0' };
+    const { rerender } = renderWithApollo(<GrantCreditDialog target={TARGET} onOpenChange={onOpenChange} />, {
+      mocks: [
+        {
+          request: {
+            query: GRANT_CREDIT,
+            variables: {
+              input: {
+                workspaceId: other.workspaceId,
+                kind: 'GRANT',
+                note: REASON,
+                requestId: second,
+                amountMicros: '100000000',
+              },
+            },
+          },
+          result: {
+            data: {
+              grantCredit: {
+                __typename: 'CreditGrant',
+                creditTransactionId: 'tx-2',
+                workspaceId: other.workspaceId,
+                accountEmail: null,
+                kind: 'GRANT',
+                amountMicros: '100000000',
+                balanceMicros: '100000000',
+                note: REASON,
+                replayed: false,
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    rerender(<GrantCreditDialog target={other} onOpenChange={onOpenChange} />);
+    await screen.findByText('Credit other@example.com');
+
+    await fill('100');
+    await userEvent.click(screen.getByRole('button', { name: 'Grant credit' }));
+
+    // Only the second id has a mock, so matching at all is the assertion.
+    expect(await screen.findByTestId('grant-credit-done')).toHaveTextContent('$100 added to other@example.com');
   });
 });

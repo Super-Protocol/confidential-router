@@ -95,6 +95,7 @@ export const GRANT_CREDIT = graphql(`
       amountMicros
       balanceMicros
       note
+      replayed
     }
   }
 `);

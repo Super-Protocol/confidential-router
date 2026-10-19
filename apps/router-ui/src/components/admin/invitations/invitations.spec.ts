@@ -7,6 +7,7 @@ import {
   kindOf,
   MAX_GRANT_CREDIT_USD,
   maskCode,
+  newRequestId,
   pageRange,
   signOf,
   validateGrantForm,
@@ -101,11 +102,11 @@ describe('pageRange', () => {
 });
 
 describe('validateGrantForm', () => {
-  const valid = { amount: '100', movement: 'GRANT' as const, note: '' };
+  const valid = { amount: '100', movement: 'GRANT' as const, note: 'Internal tester top-up' };
   /** $40, what the dialog's target holds. */
   const BALANCE = '40000000';
 
-  it('passes a $100 grant with no note', () => {
+  it('passes a $100 grant with a reason', () => {
     expect(validateGrantForm(valid, BALANCE)).toEqual({});
   });
 
@@ -121,11 +122,19 @@ describe('validateGrantForm', () => {
     expect(validateGrantForm({ ...valid, amount: `${MAX_GRANT_CREDIT_USD}.01` }, BALANCE).amount).toBeDefined();
   });
 
-  it('needs a note only when credit is being removed', () => {
-    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_ADD', note: '' }, BALANCE)).toEqual({});
-    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: '' }, BALANCE).note).toBeDefined();
-    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: ' ' }, BALANCE).note).toBeDefined();
-    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: 'Duplicate' }, BALANCE)).toEqual({});
+  it('needs a reason on every movement, not only on a removal (SUP-398)', () => {
+    for (const movement of ['GRANT', 'ADJUSTMENT_ADD', 'ADJUSTMENT_REMOVE'] as const) {
+      expect(validateGrantForm({ amount: '10', movement, note: '' }, BALANCE).note).toBeDefined();
+      expect(validateGrantForm({ amount: '10', movement, note: '  ' }, BALANCE).note).toBeDefined();
+      expect(validateGrantForm({ amount: '10', movement, note: 'Duplicate' }, BALANCE)).toEqual({});
+    }
+  });
+
+  it('says what it wants in the operator’s terms, by direction', () => {
+    expect(validateGrantForm({ amount: '10', movement: 'GRANT', note: '' }, BALANCE).note).toContain('added');
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: '' }, BALANCE).note).toContain(
+      'taken away',
+    );
   });
 
   it('will not remove more than the account holds', () => {
@@ -133,11 +142,27 @@ describe('validateGrantForm', () => {
     expect(validateGrantForm({ ...removal, amount: '40' }, BALANCE)).toEqual({});
     expect(validateGrantForm({ ...removal, amount: '40.01' }, BALANCE).amount).toBeDefined();
     // Adding more than the balance is ordinary.
-    expect(validateGrantForm({ amount: '400', movement: 'ADJUSTMENT_ADD', note: '' }, BALANCE)).toEqual({});
+    expect(validateGrantForm({ amount: '400', movement: 'ADJUSTMENT_ADD', note: 'Prepaid' }, BALANCE)).toEqual({});
   });
 
   it('skips the balance check when the account has no workspace to read one from', () => {
     expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: 'Clawback' }, null)).toEqual({});
+  });
+});
+
+describe('newRequestId', () => {
+  it('is a fresh value each time, so two decisions are never one', () => {
+    expect(newRequestId()).not.toBe(newRequestId());
+  });
+
+  it('falls back to something unique where randomUUID is unavailable — an insecure origin', () => {
+    const uuid = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true });
+    try {
+      expect(newRequestId()).toMatch(/^[a-z0-9]+-[a-z0-9]+$/);
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', { value: uuid, configurable: true });
+    }
   });
 });
 

@@ -29,6 +29,7 @@ import {
   kindOf,
   MOVEMENT_HELP,
   MOVEMENT_LABEL,
+  newRequestId,
   signOf,
   validateGrantForm,
 } from './invitations';
@@ -58,6 +59,10 @@ export interface GrantCreditTarget {
  * `ADJUSTMENT` either way. Removing credit is the one the deployment has to have
  * allowed (`billing.allowCreditDebits`); the console cannot read that setting,
  * so the API's refusal — which names the key — is what says so.
+ *
+ * The reason is required, and the submission carries a `requestId` minted when
+ * the dialog opens: a retry after a timeout replays the entry that was already
+ * written rather than crediting a second time, and says so (SUP-398).
  */
 export function GrantCreditDialog({
   target,
@@ -72,19 +77,41 @@ export function GrantCreditDialog({
   const [form, setForm] = React.useState<GrantCreditForm>(INITIAL);
   const [errors, setErrors] = React.useState<GrantCreditErrors>({});
   const [failure, setFailure] = React.useState<string | null>(null);
-  const [done, setDone] = React.useState<{ amountMicros: string; balanceMicros: string } | null>(null);
+  const [done, setDone] = React.useState<{
+    amountMicros: string;
+    balanceMicros: string;
+    /** The request had already been recorded; this call wrote nothing. */
+    replayed: boolean;
+  } | null>(null);
 
   const [grant, { loading }] = useMutation(GRANT_CREDIT);
   /**
    * In flight, tracked outside React state.
    *
    * `loading` only flips on the next render, so two clicks inside one render
-   * window both pass a check on it — and this is the one mutation where that
-   * writes a second ledger entry: `CreditGrantService` keys each call freshly on
-   * purpose (an operator asking twice means twice) and says this dialog is what
-   * stops a double-click. A ref is what makes that true.
+   * window both pass a check on it. The API's `requestId` is what makes a double
+   * submission safe rather than merely unlikely (SUP-398); this ref keeps the
+   * second click from making a round trip at all.
    */
   const inFlight = React.useRef(false);
+
+  /**
+   * One name for this decision, minted when the dialog opens and held across
+   * every retry of it.
+   *
+   * Keyed on the workspace rather than on `target`, which the list rebuilds on
+   * each render: a submission that failed — a timeout over a row that was in
+   * fact written — must retry under the *same* id, which is what makes the retry
+   * a replay instead of a second grant. Reopening the dialog, or opening it on
+   * another account, is a new decision and mints a new one.
+   */
+  const openedFor = target?.workspaceId ?? null;
+  const requestId = React.useRef<string>('');
+  React.useEffect(() => {
+    if (openedFor !== null) {
+      requestId.current = newRequestId();
+    }
+  }, [openedFor]);
 
   const reset = () => {
     setForm(INITIAL);
@@ -118,13 +145,18 @@ export function GrantCreditDialog({
             workspaceId: target.workspaceId,
             kind: kindOf(form.movement),
             amountMicros,
-            note: form.note.trim() === '' ? null : form.note.trim(),
+            note: form.note.trim(),
+            requestId: requestId.current,
           },
         },
       });
       const credited = result.data?.grantCredit;
       if (credited) {
-        setDone({ amountMicros: credited.amountMicros, balanceMicros: credited.balanceMicros });
+        setDone({
+          amountMicros: credited.amountMicros,
+          balanceMicros: credited.balanceMicros,
+          replayed: credited.replayed,
+        });
         onGranted?.();
       }
     } catch (caught) {
@@ -146,11 +178,28 @@ export function GrantCreditDialog({
         {done ? (
           <>
             <DialogHeader>
-              <DialogTitle>{BigInt(done.amountMicros) < 0n ? 'Credit removed' : 'Credit added'}</DialogTitle>
+              <DialogTitle>
+                {done.replayed
+                  ? 'Already recorded'
+                  : BigInt(done.amountMicros) < 0n
+                    ? 'Credit removed'
+                    : 'Credit added'}
+              </DialogTitle>
               <DialogDescription data-testid="grant-credit-done">
-                {formatUsdShort(done.amountMicros.replace('-', ''))}{' '}
-                {BigInt(done.amountMicros) < 0n ? 'taken from' : 'added to'} {target?.email}. Their balance is now{' '}
-                {formatUsd(done.balanceMicros)}. The ledger entry names you as the operator.
+                {done.replayed ? (
+                  <>
+                    This request was already recorded, so nothing was written a second time.{' '}
+                    {formatUsdShort(done.amountMicros.replace('-', ''))}{' '}
+                    {BigInt(done.amountMicros) < 0n ? 'was taken from' : 'went to'} {target?.email} the first time, and
+                    their balance stands at {formatUsd(done.balanceMicros)}.
+                  </>
+                ) : (
+                  <>
+                    {formatUsdShort(done.amountMicros.replace('-', ''))}{' '}
+                    {BigInt(done.amountMicros) < 0n ? 'taken from' : 'added to'} {target?.email}. Their balance is now{' '}
+                    {formatUsd(done.balanceMicros)}. The ledger entry names you as the operator.
+                  </>
+                )}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -219,7 +268,7 @@ export function GrantCreditDialog({
               </div>
 
               <div className="grid gap-1.5">
-                <Label htmlFor="grant-note">Note{form.movement === 'ADJUSTMENT_REMOVE' ? '' : ' (optional)'}</Label>
+                <Label htmlFor="grant-note">Reason</Label>
                 <Input
                   id="grant-note"
                   value={form.note}
@@ -240,7 +289,7 @@ export function GrantCreditDialog({
                   </p>
                 ) : (
                   <p id="grant-note-help" className="text-muted-foreground text-xs">
-                    Kept on the ledger row, and shown to the account holder on their Credits screen.
+                    Required. Kept on the ledger row, and shown to the account holder on their Credits screen.
                   </p>
                 )}
               </div>

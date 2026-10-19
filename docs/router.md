@@ -483,31 +483,49 @@ holds.
 
 ```graphql
 mutation {
-  grantCredit(input: { accountEmail: "tester@example.com", amountMicros: "100000000", note: "Internal tester top-up" }) {
+  grantCredit(
+    input: {
+      accountEmail: "tester@example.com"
+      amountMicros: "100000000"
+      note: "SUP-389: topped up after the verification grant"
+      requestId: "3f1c8c6e-6f1a-4a2f-9a0e-0d6a9f2b7c41"
+    }
+  ) {
     amountMicros
     balanceMicros
+    replayed
   }
 }
 ```
 
 Name the account by `accountEmail` or by `workspaceId` — exactly one. The call
 writes **one** ledger entry through the same path as every other grant, so the
-Credits screen renders it and the balance moves by exactly that amount. Three
+Credits screen renders it and the balance moves by exactly that amount. Four
 things make it an operator's operation rather than a back door:
 
-- `credit_transactions.grantedByUserId` carries the operator, and the note goes on
-  the row, so the ledger says who granted it and why without a log search.
+- `credit_transactions.grantedByUserId` carries the operator, and the reason goes
+  on the row, so the ledger says who granted it and why without a log search.
+  Both survive a redeploy: the export bundle carries the operator and remaps it
+  to the id that account has on the new deployment.
+- The reason is **required**, in both directions. It is the only field that says
+  why an entry nobody paid for exists.
 - `billing.maxCreditGrantMicros` ($10 000) is the ceiling on **one** call — the
-  same kind of blast-radius bound `billing.maxTopUpMicros` puts on a checkout.
-- Taking credit *away* is a separate decision. It has to be `kind: ADJUSTMENT`, it
-  needs a note, and it needs `billing.allowCreditDebits`, which is **off** by
-  default. Even switched on it cannot push a balance below zero: `adjustment` may
-  not overdraw.
+  same kind of blast-radius bound `billing.maxTopUpMicros` puts on a checkout,
+  and the same number that bounds the credit per invitation code.
+- Taking credit *away* is a separate decision. It has to be `kind: ADJUSTMENT`
+  and it needs `billing.allowCreditDebits`, which is **off** by default. Even
+  switched on it cannot push a balance below zero: `adjustment` may not overdraw.
+
+`requestId` names the decision and is required. The ledger entry is keyed on
+`operator:<operator>:<requestId>`, so the same submission arriving twice — a
+proxy timeout, then the obvious retry — replays the first row and answers
+`replayed: true` instead of crediting again; the console says *already recorded*
+rather than reporting a second success. A second deliberate grant is a second
+decision and carries a new `requestId`, so it lands as a second row. The console
+mints one UUID when the dialog opens and keeps it across retries.
 
 A correction is a new row, never an edit — the ledger has no update path at all
-(`docs/contracts/data-model.md` invariant 3). And unlike every other ledger
-writer this one is *not* idempotent: a redelivered webhook is two reports of one
-event, while an operator pressing the button twice is two decisions.
+(`docs/contracts/data-model.md` invariant 3).
 
 ## Invitation codes
 

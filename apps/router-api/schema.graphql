@@ -383,7 +383,14 @@ type CreditGrant {
   """The `credit_transactions` row."""
   creditTransactionId: ID!
   kind: AdminCreditGrantKind!
-  note: String
+
+  """The reason recorded on the row — the first call’s, on a replay."""
+  note: String!
+
+  """
+  True when this requestId had already been recorded: nothing was written and the balance is unchanged. The console says “already recorded” rather than reporting a second success.
+  """
+  replayed: Boolean!
   workspaceId: ID!
 }
 
@@ -1041,9 +1048,14 @@ input GrantCreditInput {
   kind: AdminCreditGrantKind! = GRANT
 
   """
-  Why, kept on the ledger row and shown to the account holder. Required when removing credit.
+  Why the credit is moving, kept on the ledger row and shown to the account holder. Required: it is the only field that explains an entry nobody paid for.
   """
-  note: String
+  note: String!
+
+  """
+  The caller's name for this decision — a UUID the console mints when the dialog opens. The same value replays the first call instead of crediting twice; a second deliberate grant sends a new one.
+  """
+  requestId: String!
 
   """
   The workspace to credit, when the caller already has its id. Exactly one of this and `accountEmail`.
@@ -1399,7 +1411,7 @@ type Mutation {
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
 
   """
-  Puts credit on an existing account, or corrects a balance, as one audited ledger entry naming the operator. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.
+  Puts credit on an existing account, or corrects a balance, as one audited ledger entry naming the operator and the reason. Idempotent on `requestId`, so a retried submission replays rather than credits twice. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.
   """
   grantCredit(input: GrantCreditInput!): CreditGrant!
 

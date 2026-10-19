@@ -89,6 +89,16 @@ const CreditEntrySchema = z.object({
   reference: z.string().max(128).nullable(),
   description: z.string().max(512).nullable(),
   idempotencyKey: z.string().min(1).max(128),
+  /**
+   * The operator who wrote the entry by hand, when one did (SUP-406). Carried so
+   * "who granted this" survives the redeploy the bundle *is* — without it the
+   * ledger answers until the next restore and `null` for ever after (SUP-398).
+   *
+   * Optional with a null default, so a bundle written before the column existed
+   * still reads: that is what the paragraph on {@link EXPORT_SCHEMA_VERSION}
+   * means by an additive field.
+   */
+  grantedByUserId: id.nullable().default(null),
   createdAt: iso,
 });
 

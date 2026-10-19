@@ -311,7 +311,9 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     }
     ledger.toCreate += 1;
     touched.add(workspaceId);
-    ledgerWrites.push({ ...entry, workspaceId, idempotencyKey });
+    // Remapped the way `issuedByUserId` is: a restore mints new account ids, and
+    // an operator id from the old deployment would name nobody here.
+    ledgerWrites.push({ ...entry, workspaceId, idempotencyKey, grantedByUserId: userIdOrNull(entry.grantedByUserId) });
   }
   if (grantsAlreadyMade > 0) {
     notes.push(

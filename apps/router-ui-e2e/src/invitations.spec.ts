@@ -149,6 +149,7 @@ const INVITATION_OPERATIONS = {
       amountMicros: (variables.input as Record<string, unknown>).amountMicros,
       balanceMicros: '140000000',
       note: (variables.input as Record<string, unknown>).note ?? null,
+      replayed: false,
       createdAt: '2026-10-19T12:00:00.000Z',
     },
   }),
@@ -325,7 +326,7 @@ test.describe('the Invitations section', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog).toContainText('They hold $40.00 today');
     await dialog.getByLabel('Amount (USD)').fill('100');
-    await dialog.getByLabel('Note', { exact: false }).fill('Internal tester top-up');
+    await dialog.getByLabel('Reason').fill('Internal tester top-up');
     await shot(page, testInfo, 'grant-credit-dialog');
 
     await dialog.getByRole('button', { name: 'Grant credit' }).click();
@@ -333,9 +334,16 @@ test.describe('the Invitations section', () => {
     await expect(dialog.getByTestId('grant-credit-done')).toContainText(
       '$100 added to dev@example.com. Their balance is now $140.00.',
     );
-    expect(calls).toEqual([
-      { workspaceId: 'ws-2', kind: 'GRANT', amountMicros: '100000000', note: 'Internal tester top-up' },
-    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      workspaceId: 'ws-2',
+      kind: 'GRANT',
+      amountMicros: '100000000',
+      note: 'Internal tester top-up',
+    });
+    // Minted in the browser when the dialog opened, so the value is the
+    // console's rather than the test's; what matters is that one was sent.
+    expect(calls[0]?.requestId).toMatch(/^[A-Za-z0-9_.-]+$/);
     await shot(page, testInfo, 'grant-credit-done');
   });
 
