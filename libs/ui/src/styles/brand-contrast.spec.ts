@@ -97,7 +97,8 @@ describe.each(['light', 'dark'] as const)('the brand accent in %s mode', (theme)
 
   it('still clears the non-text bar where --brand draws a graphic on a card', () => {
     // Sparklines, the passed-check tick and the border of a focused preset.
-    expect(ratio(of('brand'), of('card'))).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    // 3.74:1 light / 4.96:1 dark, so this floor carries HEADROOM like the rest.
+    expect(ratio(of('brand'), of('card'))).toBeGreaterThanOrEqual(AA_NON_TEXT * HEADROOM);
   });
 });
 
