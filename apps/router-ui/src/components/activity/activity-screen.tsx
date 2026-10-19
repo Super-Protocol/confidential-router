@@ -41,6 +41,7 @@ export const ACTIVITY_QUERY = graphql(`
       evidenceCoverage
       avgTimeToFirstTokenMs
       avgTokensPerSecond
+      timedRequests
     }
     activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: $bucket) {
       bucket
@@ -81,6 +82,32 @@ export const ACTIVITY_USAGE_BY_MODEL_QUERY = graphql(`
 const MODEL_LIMIT = 8;
 
 const TILE_LABELS = ['Total spend', 'Requests', 'Token volume', 'Time to first token', 'Evidence coverage'];
+
+/**
+ * What the time-to-first-token tile is an average *over*.
+ *
+ * Rarely every request: one that was not streamed has no first token to time.
+ * The tile used to print the mean under a bare "Average", which read as a claim
+ * about the whole period even when half the traffic was outside the sample
+ * (SUP-424). The generation rate rides along because it shares that sample.
+ */
+function timeToFirstTokenHint(summary: {
+  requests: number;
+  timedRequests: number;
+  avgTokensPerSecond: number | null;
+}): string {
+  if (summary.timedRequests === 0) {
+    return 'No request reported a first token';
+  }
+  const sample =
+    summary.timedRequests >= summary.requests
+      ? 'Average across the period'
+      : `Average of ${formatCount(summary.timedRequests)} of ${formatCount(summary.requests)} requests`;
+
+  return summary.avgTokensPerSecond === null
+    ? sample
+    : `${sample} · ${formatTokensPerSecond(summary.avgTokensPerSecond)}`;
+}
 
 const SERIES = [
   { key: 'completionTokens', label: 'Output tokens' },
@@ -181,11 +208,7 @@ export function ActivityScreen() {
               // `activitySeries` carries no latency, so this tile has no
               // sparkline rather than one drawn from a neighbouring metric.
               value={formatMs(summary.avgTimeToFirstTokenMs)}
-              hint={
-                summary.avgTokensPerSecond === null
-                  ? 'Average across the period'
-                  : `Average · ${formatTokensPerSecond(summary.avgTokensPerSecond)}`
-              }
+              hint={timeToFirstTokenHint(summary)}
             />
             <StatTile
               label="Evidence coverage"

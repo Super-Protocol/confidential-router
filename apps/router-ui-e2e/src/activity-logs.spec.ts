@@ -53,6 +53,7 @@ function summary(spendMicros: string, requests: number) {
     evidenceCoverage: 1,
     avgTimeToFirstTokenMs: 312,
     avgTokensPerSecond: 48.23,
+    timedRequests: requests,
   };
 }
 

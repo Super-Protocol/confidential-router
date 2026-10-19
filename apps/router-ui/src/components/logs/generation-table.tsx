@@ -8,7 +8,7 @@ import {
   TableRow,
 } from '@confidential-router/ui/components/table';
 import type { GenerationStatus } from '../../generated/graphql';
-import { formatUsd } from '../../lib/format';
+import { formatUsdMetered } from '../../lib/format';
 import { formatExact, formatMs, formatTokensPerSecond } from '../../lib/metrics';
 import { STATUS_LABELS } from './filters';
 
@@ -82,9 +82,7 @@ export function GenerationTable({ rows }: GenerationTableProps) {
             </TableCell>
             <TableCell className="text-right font-mono">{formatExact(row.promptTokens)}</TableCell>
             <TableCell className="text-right font-mono">{formatExact(row.completionTokens)}</TableCell>
-            <TableCell className="text-right font-mono">
-              {formatUsd(row.costMicros, { maximumFractionDigits: 4 })}
-            </TableCell>
+            <TableCell className="text-right font-mono">{formatUsdMetered(row.costMicros)}</TableCell>
             <TableCell className="text-right font-mono">{formatTokensPerSecond(row.tokensPerSecond)}</TableCell>
             <TableCell className="text-right font-mono">{formatMs(row.timeToFirstTokenMs)}</TableCell>
             <TableCell>

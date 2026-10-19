@@ -37,6 +37,11 @@ type ActivitySummary {
 
   """Spend in micro-USD."""
   spendMicros: String!
+
+  """
+  Of `requests`, how many reported a first-token time — the sample `avgTimeToFirstTokenMs` averages. A request that was not streamed never reports one.
+  """
+  timedRequests: Int!
 }
 
 input AddTrustedMeasurementInput {

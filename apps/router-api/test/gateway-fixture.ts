@@ -32,6 +32,7 @@ const MODELS: ModelFixture[] = [
   { id: 'mock/thinking:tdx', litellmModel: 'mock/thinking' },
   { id: 'mock/stream-abort:tdx', litellmModel: 'mock/stream-abort' },
   { id: 'mock/stream-slow:tdx', litellmModel: 'mock/stream-slow' },
+  { id: 'mock/stream-tools:tdx', litellmModel: 'mock/stream-tools' },
   { id: 'mock/covered:tdx', litellmModel: 'mock/chat', endpoint: 'mock-covered' },
   { id: 'mock/stale:tdx', litellmModel: 'mock/chat', endpoint: 'mock-stale' },
   { id: 'mock/embed:tdx', litellmModel: 'mock/embed', capabilities: ['embeddings'], endpoint: 'mock-embeddings' },

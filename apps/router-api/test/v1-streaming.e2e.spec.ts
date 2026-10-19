@@ -134,6 +134,21 @@ describe('streaming responses', () => {
     expect(row.finishReason).toBe('stop');
   });
 
+  it('records the time to first token of a turn that only calls tools', async () => {
+    // Half the streamed rows in production had no first-token time: an agent's
+    // turn streams its arguments in `tool_calls` and never sets `content`, and
+    // the clock used to watch text only (SUP-424).
+    const { chunks, response } = await stream({ ...CHAT, model: 'mock/stream-tools:tdx' });
+    const id = response.headers.get('x-confidential-router-generation-id') as string;
+
+    expect(chunks.some((chunk) => JSON.stringify(chunk).includes('tool_calls'))).toBe(true);
+
+    const row = await generations().findOneByOrFail({ id });
+    expect(row.timeToFirstTokenMs).not.toBeNull();
+    expect(row.timeToFirstTokenMs ?? -1).toBeGreaterThan(0);
+    expect(row.finishReason).toBe('tool_calls');
+  });
+
   it('reports a backend that dies mid-stream in the stream itself, then terminates it', async () => {
     const { events, chunks, response } = await stream({ ...CHAT, model: 'mock/stream-abort:tdx' });
 

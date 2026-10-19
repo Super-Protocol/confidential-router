@@ -294,6 +294,10 @@ describe('POST /v1/chat/completions', () => {
       evidenceSnapshotId: null,
     });
     expect(row.latencyMs).toBeGreaterThanOrEqual(0);
+    // No stream, so no first token to time — and without that window a rate
+    // would be the whole latency, prefill included (SUP-424).
+    expect(row.timeToFirstTokenMs).toBeNull();
+    expect(row.tokensPerSecond).toBeNull();
     expect(JSON.stringify(row)).not.toContain('Hello there');
   });
 

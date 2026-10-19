@@ -109,7 +109,13 @@ describe('summary', () => {
       timeToFirstTokenMs: null,
     });
 
-    expect((await activity.summary(range)).avgTimeToFirstTokenMs).toBe(150);
+    const summary = await activity.summary(range);
+
+    expect(summary.avgTimeToFirstTokenMs).toBe(150);
+    // And says how big that sample was, so a tile cannot present the mean of two
+    // requests as the period's (SUP-424).
+    expect(summary.timedRequests).toBe(2);
+    expect(summary.requests).toBe(3);
   });
 
   it('answers an empty period with zeroes and null averages, not with nulls throughout', async () => {
@@ -122,6 +128,7 @@ describe('summary', () => {
       evidenceCoverage: 0,
       avgTimeToFirstTokenMs: null,
       avgTokensPerSecond: null,
+      timedRequests: 0,
     });
   });
 

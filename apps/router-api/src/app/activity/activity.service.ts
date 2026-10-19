@@ -24,6 +24,8 @@ export interface ActivityTotals {
 export interface ActivitySummary extends ActivityTotals {
   avgTimeToFirstTokenMs: number | null;
   avgTokensPerSecond: number | null;
+  /** How many of `requests` reported a first-token time — what the average is over. */
+  timedRequests: number;
 }
 
 export interface ActivityPoint extends ActivityTotals {
@@ -84,6 +86,11 @@ export class ActivityService {
       ...totalsOf(row ?? {}),
       avgTimeToFirstTokenMs: average(row?.ttftSum, row?.ttftSamples),
       avgTokensPerSecond: average(row?.tpsSum, row?.tpsSamples),
+      // Reported alongside the average because it is rarely every request: one
+      // that was not streamed has no first token to time. A tile that showed the
+      // mean without its sample size claimed to speak for traffic it had never
+      // measured (SUP-424).
+      timedRequests: toNumber(row?.ttftSamples),
     };
   }
 

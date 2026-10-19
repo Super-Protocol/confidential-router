@@ -39,6 +39,28 @@ export function formatUsdShort(micros: string): string {
   return formatUsd(micros, whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {});
 }
 
+/** Below this, an amount in micro-USD would round to `$0.0000` at four decimals. */
+const MICROS_PER_HUNDREDTH_CENT = 100n;
+
+/**
+ * A metered amount: the same four decimals on the Logs screen and in the
+ * Credits ledger.
+ *
+ * One generation costs fractions of a cent, so `formatUsd`'s two decimals
+ * rendered every `Usage` row of the ledger as `−$0.00` — a list of thirty
+ * transactions that could not say where $0.10 had gone, while Logs priced the
+ * same generations to four decimals (SUP-424). Whole dollars still read as
+ * `$100.00`: four is the maximum, not the minimum.
+ *
+ * Six decimals for an amount finer than that, because micro-USD is the unit the
+ * API meters in and an amount that moved money must never print as zero.
+ */
+export function formatUsdMetered(micros: string): string {
+  const value = BigInt(micros);
+  const fine = value !== 0n && (value < 0n ? -value : value) < MICROS_PER_HUNDREDTH_CENT;
+  return formatUsd(micros, { maximumFractionDigits: fine ? 6 : 4 });
+}
+
 export function formatCompact(value: number): string {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
