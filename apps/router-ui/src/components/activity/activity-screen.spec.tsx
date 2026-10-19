@@ -31,6 +31,7 @@ function summary(overrides: Record<string, unknown> = {}) {
     avgTimeToFirstTokenMs: 312,
     avgTokensPerSecond: 48.23,
     timedRequests: 842,
+    ratedRequests: 842,
     ...overrides,
   };
 }
@@ -160,7 +161,12 @@ describe('ActivityScreen', () => {
       mocks: [
         sessionMock(),
         activityMock(24, {
-          activitySummary: summary({ avgTimeToFirstTokenMs: null, avgTokensPerSecond: null, timedRequests: 0 }),
+          activitySummary: summary({
+            avgTimeToFirstTokenMs: null,
+            avgTokensPerSecond: null,
+            timedRequests: 0,
+            ratedRequests: 0,
+          }),
         }),
         usageMock(),
       ],
@@ -176,13 +182,28 @@ describe('ActivityScreen', () => {
     renderWithSession(<ActivityScreen />, {
       mocks: [
         sessionMock(),
-        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 421 }) }),
+        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 421, ratedRequests: 421 }) }),
         usageMock(),
       ],
     });
 
     expect(await screen.findByText('312 ms')).toBeInTheDocument();
     expect(screen.getByText('Average of 421 of 842 requests · 48.2 tok/s')).toBeInTheDocument();
+  });
+
+  it('gives the rate its own sample size, which the floors make smaller than the timed one', async () => {
+    // A short tool-call turn is timed and unrated, so one count cannot label both
+    // means — the defect this issue filed, in the fix for it (SUP-424).
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 800, ratedRequests: 780 }) }),
+        usageMock(),
+      ],
+    });
+
+    expect(await screen.findByText('312 ms')).toBeInTheDocument();
+    expect(screen.getByText('Average of 800 of 842 requests · 48.2 tok/s over 780')).toBeInTheDocument();
   });
 
   it('drops the sample size when every request was timed', async () => {

@@ -118,6 +118,28 @@ describe('summary', () => {
     expect(summary.requests).toBe(3);
   });
 
+  it('counts the rate sample separately, because a timed request is not always a rated one', async () => {
+    // `tokensPerSecond` refuses a window too small to divide even when the first
+    // token was timed — an agent's short tool-call turn. The two counts label two
+    // different means and cannot stand in for each other (SUP-424).
+    await seedGeneration(dataSource, catalog, {
+      createdAt: new Date('2026-08-28T09:00:00Z'),
+      timeToFirstTokenMs: 100,
+      tokensPerSecond: 120,
+    });
+    await seedGeneration(dataSource, catalog, {
+      createdAt: new Date('2026-08-28T10:00:00Z'),
+      timeToFirstTokenMs: 200,
+      tokensPerSecond: null,
+    });
+
+    const summary = await activity.summary(range);
+
+    expect(summary.timedRequests).toBe(2);
+    expect(summary.ratedRequests).toBe(1);
+    expect(summary.avgTokensPerSecond).toBe(120);
+  });
+
   it('answers an empty period with zeroes and null averages, not with nulls throughout', async () => {
     expect(await activity.summary(range)).toEqual({
       requests: 0,
@@ -129,6 +151,7 @@ describe('summary', () => {
       avgTimeToFirstTokenMs: null,
       avgTokensPerSecond: null,
       timedRequests: 0,
+      ratedRequests: 0,
     });
   });
 

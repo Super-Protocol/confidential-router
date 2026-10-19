@@ -39,7 +39,11 @@ export function formatUsdShort(micros: string): string {
   return formatUsd(micros, whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {});
 }
 
-/** Below this, an amount in micro-USD would round to `$0.0000` at four decimals. */
+/**
+ * A hundredth of a cent: the last amount four decimals spell out in full. Below
+ * *half* of it an amount would round to `$0.0000`, so this is the conservative
+ * side of that line and a 60-micro amount gets the finer form it does not need.
+ */
 const MICROS_PER_HUNDREDTH_CENT = 100n;
 
 /**

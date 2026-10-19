@@ -26,6 +26,8 @@ export interface ActivitySummary extends ActivityTotals {
   avgTokensPerSecond: number | null;
   /** How many of `requests` reported a first-token time — what the average is over. */
   timedRequests: number;
+  /** How many reported a generation rate, which is fewer: `tokensPerSecond` refuses a sample too small to divide. */
+  ratedRequests: number;
 }
 
 export interface ActivityPoint extends ActivityTotals {
@@ -86,11 +88,14 @@ export class ActivityService {
       ...totalsOf(row ?? {}),
       avgTimeToFirstTokenMs: average(row?.ttftSum, row?.ttftSamples),
       avgTokensPerSecond: average(row?.tpsSum, row?.tpsSamples),
-      // Reported alongside the average because it is rarely every request: one
-      // that was not streamed has no first token to time. A tile that showed the
-      // mean without its sample size claimed to speak for traffic it had never
-      // measured (SUP-424).
+      // Reported alongside the averages because neither is over every request: one
+      // that was not streamed has no first token to time, and `tokensPerSecond`
+      // additionally refuses a window too small to divide — so the rate's sample
+      // is a strict subset of the first-token one, and the two counts are not
+      // interchangeable. A tile that showed a mean without its own sample size
+      // claimed to speak for traffic it had never measured (SUP-424).
       timedRequests: toNumber(row?.ttftSamples),
+      ratedRequests: toNumber(row?.tpsSamples),
     };
   }
 

@@ -63,6 +63,13 @@ export class ActivitySummaryModel extends ActivityTotalsModel {
       'A request that was not streamed never reports one.',
   })
   timedRequests!: number;
+
+  @Field(() => Int, {
+    description:
+      'Of `requests`, how many reported a generation rate — the sample `avgTokensPerSecond` averages. ' +
+      'Always at most `timedRequests`: a rate also needs a window large enough to divide.',
+  })
+  ratedRequests!: number;
 }
 
 @ObjectType('ActivityPoint', { description: 'One bucket of an activity series. Quiet buckets are zeroes, not gaps.' })

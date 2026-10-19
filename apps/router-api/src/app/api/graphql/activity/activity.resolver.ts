@@ -63,6 +63,7 @@ export class ActivityResolver {
       avgTimeToFirstTokenMs: summary.avgTimeToFirstTokenMs,
       avgTokensPerSecond: summary.avgTokensPerSecond,
       timedRequests: summary.timedRequests,
+      ratedRequests: summary.ratedRequests,
     };
   }
 

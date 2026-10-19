@@ -33,6 +33,11 @@ type ActivitySummary {
   """
   evidenceCoverage: Float!
   promptTokens: Int!
+
+  """
+  Of `requests`, how many reported a generation rate — the sample `avgTokensPerSecond` averages. Always at most `timedRequests`: a rate also needs a window large enough to divide.
+  """
+  ratedRequests: Int!
   requests: Int!
 
   """Spend in micro-USD."""

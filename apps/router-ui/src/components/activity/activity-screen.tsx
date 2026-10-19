@@ -42,6 +42,7 @@ export const ACTIVITY_QUERY = graphql(`
       avgTimeToFirstTokenMs
       avgTokensPerSecond
       timedRequests
+      ratedRequests
     }
     activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: $bucket) {
       bucket
@@ -84,16 +85,20 @@ const MODEL_LIMIT = 8;
 const TILE_LABELS = ['Total spend', 'Requests', 'Token volume', 'Time to first token', 'Evidence coverage'];
 
 /**
- * What the time-to-first-token tile is an average *over*.
+ * What the two means in the time-to-first-token tile are averages *over*.
  *
- * Rarely every request: one that was not streamed has no first token to time.
- * The tile used to print the mean under a bare "Average", which read as a claim
- * about the whole period even when half the traffic was outside the sample
- * (SUP-424). The generation rate rides along because it shares that sample.
+ * Neither is over every request, and they are not over the same ones. A request
+ * that was not streamed has no first token to time; a rate additionally needs a
+ * window large enough to divide (`tokensPerSecond` in the API), so `ratedRequests`
+ * is a strict subset of `timedRequests` — an agent's short tool-call turn is
+ * timed and unrated. The tile used to print both under one bare "Average", which
+ * read as a claim about the whole period (SUP-424), so each mean now names its
+ * own sample and the rate only repeats the count when it differs.
  */
 function timeToFirstTokenHint(summary: {
   requests: number;
   timedRequests: number;
+  ratedRequests: number;
   avgTokensPerSecond: number | null;
 }): string {
   if (summary.timedRequests === 0) {
@@ -104,9 +109,14 @@ function timeToFirstTokenHint(summary: {
       ? 'Average across the period'
       : `Average of ${formatCount(summary.timedRequests)} of ${formatCount(summary.requests)} requests`;
 
-  return summary.avgTokensPerSecond === null
-    ? sample
-    : `${sample} · ${formatTokensPerSecond(summary.avgTokensPerSecond)}`;
+  if (summary.avgTokensPerSecond === null) {
+    return sample;
+  }
+  const rate = formatTokensPerSecond(summary.avgTokensPerSecond);
+
+  return summary.ratedRequests >= summary.timedRequests
+    ? `${sample} · ${rate}`
+    : `${sample} · ${rate} over ${formatCount(summary.ratedRequests)}`;
 }
 
 const SERIES = [
