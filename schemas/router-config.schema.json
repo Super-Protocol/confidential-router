@@ -567,6 +567,17 @@
           "default": 0,
           "description": "Credit every new account receives at registration, in micro-USD, as a ledger grant referenced 'signup' (once per account). Stacks with an invitation grant. 0 disables."
         },
+        "maxCreditGrantMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000000000,
+          "description": "Ceiling on the magnitude of one operator credit grant or adjustment (grantCredit), in micro-USD. The blast radius of a single call, the way maxTopUpMicros bounds one checkout."
+        },
+        "allowCreditDebits": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether grantCredit may also remove credit — a negative adjustment. Off, so the operation a deployment gets by default can only ever add. Even when on, an adjustment may not overdraw, so a balance cannot go below zero."
+        },
         "checkoutReturnUrl": {
           "type": "string",
           "format": "uri",

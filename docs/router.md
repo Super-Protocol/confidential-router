@@ -397,6 +397,8 @@ billing:
   maxTopUpMicros: 10000000000          # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0              # how far a generation may push a balance negative
   signupGrantMicros: 0                 # credit granted to every new account (ledger `grant`, reference `signup`); 0 disables
+  maxCreditGrantMicros: 10000000000    # $10 000, the ceiling on one operator grantCredit call
+  allowCreditDebits: false             # whether grantCredit may also remove credit (a negative adjustment)
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h                # floor between two automatic top-ups of one workspace
   stripe:
@@ -469,6 +471,43 @@ mailboxes are free, so with registration open each throwaway address collects th
 the grant is once per *account*, not per person. Pair a non-zero value with
 invite-only registration (`auth.requireInviteForSignUp`) where that matters, or
 keep it small enough to be an evaluation allowance rather than a prize.
+
+## Crediting an account that already exists
+
+Everything above puts credit on an account *as it is created*, or sells it. The
+one thing missing was the ordinary request: top up the testers who already signed
+up. `grantCredit` is that operation (SUP-406) — an admin mutation restricted to
+`auth.adminEmails`, with a button beside every account on the console's
+**Invitations → Sign-ups** tab, where each row now also shows what that account
+holds.
+
+```graphql
+mutation {
+  grantCredit(input: { accountEmail: "tester@example.com", amountMicros: "100000000", note: "Internal tester top-up" }) {
+    amountMicros
+    balanceMicros
+  }
+}
+```
+
+Name the account by `accountEmail` or by `workspaceId` — exactly one. The call
+writes **one** ledger entry through the same path as every other grant, so the
+Credits screen renders it and the balance moves by exactly that amount. Three
+things make it an operator's operation rather than a back door:
+
+- `credit_transactions.grantedByUserId` carries the operator, and the note goes on
+  the row, so the ledger says who granted it and why without a log search.
+- `billing.maxCreditGrantMicros` ($10 000) is the ceiling on **one** call — the
+  same kind of blast-radius bound `billing.maxTopUpMicros` puts on a checkout.
+- Taking credit *away* is a separate decision. It has to be `kind: ADJUSTMENT`, it
+  needs a note, and it needs `billing.allowCreditDebits`, which is **off** by
+  default. Even switched on it cannot push a balance below zero: `adjustment` may
+  not overdraw.
+
+A correction is a new row, never an edit — the ledger has no update path at all
+(`docs/contracts/data-model.md` invariant 3). And unlike every other ledger
+writer this one is *not* idempotent: a redelivered webhook is two reports of one
+event, while an operator pressing the button twice is two decisions.
 
 ## Invitation codes
 

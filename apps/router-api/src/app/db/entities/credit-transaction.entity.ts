@@ -35,6 +35,17 @@ export class CreditTransaction {
   description!: string | null;
 
   /**
+   * The operator who credited or corrected this balance by hand (SUP-406).
+   *
+   * Null on every row a user, a provider or a worker produced — a purchase, a
+   * usage debit, a sign-up or invitation grant — so a non-null value *is* the
+   * statement "a named human moved this credit". No foreign key, for the reason
+   * `InviteCode.issuedByUserId` has none (ADR-004 §3).
+   */
+  @Column(idColumn({ nullable: true }))
+  grantedByUserId!: string | null;
+
+  /**
    * Makes every write retry-safe: a Stripe webhook redelivery or a retried
    * debit collapses onto the row that already exists instead of double-charging.
    */

@@ -385,6 +385,26 @@ const BillingSchema = z
      * account gets it at most once (idempotency key `signup:<userId>`).
      */
     signupGrantMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
+    /**
+     * Ceiling on the magnitude of one operator credit grant or adjustment
+     * (SUP-406), the same kind of bound `maxTopUpMicros` puts on a checkout:
+     * not a policy on what an operator may grant in total, but the blast radius
+     * of a single call — from a fat finger, or from a stolen operator session.
+     * $10 000, matching the console's invitation-issuing guard.
+     */
+    maxCreditGrantMicros: integerish().pipe(z.number().int().positive()).prefault(10_000_000_000),
+    /**
+     * Whether `grantCredit` may also *remove* credit — a negative `adjustment`
+     * (SUP-406).
+     *
+     * Off, so the operation a deployment gets by default can only ever add. A
+     * grant that is too large is visible and reversible by the account holder
+     * spending it; a debit is the one direction that takes something away, and a
+     * deployment that wants that available says so rather than arriving at it by
+     * omission. It stays bounded by `maxCreditGrantMicros` and, because
+     * `adjustment` may not overdraw, can never push a balance below zero.
+     */
+    allowCreditDebits: booleanish().prefault(false),
     /** Where Stripe (or the manual provider) sends the browser back after a checkout. */
     checkoutReturnUrl: z.url().prefault('http://localhost:4200/credits'),
     /**

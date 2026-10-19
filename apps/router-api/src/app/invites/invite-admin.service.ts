@@ -5,6 +5,8 @@ import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemptio
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { User } from '../db/entities/user.entity.js';
+import { Workspace } from '../db/entities/workspace.entity.js';
+import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAttributionService, type UserInviteAttribution } from './invite-attribution.service.js';
 import { type GeneratedInvite, type GenerateInvitesRequest, generateInvites } from './invite-generator.js';
 
@@ -56,6 +58,17 @@ export interface AdminSignUp {
   origin: SignUpOrigin;
   /** Present exactly when `origin` is `invite`. */
   invite: UserInviteAttribution | null;
+  /**
+   * The balance of the workspace this account owns, in micro-USD — null when it
+   * owns none.
+   *
+   * On the account list because this is where an operator decides whether to
+   * credit somebody (SUP-406): "who has run out" is the question that sends them
+   * here, and answering it from the Credits screen would mean signing in as the
+   * tester.
+   */
+  workspaceId: string | null;
+  balanceMicros: number | null;
 }
 
 export interface Page<T> {
@@ -199,19 +212,71 @@ export class InviteAdminService {
       .getManyAndCount();
 
     const invites = await this.attribution.forUsers(accounts.map((account) => account.id));
+    const balances = await this.balancesOf(accounts.map((account) => account.id));
     return {
       totalCount,
       nodes: accounts.map((account) => {
         const invite = invites.get(account.id) ?? null;
+        const balance = balances.get(account.id) ?? null;
         return {
           userId: account.id,
           email: account.email,
           createdAt: account.createdAt,
           origin: signUpOrigin(account.id, invite !== null, bootstrapId),
           invite,
+          workspaceId: balance?.workspaceId ?? null,
+          balanceMicros: balance?.balanceMicros ?? null,
         };
       }),
     };
+  }
+
+  /**
+   * The workspace each of these accounts owns, with its balance, keyed by user.
+   *
+   * The *oldest* owned workspace, which is the one the console opens on
+   * (`WorkspaceScopeService.defaultForUser`) and the only one a personal account
+   * has — so the two surfaces name the same balance. One query per page rather
+   * than per row, like every other enrichment here.
+   */
+  private async balancesOf(
+    userIds: readonly string[],
+  ): Promise<Map<string, { workspaceId: string; balanceMicros: number }>> {
+    const unique = [...new Set(userIds)];
+    /** userId → their oldest owned workspace. A later membership never replaces it. */
+    const owned = new Map<string, string>();
+    for (let at = 0; at < unique.length; at += ID_CHUNK) {
+      const memberships = await this.dataSource.getRepository(WorkspaceMember).find({
+        where: { userId: In(unique.slice(at, at + ID_CHUNK)), role: 'owner' },
+        order: { createdAt: 'ASC' },
+      });
+      for (const membership of memberships) {
+        if (!owned.has(membership.userId)) {
+          owned.set(membership.userId, membership.workspaceId);
+        }
+      }
+    }
+
+    const workspaceIds = [...new Set(owned.values())];
+    const byId = new Map<string, number>();
+    for (let at = 0; at < workspaceIds.length; at += ID_CHUNK) {
+      const workspaces = await this.dataSource.getRepository(Workspace).find({
+        where: { id: In(workspaceIds.slice(at, at + ID_CHUNK)) },
+        select: { id: true, balanceMicros: true },
+      });
+      for (const workspace of workspaces) {
+        byId.set(workspace.id, workspace.balanceMicros);
+      }
+    }
+
+    const balances = new Map<string, { workspaceId: string; balanceMicros: number }>();
+    for (const [userId, workspaceId] of owned) {
+      const balanceMicros = byId.get(workspaceId);
+      if (balanceMicros !== undefined) {
+        balances.set(userId, { workspaceId, balanceMicros });
+      }
+    }
+    return balances;
   }
 
   /**

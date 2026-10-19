@@ -8,6 +8,7 @@ import { Workspace } from '../db/entities/workspace.entity.js';
 import { AutoTopUpService } from './auto-top-up.service.js';
 import { BillingController } from './billing.controller.js';
 import { BillingService } from './billing.service.js';
+import { CreditGrantService } from './credit-grant.service.js';
 import { LedgerCreditsGateway } from './credits.gateway.js';
 import { DisabledPaymentProvider } from './disabled-payment.provider.js';
 import { LedgerService } from './ledger.service.js';
@@ -108,9 +109,17 @@ export function createPaymentProvider(
     },
     LedgerService,
     BillingService,
+    CreditGrantService,
     AutoTopUpService,
     LedgerCreditsGateway,
   ],
-  exports: [LedgerService, BillingService, AutoTopUpService, LedgerCreditsGateway, PAYMENT_PROVIDER],
+  exports: [
+    LedgerService,
+    BillingService,
+    CreditGrantService,
+    AutoTopUpService,
+    LedgerCreditsGateway,
+    PAYMENT_PROVIDER,
+  ],
 })
 export class BillingModule {}

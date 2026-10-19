@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { campaignError, expiryFromDate, invitesCsv, invitesText, maskCode, pageRange } from './invitations';
+import {
+  campaignError,
+  expiryFromDate,
+  invitesCsv,
+  invitesText,
+  kindOf,
+  MAX_GRANT_CREDIT_USD,
+  maskCode,
+  pageRange,
+  signOf,
+  validateGrantForm,
+} from './invitations';
 import { validateIssueForm } from './issue-codes-dialog';
 
 describe('maskCode', () => {
@@ -86,5 +97,54 @@ describe('pageRange', () => {
     expect(pageRange(0, 50, 230)).toBe('1–50 of 230');
     expect(pageRange(200, 30, 230)).toBe('201–230 of 230');
     expect(pageRange(0, 0, 0)).toBe('0 of 0');
+  });
+});
+
+describe('validateGrantForm', () => {
+  const valid = { amount: '100', movement: 'GRANT' as const, note: '' };
+  /** $40, what the dialog's target holds. */
+  const BALANCE = '40000000';
+
+  it('passes a $100 grant with no note', () => {
+    expect(validateGrantForm(valid, BALANCE)).toEqual({});
+  });
+
+  it('refuses nothing, zero and a negative typed into the amount', () => {
+    expect(validateGrantForm({ ...valid, amount: '' }, BALANCE).amount).toBeDefined();
+    expect(validateGrantForm({ ...valid, amount: '0' }, BALANCE).amount).toBeDefined();
+    // The sign is the movement's; a minus in the field is not an amount.
+    expect(validateGrantForm({ ...valid, amount: '-5' }, BALANCE).amount).toBeDefined();
+  });
+
+  it('holds the API’s ceiling before the round trip', () => {
+    expect(validateGrantForm({ ...valid, amount: String(MAX_GRANT_CREDIT_USD) }, BALANCE)).toEqual({});
+    expect(validateGrantForm({ ...valid, amount: `${MAX_GRANT_CREDIT_USD}.01` }, BALANCE).amount).toBeDefined();
+  });
+
+  it('needs a note only when credit is being removed', () => {
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_ADD', note: '' }, BALANCE)).toEqual({});
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: '' }, BALANCE).note).toBeDefined();
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: ' ' }, BALANCE).note).toBeDefined();
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: 'Duplicate' }, BALANCE)).toEqual({});
+  });
+
+  it('will not remove more than the account holds', () => {
+    const removal = { movement: 'ADJUSTMENT_REMOVE' as const, note: 'Clawback' };
+    expect(validateGrantForm({ ...removal, amount: '40' }, BALANCE)).toEqual({});
+    expect(validateGrantForm({ ...removal, amount: '40.01' }, BALANCE).amount).toBeDefined();
+    // Adding more than the balance is ordinary.
+    expect(validateGrantForm({ amount: '400', movement: 'ADJUSTMENT_ADD', note: '' }, BALANCE)).toEqual({});
+  });
+
+  it('skips the balance check when the account has no workspace to read one from', () => {
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: 'Clawback' }, null)).toEqual({});
+  });
+});
+
+describe('the movement maps onto the API’s kind and sign', () => {
+  it('is a positive GRANT, or an ADJUSTMENT either way', () => {
+    expect([kindOf('GRANT'), signOf('GRANT')]).toEqual(['GRANT', 1]);
+    expect([kindOf('ADJUSTMENT_ADD'), signOf('ADJUSTMENT_ADD')]).toEqual(['ADJUSTMENT', 1]);
+    expect([kindOf('ADJUSTMENT_REMOVE'), signOf('ADJUSTMENT_REMOVE')]).toEqual(['ADJUSTMENT', -1]);
   });
 });

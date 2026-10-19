@@ -154,6 +154,19 @@ export class AdminSignUpModel {
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   redeemedAt!: Date | null;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'The workspace this account owns — what `grantCredit` credits. Null when it owns none.',
+  })
+  workspaceId!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'That workspace’s balance in micro-USD, so the operator can see who has run out. Null with no workspace.',
+  })
+  balanceMicros!: string | null;
 }
 
 @ObjectType('AdminSignUpPage')

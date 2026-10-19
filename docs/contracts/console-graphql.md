@@ -129,6 +129,41 @@ extend type Mutation {
   setAutoTopUp(workspaceId: ID!, enabled: Boolean!, threshold: Micros, amount: Micros): Workspace!
 }
 
+# ---------- the operator credit grant (SUP-406) ----------
+
+enum AdminCreditGrantKind { GRANT ADJUSTMENT }
+type CreditGrant {
+  creditTransactionId: ID!              # the ledger row it wrote
+  workspaceId: ID!
+  accountEmail: String                  # set when the workspace was named by its account holder
+  kind: AdminCreditGrantKind!
+  amountMicros: Micros!                 # signed, as written
+  balanceMicros: Micros!                # the balance after the entry
+  note: String
+  createdAt: DateTime!
+}
+# Mutation.grantCredit(input: { accountEmail | workspaceId (exactly one), amountMicros (signed),
+#   kind = GRANT, note? }): CreditGrant!              # auth.adminEmails only
+#
+# The only way credit reaches an account that already exists: before it, a balance
+# could be raised by a checkout the user paid for or by a code redeemed *at
+# sign-up*, and topping up a tester afterwards was impossible. One ledger entry,
+# `grant` or `adjustment`, through the same `LedgerService.record` the invitation
+# and sign-up grants use — so invariant 3 holds by the same construction.
+#
+# Three things a hand-written entry needs and an automatic one does not:
+#  - `credit_transactions.grantedByUserId` names the operator on the row, not only
+#    in a log line that rotates.
+#  - `billing.maxCreditGrantMicros` bounds the magnitude of one call the way
+#    `maxTopUpMicros` bounds one checkout ($10 000 by default).
+#  - A negative amount has to be an ADJUSTMENT, needs `billing.allowCreditDebits`
+#    (off by default) and a note; and `adjustment` may not overdraw, so no call
+#    can push a balance below zero.
+#
+# Not idempotent on purpose: unlike a redelivered webhook there is no outside
+# event two calls could be two reports of, so the key is fresh per call and an
+# operator asking twice means twice.
+
 # ---------- invitations ----------
 
 type InviteGrant {                      # the viewer's credit, or null
@@ -215,6 +250,10 @@ type AdminInviteCode {
 type AdminSignUp {
   userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
   inviteCodeId: ID  inviteCode: String  campaign: String  redeemedAt: DateTime   # set exactly when origin = INVITE
+  workspaceId: ID  balanceMicros: Micros   # the workspace they own and what it holds; null when they own none.
+                                           # Here because this is the console's only account list, so it is also
+                                           # where `grantCredit` is reached for — "who has run out" has to be
+                                           # answerable without signing in as them (SUP-406)
 }
 type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: [InviteCampaignStats!]! }
 # Query.adminInviteCodes(campaign, status, offset = 0, limit = 50 ≤ 200): AdminInviteCodePage!   { totalCount, nodes }
