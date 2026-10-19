@@ -65,9 +65,13 @@ const forceAttest = time.Duration(0)
 // for a fresh verdict, and no new check is started within this of the last one.
 //
 // It is deliberately short. The point is to catch an upstream that recovered a
-// moment ago — the evidence fetch of a healthy one takes milliseconds — and not
-// to turn a fast refusal into a slow one while it is still down, nor to let a
-// burst of refused requests become a burst of handshakes against it.
+// moment ago — the evidence fetch of a healthy one takes milliseconds — without
+// letting a burst of refused requests become a burst of handshakes against one
+// that has not. It is not free while the upstream is down: a refused dial fails
+// in milliseconds, but one that blackholes its traffic hangs inside the check
+// until `initialTimeout`, and then every refused request past the window waits
+// this long on top of its 503. Two seconds on a request that was going to fail
+// anyway buys the next five minutes of them not failing (ADR-003 §7).
 const onDemandRetry = 2 * time.Second
 
 // endpoint is one configured endpoint at runtime: its listener, its verdict,
@@ -379,9 +383,10 @@ func (e *endpoint) verify(ctx context.Context) *verdict {
 // so a few seconds of a flaky network become minutes of refused traffic even
 // though every arriving request is evidence that someone wants the check redone
 // (SUP-422). The retry is bounded twice over: by [onDemandRetry], which is both
-// how long the request waits and how often a new check may start, and by the
-// single-flight guard in [endpoint.attest], which collapses a burst of refused
-// requests into one verification.
+// how long the request waits — a check that has not finished by then installs
+// its verdict for the requests behind this one — and how often a new check may
+// start, and by the single-flight guard in [endpoint.attest], which collapses a
+// burst of refused requests into one verification.
 //
 // Under `failMode: open` the request is not held up at all: traffic is already
 // flowing, so the re-check runs in the background and upgrades the endpoint for

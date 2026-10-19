@@ -637,6 +637,11 @@ Admitted traffic never waits for a verification — but a request the verdict in
 force would *refuse* re-attests on the spot, bounded to one check every two
 seconds per endpoint, so an upstream that came back seconds ago is admitted on
 the next request instead of at the next `reattestInterval` tick (ADR-003 §7).
+That request does wait for the check, up to two seconds: a refused dial fails in
+milliseconds, but an upstream that blackholes its traffic hangs inside the check
+until `initialTimeout`, and then each refused request pays the full two seconds
+on top of its 503. It is the price of not having the next five minutes of
+requests fail as well.
 
 Three things make it more than a reverse proxy with a check in front:
 

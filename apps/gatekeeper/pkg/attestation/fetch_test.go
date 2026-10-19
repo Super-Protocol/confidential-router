@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -116,6 +117,75 @@ func TestFetchEnforcesTheSizeLimit(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exceeds the 1024 byte limit") {
 		t.Fatalf("err = %v, want a size-limit error", err)
 	}
+	// The host answered 200 and streamed more than it is allowed to: the
+	// hostile-host guard doing its job, not a network failure.
+	var fetchErr *attestation.FetchError
+	if !errors.As(err, &fetchErr) {
+		t.Fatalf("err is %T, want *attestation.FetchError", err)
+	}
+	if fetchErr.Transport() {
+		t.Error("an over-sized bundle is classified as a transport failure")
+	}
+}
+
+// TestFetchErrorsSeparateTheNetworkFromTheEndpoint pins the classification the
+// 503's `code` is derived from (SUP-422): only a failure in which nothing
+// arrived may be reported as "could not be reached". Anything the endpoint
+// answered with — or that this package refused to ask for — is a denial about
+// the endpoint, and saying otherwise sends its reader after the wrong thing.
+func TestFetchErrorsSeparateTheNetworkFromTheEndpoint(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an over-sized bundle is not unreachable", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(strings.Repeat("a", 4096)))
+		}))
+		defer server.Close()
+
+		result := attestation.VerifyHostname(context.Background(), attestation.Params{
+			Hostname: localhost,
+			Fetch:    attestation.FetchOptions{Port: serverPort(t, server), MaxBytes: 1024},
+		})
+		if result.OK || result.Stage != attestation.StageFetch ||
+			!strings.Contains(result.Reason, "exceeds the 1024 byte limit") {
+			t.Fatalf("result = %+v, want a fetch-stage denial naming the size limit", result)
+		}
+		if result.Unreachable {
+			t.Error("an over-sized bundle reports as unreachable, so a hostile host reads as a network blip")
+		}
+	})
+
+	t.Run("a hostname this package refuses is not unreachable", func(t *testing.T) {
+		t.Parallel()
+		result := attestation.VerifyHostname(context.Background(), attestation.Params{
+			Hostname: "https://host.example.com",
+		})
+		if result.OK || result.Stage != attestation.StageFetch {
+			t.Fatalf("result = %+v, want a fetch-stage denial", result)
+		}
+		if result.Unreachable {
+			t.Error("a configuration error reports as unreachable")
+		}
+	})
+
+	t.Run("a fetcher seam's own error is not classified", func(t *testing.T) {
+		t.Parallel()
+		// An embedder's Fetcher cannot be read for a cause, so the safe answer
+		// is the one that claims nothing about the network.
+		result := attestation.VerifyHostname(context.Background(), attestation.Params{
+			Hostname: localhost,
+			Fetcher: func(context.Context, string, attestation.FetchOptions) (*attestation.FetchResult, error) {
+				return nil, errors.New("the embedder's transport said no")
+			},
+		})
+		if result.OK || result.Stage != attestation.StageFetch {
+			t.Fatalf("result = %+v, want a fetch-stage denial", result)
+		}
+		if result.Unreachable {
+			t.Error("an unclassifiable error reports as unreachable")
+		}
+	})
 }
 
 func TestFetchHonoursContextCancellation(t *testing.T) {

@@ -28,12 +28,34 @@ const (
 
 // FetchError is any failure reaching or reading the evidence endpoint. Its
 // message is what the verifier reports as the reason of a `fetch`-stage denial.
-type FetchError struct{ msg string }
+//
+// [FetchError.Transport] separates the two kinds, because they are about
+// different things (SUP-422). A transport failure is one in which nothing
+// arrived — the dial, the handshake or the read failed — so no check ran and
+// the endpoint said nothing; that is the only case a caller may report as
+// "could not be reached". Everything else here the endpoint *answered* with,
+// or the caller asked for: a bundle over the size cap is the hostile-host
+// guard doing its job, and a hostname this package refuses is a configuration
+// error. Both deny like any other check.
+type FetchError struct {
+	msg       string
+	transport bool
+}
 
 func (e *FetchError) Error() string { return e.msg }
 
+// Transport reports whether the exchange itself failed, so that nothing the
+// endpoint may have had to say was received.
+func (e *FetchError) Transport() bool { return e.transport }
+
+// fetchErrf is a failure the endpoint answered with, or one in the caller's own
+// request; transportErrf is one in which the exchange never completed.
 func fetchErrf(format string, args ...any) error {
 	return &FetchError{msg: fmt.Sprintf(format, args...)}
+}
+
+func transportErrf(format string, args ...any) error {
+	return &FetchError{msg: fmt.Sprintf(format, args...), transport: true}
 }
 
 // FetchOptions tunes Fetch. The zero value is valid and uses the defaults above.
@@ -147,13 +169,13 @@ func Fetch(ctx context.Context, hostname string, opts FetchOptions) (*FetchResul
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fetchErrf("request failed: %v", err)
+		return nil, transportErrf("request failed: %v", err)
 	}
 	req.Header.Set("accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fetchErrf("request failed: %v", unwrapURLError(err))
+		return nil, transportErrf("request failed: %v", unwrapURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -164,7 +186,7 @@ func Fetch(ctx context.Context, hostname string, opts FetchOptions) (*FetchResul
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return nil, fetchErrf("request failed: %v", err)
+		return nil, transportErrf("request failed: %v", err)
 	}
 	if int64(len(body)) > maxBytes {
 		return nil, fetchErrf("evidence bundle exceeds the %d byte limit", maxBytes)
@@ -253,10 +275,10 @@ func (o *leafObserver) result() ([]byte, string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.err != nil {
-		return nil, "", fetchErrf("request failed: %v", o.err)
+		return nil, "", transportErrf("request failed: %v", o.err)
 	}
 	if o.dials == 0 || o.der == nil {
-		return nil, "", fetchErrf("request failed: no TLS connection was observed")
+		return nil, "", transportErrf("request failed: no TLS connection was observed")
 	}
 	return o.der, SHA256Fingerprint(o.der), nil
 }

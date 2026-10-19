@@ -180,9 +180,14 @@ sent upstream** (no request header, no query parameter, no separate call).
   no new check starts within that of the last, and the request waits no longer than that before being
   answered on the verdict already in force (a check still running installs its verdict for the requests
   behind it). A healthy upstream answers the evidence fetch in milliseconds, so recovery costs the first
-  request nothing worth measuring, while a dead one is neither hammered nor allowed to turn a fast
-  refusal into a slow one. Under `failMode: open` the re-check never delays the request: traffic is
-  flowing already, so it runs behind it.
+  request nothing worth measuring, and a dead one is never hammered — one check every 2 s per endpoint,
+  whatever the request rate. What a refusal costs while the upstream is still down depends on how it is
+  down, and the honest answer is not "nothing": a refused dial fails in milliseconds, which is what
+  SUP-422's own `iptables REJECT` reproduction did, but a blackholed upstream (DROP — a cloud security
+  group, a dead NAT) hangs inside the check until `initialTimeout`, so every refused request arriving
+  past the window waits the full 2 s on top of its 503. Two seconds added to a request that was going to
+  fail anyway is the price of not having the next five minutes of them fail too. Under `failMode: open`
+  the re-check never delays the request: traffic is flowing already, so it runs behind it.
 - `verdictCacheTtl` (default `60s`): a re-check the data plane triggers **on its own** — the first request
   of an endpoint's life, or a connection whose certificate did not match the pin — reuses a verdict younger
   than the TTL, so a burst of failures cannot become a burst of handshakes against the upstream. The

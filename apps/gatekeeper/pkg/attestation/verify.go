@@ -3,6 +3,7 @@ package attestation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -73,11 +74,18 @@ func VerifyHostname(ctx context.Context, params Params) Result {
 	}
 	fetched, err := fetcher(ctx, params.Hostname, params.Fetch)
 	if err != nil {
-		// The document never arrived, so nothing was judged. The caller needs
-		// that apart from every other fetch-stage denial: it is the only one
-		// that is about the network rather than about the endpoint.
 		result := fail(StageFetch, "%v", err)
-		result.Unreachable = true
+		// Only a transport failure is about the network rather than about the
+		// endpoint: nothing arrived, so nothing was judged. The other errors
+		// from here are answers — an over-sized bundle, a hostname this
+		// package refuses — and deny like any other check. A [Fetcher] seam
+		// returning some other error type stays unclassified: claiming a
+		// network failure that cannot be seen would be the same mistake
+		// pointing the other way.
+		var fetchErr *FetchError
+		if errors.As(err, &fetchErr) {
+			result.Unreachable = fetchErr.Transport()
+		}
 		return result
 	}
 	if fetched.StatusCode < 200 || fetched.StatusCode >= 300 {

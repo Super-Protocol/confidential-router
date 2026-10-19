@@ -193,9 +193,10 @@ type Report struct {
 	// Unreachable separates "the check failed" from "we could not reach the
 	// upstream to run the check". It is set on a `fetch`-stage denial whose
 	// cause was the dial, the handshake or the read — never on one the upstream
-	// answered, however badly. Fail-closed refuses either way; what changes is
-	// what the client is told, and that a brief outage is not reported as an
-	// attestation failure (SUP-422).
+	// answered, however badly, and never on a request this gatekeeper refused
+	// to make. Fail-closed refuses either way; what changes is what the client
+	// is told, and that a brief outage is not reported as an attestation
+	// failure (SUP-422).
 	Unreachable bool `json:"unreachable,omitempty"`
 
 	// Root is the trustedRoots[] entry the chain terminated in, or the name the
