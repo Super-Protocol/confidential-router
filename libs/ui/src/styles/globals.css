@@ -64,9 +64,24 @@
    * from `--primary` on purpose: `--primary` is the neutral high-contrast
    * button colour, `--brand` is the identity. There is exactly one accent
    * (indigo); the prototype's alternative accents were design exploration.
+   *
+   * `--brand` is a FILL, measured behind `--brand-foreground`: 5.28:1 in both
+   * themes. `--brand-emphasis` is the accent in its FOREGROUND role — the one
+   * to reach for when the accent paints text on a surface, because `--brand`
+   * itself only reaches 3.74:1 on the light card and so fails AA for text
+   * (it clears the 3:1 non-text bar, which is why sparklines and icons may
+   * still use it). `brand-contrast.spec.ts` holds every ratio to a floor.
    */
   --brand: oklch(0.62 0.19 264);
   --brand-foreground: oklch(0.145 0 0);
+  /*
+   * Hover is its own opaque token rather than `--brand`-at-90%: an alpha blend
+   * takes its lightness from whatever sits behind the button, which on the dark
+   * card landed on exactly 4.50:1 — passing by nothing, and failing outright
+   * the moment a renderer rounds the other way. Opaque and one step lighter is
+   * 6.21:1 on every surface, in both themes (SUP-414).
+   */
+  --brand-hover: oklch(0.66 0.175 264);
   --brand-emphasis: oklch(0.45 0.18 264);
   --brand-muted: oklch(0.95 0.03 264);
   --brand-border: oklch(0.87 0.06 264);
@@ -114,6 +129,8 @@
 
   --brand: oklch(0.62 0.19 264);
   --brand-foreground: oklch(0.145 0 0);
+  /* Lighter on hover in dark too: the accent is the same hue in both themes. */
+  --brand-hover: oklch(0.66 0.175 264);
   --brand-emphasis: oklch(0.82 0.12 264);
   --brand-muted: oklch(0.24 0.05 264);
   --brand-border: oklch(0.34 0.07 264);
@@ -151,6 +168,7 @@
 
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
+  --color-brand-hover: var(--brand-hover);
   --color-brand-emphasis: var(--brand-emphasis);
   --color-brand-muted: var(--brand-muted);
   --color-brand-border: var(--brand-border);
