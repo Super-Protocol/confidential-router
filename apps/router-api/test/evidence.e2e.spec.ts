@@ -446,7 +446,7 @@ describe('the console view', () => {
     expect(data.evidenceDigestHistory).toEqual([{ evidenceDigest: DIGEST, snapshots: 1 }]);
   });
 
-  it('reports zero coverage for a workspace that has served nothing', async () => {
+  it('reports no coverage ratio at all for a workspace that has served nothing', async () => {
     const data = await graphql(
       `query ($id: ID!, $from: DateTime!, $to: DateTime!) {
         evidenceCoverage(workspaceId: $id, from: $from, to: $to) { requests covered ratio }
@@ -455,7 +455,10 @@ describe('the console view', () => {
       { id: workspaceId, from: new Date(Date.now() - 86_400_000).toISOString(), to: new Date().toISOString() },
     );
 
-    expect(data.evidenceCoverage).toEqual({ requests: 0, covered: 0, ratio: 0 });
+    // SUP-421: an empty denominator has no ratio. `0` here would be the same
+    // claim the Activity tiles stopped making — "none of your requests was
+    // covered" — one query over, with the opposite convention.
+    expect(data.evidenceCoverage).toEqual({ requests: 0, covered: 0, ratio: null });
   });
 
   it('re-polls on demand for "Fetch fresh quote"', async () => {

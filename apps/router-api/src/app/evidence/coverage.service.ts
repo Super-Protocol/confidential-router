@@ -11,11 +11,16 @@ export interface CoverageWindow {
 }
 
 export interface Coverage {
+  /**
+   * Generations this deployment's own endpoints served in the window — the only
+   * ones the question applies to. An external-endpoint generation is not counted
+   * here, so this is never the workspace's total traffic.
+   */
   requests: number;
   /** Of `requests`, those served while the endpoint had a fresh snapshot. */
   covered: number;
-  /** `covered / requests`, or 0 when nothing was served. */
-  ratio: number;
+  /** `covered / requests`; null when `requests` is 0 — no ratio exists, which is not 0. */
+  ratio: number | null;
 }
 
 /**
@@ -84,10 +89,15 @@ export class EvidenceCoverageStatsService {
 }
 
 /**
- * The ratio, with the one case that matters spelled out: a workspace that served
- * nothing has 0 coverage, not 100%. Reporting "all covered" for an empty window
- * would put a reassuring number on a screen backed by no evidence at all.
+ * The ratio, with the one case that matters spelled out: an empty window has no
+ * ratio at all. Neither number available to stand in for it is true — `1` would
+ * put a reassuring "all covered" on a screen backed by no evidence, and `0` is
+ * the measurement "none of your requests was covered", which is what the console
+ * rendered as "0 of 34" for an account whose every generation was served by an
+ * endpoint this router had verified (SUP-421). The absence travels as an
+ * absence; `activity/buckets.ts` `coverage()` is the same decision for the
+ * Activity aggregates.
  */
 export function coverageOf(covered: number, requests: number): Coverage {
-  return { requests, covered, ratio: requests > 0 ? covered / requests : 0 };
+  return { requests, covered, ratio: requests > 0 ? covered / requests : null };
 }
