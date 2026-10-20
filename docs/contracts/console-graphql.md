@@ -248,13 +248,18 @@ type ApiKeyPopulation {
 # member of it.
 #
 # `accountsHoldingLiveKey` is exactly `adminSignUps(holdsLiveApiKey: true).totalCount`
-# — both join `user` — so an operator reads the number and then pages the same
-# people. `liveKeysWithoutAccount` is what the list cannot speak for: a live key
-# whose workspace has no member resolving to a `user` row. `user` belongs to Better
-# Auth, so `workspace_members` carries no foreign key to it and a membership
-# outlives the account it names; a data import also writes memberships without
-# checking that their accounts restored. Normally zero, and the one number on this
-# surface an operator cannot act on.
+# with no other filter applied — both join `user` — so an operator reads the number
+# and then pages the same people. `liveKeysWithoutAccount` is what the list cannot
+# speak for: a live key whose workspace has no member resolving to a `user` row.
+#
+# No code path produces that orphan today: account deletion is not wired, and the
+# import refuses a bundle whose memberships name accounts it does not carry. The
+# field is justified by the schema, not by a producer — `user` belongs to Better
+# Auth, so `workspace_members` carries no foreign key to it and nothing in the
+# database prevents the shape. The day anything removes a `user` row, the number
+# and the page it promises to match must still reconcile, and this is what makes
+# them. Normally zero, and the one number on this surface an operator cannot act
+# on.
 #
 # "Live" is "would authenticate right now": not revoked, and not past `expiresAt`
 # — the two conditions `/v1` refuses on. Deliberately stricter than
