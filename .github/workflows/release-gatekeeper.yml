@@ -15,6 +15,11 @@ name: Release gatekeeper
 # the *other* packaging, not a replacement: what a person installs is still a
 # binary from a Release.
 #
+# The nightly schedule also runs a drift check: it raises an issue when
+# `releases/latest` — the install path the docs publish — has carried a merged
+# gatekeeper fix for more than a few days. Nothing about it publishes; see the
+# `drift` job at the bottom (SUP-425).
+#
 # The tag prefix exists because this is a monorepo and the router will get tags
 # of its own; see apps/gatekeeper/.goreleaser.yaml for how the bare version is
 # recovered from it.
@@ -421,3 +426,138 @@ jobs:
             apps/gatekeeper/dist/checksums.txt \
             tools/installer/install.sh \
             tools/installer/install.ps1
+
+  # The cadence guard (SUP-425). Nothing here publishes anything: it answers the
+  # one question no job above asks — is what `releases/latest` serves still a
+  # reasonable stand-in for `main`?
+  #
+  # It exists because the answer was "no" for ten days without anyone noticing:
+  # 0.3.0 was cut on 2026-10-09, the SUP-289 and SUP-300 fixes merged on
+  # 2026-10-12, and every `install.sh` run in between handed the user a binary
+  # with a bug we had already fixed. The nightly pre-release carried the fixes
+  # the whole time, but `install.sh` without `--version` resolves the *stable*
+  # release, which is the line the docs publish.
+  #
+  # Deliberately a nag rather than an auto-release: cutting a version is a
+  # judgement about what the number should be, and a bot that tags on every
+  # merge spends version numbers on commits that changed a comment. A single
+  # open issue, reopened while the drift lasts and closed the moment a release
+  # covers it, is the smallest thing that would have caught this one.
+  drift:
+    name: Release drift
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # How long a merged gatekeeper fix may sit unreleased before this is worth
+      # someone's attention. Three days: long enough that a Friday merge
+      # released on Monday is silent, short enough to be useful — against the
+      # gap above it would have raised the issue on 2026-10-15, five days
+      # before a person found it by reading the tag list.
+      MAX_DRIFT_DAYS: '3'
+      # Everything a released artifact is built from. `tools/installer` is in
+      # the list because the install scripts are published as release assets, so
+      # a fix to them is only live once a release carries it (SUP-295).
+      RELEASED_PATHS: apps/gatekeeper tools/installer gatekeeper.dockerfile
+      TITLE: 'Gatekeeper `releases/latest` is behind `main`'
+      # Backtick-free, because the exact title is matched in jq afterwards and
+      # GitHub's title search does not tokenise punctuation the way a literal
+      # would need it to.
+      SEARCH: 'in:title is behind'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The comparison is `<the latest release's tag>..HEAD`, so both the
+          # history and the tags have to be present.
+          fetch-depth: 0
+
+      - name: Compare `releases/latest` with the default branch
+        id: drift
+        run: |
+          set -euo pipefail
+
+          # The stable release, not the newest tag: a pre-release never holds
+          # `releases/latest`, and `releases/latest` is what install.sh resolves.
+          tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest stable release: $tag"
+
+          # shellcheck disable=SC2086 # RELEASED_PATHS is a deliberate word list.
+          log="$(git log --reverse --format='%cI %h %s' "$tag..HEAD" -- $RELEASED_PATHS)"
+          if [ -z "$log" ]; then
+            echo 'Nothing that ships in a release has landed since it.'
+            echo 'drifted=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # `--reverse` above, so the first line is the oldest unreleased commit:
+          # the clock starts when the first fix stopped reaching users, not when
+          # the last one did.
+          oldest="$(printf '%s\n' "$log" | head -1 | cut -d' ' -f1)"
+          age=$(( ( $(date -u +%s) - $(date -u -d "$oldest" +%s) ) / 86400 ))
+          count="$(printf '%s\n' "$log" | wc -l | tr -d ' ')"
+          echo "$count unreleased commit(s), the oldest $age day(s) old."
+
+          {
+            echo "age=$age"
+            echo "count=$count"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$age" -le "$MAX_DRIFT_DAYS" ]; then
+            echo "Within the ${MAX_DRIFT_DAYS}-day window; nothing to raise."
+            echo 'drifted=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'drifted=true' >> "$GITHUB_OUTPUT"
+
+          {
+            echo "\`$tag\` is what every documented install resolves, and it is"
+            echo "missing $count commit(s) that ship in a release — the oldest merged"
+            echo "$age days ago, past the ${MAX_DRIFT_DAYS}-day limit this check holds."
+            echo
+            echo '| Merged | Commit | Subject |'
+            echo '| --- | --- | --- |'
+            printf '%s\n' "$log" | while read -r when sha subject; do
+              printf '| %s | `%s` | %s |\n' "${when%T*}" "$sha" "${subject//|/\\|}"
+            done
+            echo
+            echo "Cut a \`gatekeeper-v<semver>\` tag from \`main\` to clear this, or"
+            echo 'say in the docs that the fixes live in `gatekeeper-nightly` until'
+            echo 'one is cut. This issue closes itself once a release covers them.'
+            echo
+            echo "<sub>Raised by [the release-drift check](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).</sub>"
+          } > drift-body.md
+
+      # One issue, reopened and rewritten while the drift lasts rather than a new
+      # one every night — the nag has to be ignorable without being lost.
+      - name: Raise or refresh the tracking issue
+        if: steps.drift.outputs.drifted == 'true'
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --state all --limit 100 --search "$SEARCH" \
+            --json number,title,state \
+            --jq '[.[] | select(.title == env.TITLE)] | first | .number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue reopen "$existing" 2>/dev/null || true
+            gh issue edit "$existing" --body-file drift-body.md
+            echo "Refreshed #$existing"
+          else
+            gh issue create --title "$TITLE" --body-file drift-body.md
+          fi
+
+      - name: Close it once a release has caught up
+        if: steps.drift.outputs.drifted == 'false'
+        run: |
+          set -euo pipefail
+          open="$(gh issue list --state open --limit 100 --search "$SEARCH" \
+            --json number,title \
+            --jq '[.[] | select(.title == env.TITLE)] | first | .number // empty')"
+          if [ -n "$open" ]; then
+            gh issue close "$open" --comment \
+              "\`${{ steps.drift.outputs.tag }}\` now covers everything on \`main\` that ships in a release."
+          fi
