@@ -1,14 +1,20 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
+import { generationLedgerKey } from '../billing/ledger.keys.js';
 import {
   BundleRefusedError,
   buildBundle,
   canonicalJson,
+  carryUsageForward,
   contentSha256,
   credentialShapedKeys,
   decodeBundle,
   type ExportData,
+  type ExportedCreditEntry,
   encodeBundle,
+  isCarriedUsage,
+  isPerGenerationUsage,
+  sourceLabelOf,
 } from './export-bundle.js';
 
 const AT = '2026-10-01T00:00:00.000Z';
@@ -77,6 +83,142 @@ function refusal(file: Buffer): string {
   throw new Error('The bundle was accepted.');
 }
 
+/** A usage debit as `LedgerService.debitGeneration` writes one. */
+function debit(input: { generationId: string; micros: string; at: string; workspaceId?: string }): ExportedCreditEntry {
+  return {
+    id: `t-${input.generationId}`,
+    workspaceId: input.workspaceId ?? 'w1',
+    kind: 'usage',
+    amountMicros: input.micros,
+    reference: input.generationId,
+    description: null,
+    idempotencyKey: generationLedgerKey(input.generationId),
+    createdAt: input.at,
+  };
+}
+
+describe('carryUsageForward', () => {
+  const grant = () => data().creditLedger[0] as ExportedCreditEntry;
+
+  it('replaces a workspace’s per-request debits with one entry for the same money', () => {
+    const carried = carryUsageForward(
+      [
+        grant(),
+        debit({ generationId: 'gen-1', micros: '-5', at: '2026-10-19T10:00:00.000Z' }),
+        debit({ generationId: 'gen-2', micros: '-7', at: '2026-10-20T11:00:00.000Z' }),
+        debit({ generationId: 'gen-3', micros: '-4', at: '2026-10-20T09:00:00.000Z' }),
+      ],
+      'old.router.test',
+    );
+
+    expect(carried).toHaveLength(2);
+    expect(carried[0]).toEqual(grant());
+    expect(carried[1]).toEqual({
+      id: 'carried-usage:w1',
+      workspaceId: 'w1',
+      kind: 'usage',
+      amountMicros: '-16',
+      // The whole point: no reference to a generation the bundle does not carry.
+      reference: null,
+      description:
+        'Metered usage carried over from old.router.test: 3 request(s) up to 2026-10-20T11:00:00.000Z. ' +
+        'The per-request log stayed on the deployment that served it.',
+      idempotencyKey: 'carried-usage:w1',
+      // The instant the spend stopped, not the first one: the entry is where the
+      // Credits list expects the last charge to be.
+      createdAt: '2026-10-20T11:00:00.000Z',
+    });
+  });
+
+  it('collapses per workspace, and deterministically', () => {
+    const entries = [
+      debit({ generationId: 'gen-b1', micros: '-2', at: '2026-10-20T10:00:00.000Z', workspaceId: 'w2' }),
+      debit({ generationId: 'gen-a1', micros: '-3', at: '2026-10-20T10:00:00.000Z', workspaceId: 'w1' }),
+    ];
+
+    const carried = carryUsageForward(entries, 'old.router.test');
+    expect(carried.map((entry) => [entry.workspaceId, entry.amountMicros])).toEqual([
+      ['w1', '-3'],
+      ['w2', '-2'],
+    ]);
+    // Same dataset in the other order, same bytes — `canonicalJson` only sorts keys.
+    expect(canonicalJson(carryUsageForward([...entries].reverse(), 'old.router.test'))).toBe(canonicalJson(carried));
+  });
+
+  it('leaves every other entry alone, including a usage debit that is not per-request', () => {
+    const adjustment: ExportedCreditEntry = {
+      id: 't-adj',
+      workspaceId: 'w1',
+      kind: 'usage',
+      amountMicros: '-100',
+      reference: null,
+      description: 'operator correction',
+      idempotencyKey: 'correction:2026-10',
+      createdAt: AT,
+    };
+
+    expect(carryUsageForward([grant(), adjustment], 'old.router.test')).toEqual([grant(), adjustment]);
+    expect(isPerGenerationUsage(adjustment)).toBe(false);
+    expect(isPerGenerationUsage(debit({ generationId: 'gen-1', micros: '-1', at: AT }))).toBe(true);
+  });
+
+  it('folds the carried entry of an earlier migration into the new one', () => {
+    const earlier: ExportedCreditEntry = {
+      id: 'carried-usage:w1',
+      workspaceId: 'w1',
+      kind: 'usage',
+      amountMicros: '-16',
+      reference: null,
+      description: 'Metered usage carried over from older.router.test: 3 request(s) up to 2026-10-20T11:00:00.000Z.',
+      idempotencyKey: 'carried-usage:w1',
+      createdAt: '2026-10-20T11:00:00.000Z',
+    };
+    expect(isCarriedUsage(earlier)).toBe(true);
+
+    const carried = carryUsageForward(
+      [earlier, debit({ generationId: 'gen-9', micros: '-4', at: '2026-10-21T09:00:00.000Z' })],
+      'old.router.test',
+    );
+
+    // One row per workspace, whatever the deployment's own history: a second
+    // under the same id is a bundle no deployment would import.
+    expect(carried).toHaveLength(1);
+    expect(carried[0]).toMatchObject({
+      id: 'carried-usage:w1',
+      amountMicros: '-20',
+      createdAt: '2026-10-21T09:00:00.000Z',
+    });
+    expect(carried[0]?.description).toContain('1 request(s) up to 2026-10-21T09:00:00.000Z, and spend carried from');
+  });
+
+  it('leaves an earlier carried entry exactly as it is when there is nothing new to collapse', () => {
+    const earlier: ExportedCreditEntry = {
+      id: 'carried-usage:w1',
+      workspaceId: 'w1',
+      kind: 'usage',
+      amountMicros: '-16',
+      reference: null,
+      description: 'Metered usage carried over from older.router.test: 3 request(s) up to 2026-10-20T11:00:00.000Z.',
+      idempotencyKey: 'carried-usage:w1',
+      createdAt: '2026-10-20T11:00:00.000Z',
+    };
+
+    expect(carryUsageForward([grant(), earlier], 'old.router.test')).toEqual([grant(), earlier]);
+  });
+
+  it('describes the source by host, so the Credits screen does not render it as a receipt link', () => {
+    expect(sourceLabelOf('https://api.old.example.com/')).toBe('api.old.example.com');
+    expect(sourceLabelOf('https://api.old.example.com:8443')).toBe('api.old.example.com:8443');
+    expect(sourceLabelOf('not a url')).toBe('not a url');
+
+    const carried = carryUsageForward(
+      [debit({ generationId: 'gen-1', micros: '-5', at: AT })],
+      sourceLabelOf('https://api.old.example.com'),
+    );
+    expect(carried[0]?.description).not.toContain('https://');
+  });
+});
+
 describe('canonicalJson', () => {
   it('is independent of key order, so one dataset has one hash', () => {
     expect(canonicalJson({ b: 1, a: [{ d: null, c: 'x' }] })).toBe('{"a":[{"c":"x","d":null}],"b":1}');
@@ -92,6 +234,15 @@ describe('buildBundle', () => {
     expect(built.counts).toMatchObject({ users: 1, workspaces: 1, creditEntries: 1, inviteCodes: 0 });
     expect(built.totalBalanceMicros).toBe('7000000');
     expect(built.integrity.contentSha256).toBe(contentSha256(built.data));
+  });
+
+  it('refuses to write a usage debit that names a generation the file cannot carry', () => {
+    const dangling = data();
+    dangling.creditLedger.push(debit({ generationId: 'gen-1', micros: '-5', at: AT }));
+
+    expect(() => buildBundle({ data: dangling, source, exportedAt: new Date(AT) })).toThrow(
+      /1 usage debit\(s\) naming a generation/,
+    );
   });
 
   it('refuses to write a credential-shaped field, whatever section it is in', () => {

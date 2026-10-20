@@ -14,7 +14,14 @@ import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { EvidenceService } from '../evidence/index.js';
 import { inviteCodeStatus } from '../invites/index.js';
-import { buildBundle, type ExportBundle, type ExportData, type ExportedInviteCode } from './export-bundle.js';
+import {
+  buildBundle,
+  carryUsageForward,
+  type ExportBundle,
+  type ExportData,
+  type ExportedInviteCode,
+  sourceLabelOf,
+} from './export-bundle.js';
 
 const isoOf = (value: Date): string => value.toISOString();
 const isoOrNull = (value: Date | null): string | null => (value ? value.toISOString() : null);
@@ -32,6 +39,10 @@ const microsOrNull = (value: number | null): string | null => (value === null ? 
  * keys (stored hashed — their owners issue new ones), the upstream API key of an
  * external endpoint (sealed under this deployment's secrets key), sessions, and
  * every credential Better Auth holds.
+ *
+ * The ledger is the one section that cannot simply be copied past that list: a
+ * per-request usage debit names the generation it charged for, so it is carried
+ * forward as one entry per workspace instead — `carryUsageForward`, SUP-446.
  *
  * Nothing is cached or written to disk: the bundle is built for the request
  * that asked for it and is gone when the response has been sent.
@@ -118,16 +129,23 @@ export class DataExportService {
           role: row.role,
           createdAt: isoOf(row.createdAt),
         })),
-      creditLedger: ledger.map((entry) => ({
-        id: entry.id,
-        workspaceId: entry.workspaceId,
-        kind: entry.kind,
-        amountMicros: microsOf(entry.amountMicros),
-        reference: entry.reference,
-        description: entry.description,
-        idempotencyKey: entry.idempotencyKey,
-        createdAt: isoOf(entry.createdAt),
-      })),
+      // Per-request usage debits are carried as one entry per workspace: the
+      // generations they name stay behind, and a debit for a request the
+      // importing deployment has no row for is what SUP-446 was. The money is
+      // unchanged.
+      creditLedger: carryUsageForward(
+        ledger.map((entry) => ({
+          id: entry.id,
+          workspaceId: entry.workspaceId,
+          kind: entry.kind,
+          amountMicros: microsOf(entry.amountMicros),
+          reference: entry.reference,
+          description: entry.description,
+          idempotencyKey: entry.idempotencyKey,
+          createdAt: isoOf(entry.createdAt),
+        })),
+        sourceLabelOf(this.config.server.publicBaseUrl),
+      ),
       inviteCodes: codes.map((code) => ({
         id: code.id,
         value: code.code,

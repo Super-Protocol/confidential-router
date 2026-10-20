@@ -1,4 +1,10 @@
-import type { ExportBundle, ExportData } from './export-bundle.js';
+import {
+  carryUsageForward,
+  type ExportBundle,
+  type ExportData,
+  isPerGenerationUsage,
+  sourceLabelOf,
+} from './export-bundle.js';
 
 /**
  * What an import would do, worked out without writing anything (SUP-271).
@@ -174,9 +180,31 @@ export function bundleInconsistencies(data: ExportData): string[] {
 }
 
 export function planImport(bundle: ExportBundle, local: LocalState, options: PlanOptions): ImportPlan {
-  const { data } = bundle;
-  const refusals = bundleInconsistencies(data);
   const notes: string[] = [];
+
+  // A bundle written before SUP-446 carries one usage debit per metered request,
+  // each naming a generation no bundle has ever carried. Collapsing them here as
+  // well as in the export means such a file is repaired on the way in rather
+  // than refused — the money is identical, so every balance check below is
+  // unaffected — and that no imported ledger row can name a generation,
+  // whichever build wrote the file.
+  const perRequest = bundle.data.creditLedger.filter(isPerGenerationUsage).length;
+  const data: ExportData =
+    perRequest === 0
+      ? bundle.data
+      : {
+          ...bundle.data,
+          creditLedger: carryUsageForward(bundle.data.creditLedger, sourceLabelOf(bundle.source.publicBaseUrl)),
+        };
+  if (perRequest > 0) {
+    notes.push(
+      `${perRequest} per-request usage debit(s) in this export name a generation log no export carries; they are ` +
+        'imported as one carried-forward entry per workspace, for the same total. The requests themselves stay on ' +
+        'the deployment that served them, so Activity here counts only traffic this deployment serves.',
+    );
+  }
+
+  const refusals = bundleInconsistencies(data);
   const operators = new Set(options.operatorEmails.map(lower).filter(Boolean));
 
   // ── accounts ────────────────────────────────────────────────────────────

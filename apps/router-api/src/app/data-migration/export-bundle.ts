@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import * as z from 'zod';
+import { GENERATION_LEDGER_KEY_PREFIX } from '../billing/ledger.keys.js';
 
 /**
  * The deployment export: one versioned JSON document, gzipped (SUP-271).
@@ -12,6 +13,12 @@ import * as z from 'zod';
  * left behind, so the file holds no secret at all. What it does hold is personal
  * data and live invitation codes, which is why only an operator can ask for one
  * and nothing keeps a copy.
+ *
+ * Because the generation log stays behind, the ledger cannot cross the boundary
+ * as it stands: a per-request `usage` debit names the generation it charged for,
+ * and on the other side that row does not exist. {@link carryUsageForward} is
+ * what reconciles the two — one carried-forward debit per workspace, for exactly
+ * the same money (SUP-446).
  *
  * Ids are the rows' own, so every reference survives as written; instants are
  * ISO-8601 UTC; money is integer micro-USD as a decimal string, the ledger's
@@ -41,6 +48,12 @@ export const MAX_INFLATED_BYTES = 256 * 1024 * 1024;
  * retry key, not a secret, and is the one spelling let through.
  */
 export const CREDENTIAL_KEY_PATTERN = /pass(word|phrase)|hash|token|secret|ciphertext|api_?key|credential|session/i;
+
+/**
+ * The id and idempotency key of the one `usage` entry a workspace's per-request
+ * debits are carried over as. See {@link carryUsageForward}.
+ */
+export const CARRIED_USAGE_LEDGER_KEY_PREFIX = 'carried-usage:';
 
 const iso = z.iso.datetime({ offset: true });
 const micros = z.string().regex(/^-?\d+$/, 'must be an integer amount of micro-USD');
@@ -202,6 +215,7 @@ export type ExportData = ExportBundle['data'];
 export type ExportCounts = ExportBundle['counts'];
 export type ExportSource = ExportBundle['source'];
 export type ExportedUser = ExportData['users'][number];
+export type ExportedCreditEntry = ExportData['creditLedger'][number];
 export type ExportedWorkspace = ExportData['workspaces'][number];
 export type ExportedInviteCode = ExportData['inviteCodes'][number];
 export type ExportedExternalEndpoint = ExportData['externalEndpoints'][number];
@@ -252,6 +266,121 @@ export function totalBalanceMicros(data: ExportData): string {
   return String(data.workspaces.reduce((sum, workspace) => sum + BigInt(workspace.balanceMicros), 0n));
 }
 
+/** Whether an entry is the usage debit of one metered request (`LedgerService.debitGeneration`). */
+export function isPerGenerationUsage(entry: ExportedCreditEntry): boolean {
+  return entry.kind === 'usage' && entry.idempotencyKey.startsWith(GENERATION_LEDGER_KEY_PREFIX);
+}
+
+/** Whether an entry is itself the result of an earlier {@link carryUsageForward}. */
+export function isCarriedUsage(entry: ExportedCreditEntry): boolean {
+  return entry.kind === 'usage' && entry.idempotencyKey.startsWith(CARRIED_USAGE_LEDGER_KEY_PREFIX);
+}
+
+/**
+ * Replaces each workspace's per-request usage debits with one carried-forward
+ * debit for the same total (SUP-446).
+ *
+ * A `usage` entry is written per metered request and names that request:
+ * `reference` is the generation id and `idempotencyKey` is `generation:<id>`.
+ * `generations` is not in the bundle and will not be — it is request metadata,
+ * it is unbounded where the bundle is a small document, and half of its columns
+ * (the endpoint it was served by, the snapshot that covered it, the key it was
+ * billed to) name rows that only exist on the deployment that served it. So the
+ * debit cannot be carried as written: on the far side it is a charge pointing at
+ * a request the console has no row for, which is how a workspace comes to be
+ * billed $0.24 for 87 requests while its log shows 22 (SUP-446).
+ *
+ * Collapsing them keeps the money exact — the sum is unchanged, so invariant 3
+ * and the bundle's own balance check hold either way — and makes the Credits
+ * screen agree with the generation log on the one deployment the reader is
+ * looking at: every request it lists is one this deployment served, and
+ * everything spent before the migration is one row that says so.
+ *
+ * Applied on both sides: the export writes no per-request debit, and the import
+ * collapses any it is given, so a bundle written by an older build is repaired
+ * rather than refused.
+ *
+ * There is at most one carried entry per workspace, ever: a deployment that was
+ * itself imported into already has one, and a second migration folds it into the
+ * new one rather than emitting a second row under the same id.
+ *
+ * `sourceLabel` names the deployment the spend happened on, as a bare host —
+ * never a URL, which the Credits screen would render as a receipt link
+ * (`amounts.ts`).
+ */
+export function carryUsageForward(entries: readonly ExportedCreditEntry[], sourceLabel: string): ExportedCreditEntry[] {
+  // A workspace that has nothing new to collapse is passed through untouched —
+  // including the carried entry a previous migration left it. Rewriting that one
+  // would re-date spend to a deployment that never served a request of it.
+  const collapsing = new Set(entries.filter(isPerGenerationUsage).map((entry) => entry.workspaceId));
+
+  const kept: ExportedCreditEntry[] = [];
+  const collapsed = new Map<string, { totalMicros: bigint; requests: number; absorbed: number; lastAt: string }>();
+
+  for (const entry of entries) {
+    // The carried entry of an earlier migration is absorbed into this one:
+    // `carried-usage:<workspaceId>` is one row per workspace, so emitting a
+    // second would be a duplicate id and a file no deployment would import.
+    const mine = collapsing.has(entry.workspaceId) && (isPerGenerationUsage(entry) || isCarriedUsage(entry));
+    if (!mine) {
+      kept.push(entry);
+      continue;
+    }
+    const request = isPerGenerationUsage(entry) ? 1 : 0;
+    const seen = collapsed.get(entry.workspaceId);
+    if (!seen) {
+      collapsed.set(entry.workspaceId, {
+        totalMicros: BigInt(entry.amountMicros),
+        requests: request,
+        absorbed: 1 - request,
+        lastAt: entry.createdAt,
+      });
+      continue;
+    }
+    seen.totalMicros += BigInt(entry.amountMicros);
+    seen.requests += request;
+    seen.absorbed += 1 - request;
+    // By instant, not by string: an ISO-8601 timestamp may carry an offset.
+    if (Date.parse(entry.createdAt) > Date.parse(seen.lastAt)) {
+      seen.lastAt = entry.createdAt;
+    }
+  }
+
+  // Sorted by workspace, so one dataset exports to one byte string whatever
+  // order the rows came back in — the same reason `canonicalJson` exists.
+  const carried = [...collapsed.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([workspaceId, { totalMicros, requests, absorbed, lastAt }]) => ({
+      id: `${CARRIED_USAGE_LEDGER_KEY_PREFIX}${workspaceId}`,
+      workspaceId,
+      kind: 'usage' as const,
+      amountMicros: String(totalMicros),
+      // Deliberately null: the generations these debits named stayed behind, and
+      // a reference to a row that does not exist is the defect, not the record.
+      reference: null,
+      description:
+        `Metered usage carried over from ${sourceLabel}: ${requests} request(s) up to ${lastAt}` +
+        (absorbed > 0 ? ', and spend carried from an earlier migration' : '') +
+        '. The per-request log stayed on the deployment that served it.',
+      idempotencyKey: `${CARRIED_USAGE_LEDGER_KEY_PREFIX}${workspaceId}`,
+      createdAt: lastAt,
+    }));
+
+  return [...kept, ...carried];
+}
+
+/**
+ * The deployment a bundle's spend happened on, for {@link carryUsageForward}'s
+ * description. The host alone — see that function on why not the URL.
+ */
+export function sourceLabelOf(publicBaseUrl: string): string {
+  try {
+    return new URL(publicBaseUrl).host;
+  } catch {
+    return publicBaseUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  }
+}
+
 /** Every key path in `value` that {@link CREDENTIAL_KEY_PATTERN} matches. */
 export function credentialShapedKeys(value: unknown, path = ''): string[] {
   if (Array.isArray(value)) {
@@ -273,6 +402,16 @@ export function buildBundle(input: { data: ExportData; source: ExportSource; exp
   const leaked = credentialShapedKeys(input.data);
   if (leaked.length > 0) {
     throw new Error(`The export would carry credential-shaped fields (${leaked.join(', ')}); refusing to write it.`);
+  }
+  // The same kind of tripwire, for the same kind of mistake: a per-request debit
+  // in an assembled bundle means somebody added a ledger section without
+  // {@link carryUsageForward}, and the file would charge for requests the
+  // importing deployment has no log of (SUP-446).
+  const dangling = input.data.creditLedger.filter(isPerGenerationUsage).length;
+  if (dangling > 0) {
+    throw new Error(
+      `The export would carry ${dangling} usage debit(s) naming a generation it does not carry; refusing to write it.`,
+    );
   }
   return {
     format: EXPORT_FORMAT,
