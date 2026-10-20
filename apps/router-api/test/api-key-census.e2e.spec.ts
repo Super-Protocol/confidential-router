@@ -162,6 +162,40 @@ describe('the console’s own chat credential', () => {
   });
 });
 
+/**
+ * A membership whose `userId` has no `user` row. `user` belongs to Better Auth,
+ * so `workspace_members` carries no foreign key to it and nothing cascades when
+ * an account goes; a data import also writes memberships without checking that
+ * their accounts restored. `adminSignUps` selects from `user`, so such a holder
+ * can never be listed — which is the blind spot SUP-454 exists to close, and the
+ * reason the two numbers have to reconcile.
+ */
+describe('a live key whose holder is no longer an account', () => {
+  it('is counted as a remainder, not as someone the operator could tell', async () => {
+    const departed = await signIn(harness, 'departed@example.test');
+    const created = await expectData(departed, CREATE, {
+      input: { workspaceId: departed.workspaceId, name: 'Left behind' },
+    });
+    // `?` and not `$1`: the harness runs on SQLite, as every e2e here does.
+    await dataSourceOf(harness).query('DELETE FROM "user" WHERE "id" = ?', [
+      (await expectData(departed, '{ me { id } }')).me.id,
+    ]);
+
+    const population = (await expectData(operator, POPULATION)).adminApiKeyPopulation;
+    const holding = await census(true);
+
+    expect(population.liveKeys).toBe(2);
+    expect(population.liveKeysWithoutAccount).toBe(1);
+    // The promise the banner makes: the number and the page agree, with the
+    // unlistable holder accounted for separately rather than silently missing.
+    expect(population.accountsHoldingLiveKey).toBe(holding.totalCount);
+    expect(holding.nodes.map((node: { email: string }) => node.email)).toEqual(['holder@example.test']);
+
+    // Leave the deployment as the later tests expect to find it.
+    await dataSourceOf(harness).getRepository(ApiKey).delete({ id: created.createApiKey.key.id });
+  });
+});
+
 describe('after the key is used and revoked', () => {
   it('reports the use, then stops counting the key as live while keeping it in the total', async () => {
     // `ApiKeyGuard` stamps `lastUsedAt` on every authenticated `/v1` call, so the

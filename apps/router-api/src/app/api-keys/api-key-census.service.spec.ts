@@ -188,7 +188,32 @@ describe('the deployment-wide population', () => {
     });
   });
 
-  it('counts a live key whose workspace has no member, which no account list would show', async () => {
+  /**
+   * The shape that actually occurs: `workspace_members` carries no foreign key to
+   * Better Auth's `user`, so a membership outlives the account it names — and a
+   * data import writes memberships without checking that their accounts restored.
+   * `adminSignUps` selects from `user`, so such a holder can never appear on the
+   * list; its keys have to be counted somewhere the operator will see them.
+   */
+  it('counts a live key held only through a membership whose account is gone', async () => {
+    const holder = await account('one@example.com');
+    const departed = await account('gone@example.com');
+    await key(await workspace([holder]));
+    await key(await workspace([departed]));
+    await dataSource.query('DELETE FROM "user" WHERE "id" = ?', [departed]);
+
+    expect(await census.totals(NOW)).toMatchObject({
+      keys: 2,
+      liveKeys: 2,
+      // Not 2: the operator will page `adminSignUps`, which cannot return the
+      // departed holder, so promising two accounts here would be a number they
+      // could never reconcile.
+      accountsHoldingLiveKey: 1,
+      liveKeysWithoutAccount: 1,
+    });
+  });
+
+  it('counts a live key in a workspace with no membership at all, unreachable as that is', async () => {
     const holder = await account('one@example.com');
     await key(await workspace([holder]));
     await key(await workspace([]));
@@ -231,6 +256,32 @@ describe('the deployment-wide population', () => {
     await key(await workspace([one, two]));
 
     expect(await census.totals(NOW)).toMatchObject({ keys: 1, liveKeys: 1, accountsHoldingLiveKey: 2 });
+  });
+});
+
+/**
+ * The one property that makes the two surfaces usable together: an operator reads
+ * "N accounts hold a live key", pages `adminSignUps(holdsLiveApiKey: true)`, and
+ * has to get N rows. A membership whose account is gone used to break this —
+ * counted in the total, unlistable on the page — which is the blind spot SUP-454
+ * exists to close, so it is asserted rather than left to the two call sites.
+ */
+describe('the total and the list', () => {
+  it('agree on how many accounts hold a live key, orphaned memberships and all', async () => {
+    const holder = await account('one@example.com');
+    const departed = await account('gone@example.com');
+    const shared = await workspace([holder, await account('two@example.com')]);
+    await key(shared);
+    await key(await workspace([departed]));
+    await dataSource.query('DELETE FROM "user" WHERE "id" = ?', [departed]);
+
+    const totals = await census.totals(NOW);
+    const query = dataSource.getRepository(User).createQueryBuilder('account');
+    whereHoldsLiveApiKey(query, { accountAlias: 'account', holds: true, now: NOW });
+
+    expect(totals.accountsHoldingLiveKey).toBe(await query.getCount());
+    // And the key the list cannot speak for is named rather than silently missing.
+    expect(totals.liveKeysWithoutAccount).toBe(1);
   });
 });
 

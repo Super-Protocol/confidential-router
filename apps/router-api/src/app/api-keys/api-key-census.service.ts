@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull, type ObjectLiteral, type SelectQueryBuilder } from 'typeorm';
 import { ApiKey } from '../db/entities/api-key.entity.js';
+import { User } from '../db/entities/user.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 
 /** Ids per `IN`, under SQLite's 999 bound-parameter ceiling. */
@@ -32,15 +33,31 @@ export interface ApiKeyPopulation {
   keys: number;
   /** Of those, the ones that would authenticate right now. */
   liveKeys: number;
-  /** Accounts holding at least one live key — who would have to re-issue. */
+  /**
+   * Accounts holding at least one live key — who would have to re-issue.
+   *
+   * Counted over memberships that resolve to a `user` row, so this is exactly
+   * `adminSignUps(holdsLiveApiKey: true).totalCount`: the operator reads the
+   * number here and then pages the same people, and the two must agree.
+   */
   accountsHoldingLiveKey: number;
   /**
-   * Live keys in a workspace nobody is a member of.
+   * Live keys whose workspace has no member this deployment can name.
    *
-   * The remainder {@link accountsHoldingLiveKey} cannot speak for: a workspace
-   * loses its members when the account is deleted but keeps its keys, so a
-   * rebuild can void credentials there is no one left to tell. Normally zero,
-   * and worth an operator's attention when it is not.
+   * The remainder {@link accountsHoldingLiveKey} cannot speak for, and the one
+   * number on this surface an operator cannot act on: a key that works, that a
+   * rebuild would void, and that no row of the account list covers. Normally
+   * zero, and worth attention when it is not.
+   *
+   * The shape that produces it is a `workspace_members` row whose `userId` has no
+   * `user` row. `user` belongs to Better Auth, so `workspace_members` carries no
+   * foreign key to it (`createForeignKeyConstraints: false`) and nothing cascades
+   * when an account goes; a data import also writes memberships without checking
+   * that their accounts restored (`data-import.service.ts`). The inverse — a
+   * workspace with keys and no membership at all — cannot arise, because deleting
+   * a workspace cascades to both `workspace_members` and `api_keys`; it is
+   * counted here anyway, since a key nobody is named for is the same problem
+   * however it got there.
    */
   liveKeysWithoutAccount: number;
 }
@@ -183,8 +200,15 @@ export class ApiKeyCensusService {
    * The deployment-wide population.
    *
    * Read from `api_keys` rather than summed over {@link forUsers}, so a key in a
-   * workspace with two members is counted once and a key in a workspace with
-   * none is counted at all.
+   * workspace with two members is counted once and a key no account is named for
+   * is counted at all.
+   *
+   * Both account-shaped numbers join `user`, because the list the operator will
+   * page is `adminSignUps`, which selects from `user`. A membership whose account
+   * is gone must therefore not inflate {@link ApiKeyPopulation.accountsHoldingLiveKey}
+   * — it would promise a row the filter cannot return — and its keys belong in
+   * {@link ApiKeyPopulation.liveKeysWithoutAccount}, which is what explains the
+   * difference instead of leaving the operator to find it.
    */
   async totals(now: Date = new Date()): Promise<ApiKeyPopulation> {
     const at = { now: now.getTime() };
@@ -194,6 +218,7 @@ export class ApiKeyCensusService {
       .getRepository(WorkspaceMember)
       .createQueryBuilder('member')
       .innerJoin(ApiKey, 'heldKey', `heldKey.workspaceId = member.workspaceId AND ${personalKeyCondition('heldKey')}`)
+      .innerJoin(User, 'holderAccount', 'holderAccount.id = member.userId')
       .where(liveKeyCondition('heldKey'), at)
       .select('COUNT(DISTINCT member.userId)', 'accounts')
       .getRawOne<{ accounts: string | number | null }>();
@@ -205,13 +230,14 @@ export class ApiKeyCensusService {
       liveKeysWithoutAccount: await this.personalKeys()
         .andWhere(liveKeyCondition('apiKey'), at)
         .andWhere((query) => {
-          const members = query
+          const named = query
             .subQuery()
             .select('1')
             .from(WorkspaceMember, 'anyMember')
+            .innerJoin(User, 'anyAccount', 'anyAccount.id = anyMember.userId')
             .where('anyMember.workspaceId = apiKey.workspaceId')
             .getQuery();
-          return `NOT EXISTS ${members}`;
+          return `NOT EXISTS ${named}`;
         })
         .getCount(),
     };

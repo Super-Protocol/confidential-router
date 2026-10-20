@@ -223,9 +223,13 @@ export function SignUpsTab() {
  * The deployment-wide credential total, above the list (SUP-454).
  *
  * Its own query because a page cannot be summed into it: a key in a shared
- * workspace belongs to every member, and a key in a workspace nobody is left in
- * belongs to no row of this table at all — which is the one number here an
- * operator cannot act on, so it is said out loud rather than left implied.
+ * workspace belongs to every member of it.
+ *
+ * The accounts figure is the same one the "Holds a live key" filter pages, so the
+ * sentence and the table agree. `liveKeysWithoutAccount` is what the table cannot
+ * show — a live key whose workspace has no member this deployment can name — and
+ * the one number here an operator cannot act on, which is why it is said out loud
+ * instead of left as an unexplained difference between the two.
  *
  * Silent on failure. The table below it is the screen's job; a deployment total
  * the API would not answer is not worth an error state over the account list.
@@ -247,10 +251,12 @@ function KeyPopulation() {
           } ever issued.`}
       {population.liveKeysWithoutAccount > 0
         ? ` ${population.liveKeysWithoutAccount} live ${
-            population.liveKeysWithoutAccount === 1 ? 'key belongs' : 'keys belong'
-          } to a workspace with no account, so no one here can be told about ${
-            population.liveKeysWithoutAccount === 1 ? 'it' : 'them'
-          }.`
+            population.liveKeysWithoutAccount === 1 ? 'key is held' : 'keys are held'
+          } by no account this deployment can name, so ${
+            population.liveKeysWithoutAccount === 1 ? 'it' : 'they'
+          } cannot be announced to anyone — and ${
+            population.liveKeysWithoutAccount === 1 ? 'it is' : 'they are'
+          } not in the table below.`
         : null}
     </p>
   );
