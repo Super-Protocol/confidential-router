@@ -13,11 +13,14 @@ import { CREDITS_GATEWAY, type CreditsGateway } from './credits.gateway.js';
 const MS_PER_HOUR = 3_600_000;
 
 /**
- * Everything the router knows about one served request. No prompt, no
- * completion, no headers — `data-model.md` invariant 1, enforced by
- * `invariants.spec.ts`.
+ * Everything that is true about a request the moment it is admitted, before a
+ * byte of it is forwarded. No prompt, no completion, no headers —
+ * `data-model.md` invariant 1, enforced by `invariants.spec.ts`.
+ *
+ * The prices are here rather than on the outcome because they are frozen at
+ * admission: a config reload mid-generation must not re-price it.
  */
-export interface MeteringRecord {
+export interface AdmittedGeneration {
   id: string;
   workspaceId: string;
   apiKeyId: string;
@@ -28,31 +31,43 @@ export interface MeteringRecord {
   externalEndpointId: string | null;
   evidenceSnapshotId: string | null;
   evidenceDigest: string | null;
-  promptTokens: number;
-  completionTokens: number;
-  costMicros: number;
   promptPer1mMicros: number;
   completionPer1mMicros: number;
   streamed: boolean;
+  requestId: string | null;
+  clientIpHash: string | null;
+  createdAt: Date;
+}
+
+/** What the request turned out to be, once the gateway is done with it. */
+export interface GenerationOutcomeRecord {
+  promptTokens: number;
+  completionTokens: number;
+  costMicros: number;
   status: GenerationStatus;
   errorCode: string | null;
   finishReason: string | null;
   latencyMs: number;
   timeToFirstTokenMs: number | null;
   tokensPerSecond: number | null;
-  requestId: string | null;
-  clientIpHash: string | null;
-  createdAt: Date;
 }
 
+/** One finished request: what was admitted, plus what came of it. */
+export type MeteringRecord = AdmittedGeneration & GenerationOutcomeRecord;
+
 /**
- * Writes the meter for a finished request.
+ * The meter, in the two phases one request has.
  *
- * Called from the gateway's completion path — including the error and abort
- * paths, because a request that consumed tokens before failing still consumed
- * them. Failures here are logged and swallowed: the response has already been
- * sent (or is mid-flight), and losing a metering row is better than turning a
- * served generation into a 500.
+ * {@link open} writes the row at admission; {@link close} replaces it with the
+ * outcome and settles the money. Both are called from the gateway, including on
+ * the error and abort paths, because a request that consumed tokens before
+ * failing still consumed them — and because a request that consumed none still
+ * happened, which is the whole of SUP-423.
+ *
+ * Failures here are logged and swallowed. On `open` the request has not been
+ * forwarded yet and refusing it over a metering write would turn a database
+ * hiccup into an outage; on `close` the response has already been sent, and
+ * losing a metering row is better than turning a served generation into a 500.
  */
 @Injectable()
 export class MeteringService {
@@ -67,9 +82,65 @@ export class MeteringService {
     private readonly attribution: InviteAttributionService,
   ) {}
 
-  async record(record: MeteringRecord): Promise<void> {
+  /**
+   * Opens the row for a request that has been admitted and is about to be
+   * forwarded.
+   *
+   * `pending`, zero tokens, zero cost: a true statement about a request whose
+   * outcome is not known yet, and the only statement available if the router
+   * does not survive to make a better one.
+   */
+  async open(admitted: AdmittedGeneration): Promise<void> {
     try {
-      await this.dataSource.getRepository(Generation).insert(record);
+      await this.dataSource.getRepository(Generation).insert({
+        ...admitted,
+        promptTokens: 0,
+        completionTokens: 0,
+        costMicros: 0,
+        status: 'pending',
+        errorCode: null,
+        finishReason: null,
+        latencyMs: 0,
+        timeToFirstTokenMs: null,
+        tokensPerSecond: null,
+      });
+    } catch (error) {
+      // Swallowed, like a failed close: the caller is on the request path and
+      // the client asked for a completion, not for a metering guarantee. `close`
+      // notices the missing row and inserts it then.
+      this.logger.error(
+        `Failed to open generation ${admitted.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Closes the row with what actually happened, and settles the money.
+   *
+   * An `UPDATE` that matches nothing means {@link open} never landed — a
+   * database that was unavailable then and is available now — so the full row is
+   * inserted instead. The alternative, letting the update silently match no
+   * rows, is the invisible generation this method exists to prevent.
+   *
+   * That insert has a catch of its own, and the order matters: a row this
+   * deployment failed to write is a reporting loss, while a generation that was
+   * served and never debited is a billing one. The settle below must not be
+   * skipped over the lesser of the two.
+   */
+  async close(record: MeteringRecord): Promise<void> {
+    try {
+      const closed = await this.dataSource.getRepository(Generation).update({ id: record.id }, outcomeOf(record));
+      if (!closed.affected) {
+        try {
+          await this.dataSource.getRepository(Generation).insert(record);
+        } catch (error) {
+          this.logger.error(
+            `Failed to write the metering row for generation ${record.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
       await this.apiKeys.recordSpend(record.apiKeyId, record.costMicros);
       await this.credits.debit({
         workspaceId: record.workspaceId,
@@ -166,4 +237,27 @@ export class MeteringService {
 
     return owner?.userId ?? null;
   }
+}
+
+/**
+ * The columns `close` overwrites: everything the outcome decides, and nothing
+ * the admission already settled.
+ *
+ * Spelled out rather than spread from the record, so a field added to
+ * {@link AdmittedGeneration} cannot start being rewritten at close time — the
+ * frozen prices and `createdAt` are the ones that would quietly stop being
+ * frozen.
+ */
+function outcomeOf(record: MeteringRecord): GenerationOutcomeRecord {
+  return {
+    promptTokens: record.promptTokens,
+    completionTokens: record.completionTokens,
+    costMicros: record.costMicros,
+    status: record.status,
+    errorCode: record.errorCode,
+    finishReason: record.finishReason,
+    latencyMs: record.latencyMs,
+    timeToFirstTokenMs: record.timeToFirstTokenMs,
+    tokensPerSecond: record.tokensPerSecond,
+  };
 }

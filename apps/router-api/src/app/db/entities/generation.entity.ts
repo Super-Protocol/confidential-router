@@ -5,10 +5,31 @@ import { EvidenceSnapshot } from './evidence-snapshot.entity.js';
 import { Model } from './model.entity.js';
 import { Workspace } from './workspace.entity.js';
 
-export type GenerationStatus = 'ok' | 'error' | 'aborted';
+/**
+ * The life of one metered request.
+ *
+ * `pending` is the row as it exists *while* the request is in flight: written
+ * at admission, before anything is forwarded, and replaced by one of the three
+ * terminal values when the gateway closes it. It is what makes a request that
+ * the router never got to close — the process was restarted under it, the pod
+ * was evicted, the edge answered the client 502 and tore the socket down —
+ * visible at all instead of absent (SUP-423). `IncompleteGenerationSweeper`
+ * closes a row left pending past `metering.incompleteAfter` as
+ * `error` / `no_response`.
+ */
+export type GenerationStatus = 'pending' | 'ok' | 'error' | 'aborted';
 
 /**
- * One metered request. **No prompt or completion content, ever** — the router
+ * One metered request, written in two phases.
+ *
+ * The row is inserted when the request is admitted (`status: 'pending'`) and
+ * updated when it ends. Before SUP-423 it was inserted only at the end, which
+ * meant any request the router did not live to finish left no trace at all: the
+ * account that paid for sixty seconds of a failed stream had nothing in Logs to
+ * point at. The insert costs one write on the hot path and buys the invariant
+ * that an admitted request is always visible to the workspace that made it.
+ *
+ * **No prompt or completion content, ever** — the router
  * forwards bodies to LiteLLM and never inspects or persists them
  * (`docs/threat-model.md`). `invariants.spec.ts` walks this entity's metadata
  * and fails the build if a column capable of holding message text is added —
@@ -16,6 +37,19 @@ export type GenerationStatus = 'ok' | 'error' | 'aborted';
  */
 @Entity({ name: 'generations' })
 @Index('IDX_generations_workspaceId_createdAt', ['workspaceId', 'createdAt'])
+/**
+ * The sweeper's predicate, and nothing else: `status = 'pending' AND createdAt <
+ * cutoff`.
+ *
+ * Partial on purpose. The rows it has to find are a vanishing fraction of the
+ * table — a handful at any moment, none at all most of the time — so an index
+ * over the whole of `createdAt` would be paid for on every insert to answer a
+ * question about almost no rows. Without it each replica sequentially scans the
+ * fastest-growing table in the schema once a minute, forever; `generations` is
+ * small today and `CREATE INDEX` here only ever gets more awkward, which is the
+ * argument for adding it in the same change that adds the query.
+ */
+@Index('IDX_generations_pending', ['createdAt'], { where: "status = 'pending'" })
 export class Generation {
   /** `gen-<ulid>`; also the `id` of the OpenAI-shaped response. */
   @PrimaryColumn({ type: 'varchar', length: 64 })
@@ -85,6 +119,12 @@ export class Generation {
   @Column({ type: 'boolean', default: false })
   streamed!: boolean;
 
+  /**
+   * Defaults to `ok` for the benefit of nothing in this codebase — every write
+   * sets it — but the column is what the Logs screen filters on, so the two
+   * phases of the row both have to be representable here. See
+   * {@link GenerationStatus}.
+   */
   @Column({ type: 'varchar', length: 16, default: 'ok' })
   status!: GenerationStatus;
 

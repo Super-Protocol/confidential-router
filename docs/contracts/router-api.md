@@ -260,6 +260,14 @@ signature whichever copy it got.
 Returns the `Generation` record (tokens, cost, model, endpoint, timings, `evidence_digest`) for a
 generation owned by the key's workspace. Never any content.
 
+**`status` may be `pending`, and then the record is not final.** A row exists from the moment the
+request is admitted (see *Metering*), so a client that polls this route while the generation is still
+running — or in the window between the last byte of a stream and the close, which is exactly when a
+client polls — gets `200` with `status: "pending"`, `cost_micros: 0`, `total_tokens: 0`, `latency_ms: 0`.
+Those zeros are "not known yet", not "free". **Reconcile only on `ok`, `error` or `aborted`**; on
+`pending`, poll again. Before SUP-423 this route answered `404` until the meter had settled, so a client
+written against the old behaviour must treat `pending` the way it used to treat that `404`.
+
 ## Errors
 
 OpenAI shape, always JSON, always `Content-Type: application/json`:
@@ -325,10 +333,30 @@ request may overshoot by its own size, never by more.
 
 ## Metering
 
-Every accepted request creates a `Generation` (see `data-model.md`) at completion (or at abort, with
-what was counted). Debit = `prompt_tokens × pricing.prompt_per_1m_micros / 1e6 + completion_tokens ×
+Every accepted request creates a `Generation` (see `data-model.md`), in two writes:
+
+1. **At admission**, before anything is forwarded: `status: pending`, zero tokens, zero cost.
+2. **At completion** (or at abort, with what was counted): the row is replaced with the outcome, and the
+   debit is written.
+
+Debit = `prompt_tokens × pricing.prompt_per_1m_micros / 1e6 + completion_tokens ×
 pricing.completion_per_1m_micros / 1e6`, rounded up to 1 micro-USD, written as one `CreditTransaction`
-(`kind: usage`, `reference: generationId`).
+(`kind: usage`, `reference: generationId`). Only the second write bills; a `pending` row is never charged.
+
+A request refused *before* admission — bad key, no credit, unknown model, rate limit, a body over the
+ceiling — creates no row at all. The client was told synchronously and nothing was forwarded.
+
+The first write is why a request the router does not live to finish is still visible. Before SUP-423 the
+row was written only at completion, so a restart, an eviction, or an edge that answered the client 502 and
+tore the connection down left no trace whatsoever: on prod, a stream that burned 60 s and failed was
+absent from Logs, from the ledger and from the Activity counters, and the account that paid for the agent
+time had nothing to point at. A row left `pending` longer than `metering.incompleteAfter` (default 15 m)
+is closed by the sweeper as `status: error`, `errorCode: no_response` — the one `errorCode` that is
+metering-only and never appears in an HTTP body, because by definition no response was written.
+
+`no_response` is still not a complete answer to "the platform answered me 502". A 502 raised by a proxy
+*in front of* router-api — an ingress with no healthy endpoint behind it — never reaches this process and
+so cannot be metered by it; that gap is an infrastructure one and lives with SUP-366.
 
 ## Router ↔ LiteLLM
 

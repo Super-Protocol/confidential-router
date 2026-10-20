@@ -137,6 +137,7 @@ const SORT_FIELDS: Record<GenerationSortFieldEnum, GenerationSort['field']> = {
 };
 
 const STATUSES: Record<GenerationStatusEnum, GenerationStatus> = {
+  [GenerationStatusEnum.PENDING]: 'pending',
   [GenerationStatusEnum.OK]: 'ok',
   [GenerationStatusEnum.ERROR]: 'error',
   [GenerationStatusEnum.ABORTED]: 'aborted',
@@ -178,6 +179,7 @@ function totalsModel(totals: ActivityTotals) {
 }
 
 const STATUS_MODELS: Record<GenerationStatus, GenerationStatusEnum> = {
+  pending: GenerationStatusEnum.PENDING,
   ok: GenerationStatusEnum.OK,
   error: GenerationStatusEnum.ERROR,
   aborted: GenerationStatusEnum.ABORTED,

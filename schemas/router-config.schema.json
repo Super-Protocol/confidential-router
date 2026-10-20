@@ -331,6 +331,17 @@
         }
       }
     },
+    "metering": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "incompleteAfter": {
+          "$ref": "#/$defs/duration",
+          "default": "15m",
+          "description": "How long a generation may stay pending before it is closed as error / no_response. A generations row is written when a request is admitted and replaced when it ends; a request the router does not survive (restart, eviction, an edge that answered the client 502) never gets that second write, and this is how long the sweeper waits before calling it. Must stay longer than the longest generation this deployment serves. 0 disables the sweep."
+        }
+      }
+    },
     "rateLimits": {
       "type": "object",
       "additionalProperties": false,

@@ -10,6 +10,7 @@ import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InvitesModule } from '../invites/invites.module.js';
 import { CREDITS_GATEWAY } from './credits.gateway.js';
 import { EvidenceCoverageService } from './evidence-coverage.service.js';
+import { IncompleteGenerationSweeper } from './incomplete-generations.service.js';
 import { MeteringService } from './metering.service.js';
 
 /**
@@ -33,7 +34,8 @@ import { MeteringService } from './metering.service.js';
     { provide: CREDITS_GATEWAY, useExisting: LedgerCreditsGateway },
     EvidenceCoverageService,
     MeteringService,
+    IncompleteGenerationSweeper,
   ],
-  exports: [CREDITS_GATEWAY, EvidenceCoverageService, MeteringService],
+  exports: [CREDITS_GATEWAY, EvidenceCoverageService, MeteringService, IncompleteGenerationSweeper],
 })
 export class MeteringModule {}

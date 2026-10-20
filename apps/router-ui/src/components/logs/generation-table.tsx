@@ -31,10 +31,17 @@ export interface GenerationTableProps {
   rows: GenerationRow[];
 }
 
-const STATUS_VARIANTS: Record<GenerationStatus, 'success' | 'destructive' | 'warning'> = {
+/**
+ * `PENDING` is `secondary` rather than a tone that reads as a result: a row the
+ * gateway has not closed yet is not a success, not a failure and not an abort —
+ * it is a request still in the air, or one the router did not survive. The
+ * sweeper turns the second kind into `ERROR` / `no_response`.
+ */
+const STATUS_VARIANTS: Record<GenerationStatus, 'success' | 'destructive' | 'warning' | 'secondary'> = {
   OK: 'success',
   ERROR: 'destructive',
   ABORTED: 'warning',
+  PENDING: 'secondary',
 };
 
 const TIME = new Intl.DateTimeFormat('en-GB', {

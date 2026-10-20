@@ -99,9 +99,9 @@ type Generation {
   promptTokens: Int!, completionTokens: Int!, cost: Micros!
   latencyMs: Int!, timeToFirstTokenMs: Int, tokensPerSecond: Float, streamed: Boolean!, finishReason: String
   evidenceSnapshot: EvidenceSnapshot                                  # snapshot fresh at generation time, or null
-  status: GenerationStatus!                                           # OK | ERROR | ABORTED
+  status: GenerationStatus!                                  # PENDING | OK | ERROR | ABORTED
 }
-enum GenerationStatus { OK ERROR ABORTED }
+enum GenerationStatus { PENDING OK ERROR ABORTED }   # PENDING: admitted, not closed yet (SUP-423)
 input GenerationFilter { from: DateTime, to: DateTime, modelIds: [ID!], apiKeyIds: [ID!], status: GenerationStatus }
 extend type Query { generations(workspaceId: ID!, filter: GenerationFilter, first: Int = 50, after: String): GenerationConnection! }
 

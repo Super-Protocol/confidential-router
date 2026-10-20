@@ -4,6 +4,7 @@ import { saltedHash } from '../../common/salted-hash.js';
 import { routerConfig } from '../../config.js';
 import type { EvidenceCoverage } from '../../metering/evidence-coverage.service.js';
 import { EvidenceCoverageService } from '../../metering/evidence-coverage.service.js';
+import type { AdmittedGeneration } from '../../metering/metering.service.js';
 import { MeteringService } from '../../metering/metering.service.js';
 import { computeCostMicros, tokensPerSecond } from '../../metering/pricing.js';
 import { generationId } from '../../metering/ulid.js';
@@ -20,9 +21,18 @@ export interface GenerationStart {
 /**
  * Opens and closes the metering record around one request.
  *
- * `begin` runs before anything is forwarded, because the evidence coverage that
- * belongs on the row is the one that was current *then* — resolving it
- * afterwards would attribute a later snapshot to an earlier generation.
+ * Three steps, in this order, and the order is the contract:
+ *
+ * 1. {@link prepare} mints the generation id and resolves the evidence coverage.
+ *    It runs before anything is forwarded, because the coverage that belongs on
+ *    the row is the one that was current *then* — resolving it afterwards would
+ *    attribute a later snapshot to an earlier generation.
+ * 2. {@link open} writes the row, still before anything is forwarded. A request
+ *    the router does not survive is then a `pending` row rather than nothing at
+ *    all, which is what SUP-423 cost an account: sixty seconds of a failed
+ *    stream, charged correctly at zero and reported nowhere.
+ * 3. {@link finish} replaces it with the outcome, on every path including the
+ *    failures.
  */
 @Injectable()
 export class GenerationRecorder {
@@ -43,7 +53,7 @@ export class GenerationRecorder {
    * router verified that bundle itself — and no `evidence_snapshots` row, because
    * there is none to point at until the external evidence poll lands.
    */
-  async begin(model: RoutedModel): Promise<GenerationStart> {
+  async prepare(model: RoutedModel): Promise<GenerationStart> {
     if (model.external) {
       return { id: generationId(), coverage: null, evidenceDigest: model.external.evidenceDigestSeen };
     }
@@ -51,10 +61,42 @@ export class GenerationRecorder {
     return { id: generationId(), coverage, evidenceDigest: coverage?.evidenceDigest ?? null };
   }
 
+  /**
+   * The write-ahead row for an admitted request.
+   *
+   * Awaited rather than fired and forgotten: the window this closes is the one
+   * between admission and the response, so a row that lands after the request
+   * has already died would close nothing. The write is one `INSERT` on the hot
+   * path, and `MeteringService.open` swallows its own failures, so the cost of
+   * being wrong about the database is latency, never a refused completion.
+   */
+  async open(context: GatewayContext): Promise<void> {
+    await this.metering.open(this.admittedOf(context));
+  }
+
   async finish(context: GatewayContext, outcome: GenerationOutcome): Promise<void> {
     const latencyMs = Date.now() - context.startedAt;
     const generationMs = outcome.timeToFirstTokenMs === null ? latencyMs : latencyMs - outcome.timeToFirstTokenMs;
-    await this.metering.record({
+    await this.metering.close({
+      ...this.admittedOf(context),
+      promptTokens: outcome.promptTokens,
+      completionTokens: outcome.completionTokens,
+      costMicros: computeCostMicros(outcome, context.model),
+      status: outcome.status,
+      errorCode: outcome.errorCode,
+      finishReason: outcome.finishReason,
+      latencyMs,
+      timeToFirstTokenMs: outcome.timeToFirstTokenMs,
+      tokensPerSecond: tokensPerSecond(outcome.completionTokens, generationMs),
+    });
+  }
+
+  /**
+   * The half of the row that is settled at admission, built the same way for
+   * both writes so `open` and `close` cannot describe different requests.
+   */
+  private admittedOf(context: GatewayContext): AdmittedGeneration {
+    return {
       id: context.generationId,
       workspaceId: context.auth.workspace.id,
       apiKeyId: context.auth.key.id,
@@ -67,22 +109,13 @@ export class GenerationRecorder {
       externalEndpointId: context.model.external ? context.model.endpoint.id : null,
       evidenceSnapshotId: context.coverage?.snapshotId ?? null,
       evidenceDigest: context.evidenceDigest,
-      promptTokens: outcome.promptTokens,
-      completionTokens: outcome.completionTokens,
-      costMicros: computeCostMicros(outcome, context.model),
       promptPer1mMicros: context.model.promptPer1mMicros,
       completionPer1mMicros: context.model.completionPer1mMicros,
       streamed: context.stream,
-      status: outcome.status,
-      errorCode: outcome.errorCode,
-      finishReason: outcome.finishReason,
-      latencyMs,
-      timeToFirstTokenMs: outcome.timeToFirstTokenMs,
-      tokensPerSecond: tokensPerSecond(outcome.completionTokens, generationMs),
       requestId: context.requestId,
       clientIpHash: this.hashClientIp(context.clientIp),
       createdAt: new Date(context.startedAt),
-    });
+    };
   }
 
   /**

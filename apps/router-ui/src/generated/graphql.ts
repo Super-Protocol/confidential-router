@@ -145,7 +145,8 @@ export type GenerationSortField =
 export type GenerationStatus =
   | 'ABORTED'
   | 'ERROR'
-  | 'OK';
+  | 'OK'
+  | 'PENDING';
 
 /** Where an invitation code stands. A withdrawn code reads as withdrawn whatever else is true of it. */
 export type InviteCodeStatus =

@@ -22,7 +22,9 @@ type ExternalModel = RoutedModel & { external: ExternalRoute };
  * Written as one readable sequence on purpose — the order of admission checks,
  * the point at which a generation id is minted, and the guarantee that every
  * forwarded request produces exactly one metering row are the properties this
- * file exists to make obvious.
+ * file exists to make obvious. That row is opened *before* the forward and
+ * closed after it, so "exactly one" holds even for the requests this process
+ * does not live to finish (SUP-423).
  *
  * There are two forward targets and exactly one seam between them (ADR-008 §4):
  * LiteLLM, in this cluster space, and the attesting egress sidecar for a model in
@@ -49,7 +51,7 @@ export class GatewayService {
     const model = this.policy.resolve(kind, body, auth.key);
     const rateLimitHeaders = await this.policy.admit(auth);
 
-    const start = await this.recorder.begin(model);
+    const start = await this.recorder.prepare(model);
     const stream = kind !== 'embeddings' && body.stream === true;
     const clientWantsUsage = usageRequested(body);
 
@@ -68,6 +70,13 @@ export class GatewayService {
       clientIp: request.ip ?? null,
       startedAt: Date.now(),
     };
+
+    // The row before the request, not after it. Everything below this line can
+    // end without reaching `finish` — the upstream can hang until something in
+    // front of this process gives up on it, and the process itself can be
+    // restarted or evicted mid-generation. Before SUP-423 all of those were
+    // indistinguishable from a request that was never made.
+    await this.recorder.open(context);
 
     for (const [header, value] of Object.entries(rateLimitHeaders)) {
       response.setHeader(header, value);
@@ -121,8 +130,15 @@ export class GatewayService {
         })
       : await this.completeOnce(context, upstreamResponse, response);
 
-    await this.policy.settle(auth.key, outcome.promptTokens + outcome.completionTokens);
+    // The meter first, the rate limiter second. `settle` writes to a store that
+    // can be unavailable, and a throw there used to lose the row of a request
+    // that had already been served in full; now it would leave a `pending` row
+    // for the sweeper to label `no_response` — which is a false statement about
+    // a request the client got every token of, and a worse one than the silence
+    // SUP-423 is about. `finish` swallows its own failures, so the settle below
+    // still runs whatever the meter did.
     await this.recorder.finish(context, outcome);
+    await this.policy.settle(auth.key, outcome.promptTokens + outcome.completionTokens);
   }
 
   /**
@@ -191,7 +207,7 @@ export class GatewayService {
   }
 
   /**
-   * Meters a request that never produced tokens, then hands the error back to
+   * Closes a request that never produced tokens, then hands the error back to
    * be thrown. A failed generation still belongs in the Logs screen — with
    * `status: error` and a cost of zero.
    */

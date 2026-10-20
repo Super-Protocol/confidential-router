@@ -146,6 +146,22 @@ const EvidenceSchema = z
   })
   .prefault({});
 
+/**
+ * The meter's one tunable: how long a generation may stay `pending` before
+ * `IncompleteGenerationSweeper` calls it `no_response`.
+ *
+ * Fifteen minutes is deliberately far longer than any generation this router
+ * serves. The cost of being late is that a request the process died under takes
+ * that long to turn from `pending` into an error row; the cost of being early is
+ * marking a live stream failed, which is the mistake SUP-339 was about in a
+ * different place. Set it to `0` to disable the sweep.
+ */
+const MeteringSchema = z
+  .strictObject({
+    incompleteAfter: durationMs('15m'),
+  })
+  .prefault({});
+
 const RateLimitsSchema = z
   .strictObject({
     requestsPerMinute: integerish().pipe(z.number().int().positive()).prefault(600),
@@ -756,6 +772,7 @@ export const RouterConfigSchema = z.strictObject({
   models: z.array(ModelSchema).prefault([]),
   evidence: EvidenceSchema,
   externalEndpoints: ExternalEndpointsSchema,
+  metering: MeteringSchema,
   rateLimits: RateLimitsSchema,
   auth: AuthSchema,
   mail: MailSchema,
