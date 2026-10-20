@@ -67,13 +67,21 @@ export class InviteAdminResolver {
     return { totalCount: page.totalCount, nodes: page.nodes.map((code) => this.codeOf(code)) };
   }
 
+  /**
+   * Also the deployment's only answer to "which accounts here hold a live key"
+   * (SUP-454) — see `AdminSignUp.apiKeys` and the `holdsLiveApiKey` filter, whose
+   * `totalCount` sizes a rebuild. Counts only; nothing here can disclose a key.
+   */
   @Query(() => AdminSignUpPageModel, {
-    description: 'Accounts, newest first, with how each came to exist. Restricted to auth.adminEmails.',
+    description:
+      'Accounts, newest first, with how each came to exist and how many API keys it holds. ' +
+      'Restricted to auth.adminEmails.',
   })
   async adminSignUps(@Args() args: AdminSignUpsArgs): Promise<AdminSignUpPageModel> {
     const page = await this.admin.signUps(
       {
         origin: args.origin ? (args.origin.toLowerCase() as SignUpOrigin) : null,
+        holdsLiveApiKey: args.holdsLiveApiKey ?? null,
         offset: args.offset,
         limit: args.limit,
       },
@@ -185,5 +193,6 @@ function signUpOf(signUp: AdminSignUp): AdminSignUpModel {
     inviteCode: signUp.invite ? formatInviteCode(signUp.invite.code) : null,
     campaign: signUp.invite?.campaign ?? null,
     redeemedAt: signUp.invite?.redeemedAt ?? null,
+    apiKeys: signUp.apiKeys,
   };
 }

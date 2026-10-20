@@ -216,10 +216,12 @@ type AdminInviteCode {
 type AdminSignUp {
   userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
   inviteCodeId: ID  inviteCode: String  campaign: String  redeemedAt: DateTime   # set exactly when origin = INVITE
+  apiKeys: AccountApiKeys!              # SUP-454; person-created keys, over every workspace the account is in
 }
+type AccountApiKeys { total: Int!  live: Int!  lastUsedAt: DateTime }
 type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: [InviteCampaignStats!]! }
 # Query.adminInviteCodes(campaign, status, offset = 0, limit = 50 ≤ 200): AdminInviteCodePage!   { totalCount, nodes }
-# Query.adminSignUps(origin, offset = 0, limit = 50 ≤ 200): AdminSignUpPage!
+# Query.adminSignUps(origin, holdsLiveApiKey, offset = 0, limit = 50 ≤ 200): AdminSignUpPage!
 # Query.inviteStatistics(days = 30 ≤ 366): InviteStatistics!    # daily is every UTC day of the window, zeros included
 # Mutation.issueInviteCodes(input: { count ≤ 1000, grantMicros ≤ $10,000, campaign (slug), maxRedemptions = 1,
 #   expiresAt?, note? }): IssuedInviteCodes!                     # { campaign, grantMicros, expiresAt, codes { id code url } }
@@ -229,6 +231,40 @@ type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: 
 # account, under `auth.bootstrapEmail`, so it is the earliest account iff it has
 # that address. Codes are answered in full (issuing them is the section's job);
 # the console masks them until revealed, and no resolver logs one.
+
+# ---------- who holds a credential (SUP-454) — session + admin ----------
+
+type ApiKeyPopulation {
+  keys: Int!  liveKeys: Int!  accountsHoldingLiveKey: Int!  liveKeysWithoutAccount: Int!
+}
+# Query.adminApiKeyPopulation: ApiKeyPopulation!   # takes no arguments; deployment-wide
+#
+# The operator-side read of API-key population. `apiKeys(workspaceId)` calls
+# `requireMembership`, so an administrator asking about a workspace they are not a
+# member of gets 403 — which is why the SUP-434 rebuild voided eight accounts'
+# keys and stayed invisible for a week, with the credit ledger the only trace. Who
+# holds what is `AdminSignUp.apiKeys` on the account list; this is the total those
+# pages cannot be summed into, because a key in a shared workspace belongs to every
+# member of it and one in a memberless workspace to no account at all —
+# `liveKeysWithoutAccount` is that remainder, and normally zero.
+#
+# "Live" is "would authenticate right now": not revoked, and not past `expiresAt`
+# — the two conditions `/v1` refuses on. Deliberately stricter than
+# `ApiKeyService.countLive`, which looks only at `revokedAt` because the
+# `api_key_created` event asks how many keys a workspace has made.
+#
+# Every count here is of keys a *person* created: `purpose IS NULL`. The console's
+# own chat credential is left out, so `keys` is not the row count of `api_keys`
+# and deliberately differs from the export bundle's `counts.apiKeys` (SUP-445),
+# which carries what is in the table because that is what it has to restore.
+# Nobody re-issues a chat key — the Chat screen rotates its own — and counting it
+# would put a member who once opened Chat on the announce list, and leave every
+# chat session the deployment ever served in `total` for good.
+#
+# Counts and one timestamp, never key material — not a secret, not a hash, not
+# even a prefix: the questions are "how many" and "who must re-issue", and neither
+# needs anything that identifies a credential. `adminSignUps(holdsLiveApiKey: true)`
+# answers both at once: the page names who, and its `totalCount` is the size.
 
 # ---------- the second grant, for feedback ----------
 

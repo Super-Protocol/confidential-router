@@ -18,7 +18,8 @@ import { SignUpsTab } from './sign-ups-tab';
 
 const TITLE = 'Invitations';
 const DESCRIPTION =
-  'Issue invitation codes, see which account came from which code, and how sign-ups are going. Numbers come from this deployment’s own database.';
+  'Issue invitation codes, see which account came from which code and which accounts hold an API key, and how sign-ups are ' +
+  'going. Numbers come from this deployment’s own database.';
 
 /**
  * The global admin's Invitations section (SUP-268).
