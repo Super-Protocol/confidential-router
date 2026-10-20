@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 
 	"io"
 	"math/big"
@@ -272,6 +273,12 @@ type fakeUpstream struct {
 	// handshaken yet when http.Server hands it over.
 	sni atomic.Pointer[string]
 
+	// blocked, when set, makes every dial fail the way an unreachable upstream
+	// does. Both the evidence fetch and the proxied traffic go through dial, so
+	// setting it is what a firewall appearing between the gatekeeper and the
+	// router looks like from in here.
+	blocked atomic.Bool
+
 	// release gates the event stream between chunks, which is how a test proves
 	// the proxy is not buffering: the second chunk is not written until the
 	// first has been read through the proxy.
@@ -331,8 +338,15 @@ func (u *fakeUpstream) addr() string { return u.listener.Addr().String() }
 
 // dial is proxy.Options.Dial: every upstream address resolves to this server.
 func (u *fakeUpstream) dial(ctx context.Context, network, _ string) (net.Conn, error) {
+	if u.blocked.Load() {
+		return nil, &net.OpError{Op: "dial", Net: network, Addr: u.listener.Addr(),
+			Err: errors.New("connect: connection refused")}
+	}
 	return (&net.Dialer{}).DialContext(ctx, network, u.addr())
 }
+
+// block cuts the upstream off, or restores it.
+func (u *fakeUpstream) block(on bool) { u.blocked.Store(on) }
 
 // serverName is the SNI of the most recent handshake.
 func (u *fakeUpstream) serverName() string {
@@ -340,6 +354,20 @@ func (u *fakeUpstream) serverName() string {
 		return *name
 	}
 	return ""
+}
+
+// evidenceFetches counts the verifier's own requests, which is how a test
+// proves a burst of refused traffic did not become a burst of handshakes.
+func (u *fakeUpstream) evidenceFetches() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	count := 0
+	for _, r := range u.requests {
+		if r.Path == attestation.EvidencePath {
+			count++
+		}
+	}
+	return count
 }
 
 func (u *fakeUpstream) setCertificate(cert tls.Certificate) { u.cert.Store(&cert) }
@@ -459,13 +487,43 @@ type endpointSpec struct {
 	initialTimeout   string
 }
 
+// tuningSpec is a `defaults:` block: one tuning inherited by every endpoint,
+// which is the shape router-api renders for the egress sidecar (one `defaults:`
+// for the whole file, per-endpoint entries carrying only `failMode`).
+type tuningSpec struct {
+	failMode         string
+	reattestInterval string
+	verdictCacheTTL  string
+	maxBundleAge     string
+}
+
 // configSpec is the whole config file a test wants written.
 type configSpec struct {
-	roots        map[string]string
+	roots map[string]string
+	// defaults is written as the file's `defaults:` block; endpoints[] values
+	// still win over it, exactly as the three-level precedence says.
+	defaults     tuningSpec
 	endpoints    []endpointSpec
 	adminSocket  string
 	auditFile    string
 	maxBundleAge string
+}
+
+// renderTuning writes the tuning keys that are set, in schema order, at the
+// given indent.
+func renderTuning(spec tuningSpec, indent string) string {
+	var b strings.Builder
+	for _, kv := range []struct{ key, value string }{
+		{"failMode", spec.failMode},
+		{"reattestInterval", spec.reattestInterval},
+		{"verdictCacheTtl", spec.verdictCacheTTL},
+		{"maxBundleAge", spec.maxBundleAge},
+	} {
+		if kv.value != "" {
+			b.WriteString(indent + kv.key + ": " + kv.value + "\n")
+		}
+	}
+	return b.String()
 }
 
 func writeConfig(t *testing.T, dir string, spec configSpec) *config.Config {
@@ -479,7 +537,10 @@ func writeConfig(t *testing.T, dir string, spec configSpec) *config.Config {
 		}
 	}
 	if spec.maxBundleAge != "" {
-		b.WriteString("defaults:\n  maxBundleAge: " + spec.maxBundleAge + "\n")
+		spec.defaults.maxBundleAge = spec.maxBundleAge
+	}
+	if defaults := renderTuning(spec.defaults, "  "); defaults != "" {
+		b.WriteString("defaults:\n" + defaults)
 	}
 	b.WriteString("endpoints:\n")
 	for _, ep := range spec.endpoints {
@@ -490,15 +551,12 @@ func writeConfig(t *testing.T, dir string, spec configSpec) *config.Config {
 		for _, pin := range ep.pins {
 			b.WriteString("      - " + pin + "\n")
 		}
-		for key, value := range map[string]string{
-			"failMode":         ep.failMode,
-			"reattestInterval": ep.reattestInterval,
-			"verdictCacheTtl":  ep.verdictCacheTTL,
-			"initialTimeout":   ep.initialTimeout,
-		} {
-			if value != "" {
-				b.WriteString("    " + key + ": " + value + "\n")
-			}
+		b.WriteString(renderTuning(tuningSpec{
+			failMode: ep.failMode, reattestInterval: ep.reattestInterval,
+			verdictCacheTTL: ep.verdictCacheTTL,
+		}, "    "))
+		if ep.initialTimeout != "" {
+			b.WriteString("    initialTimeout: " + ep.initialTimeout + "\n")
 		}
 	}
 	if spec.adminSocket != "" {
@@ -540,11 +598,22 @@ func verifierFor(u *fakeUpstream, now func() time.Time) proxy.VerifierFunc {
 // every endpoint up, with the real verifier behind it.
 func startSupervisor(t *testing.T, cfg *config.Config, u *fakeUpstream, now func() time.Time) *proxy.Supervisor {
 	t.Helper()
+	return startSupervisorTuned(t, cfg, u, now, 0)
+}
+
+// startSupervisorTuned is startSupervisor with the denied-endpoint backoff
+// fixed at denyBackoff. A test that counts evidence fetches sets it long, so
+// that the only checks in its window are the ones it caused.
+func startSupervisorTuned(t *testing.T, cfg *config.Config, u *fakeUpstream,
+	now func() time.Time, denyBackoff time.Duration,
+) *proxy.Supervisor {
+	t.Helper()
 	opts := proxy.Options{
 		Config:          cfg,
 		Dial:            u.dial,
 		Now:             now,
 		PublishInterval: 50 * time.Millisecond,
+		DenyBackoff:     denyBackoff,
 		Verifier:        verifierFor(u, now),
 	}
 	supervisor, err := proxy.New(t.Context(), opts)
@@ -667,8 +736,9 @@ func decodeDenial(t *testing.T, body string) struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
-	Stage  string `json:"stage"`
-	Reason string `json:"reason"`
+	Stage     string `json:"stage"`
+	Reason    string `json:"reason"`
+	CheckedAt string `json:"checkedAt"`
 } {
 	t.Helper()
 	var out struct {
@@ -677,8 +747,9 @@ func decodeDenial(t *testing.T, body string) struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
-		Stage  string `json:"stage"`
-		Reason string `json:"reason"`
+		Stage     string `json:"stage"`
+		Reason    string `json:"reason"`
+		CheckedAt string `json:"checkedAt"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("the denial body is not JSON (%v): %s", err, body)

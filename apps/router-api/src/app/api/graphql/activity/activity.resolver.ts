@@ -171,6 +171,7 @@ function totalsModel(totals: ActivityTotals) {
   return {
     requests: totals.requests,
     coveredRequests: totals.coveredRequests,
+    coverableRequests: totals.coverableRequests,
     promptTokens: totals.promptTokens,
     completionTokens: totals.completionTokens,
     spendMicros: String(totals.spendMicros),

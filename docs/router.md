@@ -176,6 +176,13 @@ What the console gets out of it:
 - **evidence coverage** — of the generations served in a window, how many were
   served while a fresh bundle was published for the endpoint that served them.
   A fact about publication. Not a verification rate, and the console says so.
+  Only this deployment's own endpoints can answer it: a generation routed to an
+  external endpoint has no bundle of ours, so it is outside the ratio in both
+  numerator and denominator (ADR-008 §4), and a window of nothing but external
+  traffic has no coverage figure at all — the tile says so instead of printing
+  `0%`, which would report the product's own promise as never kept (SUP-421).
+  Those generations are covered by the other vocabulary, *verified by this
+  router*.
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
@@ -278,7 +285,10 @@ auth:
 
 1. `POST /auth/email-otp/send-verification-otp {"email": …, "type": "sign-in"}`
    answers `200 {"success": true}` for every address, account or not, and mails
-   it a six-digit code. Only a digest of the code is stored.
+   it a six-digit code. Only a digest of the code is stored. On an
+   [invite-only](#invite-only-registration) deployment the request may also
+   carry `inviteCode`, and for an address with no account it has to — see
+   [what it will not mail](#what-an-invite-only-deployment-will-not-mail).
 2. `POST /auth/sign-in/email-otp {"email": …, "otp": …}` answers with the
    session cookie. The code is consumed: a second use, a wrong code and an
    expired one are all a 400 (`INVALID_OTP`, `OTP_EXPIRED`), and after `attempts`
@@ -288,17 +298,18 @@ auth:
 its code comes back; the second request may carry `name`, and `inviteCode` for
 [an invitation](#invitation-codes). On an
 [invite-only](#invite-only-registration) deployment that is the whole rule: an
-unknown address needs a valid, unredeemed invitation *and* the code, in that one
-request, and an existing account needs only the code. A refused sign-up has
-still spent its code, so the console checks the invitation before it asks for
-one.
+unknown address needs a valid, unredeemed invitation *and* the code — on **both**
+requests, because the first will not mail a code without one — and an existing
+account needs only the code. A refused sign-up has still spent its code, so the
+console checks the invitation before it asks for one.
 
 **What it does not tell anyone.** The send route answers identically for every
 address and is rate-limited per source (429). One recipient is mailed at most
 `mailsPerAddressPerHour` codes — past that the answer is the same 200 and
 nothing is sent, so the limit cannot be used to learn or to silence anything. A
 send the mail server refused is also a 200: it shows in the log and in
-`/health`, not to the requester.
+`/health`, not to the requester. A send an invite-only deployment withheld is
+the same 200 again, for the same reason.
 
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and
@@ -634,6 +645,58 @@ in to an existing account, which is untouched, and `POST /auth/bootstrap`, which
 is the operator claiming their own deployment and could never have been mailed a
 code.
 
+#### What an invite-only deployment will not mail
+
+The gate holds the account. It does not, by itself, hold the **mail** — and the
+two requests that send some are one step in front of it, so until SUP-410 a
+stranger could post any address to `/auth/email-otp/send-verification-otp` (or
+to `/auth/sign-in/magic-link`) and have a sign-in credential delivered to it on
+a deployment that then refused the account one request later. Nothing was
+created; the mail had gone out, which made the deployment's verified sender an
+open relay for whoever found the hostname.
+
+So on an invite-only deployment both mail steps ask the same question the insert
+asks, before they send:
+
+- the address **has an account** → a sign-in, mailed as always. The invitation
+  requirement is about accounts coming into existence and has nothing to say
+  about this request;
+- it **does not** → the mail goes out only while the request carries a code the
+  gate would admit: `inviteCode` in the body of the code request, or `invite` on
+  the `callbackURL` of the magic-link request, which is where the console puts
+  it on both.
+
+**Asked at the mail, not in front of the route.** The check lives in the one
+statement that hands a credential to the outside world — Better Auth's
+`sendVerificationOTP` / `sendMagicLink` callback — rather than in a hook that
+answers the request early. A hook would have to say which requests it covers,
+and every answer to that is a list: list the code `type`s that can mail and an
+upstream default quietly adds one outside the list; list the paths and the one
+request that slips the list is answered by *us* instead of by the route, so our
+200 for an unknown address differs from the route's 400 for a known one — an
+account-existence oracle inside the fix meant to prevent one. From the mail
+callback there is no list: every send of every type on both routes passes
+through it. One `before` hook remains, and it decides nothing — it moves an
+`inviteCode` from the body, which the code route's schema is about to drop, into
+the query, which it does not validate.
+
+A withheld send is therefore **indistinguishable from a sent one**: the route
+runs to completion and answers exactly as it always did — `200 {"success":
+true}`, or `{"status": true}` for the link, or whatever 400 the body earned —
+and the only difference is that nothing left the process. The reason is in the
+log (`Sign-up mail withheld: …`) and nowhere else. A sign-in code is still
+*generated* and stored hashed for a withheld send, as it is for every other type
+the route accepts; it was never delivered, and the sign-up it would belong to is
+refused by the gate in any case.
+
+One consequence worth knowing: an unusable invitation can no longer buy a mailed
+code, so on this deployment the typed refusals below are reached only by a
+sign-up that was actually attempted — an OAuth callback, or a code that went bad
+between the mail and its use. The console therefore holds its submit while the
+invitation has not passed the live lookup, and says both of the things an
+`unavailable` answer can mean rather than guessing one (which was the point of
+SUP-176; what it no longer does is promise that submitting will reveal which).
+
 The refusal is typed, because "you need an invitation" and "yours has been used"
 send a person to two different places:
 
@@ -658,17 +721,17 @@ copy. `signInOptions { inviteRequired }` reports the setting, so the sign-up scr
 says "registration is by invitation", keeps the code input open, and renders each
 refusal as its own alert.
 
-**The typed refusal has to be reachable from a browser** (SUP-176). The screen's
-pre-check calls the public lookup, which answers one `unavailable` for a spent
-code and for one that was never issued alike — so while the console held the
-submit button behind that answer, the two refusals that read differently were
-readable only by `curl`, and the visitor whose link really had been spent got a
-sentence that opened by suggesting a typo. So the button is held only while the
-lookup has *no* answer — in flight, or unreachable — and a settled `unavailable`
-submits: the gate runs before the insert, so the 403 costs nothing and is the one
-place the distinction exists. It is not a new oracle either, because that POST
-already answers the three codes to any caller, at the price of a mailed code
-per guess; the free `GET /v1/invites/:code` stays collapsed.
+**What the console says when it cannot know** (SUP-176, as SUP-410 left it). The
+screen's pre-check calls the public lookup, which answers one `unavailable` for a
+spent code and for one that was never issued alike, and the copy it renders used
+to fill that gap with "it may already have been claimed" — which told the one
+visitor whose link really had been spent that they had probably mistyped it. The
+sentence now names both outcomes and neither first. For a while the screen also
+submitted an `unavailable` code, because the router's typed 403 was the only
+place the two came apart; a submit needs a mailed code, an invite-only deployment
+no longer mails one for a code it would refuse, so the button is held in every
+state but a confirmed invitation and the free `GET /v1/invites/:code` stays
+collapsed.
 
 **One window the check does not cover.** The pre-check is a read, and the seat is
 still claimed by the atomic `UPDATE` inside the grant that follows the insert. It

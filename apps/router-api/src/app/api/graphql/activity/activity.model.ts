@@ -15,12 +15,19 @@ registerEnumType(BucketEnum, {
  *
  * `evidenceCoverage` is the share of requests served while the endpoint had
  * published evidence — a fact about publication, never a verdict about validity
- * (ADR-002). Its denominator is the requests served by *this deployment's*
- * endpoints, not `requests`: a generation routed to an external endpoint has no
- * published bundle of ours to have been covered by, and counting one as
- * uncovered would report the single case where this router verified the upstream
- * itself as the least covered (ADR-008 §4). `requests`, the token counts and
- * `spendMicros` include every generation, external ones included.
+ * (ADR-002). Its denominator is `coverableRequests`, the requests served by
+ * *this deployment's* endpoints, and not `requests`: a generation routed to an
+ * external endpoint has no published bundle of ours to have been covered by,
+ * and counting one as uncovered would report the single case where this router
+ * verified the upstream itself as the least covered (ADR-008 §4). `requests`,
+ * the token counts and `spendMicros` include every generation, external ones
+ * included.
+ *
+ * Both halves of that fraction are therefore fields: a client holding only
+ * `coveredRequests` and `requests` can phrase "0 of 34 covered" over a window
+ * whose 34 generations were every one of them external — the ratio's own
+ * denominator was 0 (SUP-421). Which is also why the ratio is nullable: no
+ * coverable request means no ratio, and `0` would read as a missing proof.
  *
  * Money is micro-USD as a string, so no client rounds it.
  */
@@ -32,6 +39,14 @@ abstract class ActivityTotalsModel {
   @Field(() => Int, { description: 'Of `requests`, how many the endpoint had published evidence for.' })
   coveredRequests!: number;
 
+  @Field(() => Int, {
+    description:
+      'Of `requests`, how many this deployment’s own endpoints served — the denominator of ' +
+      '`evidenceCoverage`. The difference from `requests` went to external endpoints, which ' +
+      'publish no bundle of ours and are reported as “verified by this router” instead.',
+  })
+  coverableRequests!: number;
+
   @Field(() => Int)
   promptTokens!: number;
 
@@ -42,11 +57,13 @@ abstract class ActivityTotalsModel {
   spendMicros!: string;
 
   @Field(() => Float, {
+    nullable: true,
     description:
-      '0–1, over the requests this deployment’s own endpoints served. Zero when there were none. ' +
-      'Generations routed to an external endpoint are outside this ratio, not counted as uncovered.',
+      '0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been ' +
+      'covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations ' +
+      'routed to an external endpoint are outside this ratio, not counted as uncovered.',
   })
-  evidenceCoverage!: number;
+  evidenceCoverage!: number | null;
 }
 
 @ObjectType('ActivitySummary', { description: 'Totals for a period.' })

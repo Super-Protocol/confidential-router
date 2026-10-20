@@ -15,10 +15,18 @@ export interface ActivityRange {
 export interface ActivityTotals {
   requests: number;
   coveredRequests: number;
+  /**
+   * Of `requests`, those that could have been covered at all — the denominator
+   * of `evidenceCoverage`, which is not `requests`. Reported alongside the ratio
+   * because a consumer that pairs `coveredRequests` with `requests` states a
+   * fraction neither number is half of (SUP-421).
+   */
+  coverableRequests: number;
   promptTokens: number;
   completionTokens: number;
   spendMicros: number;
-  evidenceCoverage: number;
+  /** Null when `coverableRequests` is 0: no ratio exists, which is not 0%. */
+  evidenceCoverage: number | null;
 }
 
 export interface ActivitySummary extends ActivityTotals {
@@ -226,16 +234,18 @@ const TOTALS_SELECTS = [
 const EMPTY_TOTALS: ActivityTotals = {
   requests: 0,
   coveredRequests: 0,
+  coverableRequests: 0,
   promptTokens: 0,
   completionTokens: 0,
   spendMicros: 0,
-  evidenceCoverage: 0,
+  evidenceCoverage: null,
 };
 
 function totalsOf(row: Record<string, unknown>): ActivityTotals {
   return {
     requests: toNumber(row.requests),
     coveredRequests: toNumber(row.coveredRequests),
+    coverableRequests: toNumber(row.coverableRequests),
     promptTokens: toNumber(row.promptTokens),
     completionTokens: toNumber(row.completionTokens),
     spendMicros: toNumber(row.spendMicros),

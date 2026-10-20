@@ -36,8 +36,16 @@ export function average(sum: unknown, samples: unknown): number | null {
   return count === 0 ? null : toNumber(sum) / count;
 }
 
-/** Share of requests served while the endpoint had published evidence. */
-export function coverage(covered: unknown, requests: unknown): number {
+/**
+ * Share of requests served while the endpoint had published evidence.
+ *
+ * Null when the denominator is empty — no request in the window could have been
+ * covered — because a ratio over nothing has no value, and the one number that
+ * fits in a `number` here is `0`, which on a screen reads as "the evidence was
+ * missing for every request you made" (SUP-421). The absent ratio travels as
+ * absent all the way to the tile, which says why instead of printing 0%.
+ */
+export function coverage(covered: unknown, requests: unknown): number | null {
   const total = toNumber(requests);
-  return total === 0 ? 0 : toNumber(covered) / total;
+  return total === 0 ? null : toNumber(covered) / total;
 }

@@ -7,6 +7,7 @@ import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
 import * as React from 'react';
 import { graphql } from '../../generated';
+import { readCoverage } from '../../lib/evidence-coverage';
 import { formatUsd, microsToUsd } from '../../lib/format';
 import { formatCount, formatMs, formatRatio, formatTokensPerSecond } from '../../lib/metrics';
 import {
@@ -38,6 +39,7 @@ export const ACTIVITY_QUERY = graphql(`
       promptTokens
       completionTokens
       coveredRequests
+      coverableRequests
       evidenceCoverage
       avgTimeToFirstTokenMs
       avgTokensPerSecond
@@ -74,6 +76,8 @@ export const ACTIVITY_USAGE_BY_MODEL_QUERY = graphql(`
       promptTokens
       completionTokens
       spendMicros
+      coveredRequests
+      coverableRequests
       evidenceCoverage
     }
   }
@@ -189,6 +193,10 @@ export function ActivityScreen() {
   const series = activity.data?.activitySeries ?? [];
   const pending = sessionLoading || activity.loading || summary === undefined;
 
+  // Null only while the tiles are skeletons; the branch that reads it has
+  // already established `summary`.
+  const coverage = summary === undefined ? null : readCoverage(summary);
+
   const points = series.map((point) => ({
     // The hourly label repeats across a rolling 24-hour window; the bucket start
     // is what actually identifies a column.
@@ -233,10 +241,13 @@ export function ActivityScreen() {
             />
             <StatTile
               label="Evidence coverage"
-              value={formatRatio(summary.evidenceCoverage)}
-              hint={`${formatCount(summary.coveredRequests)} of ${formatCount(summary.requests)} served with published evidence`}
+              value={coverage?.ratio == null ? '—' : formatRatio(coverage.ratio)}
+              hint={coverage?.headline}
               accent="success"
-              series={series.map((point) => point.evidenceCoverage)}
+              // Nulls travel as nulls: a bucket whose whole traffic was
+              // external has no ratio, and `Sparkline` breaks the line there
+              // rather than drawing a dip the hour never had.
+              series={series.map((point) => point.evidenceCoverage ?? null)}
             />
           </>
         )}

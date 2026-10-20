@@ -319,6 +319,14 @@ const MailSchema = z
     /** The display name in front of `from`. */
     fromName: z.string().trim().min(1).max(100).prefault('Confidential Router'),
     /**
+     * Where a reply goes (SUP-409). `from` is a no-reply address on a domain
+     * that need not receive mail at all, so without this a reply — or a bounce
+     * a human sends back by hand — lands nowhere. Set it to a mailbox someone
+     * reads; unset leaves the message with no `Reply-To`, which is what every
+     * deployment before this had.
+     */
+    replyTo: z.email().optional(),
+    /**
      * The console's own origin, which every link in a mail points at. Defaults
      * to the first entry of `server.validClientOrigins` — the console a chart
      * renders there — so it only needs setting when that list says `*`.

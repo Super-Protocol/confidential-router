@@ -303,6 +303,13 @@ test.describe('Profile', () => {
       },
     ],
     signedResponseDays: [new Date().toISOString()],
+    heatmapTotals: {
+      __typename: 'ActivitySummary',
+      requests: 28,
+      coveredRequests: 28,
+      coverableRequests: 28,
+      evidenceCoverage: 1,
+    },
   };
 
   test('shows the account, its week of spend and the evidence heatmap', async ({ page, baseURL }) => {
@@ -314,6 +321,39 @@ test.describe('Profile', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Profile' })).toBeVisible();
     await expect(page.getByText('Llama 3.3 70B Instruct')).toBeVisible();
     await expect(page.getByRole('img', { name: /Days with published evidence/ })).toBeVisible();
+
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+
+  test('says why the heatmap is empty for a workspace served entirely by external endpoints', async ({
+    page,
+    baseURL,
+  }) => {
+    // SUP-421 on the Profile screen: six months of grey under a legend reading
+    // "No evidence", for an account whose every generation was attested by this
+    // router's own verdict.
+    await signIn(page, baseURL as string);
+    await mockConsole(page, {
+      Profile: () => ({
+        ...PROFILE,
+        signedResponseDays: [],
+        heatmapTotals: {
+          __typename: 'ActivitySummary',
+          requests: 34,
+          coveredRequests: 0,
+          coverableRequests: 0,
+          evidenceCoverage: null,
+        },
+      }),
+    });
+
+    await page.goto('/profile');
+
+    const card = page.getByText('Days with signed responses').locator('xpath=ancestor::*[@data-slot="card"][1]');
+    await expect(card).toContainText('coverage does not apply here');
+    await expect(card).toContainText('all 34 generations were served by external endpoints');
+    await expect(card).not.toContainText('Days covered');
+    await expect(page.getByRole('img', { name: /Days with published evidence/ })).toHaveCount(0);
 
     expect(await seriousViolations(page)).toEqual([]);
   });

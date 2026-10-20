@@ -39,8 +39,12 @@ describe('average', () => {
 });
 
 describe('coverage', () => {
-  it('is zero for a period with no requests, not a division by zero', () => {
-    expect(coverage(0, 0)).toBe(0);
+  it('is null when nothing could have been covered, not zero and not a division by zero', () => {
+    // SUP-421: zero here is a claim — "none of your requests was covered" — and
+    // the console printed it as exactly that for a window with no coverable
+    // request in it. The absence of a ratio has to stay an absence.
+    expect(coverage(0, 0)).toBeNull();
     expect(coverage('3', '4')).toBe(0.75);
+    expect(coverage(0, 4)).toBe(0);
   });
 });
