@@ -112,7 +112,19 @@ Invariants enforced in code and tests:
    `ApiKey`, `ChatThread`, `ChatMessage`, `Generation`, `EvidenceSnapshot`, `FeedbackSubmission`,
    `UserPreferences`, `ExternalEndpointEvent`, `ExternalEndpoint.apiKeyCiphertext` and every verdict
    column are left behind (`data-migration.e2e.spec.ts` asserts both the key names and that the stored
-   hashes, tokens and ciphertexts are absent from the bytes). The import is the one writer that sets
+   hashes, tokens and ciphertexts are absent from the bytes). Because `generations` is left behind,
+   **no exported or imported ledger row may name one** (SUP-446): `LedgerService.debitGeneration`
+   writes one `usage` entry per metered request, `reference` the generation id and `idempotencyKey`
+   `generation:<id>`, and carrying those as written leaves the importing deployment charging for
+   requests its Logs and Activity screens have no row for — $0.24 for 87 requests beside a log of 22,
+   as production did. `carryUsageForward` collapses them into one `usage` entry per workspace,
+   `reference: null` and `idempotencyKey` `carried-usage:<workspaceId>`, for exactly the same total:
+   `buildBundle` refuses to write a bundle that still holds one, and the import collapses any it is
+   given, so a file written by an older build is repaired rather than refused. There is at most one
+   carried entry per workspace ever: a deployment that was itself imported into already has one, and
+   migrating it on folds that one into the new entry rather than writing a second row under the same
+   id. The import is the one
+   writer that sets
    `Workspace.balanceMicros` absolutely — to the sum of the ledger it has just inserted, inside the
    same transaction — and the one path that creates a `user` row without `databaseHooks`, so an
    imported account is not gated, re-provisioned, re-granted or reported as a sign-up.
