@@ -440,6 +440,40 @@ describe('an external endpoint with no verdict admitting it', () => {
   });
 });
 
+/**
+ * SUP-448. The distinction this suite exists to keep — a refusal by the
+ * gatekeeper versus a failure of the upstream — has a third case, and the egress
+ * leg used to collapse it into the second: an admitted, healthy endpoint whose
+ * *model server* read the request and called it invalid.
+ */
+describe('an admitted external endpoint whose upstream calls the request invalid', () => {
+  it('answers 4xx with the field named, not a 502 that invites a retry', async () => {
+    const endpoint = await register('picky-cloud', { behaviour: 'reject-request' });
+
+    const response = await chat(endpoint.modelId).expect(400);
+
+    expect(response.body.error).toMatchObject({
+      type: 'invalid_request_error',
+      code: 'upstream_invalid_request',
+      param: 'messages[8].tool_calls[0].function.arguments',
+    });
+    expect(response.body.error.message).toContain('tool_calls[0].function.arguments');
+    // And emphatically not the gatekeeper's vocabulary: nothing here is a denial.
+    expect(response.body.error.type).not.toBe('gatekeeper_error');
+  });
+
+  it('meters it as an error that cost nothing', async () => {
+    const endpoint = await register('picky-metered-cloud', { behaviour: 'reject-request' });
+
+    await chat(endpoint.modelId).expect(400);
+
+    const row = await dataSource()
+      .getRepository(Generation)
+      .findOneOrFail({ where: { modelId: endpoint.modelId }, order: { createdAt: 'DESC' } });
+    expect(row).toMatchObject({ status: 'error', errorCode: 'upstream_invalid_request', costMicros: 0 });
+  });
+});
+
 describe('a verdict the sidecar withdrew before router-api saw it', () => {
   it('is refused by the sidecar, and the 503 keeps the router’s own vocabulary', async () => {
     // The window between a verdict flip and the status poll that projects it. The

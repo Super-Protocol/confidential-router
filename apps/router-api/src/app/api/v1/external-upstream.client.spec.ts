@@ -231,6 +231,32 @@ describe('mapFailure', () => {
 
     expect(error.code).toBe('context_length_exceeded');
   });
+
+  it('reports a request the upstream called invalid as a 4xx naming the field (SUP-448)', async () => {
+    // The shared table's own rows are `upstream-failure.spec.ts`; what this
+    // asserts is that the egress leg reaches them — it used to answer this with
+    // `502 backend_error`, and an SDK retried the same poisoned history forever.
+    const response = jsonResponse(400, {
+      object: 'error',
+      message: 'Invalid JSON in messages[8].tool_calls[0].function.arguments.',
+      param: 'messages[8].tool_calls[0].function.arguments',
+    });
+
+    const error = await clientFor().mapFailure(model(1), response);
+
+    expect(error.status).toBe(400);
+    expect(error.type).toBe('invalid_request_error');
+    expect(error.code).toBe('upstream_invalid_request');
+    expect(error.message).toContain('tool_calls[0].function.arguments');
+    expect(error.param).toBe('messages[8].tool_calls[0].function.arguments');
+  });
+
+  it('does not turn the upstream refusing the router’s stored key into the caller’s 401', async () => {
+    const error = await clientFor().mapFailure(model(1), jsonResponse(401, { error: { message: 'bad api key' } }));
+
+    expect(error.status).toBe(502);
+    expect(error.code).toBe('backend_error');
+  });
 });
 
 describe('classifyStreamFailure', () => {

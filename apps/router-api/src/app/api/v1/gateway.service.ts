@@ -11,6 +11,7 @@ import { LiteLlmClient } from './litellm.client.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import { readUsage, shapeResponse } from './response-shaping.js';
 import { extensionFor, relayStream, type StreamFailure } from './stream-relay.js';
+import { readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 import { UpstreamTimeoutError } from './upstream-fetch.js';
 
 /** A model resolved to the external leg, narrowed so `external` is not optional. */
@@ -163,31 +164,19 @@ export class GatewayService {
   }
 
   /**
-   * Maps a backend failure onto the router's error table.
+   * Maps a backend failure onto the router's error table — see
+   * `upstream-failure.ts`, which holds the table both legs read.
    *
-   * Deliberately conservative in two directions. Only the cases a *client* can
-   * act on come back as 4xx — a misconfigured LiteLLM key or a crashed worker is
-   * the operator's problem, and telling the caller it made a bad request would
-   * be a lie. And the backend's own wording is logged rather than forwarded,
-   * except for the context-length message, which is the one thing in it the
-   * caller can actually do something about; the rest is cluster-internal detail
-   * that a bearer token should not buy.
+   * Still conservative about whose fault a failure is: a misconfigured LiteLLM key
+   * or a crashed worker stays a 502, because telling the caller it made a bad
+   * request would be a lie. What changed with SUP-448 is the converse — a 4xx
+   * LiteLLM raised *about the request body* is now reported as a 4xx, with its
+   * wording, because nothing else in the chain knows which field is wrong.
    */
   private async mapUpstreamFailure(upstream: Response): Promise<OpenAiApiError> {
-    const detail = await readErrorDetail(upstream);
-    this.logger.warn(`LiteLLM answered ${upstream.status}: ${detail || '(no detail)'}`);
-
-    if (upstream.status === 429) {
-      const retryAfter = upstream.headers.get('retry-after') ?? '1';
-      return openAiErrors.rateLimited('The model backend is at capacity.', { 'Retry-After': retryAfter });
-    }
-    if (/context[ _-]?length|maximum context|too many tokens/i.test(detail)) {
-      return openAiErrors.contextLengthExceeded(detail);
-    }
-    if (upstream.status >= 500 || upstream.status === 404) {
-      return openAiErrors.backendUnavailable(`The model backend answered ${upstream.status}.`);
-    }
-    return openAiErrors.backendError(`The model backend rejected the request (${upstream.status}).`);
+    const body = await readUpstreamError(upstream);
+    this.logger.warn(`LiteLLM answered ${upstream.status}: ${body.text || '(no detail)'}`);
+    return upstreamFailureOf('The model backend', upstream, body);
   }
 
   /**
@@ -279,15 +268,4 @@ function transportFailureOf(error: unknown): OpenAiApiError {
   return openAiErrors.backendUnavailable(
     `The model backend is unreachable: ${error instanceof Error ? error.message : String(error)}`,
   );
-}
-
-async function readErrorDetail(upstream: Response): Promise<string> {
-  try {
-    const text = (await upstream.text()).slice(0, 1000);
-    const parsed: unknown = JSON.parse(text);
-    const message = (parsed as { error?: { message?: unknown } })?.error?.message;
-    return typeof message === 'string' ? message : text;
-  } catch {
-    return '';
-  }
 }

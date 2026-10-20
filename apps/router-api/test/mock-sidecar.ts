@@ -26,7 +26,14 @@ export type SidecarBehaviour =
    * Two chunks, then the connection goes — which is what `applyVerdict` →
    * `closeAll` does to a stream in flight when a verdict is withdrawn.
    */
-  | 'drop-mid-stream';
+  | 'drop-mid-stream'
+  /**
+   * The upstream *past* the sidecar reading the request and calling it invalid:
+   * a 400 relayed through an endpoint that is perfectly healthy and admitted
+   * (SUP-448). Nothing about it is the gatekeeper's refusal, and nothing about it
+   * gets better on a retry.
+   */
+  | 'reject-request';
 
 export interface RecordedUpstreamRequest {
   endpoint: string;
@@ -183,6 +190,22 @@ export class MockEgressSidecar {
           error: { type: 'gatekeeper_error', code: 'attestation_failed', message: `${stage}: ${reason}` },
           stage,
           reason,
+        }),
+      );
+      return;
+    }
+
+    if (behaviour === 'reject-request') {
+      // Relayed verbatim from the upstream, verdict header and all: the sidecar
+      // admitted this request, the model server refused it.
+      response.writeHead(400, { 'content-type': 'application/json', 'x-gatekeeper-verdict': 'allow' });
+      response.end(
+        JSON.stringify({
+          object: 'error',
+          message: 'Invalid JSON in messages[8].tool_calls[0].function.arguments: unterminated object.',
+          type: 'BadRequestError',
+          param: 'messages[8].tool_calls[0].function.arguments',
+          code: 400,
         }),
       );
       return;

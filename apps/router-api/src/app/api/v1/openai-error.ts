@@ -97,6 +97,47 @@ export const openAiErrors = {
       param: 'messages',
     }),
 
+  /**
+   * The upstream read the request and called it invalid — so the client hears a
+   * 4xx, with the upstream's own wording.
+   *
+   * SUP-448. This used to be `502 backend_error`, and that one line killed every
+   * Continue session in SP-447: a 502 is "transient, retry" to every
+   * OpenAI-compatible SDK, the offending message was already in the conversation
+   * history, so each retry rebuilt the same invalid request, got the same 502, and
+   * the user read a permanent client-side bug as our outage. 15 of 97 agent
+   * requests in one afternoon, every one of them unrecoverable.
+   *
+   * Two things make it fixable from the client side. The status says *fix the
+   * request*, not *try again*. And the upstream's message comes with it: it is the
+   * only place that names which field is wrong, and the router cannot know — here
+   * it was one `tool_calls[].function.arguments` holding truncated JSON. That is a
+   * deliberate exception to this surface's rule of not forwarding upstream wording
+   * (see {@link backendUnavailable}): a 4xx body is *about the caller's request*,
+   * not about how this cluster is put together.
+   *
+   * `status` is the upstream's own unless an SDK would retry it; `upstreamStatus`
+   * is always what the upstream actually said, because the two can differ and the
+   * client should be able to see both.
+   */
+  upstreamRejectedRequest: (upstream: {
+    who: string;
+    status: number;
+    upstreamStatus: number;
+    detail: string;
+    param?: string;
+  }) =>
+    new OpenAiApiError({
+      status: upstream.status,
+      type: 'invalid_request_error',
+      code: 'upstream_invalid_request',
+      message: upstream.detail
+        ? `${upstream.who} rejected this request as invalid (${upstream.upstreamStatus}): ${upstream.detail}`
+        : `${upstream.who} rejected this request as invalid (${upstream.upstreamStatus}) and gave no reason. ` +
+          'Retrying it unchanged will fail the same way.',
+      ...(upstream.param ? { param: upstream.param } : {}),
+    }),
+
   invalidApiKey: () =>
     new OpenAiApiError({
       status: 401,

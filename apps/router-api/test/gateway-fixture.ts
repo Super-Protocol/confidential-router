@@ -27,6 +27,7 @@ const MODELS: ModelFixture[] = [
   { id: 'mock/overloaded:tdx', litellmModel: 'mock/overloaded' },
   { id: 'mock/context:tdx', litellmModel: 'mock/context' },
   { id: 'mock/refuses:tdx', litellmModel: 'mock/refuses' },
+  { id: 'mock/invalid-tool-call:tdx', litellmModel: 'mock/invalid-tool-call' },
   { id: 'mock/garbage:tdx', litellmModel: 'mock/garbage' },
   { id: 'mock/hangup:tdx', litellmModel: 'mock/hangup' },
   { id: 'mock/thinking:tdx', litellmModel: 'mock/thinking' },
