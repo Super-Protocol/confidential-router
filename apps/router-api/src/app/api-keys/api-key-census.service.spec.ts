@@ -189,11 +189,13 @@ describe('the deployment-wide population', () => {
   });
 
   /**
-   * The shape that actually occurs: `workspace_members` carries no foreign key to
-   * Better Auth's `user`, so a membership outlives the account it names — and a
-   * data import writes memberships without checking that their accounts restored.
-   * `adminSignUps` selects from `user`, so such a holder can never appear on the
-   * list; its keys have to be counted somewhere the operator will see them.
+   * No code path produces this orphan today — account deletion is not wired, and
+   * the import refuses a bundle whose memberships name accounts it does not
+   * carry. The schema is what allows it: `workspace_members` has no foreign key
+   * to Better Auth's `user`, so nothing stops a membership outliving the account
+   * it names. `adminSignUps` selects from `user`, so such a holder could never
+   * appear on the list; its keys have to be counted where the operator will see
+   * them, or the two numbers stop reconciling the first time one appears.
    */
   it('counts a live key held only through a membership whose account is gone', async () => {
     const holder = await account('one@example.com');

@@ -53,7 +53,8 @@ export class ApiKeyPopulationModel {
   @Field(() => Int, {
     description:
       'Accounts holding at least one live key — who would have to re-issue. Exactly ' +
-      '`adminSignUps(holdsLiveApiKey: true).totalCount`, so the number and the page agree.',
+      '`adminSignUps(holdsLiveApiKey: true).totalCount` with no other filter applied, ' +
+      'so the number and the page agree.',
   })
   accountsHoldingLiveKey!: number;
 

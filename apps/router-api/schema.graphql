@@ -189,7 +189,7 @@ Deployment-wide credential counts, for sizing and announcing a key-affecting cha
 """
 type ApiKeyPopulation {
   """
-  Accounts holding at least one live key — who would have to re-issue. Exactly `adminSignUps(holdsLiveApiKey: true).totalCount`, so the number and the page agree.
+  Accounts holding at least one live key — who would have to re-issue. Exactly `adminSignUps(holdsLiveApiKey: true).totalCount` with no other filter applied, so the number and the page agree.
   """
   accountsHoldingLiveKey: Int!
 

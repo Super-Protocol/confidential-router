@@ -37,8 +37,10 @@ export interface ApiKeyPopulation {
    * Accounts holding at least one live key — who would have to re-issue.
    *
    * Counted over memberships that resolve to a `user` row, so this is exactly
-   * `adminSignUps(holdsLiveApiKey: true).totalCount`: the operator reads the
-   * number here and then pages the same people, and the two must agree.
+   * `adminSignUps(holdsLiveApiKey: true).totalCount` with no other filter applied:
+   * the operator reads the number here and then pages the same people, and the two
+   * must agree. Narrowing that page further — by `origin`, say — correctly returns
+   * fewer; nothing claims this number describes a filtered table.
    */
   accountsHoldingLiveKey: number;
   /**
@@ -49,15 +51,25 @@ export interface ApiKeyPopulation {
    * rebuild would void, and that no row of the account list covers. Normally
    * zero, and worth attention when it is not.
    *
-   * The shape that produces it is a `workspace_members` row whose `userId` has no
-   * `user` row. `user` belongs to Better Auth, so `workspace_members` carries no
-   * foreign key to it (`createForeignKeyConstraints: false`) and nothing cascades
-   * when an account goes; a data import also writes memberships without checking
-   * that their accounts restored (`data-import.service.ts`). The inverse — a
-   * workspace with keys and no membership at all — cannot arise, because deleting
-   * a workspace cascades to both `workspace_members` and `api_keys`; it is
-   * counted here anyway, since a key nobody is named for is the same problem
-   * however it got there.
+   * The shape is a `workspace_members` row whose `userId` has no `user` row, and
+   * **no code path produces it today**: account deletion is not wired (`deleteUser`
+   * appears nowhere in `auth.options.ts`), and the data import refuses a bundle
+   * whose memberships name accounts it does not carry — `bundleInconsistencies`
+   * makes that a refusal, `planIsClean` goes false and nothing is written
+   * (`import-plan.ts`, `data-import.service.ts`).
+   *
+   * What justifies the field is the schema rather than a producer. `user` belongs
+   * to Better Auth, so `workspace_members` carries no foreign key to it
+   * (`createForeignKeyConstraints: false`) and nothing in the database prevents
+   * the shape; the day anything removes a `user` row,
+   * {@link accountsHoldingLiveKey} and the list it promises to match must still
+   * reconcile, and this is the number that makes them. A reason that does not
+   * expire — unlike the producer that would have to be found to believe it.
+   *
+   * The inverse — a workspace with keys and no membership at all — cannot arise
+   * either, since deleting a workspace cascades to both `workspace_members` and
+   * `api_keys`. It is counted here anyway: a key nobody is named for is the same
+   * problem however it got there.
    */
   liveKeysWithoutAccount: number;
 }

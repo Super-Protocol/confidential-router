@@ -163,12 +163,14 @@ describe('the console’s own chat credential', () => {
 });
 
 /**
- * A membership whose `userId` has no `user` row. `user` belongs to Better Auth,
- * so `workspace_members` carries no foreign key to it and nothing cascades when
- * an account goes; a data import also writes memberships without checking that
- * their accounts restored. `adminSignUps` selects from `user`, so such a holder
- * can never be listed — which is the blind spot SUP-454 exists to close, and the
- * reason the two numbers have to reconcile.
+ * A membership whose `userId` has no `user` row — forced here, because nothing in
+ * the running system produces one: account deletion is not wired and the import
+ * refuses a bundle that would write it. The shape is allowed by the schema alone,
+ * since `workspace_members` has no foreign key to Better Auth's `user`.
+ *
+ * It is worth an e2e anyway. `adminSignUps` selects from `user`, so such a holder
+ * could never be listed, and an unexplained gap between a number and the page it
+ * promises is the blind spot SUP-454 exists to close.
  */
 describe('a live key whose holder is no longer an account', () => {
   it('is counted as a remainder, not as someone the operator could tell', async () => {
