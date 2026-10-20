@@ -154,6 +154,12 @@ jobs:
       - name: Migration and schema-drift tests
         run: pnpm exec vitest run --root apps/router-api src/app/db/migrations.spec.ts
 
+      # The queries that are hand-written SQL rather than repository calls, run
+      # on the database production uses. The rest of the suite is SQLite-only, so
+      # without this the API-key census (SUP-454) would never execute here.
+      - name: Dialect-sensitive query tests
+        run: pnpm exec vitest run --root apps/router-api src/app/api-keys/api-key-census.postgres.spec.ts
+
       - name: Build router-api
         run: pnpm nx run @confidential-router/router-api:build
 
