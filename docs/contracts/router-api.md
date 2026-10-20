@@ -154,6 +154,20 @@ chunks as they arrive from LiteLLM (no buffering); through the gatekeeper this i
 (SUP-71). Errors after the stream started are sent as a last `data:` event with an `error` object, then
 `[DONE]`.
 
+The heartbeat covers the wait for the *upstream* too, not only the wait for the first token. If the
+backend has not answered within `server.streamKeepAliveAfter` (15 s by default) the router writes the 200
+and the SSE preamble anyway and starts pinging — so a slow prefill never looks like a dead socket to the
+proxies on the path. Seven of 97 agent turns measured against production stalled for exactly 60 s, and in
+three of them the ingress in front of the router gave up first and answered its own HTML `502`: no error
+envelope, no `x-request-id`, and no row in Logs, because the request never came back through the code that
+writes one (SUP-449). The price of opening early is the status line — past that point a failure *before*
+the first token is delivered the way a mid-stream failure is, as a last `data:` event with an `error`
+object followed by `[DONE]`, rather than as a 502/503/504. Anything that fails faster keeps its status
+code, and a non-streaming request is never pre-empted: there is nothing to heartbeat into, so it waits.
+One header is lost with the status line: a `429` the backend raises *after* the stream was opened arrives
+as an in-stream `rate_limit_error` without its `Retry-After`. A deployment whose backend regularly takes
+longer than `streamKeepAliveAfter` to say "busy" should raise the setting towards its ingress's timeout.
+
 `[DONE]` is also where the generation *ends*, for metering: a client that closes the connection once it
 has read the terminator has the whole answer and the row is `ok`. Only a client that leaves before it is
 metered `aborted` with no `errorCode`, and only a verdict withdrawn under a running stream is metered

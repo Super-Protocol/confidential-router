@@ -49,6 +49,25 @@ const ServerSchema = z
      * mind — this number times the concurrency the deployment expects is memory.
      */
     maxInferenceRequestBytes: integerish().pipe(z.number().int().min(1_048_576).max(268_435_456)).prefault(8_388_608),
+    /**
+     * How long a *streaming* `/v1` request may wait in silence before the router
+     * opens its event stream and starts heart-beating into it.
+     *
+     * It has to stay below the read timeout of the ingress in front of this
+     * deployment. Seven of 97 agent turns measured against production waited
+     * exactly 60 s on a stalled model endpoint, and in three of them the ingress
+     * gave up first and answered an openresty HTML page — not the router's error
+     * envelope, with no `x-request-id`, and with no row in Logs, because the
+     * request never came back through the code that writes one (SUP-449). nginx
+     * and OpenResty default to 60 s, so 15 s leaves room for an ingress tuned
+     * tighter and matches the heartbeat interval the stream then keeps.
+     *
+     * The cost of opening early is the status line: past this point a failure
+     * before the first token is delivered as a `data:` error event rather than a
+     * 502. Everything that fails faster — all but those seven of 169 measured
+     * requests — is unaffected.
+     */
+    streamKeepAliveAfter: durationMs('15s'),
   })
   .prefault({});
 
