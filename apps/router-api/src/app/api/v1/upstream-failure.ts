@@ -14,7 +14,7 @@ import { OpenAiApiError, openAiErrors } from './openai-error.js';
  * | upstream | router | why |
  * | --- | --- | --- |
  * | 429 | `429 rate_limit_exceeded` | capacity; retrying is the right move |
- * | a context-length message | `400 context_length_exceeded` | the caller sent too much |
+ * | a context-length message | `400 context_length_exceeded` | the caller sent too much — any status, see `CONTEXT_LENGTH` |
  * | ≥ 500, or 404 | `502 backend_unavailable` | the upstream failed or is not there |
  * | 401 / 402 / 403 / 407 | `502 backend_error` | *our* credential or account, not the caller's |
  * | any other 4xx | that 4xx, `invalid_request_error` | the upstream read the request and called it invalid |
@@ -73,6 +73,25 @@ const RETRIED_BY_SDKS = new Set([408, 409, 425]);
 /** Statuses that mean the router's own credential or account, never the caller's. */
 const OUR_CREDENTIAL = new Set([401, 402, 403, 407]);
 
+/**
+ * The one row that reads an **unstructured** body, deliberately.
+ *
+ * Everywhere else a raw body is logged and withheld (`UpstreamErrorBody.structured`)
+ * because it is as likely to be an intermediary's error page as anything about the
+ * request. Here the regex is itself the filter: a body saying `maximum context` or
+ * `too many tokens` is about the request by construction, some upstreams answer it
+ * in plain text rather than JSON, and the numbers in that sentence — the limit and
+ * what was asked for — are the one detail the caller can act on. Gating it would
+ * buy consistency and cost the only thing worth forwarding.
+ *
+ * The consequence, named so it is a decision and not a surprise: an unstructured
+ * body that matches this regex becomes `400 context_length_exceeded` whatever
+ * status carried it, a 5xx included. That was already true on the egress leg,
+ * whose reader always returned the raw text; it is newly reachable on the LiteLLM
+ * leg, whose old reader returned `''` for any body it could not parse as JSON and
+ * so never matched. A model server reporting a context overflow in an HTML 500 is
+ * better described to the caller by this row than by `backend_unavailable`.
+ */
 const CONTEXT_LENGTH = /context[ _-]?length|maximum context|too many tokens/i;
 
 /**
@@ -126,6 +145,8 @@ export function upstreamFailureOf(who: UpstreamName, upstream: Response, body: U
     return openAiErrors.rateLimited(`${who} is at capacity.`, { 'Retry-After': retryAfter });
   }
   if (CONTEXT_LENGTH.test(body.text)) {
+    // `body.text`, structured or not — see `CONTEXT_LENGTH`, which is where the
+    // reason this row forwards what the others withhold is written down.
     return openAiErrors.contextLengthExceeded(body.text);
   }
   if (status >= 500 || status === 404) {
