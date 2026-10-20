@@ -217,18 +217,20 @@ alert() {
   body="$(cat)"
   [ -n "$ALERT_ISSUE_ID" ] && command -v multica > /dev/null 2>&1 || return 0
   printf '%s' "$body" > "$EXPORT_DIR/.alert.md"
-  local posted=0
+  # Named for what a non-zero return means, which is the opposite of what the
+  # word `posted` would read as here.
+  local undelivered=0
   # From `$EXPORT_DIR`, with a relative path: the CLI refuses a
   # `--content-file` outside its working directory, and a directory with no
   # task context is what makes it use the host's own credentials.
   (cd "$EXPORT_DIR" && multica issue comment add "$ALERT_ISSUE_ID" --content-file ./.alert.md) \
     > /dev/null 2>&1 \
     || {
-      posted=1
+      undelivered=1
       say 'the alert comment could not be posted — the message above is only in this log'
     }
   rm -f "$EXPORT_DIR/.alert.md"
-  return "$posted"
+  return "$undelivered"
 }
 
 # A refusal has to reach a person. systemd would only mark the unit failed, and
@@ -270,6 +272,17 @@ json_field() {
 # cosmetic: the baseline read below treats an unparseable state file as no
 # state at all, so the shrink guard would compare against zero, never fire
 # again, and never heal. That is SUP-363 disarmed by our own bookkeeping.
+#
+# A `#` value that is not a number is a refusal and not a `null`: `Number("")`
+# is 0 and `Number("x")` serialises as `null`, and the baseline read does
+# `s.users ?? 0` — so a bad count would quietly become a zero baseline, which
+# is the same disarmed guard by a shorter route. Every call site is already
+# validated, so this is the guard and not the case; bookkeeping is the last
+# place to be forgiving.
+#
+# Written to a temporary file and renamed, because `> "$target"` truncates
+# before node runs: a node that died mid-write would leave exactly the
+# unparseable state.json this helper exists to prevent.
 write_json() {
   local target="$1"
   shift
@@ -278,11 +291,24 @@ write_json() {
     const argv = process.argv.slice(1);
     for (let i = 0; i < argv.length; i += 2) {
       const key = argv[i];
-      const number = key.endsWith("#");
-      out[number ? key.slice(0, -1) : key] = number ? Number(argv[i + 1]) : argv[i + 1];
+      if (!key.endsWith("#")) {
+        out[key] = argv[i + 1];
+        continue;
+      }
+      const raw = argv[i + 1];
+      const value = Number(raw);
+      // The blank is checked separately because `Number("")` is 0, and a count
+      // that silently became zero is the whole failure being guarded against.
+      if (raw === undefined || raw.trim() === "" || !Number.isFinite(value)) {
+        process.stderr.write(`${key.slice(0, -1)} is ${JSON.stringify(raw ?? null)}, which is not a number`);
+        process.exit(1);
+      }
+      out[key.slice(0, -1)] = value;
     }
     process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
-  ' "$@" > "$target"
+  ' "$@" > "$target.partial" 2> "$work/write-json.err" \
+    || die "could not write $target: $(tr '\n\t' '  ' < "$work/write-json.err")"
+  mv "$target.partial" "$target"
 }
 
 need() { command -v "$1" > /dev/null 2>&1 || die "$1 is not installed on this host"; }
