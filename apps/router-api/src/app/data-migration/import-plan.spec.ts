@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generationLedgerKey } from '../billing/ledger.keys.js';
 import {
   buildBundle,
+  carriedUsageKey,
   contentSha256,
   countsOf,
   EXPORT_FORMAT,
@@ -191,11 +192,11 @@ describe('planImport', () => {
     const ledger = plan.writes.creditLedger;
     expect(ledger).toHaveLength(3);
     expect(ledger.filter((row) => row.reference?.startsWith('gen-'))).toEqual([]);
-    expect(ledger.find((row) => row.id === 'carried-usage:ws-ada')).toMatchObject({
+    expect(ledger.find((row) => row.id === carriedUsageKey('ws-ada', '2026-10'))).toMatchObject({
       kind: 'usage',
       amountMicros: '-16',
       reference: null,
-      idempotencyKey: 'carried-usage:ws-ada',
+      idempotencyKey: carriedUsageKey('ws-ada', '2026-10'),
     });
     // Reported honestly rather than silently, and the balance still adds up.
     expect(plan.notes.join(' ')).toContain('3 per-request usage debit(s)');

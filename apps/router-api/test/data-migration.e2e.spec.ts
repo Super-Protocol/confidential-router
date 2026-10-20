@@ -43,6 +43,8 @@ const GRANT_MICROS = 25_000_000;
 const SPEND_PER_REQUEST_MICROS = [600_000, 500_000, 400_000];
 const SPENT_MICROS = SPEND_PER_REQUEST_MICROS.reduce((sum, micros) => sum + micros, 0);
 const MODEL_ID = 'fixture/chat';
+/** `carried-usage:<yyyy-mm>:<workspaceId>` — the month is the run's own, so it is matched, not spelled. */
+const carriedKey = (workspaceId: string): RegExp => new RegExp(`^carried-usage:\\d{4}-\\d\\d:${workspaceId}$`);
 const SEALED_UPSTREAM_KEY = 'v1.sealed-upstream-key-ciphertext';
 const API_KEY_HASH = 'a1b2c3d4'.repeat(8);
 
@@ -318,10 +320,10 @@ describe('deployment export', () => {
       amountMicros: String(-SPENT_MICROS),
       // No reference to a generation the file does not carry — the defect.
       reference: null,
-      idempotencyKey: `carried-usage:${spender.workspaceId}`,
+      idempotencyKey: expect.stringMatching(carriedKey(spender.workspaceId)),
     });
     expect(bundle.data.creditLedger.find((entry) => entry.kind === 'usage')?.description).toMatch(
-      /^Metered usage carried over from \S+: 3 request\(s\) up to \d{4}-\d\d-\d\dT[\d:.]+Z\./,
+      /^Metered usage carried over from \S+: 3 requests served in \d{4}-\d\d\. /,
     );
 
     const spenderRow = bundle.data.users.find((user) => user.email === spender.email);
@@ -539,9 +541,9 @@ describe('deployment import', () => {
     expect(usage[0]).toMatchObject({
       amountMicros: -SPENT_MICROS,
       reference: null,
-      idempotencyKey: `carried-usage:${spender.workspaceId}`,
+      idempotencyKey: expect.stringMatching(carriedKey(spender.workspaceId)),
     });
-    expect(usage[0]?.description).toContain('3 request(s) up to');
+    expect(usage[0]?.description).toMatch(/3 requests served in \d{4}-\d\d/);
     for (const generationId of ['gen-a-1', 'gen-a-2', 'gen-a-3']) {
       expect(
         await target.getRepository(CreditTransaction).countBy({ idempotencyKey: generationLedgerKey(generationId) }),
@@ -622,11 +624,14 @@ describe('deployment import', () => {
     const usageInBundle = secondBundle.data.creditLedger.filter((entry) => entry.kind === 'usage');
     expect(usageInBundle).toHaveLength(1);
     expect(usageInBundle[0]).toMatchObject({
-      id: `carried-usage:${spender.workspaceId}`,
+      id: expect.stringMatching(carriedKey(spender.workspaceId)),
       amountMicros: String(-(SPENT_MICROS + spentOnB)),
       reference: null,
     });
-    expect(usageInBundle[0]?.description).toContain('and spend carried from an earlier migration');
+    // One request of B's own beside the inherited total: the count is what this
+    // deployment served, and the rest is said in words (CTO follow-up 2).
+    expect(usageInBundle[0]?.description).toContain('plus usage carried from an earlier migration');
+    expect(usageInBundle[0]?.description).toMatch(/1 request served in \d{4}-\d\d/);
 
     const c = await deploy();
     const report = await apply(c.operator, second, secondBundle.integrity.contentSha256);
