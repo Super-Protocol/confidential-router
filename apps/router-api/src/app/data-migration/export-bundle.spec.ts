@@ -161,6 +161,7 @@ describe('credentialShapedKeys', () => {
       'apiKeys',
       'apiKeys[].keyHash',
       'apiKeys[].tokensPerMinute',
+      'counts.apiKeys',
       'counts.apiKeysLive',
     ]);
     expect(credentialShapedKeys({ apiKeys: [{ id: 'k1', keyHash: 'x' }] })).toEqual([]);
@@ -169,6 +170,12 @@ describe('credentialShapedKeys', () => {
       'apiKeys[].sessionToken',
     ]);
     expect(credentialShapedKeys({ users: [{ keyHash: 'x' }] })).toEqual(['users[].keyHash']);
+    // Excused by place, not by name: the same two words somewhere nobody judged
+    // are still the tripwire they were written to be.
+    expect(credentialShapedKeys({ users: [{ apiKeys: [{ keyHash: 'x' }] }] })).toEqual([
+      'users[].apiKeys',
+      'users[].apiKeys[].keyHash',
+    ]);
   });
 });
 

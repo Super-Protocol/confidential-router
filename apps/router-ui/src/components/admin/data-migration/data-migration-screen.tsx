@@ -57,6 +57,17 @@ function messageOf(error: unknown, fallback: string): string {
 }
 
 /**
+ * How many API keys the imported file held — `inBundle`, not `toCreate`, because
+ * on a second import the keys are here and created nothing (SUP-445).
+ *
+ * A file written before the `apiKeys` section existed has none, and then the old
+ * advice is the true one: those keys did not travel and have to be re-issued.
+ */
+function keysInFile(report: ImportReport): number {
+  return report.sections.find((section) => section.section === 'apiKeys')?.inBundle ?? 0;
+}
+
+/**
  * The redeploy migration path (SUP-271): one button that writes the deployment
  * export, and an import that shows what it would do before it does it.
  *
@@ -369,7 +380,10 @@ function ImportReportView({ report }: { report: ImportReport }) {
       {report.applied ? (
         <p data-testid="import-next-steps">
           Everyone signs in again on this deployment with their email address; balances and unredeemed invitation codes
-          work as before. API keys were not carried over — each person issues new ones under API Keys.
+          work as before.{' '}
+          {keysInFile(report) > 0
+            ? 'API keys came across and keep working — nobody has to issue a new one or re-configure a client.'
+            : 'The file carried no API keys, so anyone who needs one issues it under API Keys.'}
         </p>
       ) : null}
     </div>

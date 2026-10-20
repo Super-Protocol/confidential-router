@@ -13,6 +13,11 @@ import { BUNDLE_SECTIONS } from './export-bundle.js';
  * opposite hole, and this registry is what fills it: `bundle-coverage.spec.ts`
  * fails the build when an entity appears in {@link ENTITIES} and not here.
  *
+ * It covers the TypeORM schema — {@link ENTITIES} — and not the whole database.
+ * Better Auth owns `account`, `session` and `verification` and this codebase has
+ * no entity for them; they are credentials by definition, never read by the
+ * export, and therefore out of scope here rather than silently uncovered.
+ *
  * So the answer to "a new table showed up, what now?" is: add it below. Either
  * name the bundle section it travels in — and make the export, the plan and the
  * import carry it — or write down why it stays behind, in a sentence the next

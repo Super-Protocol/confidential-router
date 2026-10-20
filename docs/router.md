@@ -1017,6 +1017,20 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    it.
 7. **Delete the export file.**
 
+**If you have to go back to an older build**, know what its import will say. A
+file written by a build that carries the `apiKeys` section is refused by any
+build that predates it, with:
+
+```
+The export carries credential-shaped fields (apiKeys, apiKeys[].keyHash, apiKeys[].tokensPerMinute). A router export never does, so this file is refused.
+```
+
+The message blames the file; the cause is the build, and the file is perfectly
+valid one version forward. Nothing is written on either side — the refusal
+happens while the file is being read, before the dry run plans anything — so the
+way back is a file the older build wrote itself, or a build at least as new as
+the file (verified against the parked 0.18.3 deployment, SUP-445).
+
 ## Running it
 
 ```bash

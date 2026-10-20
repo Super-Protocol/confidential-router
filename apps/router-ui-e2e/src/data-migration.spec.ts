@@ -163,7 +163,7 @@ test.describe('the Export & import section', () => {
     await page.getByTestId('import-apply').click();
 
     await expect(page.getByTestId('import-verdict')).toContainText('Imported');
-    await expect(page.getByTestId('import-next-steps')).toContainText('each person issues new ones under API Keys');
+    await expect(page.getByTestId('import-next-steps')).toContainText('API keys came across and keep working');
     expect(new URL(api.urls[1] as string).searchParams.get('apply')).toBe('true');
     expect(new URL(api.urls[1] as string).searchParams.get('expect')).toBe(SHA);
     await expect(page.getByTestId('import-apply')).toBeDisabled();

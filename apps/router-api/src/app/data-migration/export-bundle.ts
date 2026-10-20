@@ -68,8 +68,10 @@ export const CREDENTIAL_KEY_PATTERN = /pass(word|phrase)|hash|token|secret|ciphe
  * tripwire keeps its reach: a `keyHash` or a `token…` added to any other section
  * still refuses the export, because only these places are excused.
  *
- * Matched as a suffix, so the same entry holds whether the guard is pointed at a
- * whole bundle (`data.apiKeys[].keyHash`) or at its `data` alone.
+ * Matched whole, or under a leading `data.` — the guard is pointed either at a
+ * bundle or at its `data` alone, and those are the only two roots a path can
+ * have. Not a suffix match: `users[].apiKeys[].keyHash` is a place no one has
+ * judged, and it should read as the surprise it would be.
  */
 export const CARRIED_NON_CREDENTIAL_PATHS: readonly string[] = [
   // The section name itself matches `api_?key`. The rows under it carry no secret.
@@ -80,8 +82,8 @@ export const CARRIED_NON_CREDENTIAL_PATHS: readonly string[] = [
   // A rate limit measured in model tokens. "Token" as a unit of text, not a
   // credential — the one word the pattern cannot tell apart.
   'apiKeys[].tokensPerMinute',
-  // Manifest counts, named after the section they count. `counts.apiKeys` is
-  // already excused by the entry above; this one is its live half.
+  // The two manifest counts, named after the section they count.
+  'counts.apiKeys',
   'counts.apiKeysLive',
 ];
 
@@ -351,9 +353,9 @@ export function totalBalanceMicros(data: ExportData): string {
   return String(data.workspaces.reduce((sum, workspace) => sum + BigInt(workspace.balanceMicros), 0n));
 }
 
-/** True when `path` is one of the {@link CARRIED_NON_CREDENTIAL_PATHS}, which are suffix-matched. */
+/** True when `path` is one of the {@link CARRIED_NON_CREDENTIAL_PATHS}, at either root. */
 function isExcusedPath(path: string): boolean {
-  return CARRIED_NON_CREDENTIAL_PATHS.some((allowed) => path === allowed || path.endsWith(`.${allowed}`));
+  return CARRIED_NON_CREDENTIAL_PATHS.some((allowed) => path === allowed || path === `data.${allowed}`);
 }
 
 /**
