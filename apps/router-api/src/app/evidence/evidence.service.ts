@@ -150,16 +150,26 @@ export class EvidenceService {
     return this.ownRefresh;
   }
 
+  /**
+   * Resolving the endpoint is inside the `try` with the fetch: both touch the
+   * database, and the promise this backs is awaited by a read whose contract is
+   * that it answers "not known yet" rather than failing.
+   */
   private async askOwnPublisher(now: Date): Promise<void> {
-    const own = await this.ownEndpoint();
-    if (!own || (await this.latestFor(own.id))) return;
-
+    let own: Endpoint | null = null;
     try {
+      own = await this.ownEndpoint();
+      if (!own || (await this.latestFor(own.id))) return;
+
       await this.refresh(own, now, ON_READ_FETCH_TIMEOUT_MS);
       this.ownRefreshFailedAt = null;
     } catch (error) {
       this.ownRefreshFailedAt = now;
-      this.logFetchFailure(own, error);
+      if (own) {
+        this.logFetchFailure(own, error);
+      } else {
+        this.logger.warn(`Could not work out which endpoint is this deployment's own: ${describe(error)}`);
+      }
     }
   }
 
@@ -344,6 +354,11 @@ export class EvidenceService {
     const message = error instanceof Error ? error.message : String(error);
     this.logger.warn(`No evidence for endpoint "${endpoint.name}" (${endpoint.hostname}): ${message}`);
   }
+}
+
+/** An error reduced to one line, for a log that must not throw while writing it. */
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** The host part of a configured URL, or null when it is not a URL at all. */

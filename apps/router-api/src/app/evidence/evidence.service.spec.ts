@@ -331,6 +331,24 @@ describe('refreshOwnIfUnknown', () => {
     expect(await service.latestFor(endpointId)).toBeNull();
   });
 
+  /**
+   * The read that awaits this one answers "not known yet" rather than failing, so
+   * neither half of the work behind it may throw — not the fetch, and not the two
+   * queries that decide whether to make it.
+   */
+  it('does not throw when it cannot even work out which endpoint is its own', async () => {
+    const broken = new EvidenceService(
+      config() as ConfigType<typeof routerConfig>,
+      {
+        getRepository: () => {
+          throw new Error('the connection is gone');
+        },
+      } as unknown as DataSource,
+    );
+
+    await expect(broken.refreshOwnIfUnknown()).resolves.toBeUndefined();
+  });
+
   it('does not ask again on every read while the publisher is down', async () => {
     const fetcher = vi.fn(async () => {
       throw new Error('ECONNREFUSED');
