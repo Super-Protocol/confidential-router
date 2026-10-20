@@ -68,6 +68,14 @@ const PIN_DIGEST = `
   }
 `;
 const DIGEST = 'sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490';
+const UPDATE_PIN = `
+  mutation Update($id: ID!, $input: UpdateExternalEndpointInput!) {
+    updateExternalEndpoint(id: $id, input: $input) {
+      id baseUrl status pinnedEvidenceDigest
+      events { kind evidenceDigest reason }
+    }
+  }
+`;
 const ADD_MEASUREMENT = `
   mutation Add($input: AddTrustedMeasurementInput!) {
     addTrustedMeasurement(input: $input) { id measurement note addedByEmail admits }
@@ -346,6 +354,53 @@ describe('pinning a deployment (SUP-252 — two-factor trust)', () => {
 
     expect(body.errors?.[0].extensions.code).toBe('BAD_REQUEST');
     expect(body.errors?.[0].message).toContain('is not an evidence digest');
+  });
+
+  it('carries the approval through a re-point when the edit states it (SUP-435)', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+    await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: DIGEST } });
+
+    const body = await graphql(ops, UPDATE_PIN, {
+      id: endpoint.id,
+      input: { baseUrl: 'https://elsewhere.example', evidenceDigest: DIGEST },
+    });
+
+    expect(body.errors, JSON.stringify(body.errors)).toBeUndefined();
+    const updated = body.data.updateExternalEndpoint;
+    // The verdict resets, because nothing has attested the new URL — but the
+    // approval is still there, so the next check can admit instead of refusing
+    // at `digest-not-pinned` until someone pins the same digest again.
+    expect(updated).toMatchObject({
+      baseUrl: 'https://elsewhere.example',
+      status: 'PENDING',
+      pinnedEvidenceDigest: DIGEST,
+    });
+    expect(updated.events.map((event: { kind: string }) => event.kind)).not.toContain('DIGEST_UNPINNED');
+    const rendered = readFileSync(configFile, 'utf8');
+    expect(rendered).toContain('upstream: https://elsewhere.example');
+    expect(rendered).toContain(`trustedEvidence:\n      - ${DIGEST}`);
+  });
+
+  it('re-pointing without one withdraws the approval, and the timeline says so', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+    await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: DIGEST } });
+
+    const body = await graphql(ops, UPDATE_PIN, {
+      id: endpoint.id,
+      input: { baseUrl: 'https://elsewhere.example' },
+    });
+
+    expect(body.data.updateExternalEndpoint.pinnedEvidenceDigest).toBeNull();
+    expect(readFileSync(configFile, 'utf8')).toContain('trustedEvidence: []');
+    // The entry is what makes the next check's `digest-not-pinned` legible: the
+    // endpoint had an approval, and this edit is where it went (SUP-435).
+    const withdrawal = body.data.updateExternalEndpoint.events.find(
+      (event: { kind: string }) => event.kind === 'DIGEST_UNPINNED',
+    );
+    expect(withdrawal).toMatchObject({ evidenceDigest: DIGEST });
+    expect(withdrawal.reason).toContain('https://elsewhere.example');
   });
 
   it('shows the pin to a signed-in non-admin: the approved deployment is part of the transparency surface', async () => {

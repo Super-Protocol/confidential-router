@@ -185,7 +185,8 @@ export class ExternalEndpointsResolver {
   @Mutation(() => ExternalEndpointModel, {
     description:
       'Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. ' +
-      'Restricted to auth.adminEmails.',
+      'Re-pointing withdraws the approved deployment, so an edit that means to keep one carries it as ' +
+      'evidenceDigest. Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
   async updateExternalEndpoint(
@@ -197,10 +198,14 @@ export class ExternalEndpointsResolver {
       id,
       baseUrl: input.baseUrl,
       models: input.models?.map(modelSpec),
+      evidenceDigest: input.evidenceDigest,
     });
     this.logger.warn(
       `External endpoint "${view.endpoint.name}" updated by ${user.email} — ${view.endpoint.baseUrl}, ` +
-        `${view.models.filter((model) => model.enabled).length} model(s) listed.`,
+        `${view.models.filter((model) => model.enabled).length} model(s) listed` +
+        // An approval is attributable, so the line that names the operator is the
+        // line that names the digest they approved — as `pinExternalEndpointDigest` does.
+        `${input.evidenceDigest ? `, deployment ${view.endpoint.pinnedEvidenceDigest} approved` : ''}.`,
     );
     return this.presentOne(view, user);
   }

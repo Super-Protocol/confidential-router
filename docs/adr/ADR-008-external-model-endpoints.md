@@ -66,7 +66,9 @@ pinned digest. What changes, by layer:
   `DENIED_BY_THIS_ROUTER`, with the code as `lastStage`. `DIGEST_CHANGED` is therefore **gating**: at
   re-attest a mismatch denies, drops the models and closes in-flight connections (decision 5), and the
   timeline records both (on an endpoint that was admitted; one already refused records the change alone). `DIGEST_PINNED` records each approval with the digest approved. Re-pointing an
-  endpoint's base URL withdraws its pin (the new upstream has not been looked at); restarts do not (the
+  endpoint's base URL withdraws its pin (the new upstream has not been looked at) unless the edit
+  carries an approval of its own (`UpdateExternalEndpointInput.evidenceDigest`, SUP-435), and a
+  withdrawal is recorded as `DIGEST_UNPINNED`; restarts do not withdraw anything (the
   pin is trust, not a verdict — §8 is unchanged for every verdict column).
 - **Evidence before approval.** The evidence poller now files an upstream's bundle whenever the last
   report's cryptography held — admitted *or* refused only by a trust factor — binding it to the TLS leaf

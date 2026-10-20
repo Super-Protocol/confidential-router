@@ -37,6 +37,7 @@ export const ExternalEndpointEventKindEnum = {
   DENIED_BY_THIS_ROUTER: 'denied',
   DIGEST_CHANGED: 'digest_changed',
   DIGEST_PINNED: 'digest_pinned',
+  DIGEST_UNPINNED: 'digest_unpinned',
   MEASUREMENT_CHANGED: 'measurement_changed',
   DISABLED: 'disabled',
   KEY_ROTATED: 'key_rotated',
@@ -47,7 +48,9 @@ registerEnumType(ExternalEndpointEventKindEnum, {
   description:
     'DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a ' +
     'DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives ' +
-    'with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest.',
+    'with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the ' +
+    'digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no ' +
+    'longer approved, so an endpoint that stops serving says in its own timeline why.',
 });
 
 /**
@@ -532,6 +535,19 @@ export class UpdateExternalEndpointInputModel {
   @ValidateNested({ each: true })
   @Type(() => ExternalModelInputModel)
   models?: ExternalModelInputModel[];
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The deployment this edit approves — the same value pinExternalEndpointDigest takes, in either spelling. ' +
+      'Omitted says nothing about the pin: an edit that leaves baseUrl alone keeps the approval, and re-pointing ' +
+      'still withdraws it (SUP-252), which is why a re-point that means to keep its approval states it here ' +
+      'rather than pinning again afterwards with the endpoint out of service in between.',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  evidenceDigest?: string;
 }
 
 @InputType('SetExternalEndpointEnabledInput')

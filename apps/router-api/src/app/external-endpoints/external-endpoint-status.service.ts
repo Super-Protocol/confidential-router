@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, Not } from 'typeorm';
+import { DataSource, type EntityManager, In, IsNull, Not } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import {
@@ -11,7 +11,7 @@ import {
 } from '../db/entities/external-endpoint-event.entity.js';
 import { ExternalCatalogService } from './external-catalog.service.js';
 import { fetchSidecarVerdicts, type SidecarVerdict } from './sidecar-admin.client.js';
-import { type ProjectedVerdict, projectVerdict } from './status-projection.js';
+import { clip, type ProjectedVerdict, projectVerdict } from './status-projection.js';
 
 export interface SyncReport {
   /** Rows the sidecar reported on. */
@@ -143,21 +143,33 @@ export class ExternalEndpointStatusService {
 
   /**
    * Appends one event the sidecar has no opinion about — registration, a disable, a
-   * key rotation, an approved digest. `evidenceDigest` is what a `digest_pinned`
-   * event approved.
+   * key rotation, an approved digest, a withdrawn one. `evidenceDigest` is what a
+   * `digest_pinned` event approved, or what a `digest_unpinned` one stopped
+   * approving; `reason` is the operator's explanation where the kind alone does
+   * not carry it, clipped to the column the way a projected verdict's is.
+   *
+   * `manager` writes it on the caller's transaction, which is what a mutation
+   * whose row change and whose timeline entry are the same fact passes — for the
+   * reason {@link apply} states: a row that changed with no event behind it is a
+   * history an operator cannot act on.
    */
   async recordEvent(
     externalEndpointId: string,
     kind: ExternalEndpointEventKind,
-    { now = new Date(), evidenceDigest = null }: { now?: Date; evidenceDigest?: string | null } = {},
+    {
+      now = new Date(),
+      evidenceDigest = null,
+      reason = null,
+      manager,
+    }: { now?: Date; evidenceDigest?: string | null; reason?: string | null; manager?: EntityManager } = {},
   ): Promise<void> {
-    await this.dataSource.getRepository(ExternalEndpointEvent).save({
+    await (manager ?? this.dataSource.manager).getRepository(ExternalEndpointEvent).save({
       id: randomUUID(),
       externalEndpointId,
       at: now,
       kind,
       stage: null,
-      reason: null,
+      reason: clip(reason, 255),
       measurement: null,
       evidenceDigest,
     });

@@ -391,6 +391,104 @@ describe('pinning a deployment’s evidence digest (SUP-252)', () => {
     expect(repointed.endpoint.pinnedEvidenceDigest).toBeNull();
   });
 
+  it('records the withdrawal, so the endpoint’s own history says why it stopped serving (SUP-435)', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    await service.update({ id: endpoint.id, baseUrl: 'https://elsewhere.example' });
+
+    // The digest that is no longer approved, not the one that is: there is none.
+    // Without this entry the only trace of the withdrawal is the next check's
+    // `digest-not-pinned`, which reads as an endpoint nobody ever approved.
+    const withdrawals = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_unpinned',
+    );
+    expect(withdrawals.map((event) => event.evidenceDigest)).toEqual([DIGEST]);
+    expect(withdrawals[0].reason).toContain('https://partner.example:8443');
+    expect(withdrawals[0].reason).toContain('https://elsewhere.example');
+  });
+
+  it('re-points and keeps the approval in one write when the edit carries it (SUP-435)', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+    render.mockClear();
+
+    // The production shape: an operator correcting a URL who knows which
+    // deployment stays approved. Without the digest here the endpoint passes
+    // through `digest-not-pinned` — out of service — until a second call pins it.
+    const repointed = await service.update({
+      id: endpoint.id,
+      baseUrl: 'https://elsewhere.example',
+      evidenceDigest: DIGEST_HEX,
+    });
+
+    expect(repointed.endpoint.baseUrl).toBe('https://elsewhere.example');
+    expect(repointed.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+    // The verdict still resets — the pin is an approval, not a verdict, and
+    // nothing has attested the new URL yet.
+    expect(repointed.endpoint.status).toBe('pending');
+    expect(render).toHaveBeenCalledTimes(1);
+    const kinds = (await dataSource.getRepository(ExternalEndpointEvent).find()).map((event) => event.kind);
+    expect(kinds).not.toContain('digest_unpinned');
+  });
+
+  it('approves a new deployment from inside an edit, in the canonical spelling', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const approved = await service.update({ id: endpoint.id, evidenceDigest: NEW_DIGEST });
+
+    expect(approved.endpoint.pinnedEvidenceDigest).toBe(NEW_DIGEST);
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins.map((event) => event.evidenceDigest)).toEqual([DIGEST, NEW_DIGEST]);
+  });
+
+  it('re-sending the digest already approved approves nothing new', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    await service.update({ id: endpoint.id, models: [model({ promptPer1mMicros: 1 })], evidenceDigest: DIGEST_HEX });
+
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins).toHaveLength(1);
+  });
+
+  it('reads a stated null as saying nothing about the pin', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    // What a GraphQL caller sends when it re-sends the endpoint's own
+    // `pinnedEvidenceDigest` and there is none: the field is nullable, so the
+    // value arrives as null rather than absent.
+    const updated = await service.update({ id: endpoint.id, models: [model()], evidenceDigest: null });
+
+    expect(updated.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+  });
+
+  it('refuses a digest it cannot read before it writes anything', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    await expect(
+      service.update({
+        id: endpoint.id,
+        baseUrl: 'https://elsewhere.example',
+        models: [model({ promptPer1mMicros: 1 })],
+        evidenceDigest: 'not a digest',
+      }),
+    ).rejects.toThrow(/sha256:<64 hex>/);
+
+    // Nothing of the edit landed: an approval the parser refused must not leave
+    // the endpoint re-pointed with its pin gone.
+    const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });
+    expect([row.baseUrl, row.pinnedEvidenceDigest]).toEqual(['https://partner.example:8443', DIGEST]);
+    expect((await dataSource.getRepository(Model).findOneByOrFail({ id: model().id })).promptPer1mMicros).toBe(400_000);
+  });
+
   it('re-pricing keeps the approval: a price does not change which deployment answers', async () => {
     const { endpoint } = await register();
     await service.pinDigest(endpoint.id, DIGEST);
