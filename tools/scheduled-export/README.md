@@ -22,9 +22,15 @@ when that ships, this goes away.
 router-export.sh [--local-only] [--quiet] [--accept-shrink '<reason>']
 ```
 
-1. signs in at `POST /auth/bootstrap` with the deployment's `auth.bootstrapToken`
-   — its designed break-glass purpose, and the only credential that works with
-   nobody watching, because ordinary sign-in is a code mailed to a mailbox;
+0. **reads the deployment's current `auth.bootstrapToken` off the marketplace
+   that deployed it** — the same value the operator console shows in its
+   credentials dialog, found by whichever deployment is currently serving
+   `ROUTER_API_ORIGIN`. That parameter is *generated per deployment*, so a copy
+   written down here stops working the day production is rebuilt; see *The token
+   is not written down*, below;
+1. signs in at `POST /auth/bootstrap` with it — the token's designed break-glass
+   purpose, and the only credential that works with nobody watching, because
+   ordinary sign-in is a code mailed to a mailbox;
 2. downloads `GET /admin/data/export` and `GET /admin/invite-codes/export.csv`;
 3. signs the session out again, so a daily run does not leave ninety live
    administrator sessions behind in a quarter;
@@ -74,7 +80,12 @@ need. A run that overruled the shrink guard carries a fourth file,
 |---|---|
 | `ROUTER_API_ORIGIN` | `https://api.router.superprotocol.com` |
 | `ROUTER_CONSOLE_ORIGIN` | `https://console.router.superprotocol.com` — sent as `Origin` |
-| `ROUTER_BOOTSTRAP_TOKEN` | the deployment's `auth.bootstrapToken` |
+| `MARKETPLACE_ORIGIN` | the marketplace that deployed the router, e.g. `https://marketplace.demo.superprotocol.dev`. Unset means "use the stored token and nothing else" |
+| `MARKETPLACE_EMAIL` | a marketplace account with the `member` role on the organization that owns the deployment |
+| `MARKETPLACE_PASSWORD` | its password. **Not** deployment-scoped — rebuilding the router does not touch it |
+| `MARKETPLACE_ORG_ID` | optional; without it, every organization the account belongs to is searched for the deployment serving `ROUTER_API_ORIGIN` |
+| `MARKETPLACE_DEPLOYMENT_ID` | optional pin. Rarely what you want: a rebuild is a *new* deployment, so a pinned id goes stale exactly as a stored token does |
+| `ROUTER_BOOTSTRAP_TOKEN` | the deployment's `auth.bootstrapToken`. The fallback when the marketplace cannot be reached, and the whole credential when none is configured |
 | `EXPORT_CONTAINER` | the container these go in — a container of their own, e.g. `prod-exports` |
 | `BLOB_PREFIX` | optional prefix inside it; leave empty in a dedicated container |
 | `LOCAL_KEEP` | run directories kept on this host; `0` keeps all |
@@ -101,6 +112,66 @@ Creating the container needs only the same account key:
 az storage container create --account-name "$AZ_STORAGE_ACCOUNT" \
   --account-key "$AZ_STORAGE_KEY" --name prod-exports --public-access off
 ```
+
+### The token is not written down
+
+`auth.bootstrapToken` is a *generated* parameter of the marketplace deployment.
+Every production rebuild is a new deployment with a new one, so a copy kept in
+this configuration file turns into a `401` the moment the rebuild lands — and
+then stays a 401 until somebody notices and pastes the new value in by hand.
+That happened three times; the last on 2026-10-20, during the SUP-434 deploy
+train, when the 12:00 export 401'd (SUP-438). It is the worst possible timing: a
+rebuild is exactly when the previous deployment's data is about to stop existing.
+
+So the token is not stored. Given `MARKETPLACE_ORIGIN` and an account, each run:
+
+1. signs in to the marketplace (`POST /api/auth/sign-in/email`);
+2. lists the deployments of every organization that account belongs to, and
+   takes the one whose `apiHostname` parameter is the host in
+   `ROUTER_API_ORIGIN`. **By hostname, not by id** — a rebuild is a new
+   deployment row serving the same hostname, so an id would go stale exactly as
+   a token does. Deployments being deleted are skipped, and when a rebuild
+   leaves two answering at once the newest running one wins;
+3. reads `GET …/deployments/<id>/credentials` and takes `bootstrapToken` — the
+   same call the console's credentials dialog makes. It needs the `member` role;
+   a viewer is refused, and the refusal says so.
+
+The marketplace account is not deployment-scoped, which is the whole point: a
+rebuild of the router does not touch it. Which deployment a run got its token
+from is recorded in `state.json` as `tokenSource`.
+
+**If the marketplace cannot be reached**, the run falls back to a stored
+`ROUTER_BOOTSTRAP_TOKEN` rather than refusing — a backup that stops because a
+*second* system is down is worse than the problem it guards against. But that
+fallback quietly re-arms the original defect, so it is not left in a log: the
+first degraded run comments on `ALERT_ISSUE_ID` and drops a
+`.token-lookup-degraded` marker in `EXPORT_DIR`, and nothing is said again until
+a run reads the token cleanly and clears it. One comment per outage, not one a
+night.
+
+**A deployment not made by a marketplace** — a hand-rolled install, a chart
+applied directly — has no credentials dialog to ask. Leave `MARKETPLACE_ORIGIN`
+unset there and keep `ROUTER_BOOTSTRAP_TOKEN`; the behaviour is what it always
+was, and a rebuild means editing this file, which is why the redeploy runbook in
+[`docs/router.md`](../../docs/router.md) names that step explicitly.
+
+### Checking it survives a rebuild
+
+Without rebuilding anything: rotate the token out from under the tool and see
+that the run is unaffected.
+
+```sh
+# What this host would have used before, if anything:
+grep '^ROUTER_BOOTSTRAP_TOKEN=' ~/.config/router-export/env | sed 's/=.*/=…/'
+
+# Break it on purpose — this is what a rebuild does to it — and run:
+sed -i 's/^ROUTER_BOOTSTRAP_TOKEN=.*/ROUTER_BOOTSTRAP_TOKEN=rotated-away-by-a-rebuild-3232/' \
+  ~/.config/router-export/env
+router-export.sh --local-only
+```
+
+It should sign in and finish. `state.json`'s `tokenSource` names the deployment
+it read from, and the stored value it ignored is still the broken one.
 
 ## Installing
 
@@ -232,6 +303,16 @@ and says so.
   `router-export.log` whose last line is old. `Persistent=true` covers a host
   that was merely switched off. Nothing here watches the watcher, and a second
   timer to check the first is the same bet one level up.
+- **Reading the token adds a dependency on the marketplace** — a second system
+  that can be down. It is a soft one: the run falls back to the stored token and
+  carries on, and only a host with neither is stopped. The trade is deliberate,
+  because the dependency is on a system that is up when it matters (a rebuild
+  goes *through* the marketplace) and the alternative was a credential that is
+  guaranteed wrong precisely then.
+- **The marketplace account is a broader credential than the one it replaces.**
+  `member` on the organization can deploy and reconfigure, where the bootstrap
+  token only opened one router's administrator account. Give this host an
+  account that belongs to it, not an operator's own.
 - **Where the copies live is where the credentials live.** The host that holds
   the storage key is the host that writes the backups, so losing it badly enough
   loses the ability to take new ones. The copies already written survive it.
@@ -242,7 +323,7 @@ and says so.
   beyond what the storage account does. Encrypting it would mean a key that has
   to outlive this host, which is a question with an owner, not a default.
 
-All four shrink to nothing when the router exports itself to a target given as a
+All of these shrink to nothing when the router exports itself to a target given as a
 deployment parameter. That is the fix; this is the bridge to it.
 
 ## Tests
@@ -253,12 +334,15 @@ bash tools/scheduled-export/router-export.test.sh   # or: pnpm nx run scheduled-
 
 A fake router on loopback, built by the same canonical form the real one hashes
 with, so "the hash matches" means something, and a stand-in `az` in place of the
-real CLI. **75 assertions**, covering:
+real CLI. **103 assertions**, covering:
 
 | | |
 |---|---|
 | the good path | exit 0, manifest with the right counts, codes CSV beside the bundle, mode `600`, log line, counts remembered |
 | sign-in | a refused token, a missing bootstrap endpoint, a 200 that sets no cookie, a router that does not answer at all |
+| the token, across a rebuild | the deployment's token preferred to the stored one and recorded in `tokenSource`; a rebuild that rotates it — old deployment deleting, new one running, config untouched — not stopping the export; the same rotation against a stored-token-only configuration failing *and* raising the alarm |
+| the token, when the lookup cannot run | an unreachable marketplace falling back and saying so, the fallback alarm raised once and not repeated the next night, a recovered lookup saying so and clearing the marker, no stored token to fall back to refused, a marketplace half-configured refused by name |
+| the token, when the lookup runs and finds nothing | no deployment serving this hostname (naming the ones it saw), a sign-in the marketplace refuses, a viewer told which role it needs, a deployment whose token was supplied by hand |
 | the file that arrived | a failing export, a truncated bundle, a hash the header disagrees with, a missing hash header, a foreign `format`, a newer `schemaVersion` |
 | what it carries | an empty export, a codes CSV shorter than the bundle's count, a codes CSV with the wrong header |
 | between runs | a shrinking export naming what shrank, a growing one accepted, local rotation to `LOCAL_KEEP` |
@@ -270,5 +354,7 @@ real CLI. **75 assertions**, covering:
 Nothing in the suite reaches the network or object storage. The container is
 resolved before any `az` call, which is what lets the refusal be tested without a
 storage account; everything past it goes through the stand-in, which is also why
-the suite costs 13 seconds instead of a minute — a slow suite is a suite that
-stops being run.
+the suite costs some twenty seconds instead of minutes — a slow suite is a suite
+that stops being run. The marketplace is the same loopback server on different
+paths, and the `multica` CLI has a stand-in too, because an alarm that fires is
+the half of this tool no exit code can check.

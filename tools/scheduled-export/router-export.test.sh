@@ -122,10 +122,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def json(self, status, payload, headers=()):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        for name, value in headers:
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_body(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        try:
+            return json.loads(self.rfile.read(length) or b'{}')
+        except ValueError:
+            return {}
+
     def do_POST(self):
         s = read_scenario()
+        # The marketplace half: sign-in is the only write the resolver makes.
+        if self.path == '/api/auth/sign-in/email':
+            status = s.get('mpSignInStatus', 200)
+            if status != 200:
+                self.json(status, {'message': 'no'})
+                return
+            self.json(200, {'user': {'email': self.read_body().get('email')}},
+                      [('Set-Cookie', 'better-auth.session_token=fake; Path=/; HttpOnly')])
+            return
         if self.path == '/auth/bootstrap':
             status = s.get('bootstrapStatus', 200)
+            # A deployment only knows its own token. `routerToken` is what this
+            # one was deployed with, so a run presenting the previous
+            # deployment's token is refused exactly as production refuses it.
+            wanted = s.get('routerToken')
+            if status == 200 and wanted is not None and self.read_body().get('token') != wanted:
+                status = 401
             self.send_response(status)
             if status == 200 and s.get('setCookie', True):
                 # Without the __Secure- prefix the real router uses: curl
@@ -142,6 +173,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         s = read_scenario()
         users, codes = s.get('users', 2), s.get('codes', 3)
+        if self.path == '/api/v1/organizations':
+            self.json(200, s.get('mpOrganizations', [{'id': 'org-1', 'name': 'Super Protocol'}]))
+            return
+        if self.path.startswith('/api/v1/organizations/'):
+            rest = self.path[len('/api/v1/organizations/'):].split('/')
+            # …/<org>/deployments and …/<org>/deployments/<id>/credentials
+            if len(rest) == 2 and rest[1] == 'deployments':
+                self.json(200, [d for d in s.get('mpDeployments', []) if d.get('_org', 'org-1') == rest[0]])
+                return
+            if len(rest) == 4 and rest[3] == 'credentials':
+                status = s.get('mpCredentialsStatus', 200)
+                if status != 200:
+                    self.json(status, {'message': 'no'})
+                    return
+                self.json(200, s.get('mpCredentials', {}).get(rest[2], []))
+                return
+            self.send_response(404)
+            self.end_headers()
+            return
         if self.path.startswith('/admin/data/export'):
             status = s.get('exportStatus', 200)
             if status != 200:
@@ -261,6 +311,29 @@ EOF
 chmod +x "$workdir/bin/az"
 az_mode() { printf '%s' "$1" > "$workdir/az-mode"; }
 az_mode ok
+
+# A stand-in for the `multica` CLI, so what the alert would have said is
+# something a test can read. Every comment body is appended to one file: an
+# alarm that fires is the half of this tool that cannot be checked by looking
+# at its exit code.
+cat > "$workdir/bin/multica" << 'EOF'
+#!/usr/bin/env bash
+file=''
+while [ $# -gt 0 ]; do
+  [ "$1" = --content-file ] && file="$2"
+  shift
+done
+{
+  printf -- '--- alert ---\n'
+  [ -n "$file" ] && cat "$file"
+} >> "$MULTICA_FAKE_LOG"
+EOF
+chmod +x "$workdir/bin/multica"
+alerts_file="$workdir/alerts.txt"
+: > "$alerts_file"
+alerts() { cat "$alerts_file"; }
+reset_alerts() { : > "$alerts_file"; }
+alert_count() { grep -c -- '--- alert ---' "$alerts_file" || true; }
 
 # Resolving the container happens before any `az` call, so the container
 # refusals below are reached whether or not `az` can do anything.
@@ -607,6 +680,188 @@ expect_contains 'no configuration says where it looked' "$out" 'no readable conf
 
 out="$(HOME="$HOME_DIR" bash "$script" --nonsense 2>&1)"
 expect_contains 'an unknown argument is refused' "$out" 'unknown argument'
+
+# --- the bootstrap token is read off the deployment, not written down ---------
+#
+# `auth.bootstrapToken` belongs to one deployment and a production rebuild mints
+# a new one, so the question these ask is the one SUP-438 is about: what happens
+# to the backup the night after a rebuild. The fake router here only accepts the
+# token its own `routerToken` names, exactly as a freshly rebuilt deployment
+# refuses the previous one's.
+
+STALE_TOKEN='the-previous-deployments-token-32'
+FIRST_TOKEN='the-first-deployments-token-3232'
+SECOND_TOKEN='the-second-deployments-token-323'
+
+# write_marketplace_config <stored-token> [marketplace-origin] [alert-issue]
+write_marketplace_config() {
+  cat > "$HOME_DIR/.config/router-export/env" << EOF
+ROUTER_API_ORIGIN=http://127.0.0.1:$PORT
+ROUTER_CONSOLE_ORIGIN=http://127.0.0.1:$PORT
+MARKETPLACE_ORIGIN=${2:-http://127.0.0.1:$PORT}
+MARKETPLACE_EMAIL=ops@example.test
+MARKETPLACE_PASSWORD=not-a-real-password
+ROUTER_BOOTSTRAP_TOKEN=$1
+EXPORT_CONTAINER=prod-exports
+LOCAL_KEEP=7
+ALERT_ISSUE_ID=${3-}
+EOF
+}
+
+# The alerts are the other half of what is under test: a refusal nobody is told
+# about is the defect, not the symptom. So these runs get a `multica` on PATH.
+run_watched() {
+  HOME="$HOME_DIR" \
+    PATH="$workdir/bin:$PATH" \
+    MULTICA_FAKE_LOG="$alerts_file" \
+    ROUTER_EXPORT_CONFIG="$HOME_DIR/.config/router-export/env" \
+    EXPORT_DIR="$HOME_DIR/prod-exports" \
+    bash "$script" "$@" 2>&1
+}
+
+# deployment <id> <status> <hostname> <created>
+deployment() {
+  printf '{"id":"%s","status":"%s","appVersion":"0.19.0","createdAt":"%s","parameters":{"apiHostname":"%s"}}' \
+    "$1" "$2" "$4" "$3"
+}
+credential() { printf '{"%s":[{"id":"bootstrapToken","title":"First sign-in token","value":"%s","source":"parameter"}]}' "$1" "$2"; }
+
+reset_state
+reset_alerts
+write_marketplace_config "$STALE_TOKEN" '' alert-issue
+set_scenario "{\"routerToken\":\"$FIRST_TOKEN\",
+  \"mpDeployments\":[$(deployment dep-1 running 127.0.0.1 2026-10-01T00:00:00Z)],
+  \"mpCredentials\":$(credential dep-1 "$FIRST_TOKEN")}"
+out="$(run_watched --local-only --quiet)"
+expect_eq 'the token off the deployment is preferred to the stored one' "$?" '0'
+expect_contains 'the run records which deployment it got the token from' \
+  "$(cat "$HOME_DIR/prod-exports/state.json")" '"tokenSource": "deployment dep-1'
+
+# A rebuild, as it actually looks from here: the old deployment is on its way
+# out and still answers to the hostname, a new one is running with a token of
+# its own, and nobody has touched the config file.
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",
+  \"mpDeployments\":[$(deployment dep-1 deleting 127.0.0.1 2026-10-01T00:00:00Z),
+                     $(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z)],
+  \"mpCredentials\":{$(credential dep-1 "$FIRST_TOKEN" | sed 's/^{//; s/}$//'),
+                     $(credential dep-2 "$SECOND_TOKEN" | sed 's/^{//; s/}$//')}}"
+out="$(run_watched --local-only --quiet)"
+expect_eq 'a rebuild that rotates the token does not stop the export' "$?" '0'
+expect_contains 'the rebuilt deployment is the one it reads from' \
+  "$(cat "$HOME_DIR/prod-exports/state.json")" '"tokenSource": "deployment dep-2'
+expect_eq 'a rebuild it survived raises no alarm' "$(alert_count)" '0'
+
+# The same rebuild against the tool as it was: the stored token is all there is,
+# and it is now the previous deployment's. The run has to fail, and the failure
+# has to reach the issue rather than only the log.
+reset_state
+reset_alerts
+cat > "$HOME_DIR/.config/router-export/env" << EOF
+ROUTER_API_ORIGIN=http://127.0.0.1:$PORT
+ROUTER_CONSOLE_ORIGIN=http://127.0.0.1:$PORT
+ROUTER_BOOTSTRAP_TOKEN=$FIRST_TOKEN
+EXPORT_CONTAINER=prod-exports
+LOCAL_KEEP=7
+ALERT_ISSUE_ID=alert-issue
+EOF
+out="$(run_watched --local-only --quiet)"
+expect_eq 'a stored token the rebuild invalidated exits non-zero' "$?" '1'
+expect_contains 'it names the stored token as the thing that was refused' "$out" 'refused (401)'
+expect_eq 'it raises exactly one alarm' "$(alert_count)" '1'
+expect_contains 'the alarm says the export failed' "$(alerts)" 'Scheduled production export failed'
+expect_contains 'the alarm carries the reason' "$(alerts)" '401'
+
+# --- when the marketplace itself cannot be reached ----------------------------
+#
+# Falling back to the stored token is right — a backup that stops because a
+# second system is down is worse than the problem — but it silently re-arms the
+# defect, so it is said out loud, once per outage.
+
+reset_state
+reset_alerts
+write_marketplace_config "$SECOND_TOKEN" 'http://127.0.0.1:9' alert-issue
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"mpDeployments\":[]}"
+out="$(run_watched --local-only --quiet)"
+expect_eq 'an unreachable marketplace still takes the backup' "$?" '0'
+expect_contains 'it says it fell back to the stored token' "$out" 'falling back to the stored'
+expect_eq 'the fallback raises an alarm of its own' "$(alert_count)" '1'
+expect_contains 'the alarm explains what the fallback costs' "$(alerts)" 'back on a stored bootstrap token'
+
+out="$(run_watched --local-only --quiet)"
+expect_eq 'the second degraded run still takes the backup' "$?" '0'
+expect_eq 'but does not repeat the alarm every night' "$(alert_count)" '1'
+
+write_marketplace_config "$SECOND_TOKEN" '' alert-issue
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",
+  \"mpDeployments\":[$(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z)],
+  \"mpCredentials\":$(credential dep-2 "$SECOND_TOKEN")}"
+out="$(run_watched --local-only)"
+expect_contains 'a recovered lookup says so' "$out" 'can be read off the deployment again'
+if [ -f "$HOME_DIR/prod-exports/.token-lookup-degraded" ]; then
+  fail 'recovery clears the once-per-outage flag' 'the flag is still there'
+else
+  pass 'recovery clears the once-per-outage flag'
+fi
+
+# --- refusals from the lookup itself ------------------------------------------
+
+reset_state
+reset_alerts
+write_marketplace_config '' 'http://127.0.0.1:9' alert-issue
+out="$(run_watched --local-only --quiet)"
+expect_eq 'no stored token and no marketplace is a refusal' "$?" '1'
+expect_contains 'it says the deployment could not be asked' "$out" 'could not be read off the deployment'
+expect_contains 'it says there was nothing to fall back to' "$out" 'no ROUTER_BOOTSTRAP_TOKEN'
+
+reset_state
+write_marketplace_config ''
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",
+  \"mpDeployments\":[$(deployment dep-9 running api.elsewhere.test 2026-10-20T12:00:00Z)],
+  \"mpCredentials\":$(credential dep-9 "$SECOND_TOKEN")}"
+out="$(run --local-only --quiet)"
+expect_eq 'a deployment serving another hostname is not this one' "$?" '1'
+expect_contains 'it names the hostnames it did see' "$out" 'api.elsewhere.test'
+
+reset_state
+write_marketplace_config ''
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"mpSignInStatus\":401,
+  \"mpDeployments\":[$(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z)]}"
+out="$(run --local-only --quiet)"
+expect_contains 'a marketplace account that cannot sign in says so' "$out" 'refused the sign-in'
+
+reset_state
+write_marketplace_config ''
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"mpCredentialsStatus\":403,
+  \"mpDeployments\":[$(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z)]}"
+out="$(run --local-only --quiet)"
+expect_contains 'a viewer is told which role reading the token needs' "$out" '"member" role'
+
+reset_state
+write_marketplace_config ''
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",
+  \"mpDeployments\":[$(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z)],
+  \"mpCredentials\":{\"dep-2\":[]}}"
+out="$(run --local-only --quiet)"
+expect_contains 'a deployment whose token was supplied by hand says so' "$out" 'no bootstrapToken among its generated values'
+
+# Half a marketplace reads as "the modern way is on" while falling back every
+# night, which is the defect wearing the fix's clothes.
+reset_state
+cat > "$HOME_DIR/.config/router-export/env" << EOF
+ROUTER_API_ORIGIN=http://127.0.0.1:$PORT
+MARKETPLACE_ORIGIN=http://127.0.0.1:$PORT
+ROUTER_BOOTSTRAP_TOKEN=$SECOND_TOKEN
+ALERT_ISSUE_ID=
+EOF
+out="$(run --local-only --quiet)"
+expect_eq 'a half-configured marketplace is refused' "$?" '1'
+expect_contains 'and says which half is missing' "$out" 'MARKETPLACE_EMAIL'
+
+# Back to a plain configuration, so anything added after this starts where the
+# rest of the suite expects to be.
+write_config
+reset_state
+set_scenario '{"users":2,"codes":3}'
 
 printf '\n'
 if [ "$failures" -gt 0 ]; then

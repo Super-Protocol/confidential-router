@@ -26,11 +26,31 @@
 # which nothing in this script ever truncates. Use it only after finding out
 # where the rows went; blessing a real loss rotates it out of the backups.
 #
+# The administrator's key is read from the deployment at run time rather than
+# written down here (SUP-438). `auth.bootstrapToken` is a *generated* parameter
+# of the marketplace deployment, so every production rebuild mints a new one and
+# any copy kept on this host becomes a 401 the day the rebuild lands — which is
+# exactly the day a backup matters. Given a marketplace account, this asks the
+# marketplace for the token of whichever deployment currently serves
+# ROUTER_API_ORIGIN, the same value its console shows in the credentials dialog.
+# That account is not deployment-scoped, so it survives what the token does not.
+#
 # Configuration: ~/.config/router-export/env, mode 0600.
 #
 #   ROUTER_API_ORIGIN       https://api.router.superprotocol.com
 #   ROUTER_CONSOLE_ORIGIN   https://console.router.superprotocol.com
-#   ROUTER_BOOTSTRAP_TOKEN  auth.bootstrapToken — a password for the administrator
+#   MARKETPLACE_ORIGIN      https://marketplace.demo.superprotocol.dev — where the
+#                           token is read from; unset means "use the stored one"
+#   MARKETPLACE_EMAIL       a marketplace account with `member` on the organization
+#   MARKETPLACE_PASSWORD    its password. Not deployment-scoped: a rebuild of the
+#                           router does not touch it
+#   MARKETPLACE_ORG_ID      optional; without it, every organization the account
+#                           belongs to is searched for the matching deployment
+#   MARKETPLACE_DEPLOYMENT_ID  optional pin. Rarely wanted: a rebuild is a new
+#                           deployment, so a pinned id goes stale as a token does
+#   ROUTER_BOOTSTRAP_TOKEN  auth.bootstrapToken — a password for the administrator.
+#                           The fallback for a marketplace that cannot be reached,
+#                           and the whole credential when none is configured
 #   EXPORT_CONTAINER        prod-exports   (container of its own; never qa-artifacts)
 #   BLOB_PREFIX             optional prefix inside that container; empty is fine
 #                           and is the point of a dedicated container
@@ -125,8 +145,27 @@ set -a
 set +a
 
 : "${ROUTER_API_ORIGIN:?set ROUTER_API_ORIGIN in $CONFIG}"
-: "${ROUTER_BOOTSTRAP_TOKEN:?set ROUTER_BOOTSTRAP_TOKEN in $CONFIG}"
 CONSOLE_ORIGIN="${ROUTER_CONSOLE_ORIGIN:-$ROUTER_API_ORIGIN}"
+MARKETPLACE_ORIGIN="${MARKETPLACE_ORIGIN:-}"
+MARKETPLACE_EMAIL="${MARKETPLACE_EMAIL:-}"
+MARKETPLACE_PASSWORD="${MARKETPLACE_PASSWORD:-}"
+MARKETPLACE_ORG_ID="${MARKETPLACE_ORG_ID:-}"
+MARKETPLACE_DEPLOYMENT_ID="${MARKETPLACE_DEPLOYMENT_ID:-}"
+# Exported deliberately: the sign-in body is written by a `node -e` that reads
+# it out of the environment rather than off a command line, and a config file
+# that omits the key entirely would otherwise leave it unexported here.
+export ROUTER_BOOTSTRAP_TOKEN="${ROUTER_BOOTSTRAP_TOKEN:-}"
+# One of the two has to be there. A marketplace half-configured is the worse
+# failure of the two — it reads as "the modern way is on" while falling back to
+# a stored token every night — so say which half is missing.
+if [ -n "$MARKETPLACE_ORIGIN" ] && { [ -z "$MARKETPLACE_EMAIL" ] || [ -z "$MARKETPLACE_PASSWORD" ]; }; then
+  echo "router-export: MARKETPLACE_ORIGIN is set but MARKETPLACE_EMAIL or MARKETPLACE_PASSWORD is not; set both in $CONFIG" >&2
+  exit 1
+fi
+if [ -z "$MARKETPLACE_ORIGIN" ] && [ -z "$ROUTER_BOOTSTRAP_TOKEN" ]; then
+  echo "router-export: set MARKETPLACE_ORIGIN (with MARKETPLACE_EMAIL and MARKETPLACE_PASSWORD) in $CONFIG, or a ROUTER_BOOTSTRAP_TOKEN to use instead" >&2
+  exit 1
+fi
 EXPORT_DIR="${EXPORT_DIR:-$HOME/prod-exports}"
 # `${x-}` and not `${x:-…}`: a container of this tool's own needs no prefix at
 # all, so an explicitly empty value has to survive rather than be defaulted away.
@@ -143,6 +182,10 @@ STATE_FILE="$EXPORT_DIR/state.json"
 # rewritten wholesale by every successful run, which is exactly how the first
 # hand-made acceptance record was erased by the run that followed it (SUP-432).
 ACCEPT_LOG="$EXPORT_DIR/shrink-acceptances.log"
+# Set while the run-time token lookup is failing and the stored token is
+# carrying the export on its own. Its only job is to keep the alert about that
+# to one comment per outage rather than one a night (SUP-438).
+DEGRADED_FLAG="$EXPORT_DIR/.token-lookup-degraded"
 
 mkdir -p "$EXPORT_DIR"
 chmod 700 "$EXPORT_DIR"
@@ -159,38 +202,121 @@ record() {
   chmod 600 "$LOG_FILE" 2>/dev/null || true
 }
 
+# Posts whatever is on stdin to the alert issue. Nothing a human has to go
+# looking for counts as having been said, so the one place a comment is written
+# is here, and both the refusals and the still-running-but-degraded warning go
+# through it.
+alert() {
+  local body
+  body="$(cat)"
+  [ -n "$ALERT_ISSUE_ID" ] && command -v multica > /dev/null 2>&1 || return 0
+  printf '%s' "$body" > "$EXPORT_DIR/.alert.md"
+  # From `$EXPORT_DIR`, with a relative path: the CLI refuses a
+  # `--content-file` outside its working directory, and a directory with no
+  # task context is what makes it use the host's own credentials.
+  (cd "$EXPORT_DIR" && multica issue comment add "$ALERT_ISSUE_ID" --content-file ./.alert.md) \
+    > /dev/null 2>&1 || say 'the alert comment could not be posted — the message above is only in this log'
+  rm -f "$EXPORT_DIR/.alert.md"
+  return 0
+}
+
 # A refusal has to reach a person. systemd would only mark the unit failed, and
 # a unit nobody looks at is the silent backup this issue exists to end.
 die() {
   local reason="$1"
   say "FAILED — $reason"
   record 'FAILED' "$reason"
-  if [ -n "$ALERT_ISSUE_ID" ] && command -v multica > /dev/null 2>&1; then
-    {
-      printf '## Scheduled production export failed\n\n'
-      printf 'Run `%s` on the agent host did not produce a usable copy.\n\n' "$STAMP"
-      printf '> %s\n\n' "$reason"
-      printf 'Nothing was uploaded for this run, so the newest good copy is whatever the previous run left. '
-      printf 'Until this is fixed the production data has one copy again, inside the deployment.\n\n'
-      # Not a bare "re-run": a transport failure clears on the next attempt, but
-      # a refusal about the data itself does not — the shrink guard compares
-      # against a baseline only a successful run rewrites, so re-running it
-      # unchanged refuses identically (SUP-432). The reason above says which.
-      printf 'Local log: `%s`. Re-run by hand with `router-export.sh` on the agent host once the cause above is addressed — a re-run clears a failure to reach the router, but not a refusal about what the export holds.\n' "$LOG_FILE"
-    } > "$EXPORT_DIR/.alert.md"
-    # From `$EXPORT_DIR`, with a relative path: the CLI refuses a
-    # `--content-file` outside its working directory, and a directory with no
-    # task context is what makes it use the host's own credentials.
-    (cd "$EXPORT_DIR" && multica issue comment add "$ALERT_ISSUE_ID" --content-file ./.alert.md) \
-      > /dev/null 2>&1 || say 'the alert comment could not be posted — the failure above is only in this log'
-    rm -f "$EXPORT_DIR/.alert.md"
-  fi
+  {
+    printf '## Scheduled production export failed\n\n'
+    printf 'Run `%s` on the agent host did not produce a usable copy.\n\n' "$STAMP"
+    printf '> %s\n\n' "$reason"
+    printf 'Nothing was uploaded for this run, so the newest good copy is whatever the previous run left. '
+    printf 'Until this is fixed the production data has one copy again, inside the deployment.\n\n'
+    # Not a bare "re-run": a transport failure clears on the next attempt, but
+    # a refusal about the data itself does not — the shrink guard compares
+    # against a baseline only a successful run rewrites, so re-running it
+    # unchanged refuses identically (SUP-432). The reason above says which.
+    printf 'Local log: `%s`. Re-run by hand with `router-export.sh` on the agent host once the cause above is addressed — a re-run clears a failure to reach the router, but not a refusal about what the export holds.\n' "$LOG_FILE"
+  } | alert
   exit 1
+}
+
+# The one JSON reader in here. `?? ''` and not `undefined`: a field that is not
+# there reads as absent rather than as the four letters that look like a value.
+json_field() {
+  node -e 'const f=require("node:fs");process.stdout.write(String(JSON.parse(f.readFileSync(process.argv[1],"utf8"))[process.argv[2]] ?? ""))' \
+    "$1" "$2"
 }
 
 need() { command -v "$1" > /dev/null 2>&1 || die "$1 is not installed on this host"; }
 need curl
 need node
+
+# --- the administrator's key --------------------------------------------------
+#
+# `auth.bootstrapToken` belongs to one deployment, and a production rebuild is a
+# new deployment: whatever is written down here stops working the moment the
+# rebuild lands, and the export 401s on the first night it is most needed. So
+# ask the marketplace that made the deployment, every run, for the token of
+# whichever deployment currently serves ROUTER_API_ORIGIN (SUP-438).
+#
+# A marketplace that cannot be reached falls back to the stored token rather
+# than refusing: the stored one is usually still good, and a backup that stops
+# because a *second* system is down is worse than the problem. But the fallback
+# is a silent re-arming of the original defect, so it says so on the alert issue
+# the first time it happens, and keeps saying nothing until a run resolves
+# cleanly again — one comment per outage, not one a night.
+
+token_source='the stored ROUTER_BOOTSTRAP_TOKEN'
+lookup_failure=''
+
+if [ -n "$MARKETPLACE_ORIGIN" ]; then
+  log "reading the bootstrap token off the deployment serving $ROUTER_API_ORIGIN"
+  resolved="$work/resolved.json"
+  if MARKETPLACE_ORIGIN="$MARKETPLACE_ORIGIN" \
+    MARKETPLACE_EMAIL="$MARKETPLACE_EMAIL" \
+    MARKETPLACE_PASSWORD="$MARKETPLACE_PASSWORD" \
+    MARKETPLACE_ORG_ID="$MARKETPLACE_ORG_ID" \
+    MARKETPLACE_DEPLOYMENT_ID="$MARKETPLACE_DEPLOYMENT_ID" \
+    ROUTER_API_ORIGIN="$ROUTER_API_ORIGIN" \
+    node "$here/resolve-bootstrap-token.mjs" > "$resolved" 2> "$work/resolve.err"; then
+    chmod 600 "$resolved"
+    ROUTER_BOOTSTRAP_TOKEN="$(json_field "$resolved" token)"
+    token_source="deployment $(json_field "$resolved" deploymentId) ($(json_field "$resolved" appVersion), $(json_field "$resolved" status)) on $MARKETPLACE_ORIGIN"
+    wipe "$resolved"
+    log "token read from $token_source"
+    # Whatever outage the flag was raised for is over; the next one deserves its
+    # own comment.
+    # `|| true`: under `set -e` a bare `test && …` that finds nothing is a
+    # failed command, and the ordinary case here is finding nothing.
+    [ -f "$DEGRADED_FLAG" ] && { rm -f "$DEGRADED_FLAG"; say 'the bootstrap token can be read off the deployment again.'; } || true
+  else
+    # The refusal is on stdout by design; stderr only has anything in it when
+    # node fell over before reaching its own error handling, and that is
+    # precisely the case where the operator needs to be told something.
+    lookup_failure="$(cat "$resolved" 2> /dev/null || true)"
+    [ -n "$lookup_failure" ] || lookup_failure="$(head -c 400 "$work/resolve.err" 2> /dev/null || true)"
+    [ -n "$lookup_failure" ] || lookup_failure='the lookup failed without saying why'
+    wipe "$resolved"
+    [ -n "$ROUTER_BOOTSTRAP_TOKEN" ] \
+      || die "the bootstrap token could not be read off the deployment, and no ROUTER_BOOTSTRAP_TOKEN is configured to fall back to: $lookup_failure"
+    say "the bootstrap token could not be read off the deployment ($lookup_failure) — falling back to the stored ROUTER_BOOTSTRAP_TOKEN, which a rebuild may already have replaced."
+    if [ ! -f "$DEGRADED_FLAG" ]; then
+      {
+        printf '## The scheduled export is back on a stored bootstrap token\n\n'
+        printf 'Run `%s` could not read the current token off the deployment, and is using the copy in `%s` instead.\n\n' \
+          "$STAMP" "$CONFIG"
+        printf '> %s\n\n' "$lookup_failure"
+        printf 'That copy belongs to one deployment. It works until the next production rebuild and then stops, '
+        printf 'which is the failure SUP-438 removed — so this is the alarm for it rather than a note in a log. '
+        printf 'Fix the marketplace credentials in `%s`, or expect to paste a new token by hand after the next deploy.\n\n' "$CONFIG"
+        printf 'This is said once per outage: no further comment until a run reads the token cleanly again.\n'
+      } | alert
+      : > "$DEGRADED_FLAG"
+      chmod 600 "$DEGRADED_FLAG" 2> /dev/null || true
+    fi
+  fi
+fi
 
 # --- the export ---------------------------------------------------------------
 
@@ -213,7 +339,19 @@ wipe "$token_json"
 # all if curl itself could not run; both mean the router did not answer.
 case "${status:-000}" in
   200) : ;;
-  401) die 'the bootstrap token was refused (401). It was rotated, or this copy is stale — read auth.bootstrapToken off the deployment again.' ;;
+  # Which of the two 401s this is matters: a refused *stored* token is the old
+  # "a rebuild happened and nobody pasted the new one" and the remedy is to
+  # stop storing it; a refused *resolved* token is a real fault, because the
+  # marketplace just handed it over as the current one.
+  401)
+    if [ -n "$lookup_failure" ]; then
+      die "the stored bootstrap token was refused (401), and the current one could not be read off the deployment to replace it: $lookup_failure"
+    elif [ -n "$MARKETPLACE_ORIGIN" ]; then
+      die "the bootstrap token read from $token_source was refused (401). The deployment was rebuilt between that read and this sign-in, or the administrator account the token opens no longer exists."
+    else
+      die 'the bootstrap token was refused (401). It was rotated, or this copy is stale — set MARKETPLACE_ORIGIN so the token is read off the deployment at run time instead of being written down.'
+    fi
+    ;;
   404) die 'the deployment has no bootstrap endpoint (404). Either auth.bootstrapToken is unset, or the administrator account it opens no longer exists.' ;;
   000) die "the router did not answer at $ROUTER_API_ORIGIN (connection failed or timed out)." ;;
   *) die "sign-in answered HTTP $status; expected 200." ;;
@@ -268,7 +406,7 @@ if ! EXPORT_HEADER_SHA="$header_sha" node "$here/verify-bundle.mjs" "$bundle" > 
   die "$(cat "$verify_json" 2>/dev/null || echo 'the bundle did not verify')"
 fi
 
-read_field() { node -e 'const f=require("fs");process.stdout.write(String(JSON.parse(f.readFileSync(process.argv[1],"utf8"))[process.argv[2]]))' "$verify_json" "$1"; }
+read_field() { json_field "$verify_json" "$1"; }
 
 content_sha="$(read_field contentSha256)"
 users="$(read_field users)"
@@ -429,7 +567,8 @@ cat > "$STATE_FILE" << JSON
   "contentSha256": "$content_sha",
   "users": $users,
   "inviteCodes": $invite_codes,
-  "uploadedTo": "$uploaded"
+  "uploadedTo": "$uploaded",
+  "tokenSource": "$token_source"
 }
 JSON
 chmod 600 "$STATE_FILE"
