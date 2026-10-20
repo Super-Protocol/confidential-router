@@ -1,3 +1,4 @@
+export * from './bundle-coverage.js';
 export * from './data-export.service.js';
 export * from './data-import.service.js';
 export * from './data-migration.controller.js';

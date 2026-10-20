@@ -904,6 +904,7 @@ built for the request that asked for it and kept nowhere on the server:
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
 | `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
 `counts`, `totalBalanceMicros` and `integrity.contentSha256` (SHA-256 over the
@@ -915,13 +916,28 @@ are ISO-8601 UTC, money is integer micro-USD as a decimal string.
 **Left behind, by design:** chats and messages, generations and activity,
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
-read); API keys, which are stored hashed and cannot be moved — **every user issues
-new keys after a migration**; and the upstream API key of an external endpoint,
-which is sealed under the old deployment's `CR_API_SECRETS_KEY`. The file
-therefore holds **no secret**. It does hold personal data and invitation codes
-that can still be redeemed: keep it private, and delete it once the new
-deployment is verified. A bundle with a credential-shaped field in it is refused
-on both sides — the export will not write one and the import will not read one.
+read); and the upstream API key of an external endpoint, which is sealed under
+the old deployment's `CR_API_SECRETS_KEY`. Which table is in which half is not a
+matter of reading this page: `data-migration/bundle-coverage.ts` records the
+decision for every entity in the schema, and a spec fails the build when a new
+one is in neither list — a table nobody classifies is a table the next rebuild
+drops in silence, which is what happened to the API keys (SUP-445).
+
+**The API-key hashes are the one thing in the file worth a paragraph.** A `/v1`
+key is stored as `sha256(secret)` over 32 bytes of CSPRNG entropy, so the stored
+form has no feasible preimage: carrying it moves the ability to *recognise* a
+key, never the ability to present one, and the file still cannot be used as a
+credential against any deployment. That is what lets a key configured into a
+Gatekeeper, an IDE or a script keep working across a redeploy — before SUP-445
+every rebuild revoked all of them, and the only symptom was a bare
+`401 invalid_api_key` on an account that otherwise looked untouched. The file
+therefore holds **no secret**, and it does hold personal data, invitation codes
+that can still be redeemed and those hashes: keep it private, and delete it once
+the new deployment is verified. A bundle with any *other* credential-shaped field
+in it is refused on both sides — the export will not write one and the import
+will not read one; the exact paths excused are listed, with their reasons, in
+`CARRIED_NON_CREDENTIAL_PATHS`. An older build handed a file that carries the new
+section refuses it on that guard rather than importing it without the keys.
 
 The import takes the file **only into a fresh deployment**, and always in two
 steps:
@@ -938,7 +954,8 @@ file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`); the
 file's schema version is not this build's; its contents do not match its own
 hash, counts or total; a workspace balance does not equal the sum of its ledger
 entries; or a row collides with a different one here (a taken slug, an invitation
-code already issued here under another id, a taken endpoint name or model id).
+code already issued here under another id, an API key whose credential is already
+registered here under another id, a taken endpoint name or model id).
 
 Three things about what it writes:
 
@@ -949,6 +966,12 @@ Three things about what it writes:
   that account (the sign-up credit) is not credited twice.
 - **Balances are re-summed from the imported ledger**, never copied — the same
   invariant every other balance obeys (`contracts/data-model.md`, invariant 3).
+- **API keys arrive usable.** The hash is written exactly as exported, which is
+  what `ApiKeyService.authenticate` looks a presented key up by, so nobody has to
+  re-issue anything; the spend limit arrives with the counter it is measured
+  against, so a key that had $0.50 of its cap left still has $0.50; and a revoked
+  key arrives revoked. The report says how many came across and how many of them
+  are still live.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.
@@ -967,7 +990,7 @@ Both actions leave an audit line (`warn`) naming the operator, the bundle's hash
 and its row counts, and never an address or a code:
 
 ```
-Deployment export downloaded by admin@example.com — sha256 8135…0659: 42 account(s), 42 workspace(s), 118 ledger entr(y/ies), 50 invitation code(s) (31 unredeemed), 2 external endpoint(s), 3 trusted measurement(s).
+Deployment export downloaded by admin@example.com — sha256 8135…0659: 42 account(s), 42 workspace(s), 118 ledger entr(y/ies), 50 invitation code(s) (31 unredeemed), 37 API key(s) (29 live), 2 external endpoint(s), 3 trusted measurement(s).
 Deployment import by admin@example.com — applied; from https://api.old.example.com, sha256 8135…0659: users +41, workspaces +41, …
 ```
 
@@ -987,9 +1010,11 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    Import.
 6. **Verify:** the Invitations section shows the same codes and attribution; a
    known user signs in with their address and sees their balance; an unredeemed
-   code still redeems; API Keys is empty for everyone (expected) and a new key
-   works; chat history is empty (expected). Re-enter upstream keys for any
-   external endpoint and enable it.
+   code still redeems; **a key issued before the export still authenticates** —
+   `curl -H "Authorization: Bearer sk-tee-v1-…" https://<new-host>/v1/models` —
+   and API Keys lists the same keys with the same spend used; chat history is
+   empty (expected). Re-enter upstream keys for any external endpoint and enable
+   it.
 7. **Delete the export file.**
 
 ## Running it

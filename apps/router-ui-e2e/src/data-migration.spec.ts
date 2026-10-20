@@ -44,7 +44,7 @@ function report(overrides: Record<string, unknown> = {}) {
       evidenceDigest: 'sha256/6b1f9c04a7e2d95c3f8b0a1d4e7f2c5b8a9d0e3f6c1b4a7d',
     },
     contentSha256: SHA,
-    counts: { users: 42, inviteCodes: 50, inviteCodesUnredeemed: 31 },
+    counts: { users: 42, inviteCodes: 50, inviteCodesUnredeemed: 31, apiKeys: 37, apiKeysLive: 29 },
     totalBalanceMicros: '3187250000',
     refusals: [],
     sections: [
@@ -54,12 +54,14 @@ function report(overrides: Record<string, unknown> = {}) {
       { section: 'creditLedger', inBundle: 118, toCreate: 118, alreadyPresent: 0, conflicts: [] },
       { section: 'inviteCodes', inBundle: 50, toCreate: 50, alreadyPresent: 0, conflicts: [] },
       { section: 'inviteRedemptions', inBundle: 19, toCreate: 19, alreadyPresent: 0, conflicts: [] },
+      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, conflicts: [] },
       { section: 'externalEndpoints', inBundle: 2, toCreate: 2, alreadyPresent: 0, conflicts: [] },
       { section: 'externalModels', inBundle: 5, toCreate: 5, alreadyPresent: 0, conflicts: [] },
       { section: 'trustedMeasurements', inBundle: 3, toCreate: 3, alreadyPresent: 0, conflicts: [] },
     ],
     notes: [
       '1 operator account(s) already exist here under a new id; the exported account of the same address is merged into each, with its workspace, balance and attribution.',
+      '37 API key(s) are imported, 29 of them still live: a key configured in a Gatekeeper, an IDE or a script keeps working here, and nobody has to issue a new one. A revoked key arrives revoked.',
       '2 external endpoint(s) are imported switched off and without an upstream API key — the export carries no secrets. Enter each key again under Administration → External endpoints, then enable it.',
     ],
     ...overrides,
@@ -127,7 +129,7 @@ test.describe('the Export & import section', () => {
     await mockDataApi(page, []);
     await openAsAdmin(page, baseURL as string);
     await expect(page.getByRole('link', { name: 'Export & import' })).toBeVisible();
-    await expect(page.getByTestId('export-card')).toContainText('everyone issues new keys after a migration');
+    await expect(page.getByTestId('export-card')).toContainText('each key keeps working on the new deployment');
 
     const download = page.waitForEvent('download');
     await page.getByTestId('export-button').click();
@@ -151,6 +153,9 @@ test.describe('the Export & import section', () => {
     await expect(page.getByTestId('import-total-balance')).toHaveText('$3,187.25');
     const accounts = page.getByTestId('import-section-users').getByRole('cell');
     await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0']);
+    const keys = page.getByTestId('import-section-apiKeys').getByRole('cell');
+    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0']);
+    await expect(page.getByTestId('import-notes')).toContainText('29 of them still live');
     await expect(page.getByTestId('import-notes')).toContainText('without an upstream API key');
     expect(api.urls).toHaveLength(1);
     expect(new URL(api.urls[0] as string).search).toBe('');

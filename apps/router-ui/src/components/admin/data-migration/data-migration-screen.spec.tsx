@@ -29,6 +29,7 @@ function report(overrides: Partial<ImportReport> = {}): ImportReport {
     sections: [
       { section: 'users', inBundle: 4, toCreate: 3, alreadyPresent: 1, conflicts: [] },
       { section: 'inviteCodes', inBundle: 5, toCreate: 5, alreadyPresent: 0, conflicts: [] },
+      { section: 'apiKeys', inBundle: 2, toCreate: 2, alreadyPresent: 0, conflicts: [] },
     ],
     notes: [],
     ...overrides,
@@ -69,12 +70,13 @@ describe('DataMigrationScreen', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('says what the export leaves behind, API keys included', async () => {
+  it('says that API keys travel and what the export still leaves behind', async () => {
     renderScreen();
 
     const card = await screen.findByTestId('export-card');
     expect(card).toHaveTextContent('Chats, generation logs and activity history');
-    expect(card).toHaveTextContent('everyone issues new keys after a migration');
+    expect(card).toHaveTextContent('each key keeps working on the new deployment');
+    expect(card).toHaveTextContent('API keys travel as their hashes');
     expect(card).toHaveTextContent('invitation codes that can still be redeemed');
   });
 

@@ -46,6 +46,7 @@ const SECTION_LABELS: Record<ImportSectionName, string> = {
   creditLedger: 'Credit ledger entries',
   inviteCodes: 'Invitation codes',
   inviteRedemptions: 'Invitation redemptions',
+  apiKeys: 'API keys',
   externalEndpoints: 'External endpoints',
   externalModels: 'External models',
   trustedMeasurements: 'Trusted measurements',
@@ -136,6 +137,10 @@ function ExportCard() {
               <li>Accounts: address, name, sign-up date and which invitation each came from</li>
               <li>Workspaces, their credit balances and the full credit ledger</li>
               <li>Every invitation code, including the ones nobody has redeemed yet</li>
+              <li>
+                API keys: each key keeps working on the new deployment, with its spend limit, its scope and its
+                revocations — nobody has to re-configure a Gatekeeper, an IDE or a script
+              </li>
               <li>External endpoints and the trust list</li>
             </ul>
           </div>
@@ -143,9 +148,6 @@ function ExportCard() {
             <p className="mb-1 font-medium">Left behind</p>
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
               <li>Chats, generation logs and activity history</li>
-              <li>
-                API keys — they are stored hashed and cannot be moved, so everyone issues new keys after a migration
-              </li>
               <li>Upstream API keys of external endpoints — enter them again after importing</li>
               <li>Sessions and every sign-in credential: people sign in again on the new deployment</li>
             </ul>
@@ -154,8 +156,9 @@ function ExportCard() {
         <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3">
           <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
           <span>
-            The file holds no secrets, but it does hold personal data and invitation codes that can still be redeemed.
-            Keep it private and delete it once the new deployment is verified.
+            Nothing in the file can be presented as a credential — API keys travel as their hashes, which no one can
+            read a key out of — but it does hold personal data and invitation codes that can still be redeemed. Keep it
+            private and delete it once the new deployment is verified.
           </span>
         </p>
         {error ? (
