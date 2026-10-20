@@ -78,6 +78,26 @@ describe('sign-in by emailed code', () => {
     expect(init.credentials).toBe('include');
   });
 
+  it('carries an invitation on it, which is what lets an invite-only deployment send at all', async () => {
+    const fetchMock = stubFetch(new Response('{"success":true}', { status: 200 }));
+
+    await requestSignInCode('dev@example.com', 'ABCDEFGHJKLM');
+
+    expect(sent(fetchMock).body).toEqual({
+      email: 'dev@example.com',
+      type: 'sign-in',
+      inviteCode: 'ABCDEFGHJKLM',
+    });
+  });
+
+  it('leaves the field out rather than sending it empty', async () => {
+    const fetchMock = stubFetch(new Response('{"success":true}', { status: 200 }));
+
+    await requestSignInCode('dev@example.com', null);
+
+    expect(sent(fetchMock).body).toEqual({ email: 'dev@example.com', type: 'sign-in' });
+  });
+
   it('hands the code back under the name the router gives it', async () => {
     const fetchMock = stubFetch(new Response('{}', { status: 200 }));
 

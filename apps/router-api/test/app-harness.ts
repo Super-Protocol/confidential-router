@@ -188,6 +188,10 @@ export function lastCodeFor(harness: Harness, email: string): string {
  * captured mail, trade it for a session. Creates the account when the address
  * has none — `extra` rides the second request's body, which is where a sign-up
  * carries its name and its invitation code.
+ *
+ * An `inviteCode` in `extra` rides the *first* request as well, because an
+ * invite-only deployment will not mail an address it has no account for unless
+ * the request carries one (SUP-410) — which is what the console does too.
  */
 export async function signInWithCode(
   harness: Harness,
@@ -195,10 +199,15 @@ export async function signInWithCode(
   extra: Record<string, unknown> = {},
 ): Promise<request.Response> {
   const server = harness.app.getHttpServer();
-  await request(server).post('/auth/email-otp/send-verification-otp').send({ email, type: 'sign-in' }).expect(200);
+  await request(server).post('/auth/email-otp/send-verification-otp').send(sendBody(email, extra)).expect(200);
   return request(server)
     .post('/auth/sign-in/email-otp')
     .send({ email, otp: lastCodeFor(harness, email), ...extra });
+}
+
+/** The send request, with the invitation on it when the sign-up has one. */
+function sendBody(email: unknown, extra: Record<string, unknown>): Record<string, unknown> {
+  return { email, type: 'sign-in', ...(extra.inviteCode ? { inviteCode: extra.inviteCode } : {}) };
 }
 
 /** A response still on its way, with supertest's `.expect(status)` so call sites read the same. */
@@ -213,7 +222,12 @@ export function signUpWithCode(harness: Harness, body: Record<string, unknown>, 
   const { email, ...extra } = body;
   const pending = (async () => {
     const server = harness.app.getHttpServer();
-    await request(server).post('/auth/email-otp/send-verification-otp').send({ email, type: 'sign-in' }).expect(200);
+    // The query goes on the send request too: `?invite=…` is one of the places
+    // the code can arrive, and the send route now reads it (SUP-410).
+    await request(server)
+      .post(`/auth/email-otp/send-verification-otp${query}`)
+      .send(sendBody(email, extra))
+      .expect(200);
     return request(server)
       .post(`/auth/sign-in/email-otp${query}`)
       .send({ email, otp: lastCodeFor(harness, String(email)), ...extra });

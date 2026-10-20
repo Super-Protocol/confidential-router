@@ -218,15 +218,21 @@ export function InviteNotice({
           account and not. So it is an alert rather than a footnote saying to
           carry on.
 
-          It does not guess which refusal it is, and that is the whole of
-          SUP-176. The public lookup collapses claimed, expired, withdrawn and
-          never-issued into one `unavailable` on purpose, so this sentence has no
-          way to know — and the old copy filled the gap with "it may already have
-          been claimed", which told the one visitor whose link really was spent
-          that they had probably mistyped it. The router does know and answers a
-          typed refusal to the submit, which is why the sign-up is no longer held
-          behind this state: the sentence below sends the visitor to get the
-          answer instead of inventing it. */}
+          It does not guess which refusal it is, and that is the part of SUP-176
+          that outlives its mechanism. The public lookup collapses claimed,
+          expired, withdrawn and never-issued into one `unavailable` on purpose,
+          so this sentence has no way to know — and the copy before it filled the
+          gap with "it may already have been claimed", which told the one visitor
+          whose link really was spent that they had probably mistyped it. Naming
+          both outcomes and neither first is what that is worth.
+
+          What it no longer says is "submit and the router will tell you which".
+          The router does know, and answers a typed refusal — but only to a
+          request that creates an account, and reaching one needs a mailed code
+          an invite-only deployment will not send to an address with no account
+          unless the request carries a code it would admit (SUP-410). So there is
+          nothing to submit here, and a code that has to come from somewhere else
+          is the honest next step. */}
       {state.kind === 'unavailable' ? (
         required ? (
           <div
@@ -238,8 +244,8 @@ export function InviteNotice({
             <div className="min-w-0">
               <p className="font-medium text-sm">This invitation cannot be used.</p>
               <p className="text-muted-foreground text-xs leading-relaxed">
-                Submit the form to find out whether it was already claimed or was never issued — nothing is created by
-                asking. You can also paste a different code below.
+                It was already claimed or was never issued — from here we cannot tell which, and an account cannot be
+                created without one that works. Paste a different code below, or ask whoever invited you for a new link.
               </p>
             </div>
           </div>
