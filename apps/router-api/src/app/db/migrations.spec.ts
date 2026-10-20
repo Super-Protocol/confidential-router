@@ -111,8 +111,15 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-406's operator column is one additive column; the first undo drops
+      // only that and leaves the ledger it hangs off.
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(false);
+      expect(await queryRunner.hasColumn('credit_transactions', 'idempotencyKey')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

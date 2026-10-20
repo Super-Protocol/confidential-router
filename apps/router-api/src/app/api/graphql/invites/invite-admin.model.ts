@@ -22,6 +22,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { MAX_OPERATOR_CREDIT_MICROS } from '../../../billing/money.js';
 import { INVITE_CAMPAIGN_PATTERN } from '../../../invites/invite-code.js';
 import { InviteCampaignStatsModel } from './invites.model.js';
 
@@ -154,6 +155,19 @@ export class AdminSignUpModel {
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   redeemedAt!: Date | null;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'The workspace this account owns — what `grantCredit` credits. Null when it owns none.',
+  })
+  workspaceId!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'That workspace’s balance in micro-USD, so the operator can see who has run out. Null with no workspace.',
+  })
+  balanceMicros!: string | null;
 }
 
 @ObjectType('AdminSignUpPage')
@@ -254,8 +268,12 @@ export const MAX_ISSUE_COUNT = 1000;
  *
  * Not a policy on what a code may be worth — the CLI has no ceiling — but a
  * fat-finger guard on a form where one extra zero mints real money in bulk.
+ *
+ * The same number bounds one operator credit grant
+ * (`billing.maxCreditGrantMicros`), so it is defined once beside the other money
+ * facts rather than typed here a second time (SUP-398).
  */
-export const MAX_ISSUE_GRANT_MICROS = 10_000_000_000;
+export const MAX_ISSUE_GRANT_MICROS = MAX_OPERATOR_CREDIT_MICROS;
 
 @InputType('IssueInviteCodesInput')
 export class IssueInviteCodesInputModel {

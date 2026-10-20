@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { campaignError, expiryFromDate, invitesCsv, invitesText, maskCode, pageRange } from './invitations';
+import {
+  campaignError,
+  expiryFromDate,
+  invitesCsv,
+  invitesText,
+  kindOf,
+  MAX_GRANT_CREDIT_USD,
+  maskCode,
+  newRequestId,
+  pageRange,
+  signOf,
+  validateGrantForm,
+} from './invitations';
 import { validateIssueForm } from './issue-codes-dialog';
 
 describe('maskCode', () => {
@@ -86,5 +98,78 @@ describe('pageRange', () => {
     expect(pageRange(0, 50, 230)).toBe('1–50 of 230');
     expect(pageRange(200, 30, 230)).toBe('201–230 of 230');
     expect(pageRange(0, 0, 0)).toBe('0 of 0');
+  });
+});
+
+describe('validateGrantForm', () => {
+  const valid = { amount: '100', movement: 'GRANT' as const, note: 'Internal tester top-up' };
+  /** $40, what the dialog's target holds. */
+  const BALANCE = '40000000';
+
+  it('passes a $100 grant with a reason', () => {
+    expect(validateGrantForm(valid, BALANCE)).toEqual({});
+  });
+
+  it('refuses nothing, zero and a negative typed into the amount', () => {
+    expect(validateGrantForm({ ...valid, amount: '' }, BALANCE).amount).toBeDefined();
+    expect(validateGrantForm({ ...valid, amount: '0' }, BALANCE).amount).toBeDefined();
+    // The sign is the movement's; a minus in the field is not an amount.
+    expect(validateGrantForm({ ...valid, amount: '-5' }, BALANCE).amount).toBeDefined();
+  });
+
+  it('holds the API’s ceiling before the round trip', () => {
+    expect(validateGrantForm({ ...valid, amount: String(MAX_GRANT_CREDIT_USD) }, BALANCE)).toEqual({});
+    expect(validateGrantForm({ ...valid, amount: `${MAX_GRANT_CREDIT_USD}.01` }, BALANCE).amount).toBeDefined();
+  });
+
+  it('needs a reason on every movement, not only on a removal (SUP-398)', () => {
+    for (const movement of ['GRANT', 'ADJUSTMENT_ADD', 'ADJUSTMENT_REMOVE'] as const) {
+      expect(validateGrantForm({ amount: '10', movement, note: '' }, BALANCE).note).toBeDefined();
+      expect(validateGrantForm({ amount: '10', movement, note: '  ' }, BALANCE).note).toBeDefined();
+      expect(validateGrantForm({ amount: '10', movement, note: 'Duplicate' }, BALANCE)).toEqual({});
+    }
+  });
+
+  it('says what it wants in the operator’s terms, by direction', () => {
+    expect(validateGrantForm({ amount: '10', movement: 'GRANT', note: '' }, BALANCE).note).toContain('added');
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: '' }, BALANCE).note).toContain(
+      'taken away',
+    );
+  });
+
+  it('will not remove more than the account holds', () => {
+    const removal = { movement: 'ADJUSTMENT_REMOVE' as const, note: 'Clawback' };
+    expect(validateGrantForm({ ...removal, amount: '40' }, BALANCE)).toEqual({});
+    expect(validateGrantForm({ ...removal, amount: '40.01' }, BALANCE).amount).toBeDefined();
+    // Adding more than the balance is ordinary.
+    expect(validateGrantForm({ amount: '400', movement: 'ADJUSTMENT_ADD', note: 'Prepaid' }, BALANCE)).toEqual({});
+  });
+
+  it('skips the balance check when the account has no workspace to read one from', () => {
+    expect(validateGrantForm({ amount: '10', movement: 'ADJUSTMENT_REMOVE', note: 'Clawback' }, null)).toEqual({});
+  });
+});
+
+describe('newRequestId', () => {
+  it('is a fresh value each time, so two decisions are never one', () => {
+    expect(newRequestId()).not.toBe(newRequestId());
+  });
+
+  it('falls back to something unique where randomUUID is unavailable — an insecure origin', () => {
+    const uuid = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true });
+    try {
+      expect(newRequestId()).toMatch(/^[a-z0-9]+-[a-z0-9]+$/);
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', { value: uuid, configurable: true });
+    }
+  });
+});
+
+describe('the movement maps onto the API’s kind and sign', () => {
+  it('is a positive GRANT, or an ADJUSTMENT either way', () => {
+    expect([kindOf('GRANT'), signOf('GRANT')]).toEqual(['GRANT', 1]);
+    expect([kindOf('ADJUSTMENT_ADD'), signOf('ADJUSTMENT_ADD')]).toEqual(['ADJUSTMENT', 1]);
+    expect([kindOf('ADJUSTMENT_REMOVE'), signOf('ADJUSTMENT_REMOVE')]).toEqual(['ADJUSTMENT', -1]);
   });
 });

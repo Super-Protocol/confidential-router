@@ -7,6 +7,7 @@ import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
 import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
 import { ChatResolver } from './chat/chat.resolver.js';
+import { CreditGrantResolver } from './credits/credit-grant.resolver.js';
 import { CreditsResolver } from './credits/credits.resolver.js';
 import { ExternalEndpointsResolver } from './external-endpoints/external-endpoints.resolver.js';
 import { FeedbackResolver } from './feedback/feedback.resolver.js';
@@ -31,6 +32,7 @@ export const CONSOLE_RESOLVERS = [
   ApiKeysResolver,
   CatalogResolver,
   ChatResolver,
+  CreditGrantResolver,
   CreditsResolver,
   EvidenceResolver,
   ExternalEndpointsResolver,

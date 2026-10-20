@@ -397,6 +397,8 @@ billing:
   maxTopUpMicros: 10000000000          # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0              # how far a generation may push a balance negative
   signupGrantMicros: 0                 # credit granted to every new account (ledger `grant`, reference `signup`); 0 disables
+  maxCreditGrantMicros: 10000000000    # $10 000, the ceiling on one operator grantCredit call
+  allowCreditDebits: false             # whether grantCredit may also remove credit (a negative adjustment)
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h                # floor between two automatic top-ups of one workspace
   stripe:
@@ -469,6 +471,78 @@ mailboxes are free, so with registration open each throwaway address collects th
 the grant is once per *account*, not per person. Pair a non-zero value with
 invite-only registration (`auth.requireInviteForSignUp`) where that matters, or
 keep it small enough to be an evaluation allowance rather than a prize.
+
+## Crediting an account that already exists
+
+Everything above puts credit on an account *as it is created*, or sells it. The
+one thing missing was the ordinary request: top up the testers who already signed
+up. `grantCredit` is that operation (SUP-406) — an admin mutation restricted to
+`auth.adminEmails`, with a button beside every account on the console's
+**Invitations → Sign-ups** tab, where each row now also shows what that account
+holds.
+
+```graphql
+mutation {
+  grantCredit(
+    input: {
+      accountEmail: "tester@example.com"
+      amountMicros: "100000000"
+      note: "SUP-389: topped up after the verification grant"
+      requestId: "3f1c8c6e-6f1a-4a2f-9a0e-0d6a9f2b7c41"
+    }
+  ) {
+    amountMicros
+    balanceMicros
+    replayed
+  }
+}
+```
+
+Name the account by `accountEmail` or by `workspaceId` — exactly one. The call
+writes **one** ledger entry through the same path as every other grant, so the
+Credits screen renders it and the balance moves by exactly that amount. Four
+things make it an operator's operation rather than a back door:
+
+- `credit_transactions.grantedByUserId` carries the operator, and the reason goes
+  on the row, so the ledger says who granted it and why without a log search.
+  Both survive a redeploy: the export bundle carries the operator and remaps it
+  to the id that account has on the new deployment.
+- The reason is **required**, in both directions. It is the only field that says
+  why an entry nobody paid for exists.
+- `billing.maxCreditGrantMicros` ($10 000) is the ceiling on **one** call — the
+  same kind of blast-radius bound `billing.maxTopUpMicros` puts on a checkout,
+  and the same number that bounds the credit per invitation code.
+- Taking credit *away* is a separate decision. It has to be `kind: ADJUSTMENT`
+  and it needs `billing.allowCreditDebits`, which is **off** by default. Even
+  switched on it cannot push a balance below zero: `adjustment` may not overdraw.
+
+`requestId` names the decision and is required. The ledger entry is keyed on
+`operator:<operator>:<requestId>`, so the same submission arriving twice — a
+proxy timeout, then the obvious retry — replays the first row and answers
+`replayed: true` instead of crediting again; the console says *already recorded*
+rather than reporting a second success. A second deliberate grant is a second
+decision and carries a new `requestId`, so it lands as a second row. The console
+mints one UUID when the dialog opens and keeps it across retries.
+
+One decision moves credit on **one** account: the same `requestId` sent against a
+different account is refused rather than answered, because the alternative is
+telling an operator that somebody was credited who was not. That is the mistake a
+hand-written mutation makes — copy the call for the next person, change the
+address, forget the `requestId`. The composed key has to fit
+`credit_transactions.idempotencyKey` (`varchar(128)`), so a `requestId` and an
+operator id that together overflow it are refused too; PostgreSQL would answer
+`22001` where SQLite would not, and the refusal makes the two agree.
+
+A correction is a new row, never an edit — the ledger has no update path at all
+(`docs/contracts/data-model.md` invariant 3).
+
+The reason reaches the account holder **as the operator wrote it**. That needs
+saying because `description` is not free text anywhere else in the ledger: it
+"carries the receipt link when there is one", and the Credits screen pulls the
+first `https://…` out of it to render a **Receipt** link. A goodwill note citing
+an incident would otherwise arrive as a truncated sentence next to a Receipt
+pointing at a status page, so the screen scopes that convention by `reference`
+and leaves an operator's row alone (`credits/amounts.ts`).
 
 ## Invitation codes
 
@@ -941,6 +1015,15 @@ SQLite applies migrations at boot (`database.migrationsRun: true`, the
 development default). PostgreSQL deployments run the migration CLI **once**,
 from a job or an init container, and leave `migrationsRun` off — otherwise
 every replica races the others at startup.
+
+**The migration runs before the new image serves, not after.** TypeORM writes
+every column the entities declare, so an image started against a schema it is
+newer than fails on *writes it did not change*. The current example is
+`credit_transactions.grantedByUserId` (SUP-406): a router booted before that
+migration lands rejects every ledger write — purchases and usage debits
+included, not merely the operator grants the column was added for. Order the
+rollout `router-api-migrate` → router, and treat any release that adds a column
+to a hot table as one that cannot go image-first.
 
 Container image: `router-api.dockerfile`, published to ghcr by the release
 workflow. `docker/docker-compose.yml` runs the API, the console and PostgreSQL

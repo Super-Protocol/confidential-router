@@ -139,6 +139,20 @@ const INVITATION_OPERATIONS = {
       ],
     },
   },
+  GrantCredit: (variables: Record<string, unknown>) => ({
+    grantCredit: {
+      __typename: 'CreditGrant',
+      creditTransactionId: 'tx-1',
+      workspaceId: 'ws-2',
+      accountEmail: null,
+      kind: (variables.input as Record<string, unknown>).kind ?? 'GRANT',
+      amountMicros: (variables.input as Record<string, unknown>).amountMicros,
+      balanceMicros: '140000000',
+      note: (variables.input as Record<string, unknown>).note ?? null,
+      replayed: false,
+      createdAt: '2026-10-19T12:00:00.000Z',
+    },
+  }),
   AdminSignUps: {
     adminSignUps: {
       __typename: 'AdminSignUpPage',
@@ -154,6 +168,8 @@ const INVITATION_OPERATIONS = {
           inviteCode: CODE,
           campaign: 'launch-2026-10',
           redeemedAt: '2026-10-09T09:00:00.000Z',
+          workspaceId: 'ws-2',
+          balanceMicros: '40000000',
         },
         {
           __typename: 'AdminSignUp',
@@ -165,6 +181,8 @@ const INVITATION_OPERATIONS = {
           inviteCode: null,
           campaign: null,
           redeemedAt: null,
+          workspaceId: 'ws-1',
+          balanceMicros: '0',
         },
       ],
     },
@@ -281,6 +299,54 @@ test.describe('the Invitations section', () => {
     await shot(page, testInfo, 'import-applied');
   });
 
+  test('credits an account from the accounts list, and says what the balance became', async ({
+    page,
+    baseURL,
+  }, testInfo) => {
+    // Observed rather than intercepted: `signIn` installs its own `**/graphql`
+    // route, and a second route registered before it would never run.
+    const calls: Record<string, unknown>[] = [];
+    page.on('request', (request) => {
+      if (!request.url().startsWith(`${API_ORIGIN}/graphql`)) return;
+      const body = request.postDataJSON() as { operationName?: string; variables?: Record<string, unknown> };
+      if (body?.operationName === 'GrantCredit') {
+        calls.push(body.variables?.input as Record<string, unknown>);
+      }
+    });
+
+    await openAsAdmin(page, baseURL as string);
+    await page.getByRole('tab', { name: 'Sign-ups' }).click();
+
+    const table = page.getByRole('table', { name: 'Sign-ups' });
+    const row = table.getByRole('row', { name: /dev@example\.com/ });
+    await expect(row).toContainText('$40.00');
+    await shot(page, testInfo, 'sign-ups-tab-balances');
+
+    await row.getByRole('button', { name: 'Credit' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('They hold $40.00 today');
+    await dialog.getByLabel('Amount (USD)').fill('100');
+    await dialog.getByLabel('Reason').fill('Internal tester top-up');
+    await shot(page, testInfo, 'grant-credit-dialog');
+
+    await dialog.getByRole('button', { name: 'Grant credit' }).click();
+
+    await expect(dialog.getByTestId('grant-credit-done')).toContainText(
+      '$100 added to dev@example.com. Their balance is now $140.00.',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      workspaceId: 'ws-2',
+      kind: 'GRANT',
+      amountMicros: '100000000',
+      note: 'Internal tester top-up',
+    });
+    // Minted in the browser when the dialog opened, so the value is the
+    // console's rather than the test's; what matters is that one was sent.
+    expect(calls[0]?.requestId).toMatch(/^[A-Za-z0-9_.-]+$/);
+    await shot(page, testInfo, 'grant-credit-done');
+  });
+
   for (const theme of ['dark', 'light'] as const) {
     test(`has no serious axe violations on any tab, or in the issue dialog, in ${theme} mode`, async ({
       page,
@@ -297,6 +363,20 @@ test.describe('the Invitations section', () => {
       await page.getByRole('tab', { name: 'Sign-ups' }).click();
       await expect(page.getByRole('table', { name: 'Sign-ups' })).toBeVisible();
       expect(await blockingViolations(page)).toEqual([]);
+
+      await page
+        .getByRole('table', { name: 'Sign-ups' })
+        .getByRole('row', { name: /dev@example\.com/ })
+        .getByRole('button', { name: 'Credit' })
+        .click();
+      const credit = page.getByRole('dialog');
+      await expect(credit).toBeVisible();
+      await credit.evaluate((element) =>
+        Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
+      );
+      expect(await blockingViolations(page)).toEqual([]);
+      await page.keyboard.press('Escape');
+      await expect(credit).toBeHidden();
 
       await page.getByRole('button', { name: 'Issue codes' }).click();
       const dialog = page.getByRole('dialog');

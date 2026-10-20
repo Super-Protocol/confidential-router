@@ -53,6 +53,7 @@ function data(): ExportData {
         reference: 'signup',
         description: null,
         idempotencyKey: 'signup:u1',
+        grantedByUserId: null,
         createdAt: AT,
       },
     ],
@@ -64,7 +65,12 @@ function data(): ExportData {
 }
 
 const source = { publicBaseUrl: 'https://old.router.test', routerVersion: '0.17.0', evidenceDigest: 'sha256/abc' };
-const bundle = () => buildBundle({ data: data(), source, exportedAt: new Date(AT) });
+/** The fixture, optionally with the one ledger row overridden. */
+const bundle = (ledger: Partial<ExportData['creditLedger'][number]> = {}) => {
+  const fixture = data();
+  fixture.creditLedger[0] = { ...fixture.creditLedger[0], ...ledger };
+  return buildBundle({ data: fixture, source, exportedAt: new Date(AT) });
+};
 const repack = (value: unknown): Buffer => gzipSync(Buffer.from(JSON.stringify(value), 'utf8'));
 
 function refusal(file: Buffer): string {
@@ -124,6 +130,20 @@ describe('decodeBundle', () => {
     raw.integrity.contentSha256 = contentSha256(raw.data);
 
     expect(decodeBundle(repack(raw)).data.users[0]).not.toHaveProperty('locale');
+  });
+
+  it('carries the operator behind a hand-written ledger entry', () => {
+    const operated = bundle({ grantedByUserId: 'op-1' });
+
+    expect(decodeBundle(encodeBundle(operated)).data.creditLedger[0].grantedByUserId).toBe('op-1');
+  });
+
+  it('reads a bundle written before the operator column existed, as a null', () => {
+    const raw = JSON.parse(gunzipSync(encodeBundle(bundle())).toString('utf8'));
+    delete raw.data.creditLedger[0].grantedByUserId;
+    raw.integrity.contentSha256 = contentSha256(raw.data);
+
+    expect(decodeBundle(repack(raw)).data.creditLedger[0].grantedByUserId).toBeNull();
   });
 
   it('refuses another schema version before it reads anything else', () => {

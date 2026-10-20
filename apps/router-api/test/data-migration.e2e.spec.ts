@@ -45,6 +45,12 @@ const ISSUE = `
   }
 `;
 
+const GRANT_CREDIT = `
+  mutation Grant($input: GrantCreditInput!) {
+    grantCredit(input: $input) { creditTransactionId balanceMicros }
+  }
+`;
+
 const harnesses: Harness[] = [];
 
 afterEach(async () => {
@@ -433,6 +439,50 @@ describe('deployment import', () => {
     expect((await balancesByEmail(b.harness)).get(dee.email)).toBe(GRANT_MICROS);
     const eve = await signUp(b.harness, 'eve@example.test', codes[0]?.code);
     expect((await balancesByEmail(b.harness)).get(eve.email)).toBe(0);
+  });
+
+  it('carries the operator behind a hand-written credit entry, remapped to their id here', async () => {
+    // Without this the column answers "who granted this" until the first
+    // redeploy and `null` for ever after — and the export *is* the redeploy path
+    // on this deployment (SUP-398).
+    const { a, users } = await usedDeployment();
+    const ada = users[0] as ConsoleSession;
+    await expectData(a.operator, GRANT_CREDIT, {
+      input: {
+        accountEmail: ada.email,
+        amountMicros: '50000000',
+        note: 'SUP-389: topped up after the verification grant',
+        requestId: randomUUID(),
+      },
+    });
+    const operatorIdOnA = (await dataSourceOf(a.harness).getRepository(User).findOneByOrFail({ email: OPERATOR })).id;
+    const granted = await dataSourceOf(a.harness)
+      .getRepository(CreditTransaction)
+      .findOneByOrFail({ reference: 'operator' });
+    expect(granted.grantedByUserId).toBe(operatorIdOnA);
+
+    const file = await exportFile(a.operator);
+    const before = await balancesByEmail(a.harness);
+    await a.harness.close();
+    harnesses.splice(0);
+
+    const b = await deploy();
+    const target = dataSourceOf(b.harness);
+    const preview = await dryRun(b.operator, file);
+    expect(await apply(b.operator, file, preview.contentSha256)).toMatchObject({ applied: true, ok: true });
+
+    const operatorIdOnB = (await target.getRepository(User).findOneByOrFail({ email: OPERATOR })).id;
+    const restored = await target.getRepository(CreditTransaction).findOneByOrFail({ reference: 'operator' });
+
+    expect(restored.grantedByUserId).toBe(operatorIdOnB);
+    // A passthrough would have kept A's id, which names nobody here.
+    expect(operatorIdOnB).not.toBe(operatorIdOnA);
+    expect(restored.description).toBe(
+      'Credit granted by an operator · SUP-389: topped up after the verification grant',
+    );
+    // The grant travelled as money as well as as attribution.
+    expect(await balancesByEmail(b.harness)).toEqual(before);
+    expect(before.get(ada.email)).toBe(GRANT_MICROS - SPENT_MICROS + 50_000_000);
   });
 
   it('is idempotent: importing the same file again creates nothing and changes no balance', async () => {

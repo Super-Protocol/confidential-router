@@ -283,6 +283,63 @@ balance falls under `autoTopUpThresholdMicros`, at most once per `billing.autoTo
 written before the charge, so concurrent generations produce one charge and a declining card backs off
 instead of retrying per request.
 
+## Putting credit on an account that already exists
+
+Before SUP-406 a balance could only be raised two ways: a checkout the user paid for, or an invitation
+code redeemed **at sign-up**. Topping up a tester who had already signed up was impossible without a
+product change — and the requests that need it are ordinary: a burnt-through grant, goodwill after an
+incident, a refund that is not a Stripe refund. `grantCredit` (`auth.adminEmails`, behind `SessionGuard` +
+`AdminGuard`) is that operation, and the console's accounts list is where an operator reaches it.
+
+| What | Where |
+| --- | --- |
+| `grantCredit(input: { accountEmail \| workspaceId, amountMicros, kind = GRANT, note? })` | `CreditGrantResolver` |
+| the rules, the target resolution and the audit line | `CreditGrantService` |
+| the console action, beside each account with its balance | router-ui, Invitations → Sign-ups |
+
+Nothing about the ledger changes for it: one `grant` (or `adjustment`) entry through the same
+`LedgerService.record` the invitation and sign-up grants use, so invariant 3 — the cached balance is the
+sum of the ledger — holds by the same construction. What the operator path adds is the three things a
+hand-written entry needs and an automatic one does not:
+
+- **A named operator on the row.** `credit_transactions.grantedByUserId`, so "who granted this" survives
+  a log rotation and a rewrite of the `description` the account holder reads. An id, not an address,
+  because the address is Better Auth's to change.
+- **A ceiling.** `billing.maxCreditGrantMicros` ($10 000) bounds the magnitude of one call the way
+  `maxTopUpMicros` bounds one checkout: what it accepts is what one fat finger, or one stolen operator
+  session, can do.
+- **A separate guard on taking credit away.** A negative amount has to be an `ADJUSTMENT`, needs
+  `billing.allowCreditDebits` — **off by default**, so the operation a deployment gets can only ever add
+  — and must carry a note. On top of that `adjustment` is absent from the ledger's `MAY_OVERDRAW`, so no
+  sequence of calls can push a balance below zero.
+- **A required reason.** `grantedByUserId` says who and `reference` says it was by hand, so `description`
+  is the only field left that says *why* — and an operator entry is the one ledger row with no outside
+  event to explain it.
+
+**Idempotency is the caller's to name.** `requestId` is a UUID the console mints when the dialog opens
+and holds across retries; the ledger key is `operator:<operatorId>:<requestId>`, operator-scoped so two
+callers cannot collide on the same value. The same submission arriving twice replays the first row and
+answers `replayed: true` — the case that matters is not a double-click but a write that succeeded behind
+a proxy that timed out, where the obvious retry used to credit twice. A second *deliberate* grant opens
+the dialog again and gets a new id, so two decisions still make two entries. The result is read off the
+stored row, so a retry carrying an edited amount is shown what stands, and a replay reports the workspace
+that row credited rather than the one the retry pointed at.
+
+`grantedByUserId` travels with the deployment export (`data-migration/`): a redeploy is exactly what that
+bundle is for, and a round trip that dropped the operator would answer "who granted this" until the
+restore and `null` — which the column reads as "nobody did" — for ever after. An import remaps it the way
+it remaps `issuedByUserId`: to the operator's id on the importing deployment when they have an account
+there, and otherwise to the id they had on the source.
+
+The note is the operator's own words and reaches the account holder as written. That is why the Credits
+screen scopes its receipt convention by `reference`: `description` "carries the receipt link when there is
+one", and a goodwill note citing an incident URL would otherwise be rendered as a **Receipt** on a
+customer's billing screen with the sentence it came from truncated (`credits/amounts.ts`).
+
+**Deploy ordering.** On PostgreSQL `database.migrationsRun` is off, so `router-api-migrate` must land
+before the new image serves. A router that boots first rejects *every* ledger write, not only grants —
+TypeORM writes `grantedByUserId` on each insert. See [`docs/router.md`](../../docs/router.md#running-it).
+
 ## Invitation codes
 
 Invitation codes that grant credit, for a mailed campaign
