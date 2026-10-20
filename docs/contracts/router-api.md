@@ -180,10 +180,19 @@ route** — and the two ways it gets served are invisible to the client bar one 
 
 In the translated form four legacy-only parameters are refused by name with `400 unsupported_parameter`
 rather than dropped: `suffix`, `echo`, `logprobs` and `best_of > 1`. Silently ignoring `suffix` is the
-dangerous one — an autocomplete client sends the text after the cursor there, and prose written as if
-the file ended at the cursor would be pasted into the middle of it. A batch `prompt` (more than one
-string) and a pre-tokenised one are refused for the same reason `n > 1` is: one metered completion per
-request, and no tokeniser to turn token ids back into text.
+dangerous one — a client doing *parameter* infilling sends the text after the cursor there, and prose
+written as if the file ended at the cursor would be pasted into the middle of it. A batch `prompt` (more
+than one string) and a pre-tokenised one are refused for the same reason `n > 1` is: one metered
+completion per request, and no tokeniser to turn token ids back into text.
+
+Which clients those are is narrower than it looks, and the distinction is worth stating because it is
+easy to get backwards. Cursor completion comes in two forms. A client doing *template* infilling puts
+both sides of the cursor inside `prompt`, between the model's own FIM markers
+(`<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`), and sends no `suffix` at all — that is an ordinary
+completions request and it is served on **any** model, translated or not. Continue with
+`provider: openai` is one of these (verified on the wire, SUP-450 QA). Only a client that sends `suffix`
+as a parameter meets the refusal above. What the native route buys either of them is quality rather than
+admission: the prompt reaches the model with no chat template around it.
 
 Until SUP-450 the route answered `400 unsupported_parameter` for any model that had not declared
 `completions`, which is the default registration — so the production catalogue's only model refused a
@@ -216,10 +225,10 @@ will accept, which is wider:
 | `completions` | `POST /v1/completions` is accepted — forwarded or translated, see above |
 | `embeddings` | `POST /v1/embeddings` is accepted |
 | `tools` | `tools` / `tool_choice` are forwarded untouched and `tool_calls` deltas relayed untouched. A statement about this surface, not a promise that the model chooses tools well |
-| `streaming` | `stream: true` is honoured |
+| `streaming` | `stream: true` is honoured. Absent for an embeddings-only model, which answers one JSON body whatever was asked for — that route *ignores* `stream: true` rather than refusing it, so the value states what is honoured rather than what is accepted |
 
 So `chat` alone is reported as `["chat", "completions", "tools", "streaming"]`, and an embeddings-only
-model as `["embeddings"]` — no streaming, which that route refuses. The admission gate and this list read
+model as `["embeddings"]` — no streaming, which that route never does. The admission gate and this list read
 the same function, so a route is accepted **exactly** when it is listed; `test/v1-completions.e2e.spec.ts`
 asserts that over HTTP for every declarable shape. The declared list stays visible to operators as
 `ExternalEndpointModel.capabilities` / `RouteCapability` in the console schema.

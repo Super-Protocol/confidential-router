@@ -21,6 +21,12 @@ import { openAiErrors } from './openai-error.js';
  * let a client paste it into the middle of a file. An upstream that serves
  * `/v1/completions` itself is declared with `capabilities: [chat, completions]`
  * and never reaches this file.
+ *
+ * Only a client that infills by *parameter* meets that refusal. One that infills
+ * by template — both sides of the cursor inside `prompt`, between the model's own
+ * FIM markers, which is what Continue's `openai` provider does — sends no
+ * `suffix` and is served here like any other prompt (verified on the wire,
+ * SUP-450 QA). What the native route buys it is quality, not admission.
  */
 
 /**
@@ -65,8 +71,9 @@ const UNTRANSLATABLE: { param: string; asked: (value: unknown) => boolean; becau
  * route a body only a lenient upstream accepts — vLLM ignores unknown fields,
  * LiteLLM and the OpenAI API are entitled to answer 400. That would turn a
  * request this bridge decided to accept into an upstream error the client cannot
- * act on, and `suffix: ''` is exactly what an autocomplete client sends with the
- * cursor at end of file, so it is on the path this change exists to fix.
+ * act on, and `suffix: ''` is exactly what a cursor-completion client doing
+ * parameter infilling sends with the cursor at end of file, so it is on the path
+ * this change exists to fix.
  */
 export function chatBodyForPrompt(body: Record<string, unknown>): Record<string, unknown> {
   const prompt = promptTextOf(body.prompt);

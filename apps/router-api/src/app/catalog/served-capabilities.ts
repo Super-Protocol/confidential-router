@@ -52,7 +52,10 @@ export type ServedCapability = RouteCapability | 'tools' | 'streaming';
  *   unverified assertion that produced the `["chat"]` understatement. A client
  *   that needs to know whether the model is any good at it has to try it.
  * - `streaming` → `stream: true` is honoured, which the gateway does on both
- *   generation routes and on neither embeddings one.
+ *   generation routes and on neither embeddings one. Absent rather than false
+ *   for embeddings: the route answers one JSON body whatever was asked for. Note
+ *   it *ignores* `stream: true` there rather than refusing it — so this value
+ *   says what gets honoured, which is the only reading that stays true.
  *
  * Order is canonical rather than the order the config happened to use, so two
  * models that serve the same things report the same list.

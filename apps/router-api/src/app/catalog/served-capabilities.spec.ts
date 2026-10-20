@@ -20,8 +20,11 @@ describe('servedCapabilities', () => {
   });
 
   it('claims nothing but embeddings for an embeddings model', () => {
-    // Not streaming: the gateway refuses `stream: true` on that route, so
-    // claiming it here would be the catalogue lying in the other direction.
+    // Not streaming: the gateway never streams that route — it answers one
+    // JSON body whatever the client asked for — so claiming it here would be the
+    // catalogue lying in the other direction. It does not *refuse* `stream: true`
+    // there, it ignores it (`gateway.service.ts`, `kind !== 'embeddings'`), which
+    // is pre-existing behaviour this list only has to describe honestly.
     expect(servedCapabilities(['embeddings'])).toEqual(['embeddings']);
   });
 
