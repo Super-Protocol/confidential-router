@@ -53,6 +53,56 @@ export const STREAM_CHUNKS: Record<string, unknown>[] = [
   },
 ];
 
+/**
+ * What `mock/stream-tools` streams: an agent's turn, which is the common shape
+ * in production and the one that used to record no time to first token at all.
+ * Not one `content` delta anywhere — the arguments arrive in `tool_calls`.
+ */
+export const TOOL_CALL_STREAM_CHUNKS: Record<string, unknown>[] = [
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+  },
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read', arguments: '' } }],
+        },
+        finish_reason: null,
+      },
+    ],
+  },
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [
+      {
+        index: 0,
+        delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":"README.md"}' } }] },
+        finish_reason: null,
+      },
+    ],
+  },
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+  },
+];
+
 export const STREAM_USAGE = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };
 
 /**
@@ -62,11 +112,14 @@ export const STREAM_USAGE = { prompt_tokens: 11, completion_tokens: 7, total_tok
  * chunk inside the same millisecond, so the router measures a generation that
  * took no time at all, `tokensPerSecond` is `null` for want of a denominator,
  * and the e2e assertion on the recorded rate fails for reasons that have
- * nothing to do with the router. A couple of milliseconds per chunk makes a
- * streamed generation measurably longer than its first token without making the
- * suite slow.
+ * nothing to do with the router.
+ *
+ * Wide enough, now, that the generation window clears the floor the rate is
+ * reported above (`MIN_RATE_WINDOW_MS` in `pricing.ts`): a sample of a couple of
+ * milliseconds is one the router deliberately refuses to divide (SUP-424). Three
+ * gaps after the first token, so ~36 ms, and still some 40 ms per streaming test.
  */
-const CHUNK_GAP_MS = 2;
+const CHUNK_GAP_MS = 12;
 
 export const COMPLETION_BODY = {
   id: 'chatcmpl-upstream',
@@ -179,7 +232,8 @@ export class MockLiteLlm {
       connection: 'keep-alive',
     });
 
-    const events = STREAM_CHUNKS.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`);
+    const chunks = body.model === 'mock/stream-tools' ? TOOL_CALL_STREAM_CHUNKS : STREAM_CHUNKS;
+    const events = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`);
     const includeUsage = Boolean((body.stream_options as { include_usage?: unknown } | undefined)?.include_usage);
     if (includeUsage && body.model !== 'mock/no-usage') {
       events.push(

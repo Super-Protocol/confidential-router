@@ -62,6 +62,8 @@ export class ActivityResolver {
       ...totalsModel(summary),
       avgTimeToFirstTokenMs: summary.avgTimeToFirstTokenMs,
       avgTokensPerSecond: summary.avgTokensPerSecond,
+      timedRequests: summary.timedRequests,
+      ratedRequests: summary.ratedRequests,
     };
   }
 

@@ -43,6 +43,8 @@ export const ACTIVITY_QUERY = graphql(`
       evidenceCoverage
       avgTimeToFirstTokenMs
       avgTokensPerSecond
+      timedRequests
+      ratedRequests
     }
     activitySeries(workspaceId: $workspaceId, from: $from, to: $to, bucket: $bucket) {
       bucket
@@ -85,6 +87,52 @@ export const ACTIVITY_USAGE_BY_MODEL_QUERY = graphql(`
 const MODEL_LIMIT = 8;
 
 const TILE_LABELS = ['Total spend', 'Requests', 'Token volume', 'Time to first token', 'Evidence coverage'];
+
+/**
+ * What the two means in the time-to-first-token tile are averages *over*.
+ *
+ * Neither is over every request, and they are not over the same ones. A request
+ * that was not streamed has no first token to time; a rate additionally needs a
+ * window large enough to divide (`tokensPerSecond` in the API), so `ratedRequests`
+ * is a strict subset of `timedRequests` — an agent's short tool-call turn is
+ * timed and unrated. The tile used to print both under one bare "Average", which
+ * read as a claim about the whole period (SUP-424), so each mean now names its
+ * own sample — the rate only repeats the count when it differs from the
+ * first-token one, and carries the total itself when the first clause printed
+ * none to read it against.
+ */
+function timeToFirstTokenHint(summary: {
+  requests: number;
+  timedRequests: number;
+  ratedRequests: number;
+  avgTokensPerSecond: number | null;
+}): string {
+  if (summary.timedRequests === 0) {
+    return 'No request reported a first token';
+  }
+  const sample =
+    summary.timedRequests >= summary.requests
+      ? 'Average across the period'
+      : `Average of ${formatCount(summary.timedRequests)} of ${formatCount(summary.requests)} requests`;
+
+  if (summary.avgTokensPerSecond === null) {
+    return sample;
+  }
+  const rate = formatTokensPerSecond(summary.avgTokensPerSecond);
+  if (summary.ratedRequests >= summary.timedRequests) {
+    // One sample behind both means, and `sample` has already named it.
+    return `${sample} · ${rate}`;
+  }
+  // Fewer rated than timed, so the rate states its own count — with the total
+  // when `sample` is "Average across the period" and prints none to read it
+  // against, and without when it already says "of 842 requests".
+  const over =
+    summary.timedRequests >= summary.requests
+      ? `${formatCount(summary.ratedRequests)} of ${formatCount(summary.requests)}`
+      : formatCount(summary.ratedRequests);
+
+  return `${sample} · ${rate} over ${over}`;
+}
 
 const SERIES = [
   { key: 'completionTokens', label: 'Output tokens' },
@@ -189,11 +237,7 @@ export function ActivityScreen() {
               // `activitySeries` carries no latency, so this tile has no
               // sparkline rather than one drawn from a neighbouring metric.
               value={formatMs(summary.avgTimeToFirstTokenMs)}
-              hint={
-                summary.avgTokensPerSecond === null
-                  ? 'Average across the period'
-                  : `Average · ${formatTokensPerSecond(summary.avgTokensPerSecond)}`
-              }
+              hint={timeToFirstTokenHint(summary)}
             />
             <StatTile
               label="Evidence coverage"

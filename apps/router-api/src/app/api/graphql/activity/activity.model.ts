@@ -73,6 +73,20 @@ export class ActivitySummaryModel extends ActivityTotalsModel {
 
   @Field(() => Float, { nullable: true })
   avgTokensPerSecond!: number | null;
+
+  @Field(() => Int, {
+    description:
+      'Of `requests`, how many reported a first-token time — the sample `avgTimeToFirstTokenMs` averages. ' +
+      'A request that was not streamed never reports one.',
+  })
+  timedRequests!: number;
+
+  @Field(() => Int, {
+    description:
+      'Of `requests`, how many reported a generation rate — the sample `avgTokensPerSecond` averages. ' +
+      'Always at most `timedRequests`: a rate also needs a window large enough to divide.',
+  })
+  ratedRequests!: number;
 }
 
 @ObjectType('ActivityPoint', { description: 'One bucket of an activity series. Quiet buckets are zeroes, not gaps.' })

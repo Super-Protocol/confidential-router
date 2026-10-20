@@ -32,6 +32,8 @@ function summary(overrides: Record<string, unknown> = {}) {
     evidenceCoverage: 0.95,
     avgTimeToFirstTokenMs: 312,
     avgTokensPerSecond: 48.23,
+    timedRequests: 842,
+    ratedRequests: 842,
     ...overrides,
   };
 }
@@ -241,14 +243,71 @@ describe('ActivityScreen', () => {
       mocks: [
         sessionMock(),
         activityMock(24, {
-          activitySummary: summary({ avgTimeToFirstTokenMs: null, avgTokensPerSecond: null }),
+          activitySummary: summary({
+            avgTimeToFirstTokenMs: null,
+            avgTokensPerSecond: null,
+            timedRequests: 0,
+            ratedRequests: 0,
+          }),
         }),
         usageMock(),
       ],
     });
 
     expect(await screen.findByText('—')).toBeInTheDocument();
-    expect(screen.getByText('Average across the period')).toBeInTheDocument();
+    expect(screen.getByText('No request reported a first token')).toBeInTheDocument();
+  });
+
+  it('names the sample the first-token average covers when it is not every request', async () => {
+    // Half the period's requests reported no first token, so "Average" on its
+    // own would be a claim about traffic the mean never measured (SUP-424).
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 421, ratedRequests: 421 }) }),
+        usageMock(),
+      ],
+    });
+
+    expect(await screen.findByText('312 ms')).toBeInTheDocument();
+    expect(screen.getByText('Average of 421 of 842 requests · 48.2 tok/s')).toBeInTheDocument();
+  });
+
+  it('gives the rate its own sample size, which the floors make smaller than the timed one', async () => {
+    // A short tool-call turn is timed and unrated, so one count cannot label both
+    // means — the defect this issue filed, in the fix for it (SUP-424).
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 800, ratedRequests: 780 }) }),
+        usageMock(),
+      ],
+    });
+
+    expect(await screen.findByText('312 ms')).toBeInTheDocument();
+    expect(screen.getByText('Average of 800 of 842 requests · 48.2 tok/s over 780')).toBeInTheDocument();
+  });
+
+  it('gives the rate its own total when the first-token clause prints none', async () => {
+    // Every request timed, some unrated: "over 780" alone leaves its denominator
+    // to the Requests tile next to it, which is a tile-ordering accident.
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 842, ratedRequests: 780 }) }),
+        usageMock(),
+      ],
+    });
+
+    expect(await screen.findByText('312 ms')).toBeInTheDocument();
+    expect(screen.getByText('Average across the period · 48.2 tok/s over 780 of 842')).toBeInTheDocument();
+  });
+
+  it('drops the sample size when every request was timed', async () => {
+    renderWithSession(<ActivityScreen />, { mocks: defaultMocks() });
+
+    expect(await screen.findByText('312 ms')).toBeInTheDocument();
+    expect(screen.getByText('Average across the period · 48.2 tok/s')).toBeInTheDocument();
   });
 
   it('ranks the top keys by spend', async () => {
