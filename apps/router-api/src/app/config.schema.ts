@@ -66,8 +66,26 @@ const ServerSchema = z
      * before the first token is delivered as a `data:` error event rather than a
      * 502. Everything that fails faster — all but those seven of 169 measured
      * requests — is unaffected.
+     *
+     * Floored at 1 s, because `durationMs` would otherwise accept `0s` and that
+     * value is two bugs at once: `setInterval` on a zero delay is a write loop
+     * per concurrent stream, and opening the stream before the backend has had
+     * any chance to answer costs *every* streamed failure its status line —
+     * including a `429` and its `Retry-After`. A deployment that wants the old
+     * behaviour raises this above its ingress's timeout rather than lowering it
+     * to nothing.
      */
-    streamKeepAliveAfter: durationMs('15s'),
+    streamKeepAliveAfter: durationMs('15s').pipe(
+      z
+        .number()
+        .int()
+        .min(
+          1_000,
+          'server.streamKeepAliveAfter must be at least 1s: a shorter delay opens the event stream before the ' +
+            'backend could plausibly have answered, which costs every streamed failure its status code, and 0s ' +
+            'turns the heartbeat into a busy loop.',
+        ),
+    ),
   })
   .prefault({});
 

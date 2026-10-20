@@ -17,7 +17,8 @@ import { MockLiteLlm } from './mock-litellm.js';
  * The router's answer is to stop being silent: past `server.streamKeepAliveAfter`
  * it opens the event stream itself and heartbeats into it, which resets every
  * proxy's read deadline on the path and keeps the request ending where the router
- * can account for it. This suite boots that deadline down to 100 ms.
+ * can account for it. This suite boots that deadline down to its 1 s floor,
+ * and the mock upstream stalls for 1.5 s before it answers at all.
  */
 
 const upstream = new MockLiteLlm();
@@ -29,7 +30,7 @@ let secret: string;
 beforeAll(async () => {
   const upstreamUrl = await upstream.start();
   harness = await createHarness({
-    config: routerConfigFor(upstreamUrl, { server: { streamKeepAliveAfter: '100ms' } }),
+    config: routerConfigFor(upstreamUrl, { server: { streamKeepAliveAfter: '1s' } }),
   });
   baseUrl = await listen(harness);
   const workspace = await seedWorkspace(harness.app);

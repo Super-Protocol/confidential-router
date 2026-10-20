@@ -160,9 +160,9 @@ export const TEXT_COMPLETION_STREAM_CHUNKS: Record<string, unknown>[] = [
  * Production's version of this gap is 60 s (SUP-449); what the suite needs is
  * only that it clears the `server.streamKeepAliveAfter` the slow-upstream
  * harness boots with, so the router reaches the point of opening the stream on
- * its own.
+ * its own. That setting is floored at 1 s, so this cannot go below it.
  */
-const SLOW_START_MS = 250;
+const SLOW_START_MS = 1_500;
 
 export const COMPLETION_BODY = {
   id: 'chatcmpl-upstream',

@@ -166,6 +166,14 @@ export class GatewayService {
       return this.endBeforeTokens({ context, response, pending }, transportFailureOf(error));
     }
     releaseSocket();
+    if (clientLeft) {
+      // The hang-up and the upstream's headers crossed. Nothing failed and
+      // nobody is left to tell, so this is the same `aborted` as a hang-up one
+      // tick earlier — not the `error` the relay would read off a body the
+      // abort has already torn down.
+      void upstreamResponse.body?.cancel().catch(() => undefined);
+      return this.recordAbandoned(context);
+    }
 
     if (!upstreamResponse.ok) {
       const error = leg

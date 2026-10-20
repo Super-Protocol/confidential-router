@@ -360,6 +360,36 @@ describe('the top-up bounds', () => {
   });
 });
 
+describe('the stream keep-alive delay', () => {
+  it('defaults to 15s, under the 60s an nginx or OpenResty ingress waits', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    expect(config.server.streamKeepAliveAfter).toBe(15_000);
+  });
+
+  /**
+   * SUP-449: `durationMs` is only `nonnegative`, and the two values under a
+   * second are each their own bug — `0s` turns the heartbeat into a write loop
+   * per concurrent stream, and any sub-second delay opens the event stream
+   * before the backend could plausibly have answered, which costs *every*
+   * streamed failure its status code and a `429` its `Retry-After`.
+   */
+  it('refuses a delay under a second', () => {
+    for (const bad of ['0s', '0ms', '999ms']) {
+      const result = RouterConfigSchema.safeParse({ auth: { secret: SECRET }, server: { streamKeepAliveAfter: bad } });
+
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0].path).toEqual(['server', 'streamKeepAliveAfter']);
+    }
+  });
+
+  it('accepts a second and anything above it', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET }, server: { streamKeepAliveAfter: '1s' } });
+
+    expect(config.server.streamKeepAliveAfter).toBe(1_000);
+  });
+});
+
 describe('the external-endpoint sidecar section', () => {
   it('defaults to a 10-minute re-attestation and a 5-second status poll', () => {
     const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
