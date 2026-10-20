@@ -904,6 +904,7 @@ built for the request that asked for it and kept nowhere on the server:
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
 | `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `inviteCarriedRedemptions` | who spent a code on a deployment this one is not — carried in by a codes CSV import (SUP-272) and carried on from here, so a code that arrives already spent still names its redeemers. A redemption whose account this deployment no longer has travels as one of these rather than being dropped |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
 `counts`, `totalBalanceMicros` and `integrity.contentSha256` (SHA-256 over the
@@ -922,6 +923,14 @@ therefore holds **no secret**. It does hold personal data and invitation codes
 that can still be redeemed: keep it private, and delete it once the new
 deployment is verified. A bundle with a credential-shaped field in it is refused
 on both sides — the export will not write one and the import will not read one.
+
+**Import into a build at least as new as the one that wrote the file.** A
+version this build does not know is refused outright, but a *section* it does
+not know is dropped in silence — that is what makes a new section additive, and
+it is also how an older build would read a newer file: everything it knows, and
+nothing of what it does not. Across a redeploy that direction never comes up;
+if you have to take an export into an older build, check the section list above
+against that build first.
 
 The import takes the file **only into a fresh deployment**, and always in two
 steps:

@@ -117,6 +117,31 @@ const InviteRedemptionSchema = z.object({
   redeemedAt: iso,
 });
 
+/**
+ * A redemption that happened on another deployment and was carried here by a
+ * codes CSV import (SUP-272) — the record of *who* spent a code whose
+ * `redemptionCount` the bundle already carries (SUP-403).
+ *
+ * Optional, with an empty default, so a bundle written before this section
+ * existed still reads: that is what the paragraph on {@link
+ * EXPORT_SCHEMA_VERSION} means by an additive field. A build that does not know
+ * the section drops it, exactly as it does today.
+ */
+const InviteCarriedRedemptionSchema = z.object({
+  id,
+  inviteCodeId: id,
+  /** Lower case. Null when the deployment the record came from had already lost the account. */
+  email: z.string().min(3).max(320).nullable(),
+  /** When it was redeemed on the deployment it happened on. */
+  redeemedAt: iso,
+  /**
+   * When it first arrived on a deployment that is not the one it happened on.
+   * Equal to `redeemedAt` for a row that never travelled — a redemption the
+   * export degraded because its account was gone (`DataExportService`).
+   */
+  importedAt: iso,
+});
+
 const ExternalModelSchema = z.object({
   id: z.string().min(1).max(255),
   name: z.string().min(1).max(255),
@@ -156,6 +181,7 @@ const DataSchema = z.object({
   creditLedger: z.array(CreditEntrySchema),
   inviteCodes: z.array(InviteCodeSchema),
   inviteRedemptions: z.array(InviteRedemptionSchema),
+  inviteCarriedRedemptions: z.array(InviteCarriedRedemptionSchema).default([]),
   externalEndpoints: z.array(ExternalEndpointSchema),
   trustedMeasurements: z.array(TrustedMeasurementSchema),
 });
@@ -169,6 +195,7 @@ const CountsSchema = z.object({
   inviteCodes: z.number().int(),
   inviteCodesUnredeemed: z.number().int(),
   inviteRedemptions: z.number().int(),
+  inviteCarriedRedemptions: z.number().int().default(0),
   externalEndpoints: z.number().int(),
   externalModels: z.number().int(),
   trustedMeasurements: z.number().int(),
@@ -242,6 +269,7 @@ export function countsOf(data: ExportData): ExportCounts {
     inviteCodes: data.inviteCodes.length,
     inviteCodesUnredeemed: data.inviteCodes.filter((code) => code.status === 'unredeemed').length,
     inviteRedemptions: data.inviteRedemptions.length,
+    inviteCarriedRedemptions: data.inviteCarriedRedemptions.length,
     externalEndpoints: data.externalEndpoints.length,
     externalModels: data.externalEndpoints.reduce((sum, endpoint) => sum + endpoint.models.length, 0),
     trustedMeasurements: data.trustedMeasurements.length,

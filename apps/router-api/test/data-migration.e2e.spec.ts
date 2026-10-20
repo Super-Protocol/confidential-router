@@ -15,11 +15,13 @@ import {
 import { ApiKey } from '../src/app/db/entities/api-key.entity.js';
 import { CreditTransaction } from '../src/app/db/entities/credit-transaction.entity.js';
 import { ExternalEndpoint } from '../src/app/db/entities/external-endpoint.entity.js';
+import { InviteCarriedRedemption } from '../src/app/db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../src/app/db/entities/invite-redemption.entity.js';
 import { TrustedMeasurement } from '../src/app/db/entities/trusted-measurement.entity.js';
 import { User } from '../src/app/db/entities/user.entity.js';
 import { Workspace } from '../src/app/db/entities/workspace.entity.js';
+import { INVITE_CODES_CSV_HEADER } from '../src/app/invites/index.js';
 import { createHarness, type Harness, signUpWithCode } from './app-harness.js';
 import { type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
@@ -44,6 +46,21 @@ const ISSUE = `
     issueInviteCodes(input: $input) { codes { id code } }
   }
 `;
+const CODES = `
+  query Codes {
+    adminInviteCodes(limit: 200) {
+      nodes { code status redemptionCount redeemers { userId email redeemedAt carried } }
+    }
+  }
+`;
+
+/** A code spent on a deployment before this one, in the shape its CSV export has. */
+const CARRIED = {
+  code: 'JKMN-PQRS-TVWX',
+  email: 'spent-elsewhere@example.test',
+  redeemedAt: '2026-09-01T10:00:00.000Z',
+  createdAt: '2026-08-01T09:00:00.000Z',
+};
 
 const harnesses: Harness[] = [];
 
@@ -201,6 +218,51 @@ async function usedDeployment(): Promise<Used> {
   return { a, users, codes, spender };
 }
 
+/**
+ * Imports one already-spent code into a deployment by CSV (SUP-272), the way a
+ * rebuild carries the codes that were already mailed. What it leaves behind is a
+ * code with `redemptionCount` 1 and an `invite_carried_redemptions` row naming
+ * who spent it — the pair SUP-403 is about.
+ */
+async function importCarriedCode(session: ConsoleSession): Promise<void> {
+  const csv =
+    `${INVITE_CODES_CSV_HEADER.join(',')}\n` +
+    `${[
+      CARRIED.code,
+      '',
+      'launch-2026-10',
+      '25',
+      'redeemed',
+      CARRIED.email,
+      CARRIED.redeemedAt,
+      CARRIED.createdAt,
+      '',
+      '',
+      '1',
+      'From the deployment before',
+    ].join(',')}\n`;
+  const upload = (query: Record<string, string>) =>
+    request(session.harness.app.getHttpServer())
+      .post('/admin/invite-codes/import')
+      .query(query)
+      .set('Cookie', session.cookies)
+      .set('Content-Type', 'text/csv')
+      .send(csv);
+
+  const preview = (await upload({}).expect(200)).body;
+  expect(preview).toMatchObject({ applied: false, ok: true });
+  expect((await upload({ apply: 'true', expect: preview.sha256 }).expect(200)).body).toMatchObject({ applied: true });
+}
+
+async function codeOn(session: ConsoleSession, code: string) {
+  const page = await expectData(session, CODES);
+  return page.adminInviteCodes.nodes.find((node: { code: string }) => node.code === code);
+}
+
+function carriedCodeOn(session: ConsoleSession) {
+  return codeOn(session, CARRIED.code);
+}
+
 async function balancesByEmail(harness: Harness): Promise<Map<string, number>> {
   const rows: { email: string; balanceMicros: string | number }[] = await dataSourceOf(harness).query(
     'SELECT u."email" AS "email", w."balanceMicros" AS "balanceMicros" FROM "user" u ' +
@@ -279,6 +341,7 @@ describe('deployment export', () => {
     expect(Object.keys(bundle.data).sort()).toEqual([
       'creditLedger',
       'externalEndpoints',
+      'inviteCarriedRedemptions',
       'inviteCodes',
       'inviteRedemptions',
       'trustedMeasurements',
@@ -313,6 +376,28 @@ describe('deployment export', () => {
         expect(text.includes(secret)).toBe(false);
       }
     }
+  });
+
+  it('carries a redemption whose account is gone as a carried one, rather than dropping it', async () => {
+    const { a, codes, spender } = await usedDeployment();
+    // Deleting the account leaves its redemption behind: `invite_redemptions`
+    // takes no foreign key on `user`, which Better Auth owns (ADR-004 §3). The
+    // seat is still taken, and the code is still unredeemable because of it.
+    await dataSourceOf(a.harness).getRepository(User).delete({ email: spender.email });
+
+    const file = await exportFile(a.operator);
+    const bundle = decodeBundle(file);
+
+    expect(bundle.counts).toMatchObject({ users: 3, inviteRedemptions: 2, inviteCarriedRedemptions: 1 });
+    expect(bundle.data.inviteCarriedRedemptions[0]).toMatchObject({
+      inviteCodeId: codes[0]?.id,
+      // Nothing is left to name, and no credit can follow an account that is gone.
+      email: null,
+    });
+
+    // Degrading it keeps the bundle importable: the code it names is in the file.
+    const b = await deploy();
+    expect(await dryRun(b.operator, file)).toMatchObject({ ok: true, refusals: [] });
   });
 
   it('leaves an audit line that names the operator and the counts, never a code or an address', async () => {
@@ -433,6 +518,82 @@ describe('deployment import', () => {
     expect((await balancesByEmail(b.harness)).get(dee.email)).toBe(GRANT_MICROS);
     const eve = await signUp(b.harness, 'eve@example.test', codes[0]?.code);
     expect((await balancesByEmail(b.harness)).get(eve.email)).toBe(0);
+  });
+
+  it('keeps the redeemers of a code that arrived by CSV, so a rebuild does not spend it on nobody', async () => {
+    const a = await deploy();
+    await importCarriedCode(a.operator);
+    // What the operator sees on A, and has to go on seeing on B.
+    expect(await carriedCodeOn(a.operator)).toMatchObject({
+      status: 'REDEEMED',
+      redemptionCount: 1,
+      redeemers: [{ userId: null, email: CARRIED.email, carried: true }],
+    });
+
+    const file = await exportFile(a.operator);
+    const exported = decodeBundle(file);
+    expect(exported.counts.inviteCarriedRedemptions).toBe(1);
+    expect(exported.data.inviteCarriedRedemptions[0]).toMatchObject({
+      email: CARRIED.email,
+      redeemedAt: CARRIED.redeemedAt,
+    });
+    await a.harness.close();
+    harnesses.splice(0);
+
+    const b = await deploy();
+    const report = await apply(b.operator, file, exported.integrity.contentSha256);
+    expect(report).toMatchObject({ applied: true, ok: true });
+    expect(section(report, 'inviteCarriedRedemptions')).toMatchObject({ inBundle: 1, toCreate: 1, conflicts: [] });
+
+    // The code is still spent on B, and still spent by somebody.
+    expect(await carriedCodeOn(b.operator)).toMatchObject({
+      status: 'REDEEMED',
+      redemptionCount: 1,
+      redeemers: [{ userId: null, email: CARRIED.email, carried: true, redeemedAt: CARRIED.redeemedAt }],
+    });
+
+    // A second import adds no second redeemer: the row is recognised by its id.
+    const again = await apply(b.operator, file, exported.integrity.contentSha256);
+    expect(section(again, 'inviteCarriedRedemptions')).toMatchObject({ toCreate: 0, alreadyPresent: 1 });
+    expect(await dataSourceOf(b.harness).getRepository(InviteCarriedRedemption).count()).toBe(1);
+
+    // And the record survives the next rebuild too: B's own export carries it on.
+    const onwards = decodeBundle(await exportFile(b.operator));
+    expect(onwards.data.inviteCarriedRedemptions).toEqual(exported.data.inviteCarriedRedemptions);
+  });
+
+  it('does not re-record a degraded redemption on a deployment that still holds it live', async () => {
+    const { a, codes, spender } = await usedDeployment();
+    const target = dataSourceOf(a.harness);
+    await target.getRepository(User).delete({ email: spender.email });
+
+    // The file carries that redemption as a carried one; this deployment still
+    // holds the row it came from, so taking the file back is not a new fact.
+    const file = await exportFile(a.operator);
+    const preview = await dryRun(a.operator, file);
+    expect(preview).toMatchObject({ ok: true, refusals: [] });
+    expect(section(preview, 'inviteCarriedRedemptions')).toMatchObject({
+      inBundle: 1,
+      toCreate: 0,
+      alreadyPresent: 1,
+      conflicts: [],
+    });
+
+    const report = await apply(a.operator, file, preview.contentSha256);
+    expect(report).toMatchObject({ applied: true, ok: true });
+    expect(await target.getRepository(InviteCarriedRedemption).count()).toBe(0);
+    expect(await target.getRepository(InviteRedemption).count()).toBe(3);
+
+    // One seat spent, one redeemer — not the same redemption told twice.
+    const spent = await codeOn(a.operator, codes[0]?.code as string);
+    expect(spent).toMatchObject({ redemptionCount: 1 });
+    expect(spent.redeemers).toEqual([
+      // The account is gone, so there is no address to show against the row it left.
+      { userId: expect.any(String), email: null, redeemedAt: expect.any(String), carried: false },
+    ]);
+
+    // And two exports of an unchanged deployment are still the same file.
+    expect(decodeBundle(await exportFile(a.operator)).integrity.contentSha256).toBe(preview.contentSha256);
   });
 
   it('is idempotent: importing the same file again creates nothing and changes no balance', async () => {
