@@ -176,6 +176,13 @@ What the console gets out of it:
 - **evidence coverage** — of the generations served in a window, how many were
   served while a fresh bundle was published for the endpoint that served them.
   A fact about publication. Not a verification rate, and the console says so.
+  Only this deployment's own endpoints can answer it: a generation routed to an
+  external endpoint has no bundle of ours, so it is outside the ratio in both
+  numerator and denominator (ADR-008 §4), and a window of nothing but external
+  traffic has no coverage figure at all — the tile says so instead of printing
+  `0%`, which would report the product's own promise as never kept (SUP-421).
+  Those generations are covered by the other vocabulary, *verified by this
+  router*.
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.

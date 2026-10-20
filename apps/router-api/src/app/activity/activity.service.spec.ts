@@ -98,7 +98,33 @@ describe('summary', () => {
     expect(summary.requests).toBe(2);
     expect(summary.spendMicros).toBe(1_042);
     expect(summary.coveredRequests).toBe(1);
+    expect(summary.coverableRequests).toBe(1);
     expect(summary.evidenceCoverage).toBe(1);
+  });
+
+  it('has no coverage ratio at all when every generation went to an external endpoint', async () => {
+    // SUP-421: the ratio's denominator is empty, so there is no ratio. Zero here
+    // is what the console turned into "0 of 34 generations were served with
+    // published evidence" for an account whose every request was served by an
+    // endpoint this router had verified.
+    const external = await seedExternalEndpoint(dataSource, { status: 'verified', withModel: false });
+    for (const hour of [9, 10, 11]) {
+      await seedGeneration(dataSource, catalog, {
+        createdAt: new Date(Date.UTC(2026, 7, 28, hour)),
+        // Carries the digest the router's own verdict observed, exactly as
+        // production does: `evidenceSnapshotId` stays null because there is no
+        // bundle of ours, not because the request went unattested.
+        covered: true,
+        externalEndpointId: external.id,
+      });
+    }
+
+    const summary = await activity.summary(range);
+
+    expect(summary.requests).toBe(3);
+    expect(summary.coverableRequests).toBe(0);
+    expect(summary.coveredRequests).toBe(0);
+    expect(summary.evidenceCoverage).toBeNull();
   });
 
   it('averages first-token time over the requests that reported one, not over all of them', async () => {
@@ -116,10 +142,11 @@ describe('summary', () => {
     expect(await activity.summary(range)).toEqual({
       requests: 0,
       coveredRequests: 0,
+      coverableRequests: 0,
       promptTokens: 0,
       completionTokens: 0,
       spendMicros: 0,
-      evidenceCoverage: 0,
+      evidenceCoverage: null,
       avgTimeToFirstTokenMs: null,
       avgTokensPerSecond: null,
     });
@@ -195,14 +222,16 @@ describe('series', () => {
         spendMicros: accumulator.spendMicros + point.spendMicros,
         requests: accumulator.requests + point.requests,
         coveredRequests: accumulator.coveredRequests + point.coveredRequests,
+        coverableRequests: accumulator.coverableRequests + point.coverableRequests,
       }),
-      { spendMicros: 0, requests: 0, coveredRequests: 0 },
+      { spendMicros: 0, requests: 0, coveredRequests: 0, coverableRequests: 0 },
     );
 
     expect(totals).toEqual({
       spendMicros: summary.spendMicros,
       requests: summary.requests,
       coveredRequests: summary.coveredRequests,
+      coverableRequests: summary.coverableRequests,
     });
   });
 });

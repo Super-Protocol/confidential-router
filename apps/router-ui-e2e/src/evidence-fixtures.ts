@@ -125,6 +125,7 @@ export const OVERVIEW_DATA = {
     promptTokens: 700_000_000,
     completionTokens: 80_300_000,
     coveredRequests: 10_900,
+    coverableRequests: 10_900,
     evidenceCoverage: 1,
   },
   activitySeries: [1, 2, 9, 7, 5, 0, 0].map((weight, index) => ({
@@ -239,6 +240,23 @@ export const MIXED_CATALOGUE_DATA = {
  * bundle waiting, and every other endpoint answers `null` — which is the
  * "nothing published" branch, not an error.
  */
+/**
+ * A week whose every generation was served by an external endpoint — the shape
+ * of the production account in SUP-421. `coverableRequests` is 0, so there is no
+ * coverage ratio to report, and the tile must say that instead of "0%".
+ */
+export const EXTERNAL_ONLY_OVERVIEW_DATA = {
+  ...OVERVIEW_DATA,
+  activitySummary: {
+    ...OVERVIEW_DATA.activitySummary,
+    spendMicros: '100738',
+    requests: 34,
+    coveredRequests: 0,
+    coverableRequests: 0,
+    evidenceCoverage: null,
+  },
+};
+
 export const CONSOLE_OPERATIONS = {
   Overview: OVERVIEW_DATA,
   ModelCatalogue: CATALOGUE_DATA,
@@ -256,4 +274,10 @@ export const CONSOLE_OPERATIONS = {
           })
         : null,
   }),
+};
+
+/** `CONSOLE_OPERATIONS` with the external-only week in place of the default. */
+export const EXTERNAL_ONLY_CONSOLE_OPERATIONS = {
+  ...CONSOLE_OPERATIONS,
+  Overview: EXTERNAL_ONLY_OVERVIEW_DATA,
 };
