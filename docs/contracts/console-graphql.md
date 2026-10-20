@@ -106,7 +106,8 @@ input GenerationFilter { from: DateTime, to: DateTime, modelIds: [ID!], apiKeyId
 extend type Query { generations(workspaceId: ID!, filter: GenerationFilter, first: Int = 50, after: String): GenerationConnection! }
 
 # ---------- activity aggregates ----------
-type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, coverableRequests: Int!, evidenceCoverage: Float, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float }   # evidenceCoverage is null when coverableRequests is 0 — no ratio, not 0%
+type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, coverableRequests: Int!, evidenceCoverage: Float, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float, timedRequests: Int!, ratedRequests: Int! }
+# evidenceCoverage is null when coverableRequests is 0 — no ratio, not 0%. timedRequests / ratedRequests are the samples the two averages are over; ratedRequests <= timedRequests.
 type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, coverableRequests: Int!, evidenceCoverage: Float }
 type KeyUsage { apiKey: ApiKey!, spend: Micros!, requests: Int! }
 type ModelUsage { model: Model!, spend: Micros!, requests: Int!, tokens: Int! }

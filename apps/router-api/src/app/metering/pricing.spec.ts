@@ -55,4 +55,25 @@ describe('tokensPerSecond', () => {
     expect(tokensPerSecond(0, 2_000)).toBeNull();
     expect(tokensPerSecond(100, 0)).toBeNull();
   });
+
+  it('is null when no first token was timed, rather than a rate over the whole latency', () => {
+    // A request that was not streamed: counting prefill as generation reported a
+    // model that got slower the longer the prompt was (SUP-424).
+    expect(tokensPerSecond(12, null)).toBeNull();
+  });
+
+  it('says nothing about a two-token completion instead of 2000 tok/s', () => {
+    // The row from production: 2 tokens, one millisecond after the first one.
+    expect(tokensPerSecond(2, 1)).toBeNull();
+  });
+
+  it('needs a window the wall clock can resolve', () => {
+    expect(tokensPerSecond(400, 24)).toBeNull();
+    expect(tokensPerSecond(400, 25)).toBe(16_000);
+  });
+
+  it('needs enough tokens that the first one is not most of the sample', () => {
+    expect(tokensPerSecond(3, 1_000)).toBeNull();
+    expect(tokensPerSecond(4, 1_000)).toBe(4);
+  });
 });
