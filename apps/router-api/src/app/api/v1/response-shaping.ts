@@ -50,6 +50,41 @@ export function deltaTextOf(chunk: unknown): string {
     .join('');
 }
 
+/**
+ * Whether one streaming chunk carries assistant output yet.
+ *
+ * Separate from `deltaTextOf` because the two questions have different answers:
+ * the tokeniser fallback only cares about text, while the first-token clock has
+ * to start on anything the model produced. A turn that calls a tool streams its
+ * arguments in `delta.tool_calls` and never sets `delta.content`, so a clock
+ * that watched text alone left every tool-call turn with no time to first token
+ * at all — half the streamed rows in Logs (SUP-424).
+ *
+ * The opener OpenAI sends before the model has produced anything — `role` with
+ * an empty `content` — is deliberately not output.
+ */
+export function hasAssistantOutput(chunk: unknown): boolean {
+  const choices = asRecord(chunk)?.choices;
+  if (!Array.isArray(choices)) {
+    return false;
+  }
+  return choices.some((choice) => {
+    const record = asRecord(choice);
+    const delta = asRecord(record?.delta) ?? asRecord(record?.message);
+    return (
+      isPresent(delta?.content) ||
+      isPresent(record?.text) ||
+      isPresent(delta?.refusal) ||
+      // A thinking model streams its reasoning before any answer, under either
+      // of the two spellings in the wild.
+      isPresent(delta?.reasoning_content) ||
+      isPresent(delta?.reasoning) ||
+      isPresent(delta?.tool_calls) ||
+      isPresent(delta?.function_call)
+    );
+  });
+}
+
 export function finishReasonOf(chunk: unknown): string | null {
   const choices = asRecord(chunk)?.choices;
   if (!Array.isArray(choices)) {
@@ -94,6 +129,14 @@ export function shapeResponse(
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/** Output, not an empty placeholder: a non-empty string, list or object. */
+function isPresent(value: unknown): boolean {
+  if (typeof value === 'string' || Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return asRecord(value) !== null;
 }
 
 function asCount(value: unknown): number | null {

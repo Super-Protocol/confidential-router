@@ -1,0 +1,17 @@
+# Registration by invitation, on top of docker-compose.yml (SUP-173):
+#
+#   docker compose -f docker/docker-compose.yml \
+#                  -f docker/docker-compose.invite-only.yml up -d --wait
+#
+# A separate file rather than a value in `docker/.env`, because the compose file
+# passes the `api` service a fixed list of keys and this is not one of them — so
+# putting it in `.env` silently does nothing, and the stack comes up open.
+#
+# What it changes: no account is created without a valid, unredeemed invitation,
+# and no sign-in code or magic link is mailed to an address that has no account
+# unless the request carries one (SUP-410). `docker/README.md` has the rest —
+# where codes come from and which log line says a mail was withheld.
+services:
+  api:
+    environment:
+      CR_API_AUTH__REQUIRE_INVITE_FOR_SIGN_UP: 'true'

@@ -763,9 +763,10 @@ describe('an invitation carried to a sign-in screen', () => {
     // account creation and nowhere else, so an existing one is not topped up
     // (SUP-142) and the console does not have to know which this is.
     expect(bodyOf(SIGN_IN)).toEqual({ email: 'invited@example.com', otp: '123456', inviteCode: 'ABCDEFGH' });
-    // The request for the code carries nothing of it: a code is asked for by
-    // address alone.
-    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in' });
+    // And the request that asks for the code, because an invite-only deployment
+    // will not mail an address it has no account for without one (SUP-410) —
+    // this screen registers an invited visitor who never opened `/signup`.
+    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in', inviteCode: 'ABCDEFGH' });
   });
 });
 

@@ -206,18 +206,27 @@ export class DigestChangeModel {
 
 @ObjectType('EvidenceCoverage', {
   description:
-    'Of the generations served in a window, how many were served while the platform had a fresh bundle ' +
-    'published for the endpoint that served them. A fact about publication, not a verification rate.',
+    'Of the generations this deployment’s own endpoints served in a window, how many were served while ' +
+    'the platform had a fresh bundle published for the endpoint that served them. A fact about ' +
+    'publication, not a verification rate. Generations routed to an external endpoint are outside the ' +
+    'question entirely — they are in neither `requests` nor `covered` — because this platform publishes ' +
+    'no bundle for one; the router verified that upstream itself and reports it as “verified by this ' +
+    'router” (ADR-008 §4).',
 })
 export class EvidenceCoverageModel {
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Generations this deployment’s own endpoints served — not the workspace’s total.' })
   requests!: number;
 
   @Field(() => Int)
   covered!: number;
 
-  @Field(() => Float, { description: 'covered / requests; 0 when nothing was served.' })
-  ratio!: number;
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'covered / requests. Null when `requests` is 0: nothing in the window could have been covered, so ' +
+      'there is no ratio — render it as “not applicable”, never as 0%.',
+  })
+  ratio!: number | null;
 
   static from(coverage: Coverage): EvidenceCoverageModel {
     return coverage;

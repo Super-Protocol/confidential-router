@@ -275,10 +275,24 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | 402 | `insufficient_credits` | `insufficient_credits`, `key_spend_limit_reached` |
 | 403 | `permission_error` | `model_not_in_key_scope` |
 | 404 | `invalid_request_error` | `model_not_found`, `not_found` |
+| 413 | `invalid_request_error` | `request_too_large` |
 | 429 | `rate_limit_error` | `rate_limit_exceeded` (+ `Retry-After`, `X-RateLimit-Limit/Remaining/Reset`) |
 | 502 | `upstream_error` | `backend_unavailable`, `backend_error` |
 | 503 | `gatekeeper_error` | `attestation_failed`, `attestation_revoked` — see below |
+| 504 | `upstream_error` | `upstream_timeout` |
 | 500 | `server_error` | `internal` |
+
+`/v1` bodies are parsed under their own ceiling, `server.maxInferenceRequestBytes` (8 MiB by default), not
+the 1 MiB the console surfaces keep: a prompt that fills the `context_length` a model advertises is
+megabytes of JSON, and a client that trusts the advertised figure has to be able to spend it. Over the
+ceiling the answer is `413 request_too_large`, and its message names the ceiling — the only way a client
+learns a deployment's value.
+
+The two 5xx upstream codes name different parties, and the difference is the point. **`backend_unavailable`**
+means the backend could not be reached — refused, reset, unresolvable — or answered 5xx itself.
+**`upstream_timeout`** means the router stopped waiting: the upstream took the request and may be generating
+right now, it is simply slower than `connectTimeout + readTimeout` allowed. Retrying the second as-is once
+the queue drains is reasonable; reading it as a sick deployment is not.
 
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
 ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at
@@ -321,7 +335,9 @@ pricing.completion_per_1m_micros / 1e6`, rounded up to 1 micro-USD, written as o
 `router.yaml → backends.litellm.{baseUrl, apiKey}`; the router forwards `/v1/chat/completions`,
 `/v1/completions`, `/v1/embeddings` to LiteLLM with `model` rewritten to `models[].litellmModel`, adds
 `Authorization: Bearer <litellm key>` and `x-litellm-metadata` with the generation id; timeouts
-`backends.litellm.{connectTimeout, readTimeout}`. Plain HTTP inside the cluster (ADR-002 §4). For CI a mock
+`backends.litellm.{connectTimeout, readTimeout}`, whose sum bounds the wait for the response headers —
+for a non-streaming completion that is the whole generation, so it has to be the generous figure rather
+than the connect one. Plain HTTP inside the cluster (ADR-002 §4). For CI a mock
 LiteLLM (`docker/mock-litellm`) implements the same three routes with canned streaming output.
 
 ## Router ↔ an external endpoint

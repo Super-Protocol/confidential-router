@@ -4,7 +4,14 @@ import { computeCostMicros } from '../../metering/pricing.js';
 import { estimatePromptTokens, estimateTokens } from '../../metering/token-estimator.js';
 import type { GatewayContext, GenerationOutcome } from './gateway.types.js';
 import { asOpenAiError, type OpenAiApiError } from './openai-error.js';
-import { deltaTextOf, finishReasonOf, readUsage, shapeResponse, type UsageCounts } from './response-shaping.js';
+import {
+  deltaTextOf,
+  finishReasonOf,
+  hasAssistantOutput,
+  readUsage,
+  shapeResponse,
+  type UsageCounts,
+} from './response-shaping.js';
 import { dataPayloadOf, formatDataEvent, SSE_DONE, SSE_HEARTBEAT, splitSseEvents } from './sse.js';
 
 /** `docs/contracts/router-api.md`: a comment line while waiting for the first token. */
@@ -142,12 +149,13 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
       return;
     }
 
-    const text = deltaTextOf(chunk);
-    if (text.length > 0 && timeToFirstTokenMs === null) {
+    // Any output starts the clock, not only text: a tool call is the first
+    // token of a turn that will never have a `content` delta (SUP-424).
+    if (timeToFirstTokenMs === null && hasAssistantOutput(chunk)) {
       timeToFirstTokenMs = Date.now() - context.startedAt;
       stopHeartbeat();
     }
-    completionEstimate += estimateTokens(text);
+    completionEstimate += estimateTokens(deltaTextOf(chunk));
     finishReason = finishReasonOf(chunk) ?? finishReason;
 
     const reported = readUsage(chunk);

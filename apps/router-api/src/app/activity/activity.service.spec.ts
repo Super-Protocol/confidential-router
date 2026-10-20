@@ -98,7 +98,33 @@ describe('summary', () => {
     expect(summary.requests).toBe(2);
     expect(summary.spendMicros).toBe(1_042);
     expect(summary.coveredRequests).toBe(1);
+    expect(summary.coverableRequests).toBe(1);
     expect(summary.evidenceCoverage).toBe(1);
+  });
+
+  it('has no coverage ratio at all when every generation went to an external endpoint', async () => {
+    // SUP-421: the ratio's denominator is empty, so there is no ratio. Zero here
+    // is what the console turned into "0 of 34 generations were served with
+    // published evidence" for an account whose every request was served by an
+    // endpoint this router had verified.
+    const external = await seedExternalEndpoint(dataSource, { status: 'verified', withModel: false });
+    for (const hour of [9, 10, 11]) {
+      await seedGeneration(dataSource, catalog, {
+        createdAt: new Date(Date.UTC(2026, 7, 28, hour)),
+        // Carries the digest the router's own verdict observed, exactly as
+        // production does: `evidenceSnapshotId` stays null because there is no
+        // bundle of ours, not because the request went unattested.
+        covered: true,
+        externalEndpointId: external.id,
+      });
+    }
+
+    const summary = await activity.summary(range);
+
+    expect(summary.requests).toBe(3);
+    expect(summary.coverableRequests).toBe(0);
+    expect(summary.coveredRequests).toBe(0);
+    expect(summary.evidenceCoverage).toBeNull();
   });
 
   it('averages first-token time over the requests that reported one, not over all of them', async () => {
@@ -109,19 +135,50 @@ describe('summary', () => {
       timeToFirstTokenMs: null,
     });
 
-    expect((await activity.summary(range)).avgTimeToFirstTokenMs).toBe(150);
+    const summary = await activity.summary(range);
+
+    expect(summary.avgTimeToFirstTokenMs).toBe(150);
+    // And says how big that sample was, so a tile cannot present the mean of two
+    // requests as the period's (SUP-424).
+    expect(summary.timedRequests).toBe(2);
+    expect(summary.requests).toBe(3);
+  });
+
+  it('counts the rate sample separately, because a timed request is not always a rated one', async () => {
+    // `tokensPerSecond` refuses a window too small to divide even when the first
+    // token was timed — an agent's short tool-call turn. The two counts label two
+    // different means and cannot stand in for each other (SUP-424).
+    await seedGeneration(dataSource, catalog, {
+      createdAt: new Date('2026-08-28T09:00:00Z'),
+      timeToFirstTokenMs: 100,
+      tokensPerSecond: 120,
+    });
+    await seedGeneration(dataSource, catalog, {
+      createdAt: new Date('2026-08-28T10:00:00Z'),
+      timeToFirstTokenMs: 200,
+      tokensPerSecond: null,
+    });
+
+    const summary = await activity.summary(range);
+
+    expect(summary.timedRequests).toBe(2);
+    expect(summary.ratedRequests).toBe(1);
+    expect(summary.avgTokensPerSecond).toBe(120);
   });
 
   it('answers an empty period with zeroes and null averages, not with nulls throughout', async () => {
     expect(await activity.summary(range)).toEqual({
       requests: 0,
       coveredRequests: 0,
+      coverableRequests: 0,
       promptTokens: 0,
       completionTokens: 0,
       spendMicros: 0,
-      evidenceCoverage: 0,
+      evidenceCoverage: null,
       avgTimeToFirstTokenMs: null,
       avgTokensPerSecond: null,
+      timedRequests: 0,
+      ratedRequests: 0,
     });
   });
 
@@ -195,14 +252,16 @@ describe('series', () => {
         spendMicros: accumulator.spendMicros + point.spendMicros,
         requests: accumulator.requests + point.requests,
         coveredRequests: accumulator.coveredRequests + point.coveredRequests,
+        coverableRequests: accumulator.coverableRequests + point.coverableRequests,
       }),
-      { spendMicros: 0, requests: 0, coveredRequests: 0 },
+      { spendMicros: 0, requests: 0, coveredRequests: 0, coverableRequests: 0 },
     );
 
     expect(totals).toEqual({
       spendMicros: summary.spendMicros,
       requests: summary.requests,
       coveredRequests: summary.coveredRequests,
+      coverableRequests: summary.coverableRequests,
     });
   });
 });

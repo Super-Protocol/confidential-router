@@ -13,9 +13,10 @@ export interface StatTileProps {
   /**
    * Trend for the same period as `value`. Omitted where the API has no series
    * for the metric — a drawn-from-nothing line would be a claim about data that
-   * was never returned.
+   * was never returned. A `null` bucket is one the metric has no value for: the
+   * line breaks there and keeps the bucket's place (`Sparkline`).
    */
-  series?: number[];
+  series?: (number | null)[];
   /** Tints the sparkline; defaults to the muted trend colour. */
   accent?: 'muted' | 'brand' | 'success';
 }
@@ -32,7 +33,7 @@ export function StatTile({ label, value, hint, series, accent = 'muted' }: StatT
     <Card className="gap-0 px-4 py-3.5">
       <div className="flex items-start justify-between gap-3">
         <span className="text-muted-foreground text-sm">{label}</span>
-        {series && series.length > 0 ? (
+        {series?.some((value) => value !== null) ? (
           <Sparkline values={series} label={`${label} trend`} className={cn('shrink-0', ACCENTS[accent])} />
         ) : null}
       </div>

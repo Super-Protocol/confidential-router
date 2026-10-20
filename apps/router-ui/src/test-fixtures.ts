@@ -280,6 +280,7 @@ export function overviewData(overrides: Partial<OverviewQuery> = {}): OverviewQu
       promptTokens: 700_000_000,
       completionTokens: 80_300_000,
       coveredRequests: 10_900,
+      coverableRequests: 10_900,
       evidenceCoverage: 1,
     }),
     activitySeries: [

@@ -31,6 +31,12 @@ describe('finding the code', () => {
     expect(signUpInviteOf(context({ query: { callbackURL } })).code).toBe(CODE);
   });
 
+  it('reads it out of a callbackURL in the body — where a magic-link *request* carries it', () => {
+    const body = { email: 'a@b.test', callbackURL: `https://console.test/auth/callback?invite=${CODE}` };
+
+    expect(signUpInviteOf(context({ body })).code).toBe(CODE);
+  });
+
   it('reads the cookie, which is all that survives an OAuth round trip', () => {
     const cookie = `cr_session=abc; ${INVITE_COOKIE_NAME}=${CODE}; other=1`;
 

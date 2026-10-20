@@ -62,6 +62,8 @@ export class ActivityResolver {
       ...totalsModel(summary),
       avgTimeToFirstTokenMs: summary.avgTimeToFirstTokenMs,
       avgTokensPerSecond: summary.avgTokensPerSecond,
+      timedRequests: summary.timedRequests,
+      ratedRequests: summary.ratedRequests,
     };
   }
 
@@ -169,6 +171,7 @@ function totalsModel(totals: ActivityTotals) {
   return {
     requests: totals.requests,
     coveredRequests: totals.coveredRequests,
+    coverableRequests: totals.coverableRequests,
     promptTokens: totals.promptTokens,
     completionTokens: totals.completionTokens,
     spendMicros: String(totals.spendMicros),

@@ -176,6 +176,14 @@ type Result struct {
 	// Set when not OK.
 	Stage  Stage  `json:"stage,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Unreachable marks the one failure in which no check ran at all: the
+	// evidence never arrived, because the dial, the handshake or the read
+	// failed ([FetchError.Transport]). It is a `fetch`-stage denial like a 404,
+	// an over-sized bundle or a malformed document — and unlike every one of
+	// those, which the endpoint answered with, it says nothing about the
+	// endpoint, which may be perfectly healthy and briefly unreachable
+	// (SUP-422).
+	Unreachable bool `json:"unreachable,omitempty"`
 
 	// ObservedTLSFingerprint is the fingerprint of the leaf certificate seen on
 	// the handshake this verdict was reached over, when there was one. It is
