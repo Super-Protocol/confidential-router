@@ -200,11 +200,19 @@ matching both is a misconfiguration, and the safe reading of it is the one where
 for itself.
 
 Either way the response is the most recently issued `/.well-known/swarm-evidence` bundle this router has
-fetched, **byte for byte as published** (`schemas/swarm-evidence-bundle.schema.json`) — the stored copy is
+fetched **from the hostname that endpoint answers on today**, **byte for byte as published**
+(`schemas/swarm-evidence-bundle.schema.json`) — the stored copy is
 the publisher's own document, member order included, so hashing this response and hashing what the
 platform's gateway serves for the same publication gives the same digest. `Cache-Control: no-store`: a
 bundle is re-signed every few minutes and a reader is comparing freshness and digests against the live
 host.
+
+A hostname is part of that answer, not a detail of it. An endpoint keeps its identity across a
+reconfigure that renames it, so the bundles stored for it can span two hostnames; only those of the
+name it answers on now are served, and until that name has published something the route answers `503`
+`evidence_not_fetched` rather than handing out what the previous name published (SUP-437). A request in
+that state asks the publisher once, with a short budget, so the state normally resolves within the first
+call rather than at the next poll.
 
 For an external endpoint it is specifically the publication **that endpoint's last verdict named**
 (`ExternalEndpoint.evidenceDigestSeen`), not merely the newest row the poller holds. Two rules meet
