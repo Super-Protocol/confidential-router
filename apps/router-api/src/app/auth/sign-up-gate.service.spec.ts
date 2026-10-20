@@ -83,6 +83,33 @@ describe('a deployment that does not require an invitation', () => {
   });
 });
 
+describe('the same decision, answered rather than thrown (SUP-410)', () => {
+  it('admits everything on a deployment that is not invite-only', async () => {
+    const spent = await seedCode({ redemptionCount: 1 });
+
+    await expect(gate(false).admits(carrying(null))).resolves.toBe(true);
+    await expect(gate(false).admits(carrying(spent.code))).resolves.toBe(true);
+  });
+
+  it('answers a usable code with true, and spends nothing', async () => {
+    const code = await seedCode();
+
+    await expect(gate(true).admits(carrying(code.code))).resolves.toBe(true);
+    expect(await dataSource.getRepository(InviteCode).findOneByOrFail({ id: code.id })).toMatchObject({
+      redemptionCount: 0,
+    });
+  });
+
+  it('answers false for every code `admit` would refuse, and throws nothing', async () => {
+    const spent = await seedCode({ redemptionCount: 1 });
+    const disabled = await seedCode({ disabledAt: new Date() });
+
+    for (const candidate of [null, spent.code, disabled.code, mintInviteCode()]) {
+      await expect(gate(true).admits(carrying(candidate)), String(candidate)).resolves.toBe(false);
+    }
+  });
+});
+
 describe('a deployment that requires an invitation', () => {
   it('admits a usable code, and spends nothing doing it', async () => {
     const code = await seedCode();
