@@ -188,7 +188,9 @@ type ApiKeyCreated {
 Deployment-wide credential counts, for sizing and announcing a key-affecting change.
 """
 type ApiKeyPopulation {
-  """Accounts holding at least one live key — who would have to re-issue."""
+  """
+  Accounts holding at least one live key — who would have to re-issue. Exactly `adminSignUps(holdsLiveApiKey: true).totalCount`, so the number and the page agree.
+  """
   accountsHoldingLiveKey: Int!
 
   """
@@ -200,7 +202,7 @@ type ApiKeyPopulation {
   liveKeys: Int!
 
   """
-  Live keys in a workspace nobody is a member of: the remainder no account list can show.
+  Live keys whose workspace has no member this deployment can name — the remainder no account list can show, and the one number here an operator cannot act on. Normally 0.
   """
   liveKeysWithoutAccount: Int!
 }

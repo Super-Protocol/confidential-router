@@ -601,7 +601,7 @@ describe('the Invitations section, on who holds an API key', () => {
     await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
 
     expect(await screen.findByTestId('api-key-population')).toHaveTextContent(
-      '2 live keys belong to a workspace with no account',
+      '2 live keys are held by no account this deployment can name',
     );
   });
 

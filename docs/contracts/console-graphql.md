@@ -245,8 +245,16 @@ type ApiKeyPopulation {
 # keys and stayed invisible for a week, with the credit ledger the only trace. Who
 # holds what is `AdminSignUp.apiKeys` on the account list; this is the total those
 # pages cannot be summed into, because a key in a shared workspace belongs to every
-# member of it and one in a memberless workspace to no account at all —
-# `liveKeysWithoutAccount` is that remainder, and normally zero.
+# member of it.
+#
+# `accountsHoldingLiveKey` is exactly `adminSignUps(holdsLiveApiKey: true).totalCount`
+# — both join `user` — so an operator reads the number and then pages the same
+# people. `liveKeysWithoutAccount` is what the list cannot speak for: a live key
+# whose workspace has no member resolving to a `user` row. `user` belongs to Better
+# Auth, so `workspace_members` carries no foreign key to it and a membership
+# outlives the account it names; a data import also writes memberships without
+# checking that their accounts restored. Normally zero, and the one number on this
+# surface an operator cannot act on.
 #
 # "Live" is "would authenticate right now": not revoked, and not past `expiresAt`
 # — the two conditions `/v1` refuses on. Deliberately stricter than

@@ -38,7 +38,7 @@ describe.skipIf(!POSTGRES_URL)('the API-key census, on PostgreSQL', () => {
 
   beforeAll(async () => {
     dataSource = new DataSource(
-      buildDataSourceOptions({ type: 'postgres', url: POSTGRES_URL as string, logging: false }),
+      buildDataSourceOptions({ type: 'postgres', url: POSTGRES_URL as string, migrationsRun: false, logging: false }),
     );
     await dataSource.initialize();
     await dataSource.runMigrations();
@@ -49,10 +49,19 @@ describe.skipIf(!POSTGRES_URL)('the API-key census, on PostgreSQL', () => {
         '"name" varchar NOT NULL, "image" varchar, "createdAt" timestamptz NOT NULL)',
     );
 
+    // `totals` is deployment-wide, so every assertion below is a statement about
+    // the whole database. Clearing first makes this spec independent of whatever
+    // ran before it in the job rather than of the order the steps happen to be in.
+    await clear();
+
     live = await seed('live@example.test', { keys: [{}] });
     revoked = await seed('revoked@example.test', { keys: [{ revokedAt: PAST }] });
     keyless = await seed('keyless@example.test', { keys: [] });
     await seed('chat@example.test', { keys: [{ purpose: 'console_chat' }] });
+    // A membership whose account is gone — the shape `liveKeysWithoutAccount`
+    // exists for, and the one `adminSignUps` can never list.
+    const departed = await seed('gone@example.test', { keys: [{}] });
+    await dataSource.query('DELETE FROM "user" WHERE "id" = $1', [departed]);
 
     census = new ApiKeyCensusService(dataSource);
   }, 60_000);
@@ -63,11 +72,16 @@ describe.skipIf(!POSTGRES_URL)('the API-key census, on PostgreSQL', () => {
     }
     // Shared with every other PostgreSQL test in the job, so this cleans up after
     // itself rather than dropping the schema out from under them.
+    await clear();
+    await dataSource.destroy();
+  });
+
+  /** Child tables first; `workspaces` has the only foreign keys that matter here. */
+  async function clear(): Promise<void> {
     for (const table of ['api_keys', 'workspace_members', 'workspaces', 'user']) {
       await dataSource.query(`DELETE FROM "${table}"`);
     }
-    await dataSource.destroy();
-  });
+  }
 
   /** One account, its own workspace, and a key per entry. */
   async function seed(
@@ -118,12 +132,14 @@ describe.skipIf(!POSTGRES_URL)('the API-key census, on PostgreSQL', () => {
     expect(map.has(keyless)).toBe(false);
   });
 
-  it('totals the deployment — `COUNT(DISTINCT)` and the `NOT EXISTS` for a memberless workspace', async () => {
+  it('totals the deployment — `COUNT(DISTINCT)` and the `NOT EXISTS` over the orphaned membership', async () => {
     expect(await census.totals(NOW)).toEqual({
-      keys: 2,
-      liveKeys: 1,
+      keys: 3,
+      liveKeys: 2,
+      // The departed holder's key is live and counted, but its holder is not an
+      // account, so it lands in the remainder rather than in the announce list.
       accountsHoldingLiveKey: 1,
-      liveKeysWithoutAccount: 0,
+      liveKeysWithoutAccount: 1,
     });
   });
 
@@ -136,5 +152,7 @@ describe.skipIf(!POSTGRES_URL)('the API-key census, on PostgreSQL', () => {
 
     expect(await emails(true)).toEqual(['live@example.test']);
     expect(await emails(false)).toEqual(['chat@example.test', 'keyless@example.test', 'revoked@example.test']);
+    // The number above the table and the table itself, on PostgreSQL too.
+    expect((await census.totals(NOW)).accountsHoldingLiveKey).toBe((await emails(true)).length);
   });
 });

@@ -230,7 +230,7 @@ test.describe('the Invitations section', () => {
       '5 accounts hold a live API key — 7 live of 9 ever issued.',
     );
     await expect(page.getByTestId('api-key-population')).toContainText(
-      '1 live key belongs to a workspace with no account',
+      '1 live key is held by no account this deployment can name',
     );
 
     const table = page.getByRole('table', { name: 'Sign-ups' });

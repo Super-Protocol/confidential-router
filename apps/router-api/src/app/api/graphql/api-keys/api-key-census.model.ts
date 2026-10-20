@@ -50,11 +50,17 @@ export class ApiKeyPopulationModel {
   @Field(() => Int, { description: 'Of those, the ones that would authenticate right now.' })
   liveKeys!: number;
 
-  @Field(() => Int, { description: 'Accounts holding at least one live key — who would have to re-issue.' })
+  @Field(() => Int, {
+    description:
+      'Accounts holding at least one live key — who would have to re-issue. Exactly ' +
+      '`adminSignUps(holdsLiveApiKey: true).totalCount`, so the number and the page agree.',
+  })
   accountsHoldingLiveKey!: number;
 
   @Field(() => Int, {
-    description: 'Live keys in a workspace nobody is a member of: the remainder no account list can show.',
+    description:
+      'Live keys whose workspace has no member this deployment can name — the remainder no account list ' +
+      'can show, and the one number here an operator cannot act on. Normally 0.',
   })
   liveKeysWithoutAccount!: number;
 }
