@@ -171,7 +171,8 @@ sent upstream** (no request header, no query parameter, no separate call).
   handshake, fresh bundle fetch). Requests are admitted against the **last verdict**; the data plane never
   blocks on verification except for the very first request, which waits for the initial verdict
   (`initialTimeout`, default `15s`), and a request the verdict in force would refuse — see the next
-  bullet.
+  bullet. The interval is the period while the endpoint is **admitted**; while it is denied the loop falls
+  back to the deny backoff below.
 - **On-demand re-attestation of a denial** (`2s`, not configurable; SUP-422): a request that arrives while
   the last verdict is a denial triggers a re-check and is decided on its result. Without it a failed
   re-attestation latches the endpoint closed until the next `reattestInterval` tick — measured: a
@@ -188,6 +189,15 @@ sent upstream** (no request header, no query parameter, no separate call).
   past the window waits the full 2 s on top of its 503. Two seconds added to a request that was going to
   fail anyway is the price of not having the next five minutes of them fail too. Under `failMode: open`
   the re-check never delays the request: traffic is flowing already, so it runs behind it.
+- **Deny backoff** (`2s`, doubling to `30s`, never slower than `reattestInterval`; SUP-422): while an
+  endpoint is denied, the background loop re-checks on that schedule instead of waiting out
+  `reattestInterval`. Traffic cannot be the only trigger. The router's attested egress runs this same loop
+  (`pkg/sidecar`) with `failMode: closed` and `reattestInterval: 10m`, so an external model nobody happens
+  to call for ten minutes would otherwise still be refused when its first caller arrives — and the first
+  caller is a real user. The doubling is what keeps a denial only a human can clear (an unapproved digest
+  awaiting review) from re-fetching evidence every two seconds all day. An admitted verdict resets it.
+  `NextAttestAt` is written by the loop, so it reports the schedule actually in force rather than always
+  `lastAttestAt + reattestInterval`.
 - `verdictCacheTtl` (default `60s`): a re-check the data plane triggers **on its own** — the first request
   of an endpoint's life, or a connection whose certificate did not match the pin — reuses a verdict younger
   than the TTL, so a burst of failures cannot become a burst of handshakes against the upstream. The

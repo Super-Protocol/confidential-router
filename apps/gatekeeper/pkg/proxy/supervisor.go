@@ -47,6 +47,12 @@ type Options struct {
 	Registry *prometheus.Registry
 	// PublishInterval overrides [PublishInterval].
 	PublishInterval time.Duration
+	// DenyBackoff replaces the denied-endpoint retry schedule with one fixed
+	// delay. Zero means the built-in schedule: [onDemandRetry], doubling to
+	// [denyBackoffMax]. Nothing in production sets it; it exists so that a test
+	// counting evidence fetches can keep the background loop out of its way,
+	// the way PublishInterval keeps the snapshot loop out of it.
+	DenyBackoff time.Duration
 }
 
 // Supervisor runs the data plane: one listener per endpoint, each with its own
@@ -126,6 +132,23 @@ func (s *Supervisor) build(cfg *config.Config) ([]*endpoint, error) {
 		out = append(out, ep)
 	}
 	return out, nil
+}
+
+// denyBackoff is the first delay of the schedule a denied endpoint re-checks on.
+func (s *Supervisor) denyBackoff() time.Duration {
+	if s.opts.DenyBackoff > 0 {
+		return s.opts.DenyBackoff
+	}
+	return onDemandRetry
+}
+
+// denyBackoffMax is that schedule's ceiling. An override is a fixed delay, so
+// it is its own ceiling.
+func (s *Supervisor) denyBackoffMax() time.Duration {
+	if s.opts.DenyBackoff > 0 {
+		return s.opts.DenyBackoff
+	}
+	return denyBackoffMax
 }
 
 func (s *Supervisor) now() time.Time {

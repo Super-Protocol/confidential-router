@@ -74,6 +74,14 @@ const forceAttest = time.Duration(0)
 // anyway buys the next five minutes of them not failing (ADR-003 §7).
 const onDemandRetry = 2 * time.Second
 
+// denyBackoffMax is the ceiling of the schedule the background loop falls back
+// to while an endpoint is denied: [onDemandRetry], doubling, up to this. The
+// doubling is what keeps a deployment denied for a reason only a human can
+// clear — an unapproved digest — from re-fetching its evidence every two
+// seconds for the rest of the day, while still clearing a transient denial in
+// seconds rather than in whole `reattestInterval` windows.
+const denyBackoffMax = 30 * time.Second
+
 // endpoint is one configured endpoint at runtime: its listener, its verdict,
 // and the two connection pools its traffic can take.
 type endpoint struct {
@@ -266,22 +274,68 @@ func (e *endpoint) stop(ctx context.Context) error {
 	return err
 }
 
-// attestLoop re-runs the full pipeline every reattestInterval until the
-// endpoint stops (ADR-003 §7). Requests are never blocked on it: they are
-// admitted against the last verdict it produced.
+// attestLoop re-runs the full pipeline until the endpoint stops (ADR-003 §7).
+// Requests are never blocked on it: they are admitted against the last verdict
+// it produced — except one that would be refused, which re-checks on its own
+// way through ([endpoint.retryDenied]).
+//
+// The period is `reattestInterval` while the endpoint is admitted, and the deny
+// backoff while it is not. Traffic alone is not enough to recover from a failed
+// re-attestation: the egress sidecar runs this loop with a 10-minute interval,
+// and an endpoint that nobody happens to call in the next ten minutes would
+// stay closed for all of them even though the upstream came back in seconds
+// (SUP-422).
 func (e *endpoint) attestLoop(ctx context.Context, done chan struct{}) {
 	defer close(done)
 
-	e.attest(ctx, forceAttest)
-	ticker := time.NewTicker(e.tuning.ReattestInterval)
-	defer ticker.Stop()
+	// The schedule is the loop's own state, read and written by nothing else.
+	backoff := e.sup.denyBackoff()
+	next := func(current *verdict) time.Duration {
+		if current == nil || current.Admitted {
+			backoff = e.sup.denyBackoff()
+			return e.tuning.ReattestInterval
+		}
+		// Whichever comes sooner. The backoff exists to check more often than
+		// `reattestInterval` while a denial stands; an interval already shorter
+		// than the backoff stays in charge, because it is the operator saying
+		// how stale a verdict may get.
+		delay := min(backoff, e.tuning.ReattestInterval)
+		backoff = min(backoff*2, e.sup.denyBackoffMax())
+		return delay
+	}
+
+	delay := next(e.attest(ctx, forceAttest))
+	e.armNext(delay)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			e.attest(ctx, forceAttest)
+		case <-timer.C:
+			delay = next(e.attest(ctx, forceAttest))
+			e.armNext(delay)
+			timer.Reset(delay)
 		}
+	}
+}
+
+// armNext records when the background loop will next run, which is what the
+// dashboard's "next" column and the admin API report. It is written by the loop
+// rather than by [endpoint.attest], because a check the data plane triggered on
+// its own does not move the loop's schedule — and claiming it did was how a
+// denied endpoint could show a next-check five minutes out while it was in fact
+// being re-checked every couple of seconds.
+//
+// It therefore lands just after the verdict it follows rather than with it,
+// which leaves the field empty for the few instructions between an endpoint's
+// very first verdict and its first schedule. [status.Endpoint] renders an
+// unknown next check as blank, which is what it is at that point.
+func (e *endpoint) armNext(delay time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.running {
+		e.nextAttestAt = e.sup.now().Add(delay)
 	}
 }
 
@@ -330,7 +384,6 @@ func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
 	previous := e.verdict
 	e.verdict = result
 	e.lastAttestAt = result.At
-	e.nextAttestAt = result.At.Add(e.tuning.ReattestInterval)
 	e.attesting = false
 	first := e.firstVerdict
 	select {

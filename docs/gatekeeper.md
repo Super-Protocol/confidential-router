@@ -504,7 +504,9 @@ run one at all — a refused dial, a failed handshake, a truncated read. The
 second is a statement about the network between you and the endpoint, not about
 the endpoint. A request arriving against a denial also re-runs the check
 immediately (at most one every two seconds), so a blip that has already passed
-clears on your next request rather than on the next `reattestInterval`.
+clears on your next request rather than on the next `reattestInterval` — and
+while the endpoint stays denied the background loop re-checks on the same
+backoff, so it recovers even with no traffic at all.
 
 | `stage` | What happened |
 | --- | --- |

@@ -643,6 +643,13 @@ until `initialTimeout`, and then each refused request pays the full two seconds
 on top of its 503. It is the price of not having the next five minutes of
 requests fail as well.
 
+Traffic is not the only trigger. While an endpoint is denied, the background
+loop re-checks on a backoff — two seconds, doubling to thirty, never slower than
+`reattestInterval` — instead of waiting out the interval, so an endpoint nobody
+calls is already admitted again when its next caller arrives. That matters most
+where the interval is long: the router's own egress sidecar runs this loop with
+`reattestInterval: 10m`.
+
 Three things make it more than a reverse proxy with a check in front:
 
 - **The verdict is bound to a certificate, not to a hostname.** Verification

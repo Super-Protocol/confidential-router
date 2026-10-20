@@ -47,6 +47,18 @@ func deniedEndpoint(t *testing.T, failMode string) (
 	s *proxy.Supervisor, u *fakeUpstream, listen string, c *clock, fix func(),
 ) {
 	t.Helper()
+	return deniedEndpointTuned(t, failMode, quietBackoff)
+}
+
+// quietBackoff parks the background deny retry far outside any test's window,
+// so that a test about the request path counts only the checks requests caused.
+// The loop's own schedule has its own test.
+const quietBackoff = time.Hour
+
+func deniedEndpointTuned(t *testing.T, failMode string, denyBackoff time.Duration) (
+	s *proxy.Supervisor, u *fakeUpstream, listen string, c *clock, fix func(),
+) {
+	t.Helper()
 	pki := newPKI(t)
 	pinned := digestOf("the pinned deployment")
 	upstream := newUpstream(t, pki.leaf.cert, buildBundle(t, bundleSpec{
@@ -62,7 +74,7 @@ func deniedEndpoint(t *testing.T, failMode string) (
 		}},
 	})
 	clk := newClock()
-	supervisor := startSupervisor(t, cfg, upstream, clk.now)
+	supervisor := startSupervisorTuned(t, cfg, upstream, clk.now, denyBackoff)
 	broken := status.Broken
 	if failMode == config.FailOpen {
 		broken = status.NonConfidential
@@ -200,5 +212,110 @@ func TestADeniedFailOpenEndpointRecoversWithoutBlocking(t *testing.T) {
 	ep := awaitHealth(t, supervisor, "router", status.Confidential)
 	if !ep.Health.Trusted() {
 		t.Errorf("health = %q, want the background re-check to have admitted the endpoint", ep.Health)
+	}
+}
+
+// TestAHundredRefusedRequestsCauseOneCheck is the stampede guard at the scale
+// the egress sidecar sees it: every user of one external model meets the same
+// bad verdict at the same moment, and the upstream must see one evidence fetch
+// rather than one per request. The single-flight guard in attest is what makes
+// the on-demand retry safe to put on the request path at all.
+func TestAHundredRefusedRequestsCauseOneCheck(t *testing.T) {
+	_, upstream, listen, clk, _ := deniedEndpoint(t, config.FailClosed)
+	settled := upstream.evidenceFetches()
+	clk.advance(pastTheRetryWindow)
+
+	const callers = 100
+	var wg sync.WaitGroup
+	refused := make([]int, callers)
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			refused[i] = get(t, listen, "/v1/models", nil).status
+		}()
+	}
+	wg.Wait()
+
+	for i, status := range refused {
+		if status != http.StatusServiceUnavailable {
+			t.Fatalf("request %d answered %d, want every one of them refused", i, status)
+		}
+	}
+	if got := upstream.evidenceFetches() - settled; got != 1 {
+		t.Errorf("%d evidence fetches for %d simultaneous refused requests, want 1", got, callers)
+	}
+}
+
+// TestADeniedEndpointRecoversWithoutTraffic covers the other half of the fix:
+// the background loop falls back to the deny backoff instead of waiting out
+// `reattestInterval`. Traffic cannot be the only trigger — the egress sidecar
+// runs a 10-minute interval, and an external model nobody calls for ten minutes
+// would otherwise still be refused when the first caller arrives.
+func TestADeniedEndpointRecoversWithoutTraffic(t *testing.T) {
+	// The real backoff, and not one request in this test: `reattestInterval` is
+	// an hour, so anything that recovers here is the loop.
+	supervisor, _, _, _, fix := deniedEndpointTuned(t, config.FailClosed, 0)
+
+	fix()
+	ep := awaitHealth(t, supervisor, "router", status.Confidential)
+	// The loop armed a schedule after each denial it installed, so by the time
+	// the endpoint is admitted there is one to report; only an endpoint's very
+	// first verdict can be seen before its first schedule.
+	if ep.NextAttestAt.IsZero() {
+		t.Error("the endpoint does not report when it will next be checked")
+	}
+}
+
+// TestTheEgressSidecarTuningDoesNotLatch runs the scenario on the tuning
+// router-api renders for the attested egress (ADR-008 §5): one `defaults:`
+// block, `failMode: closed`, `reattestInterval: 10m`, `verdictCacheTtl: 60s`.
+// The denial is produced at the *fetch* stage by an upstream that cannot be
+// dialled, which is what seconds of trouble between the router and another
+// cloud look like — and with those two windows, nothing but the request's own
+// re-check can clear it inside this test.
+//
+// What it does not cover: the sidecar's own process supervision (pkg/sidecar)
+// and the two-factor trust mode that file also carries. Neither takes part in
+// how a denial is retried, which is what this is about.
+func TestTheEgressSidecarTuningDoesNotLatch(t *testing.T) {
+	pki := newPKI(t)
+	digest := digestOf("the approved deployment")
+	upstream := newUpstream(t, pki.leaf.cert, buildBundle(t, bundleSpec{
+		signer: pki.leaf, rootPEM: pki.rootPEM, digest: digest,
+	}))
+	cfg := writeConfig(t, t.TempDir(), configSpec{
+		roots: map[string]string{"test-root": pki.rootPEM},
+		defaults: tuningSpec{
+			failMode: "closed", reattestInterval: "10m", verdictCacheTTL: "60s", maxBundleAge: "24h",
+		},
+		endpoints: []endpointSpec{{
+			name: "partner-llama", listen: freePort(t), pins: []string{digest}, failMode: "closed",
+		}},
+	})
+	clk := newClock()
+	supervisor := startSupervisorTuned(t, cfg, upstream, clk.now, quietBackoff)
+	listen := cfg.Endpoints[0].Listen
+	awaitHealth(t, supervisor, "partner-llama", status.Confidential)
+
+	// Seconds of trouble on the route to the other cloud, landing on a
+	// re-attestation.
+	upstream.block(true)
+	if _, err := supervisor.Reattest(t.Context(), "partner-llama"); err != nil {
+		t.Fatalf("re-attesting into the outage: %v", err)
+	}
+	denial := decodeDenial(t, get(t, listen, "/v1/chat/completions", nil).body)
+	if denial.Stage != "fetch" || denial.Error.Code != "attestation_unreachable" {
+		t.Fatalf("denial = %+v, want an unreachable fetch-stage denial", denial)
+	}
+
+	// The route is fine again, well inside the 10 minutes.
+	upstream.block(false)
+	clk.advance(pastTheRetryWindow)
+	if resp := get(t, listen, "/v1/chat/completions", nil); resp.status != http.StatusOK {
+		t.Fatalf("status = %d, want the next request to have re-attested (%s)", resp.status, resp.body)
+	}
+	if ep, _ := supervisor.Snapshot(t.Context()).Endpoint("partner-llama"); ep.Health != status.Confidential {
+		t.Errorf("health = %q, want the endpoint admitted again", ep.Health)
 	}
 }
