@@ -144,6 +144,17 @@ models:
 A model id the catalogue does not list is a `404 model_not_found`, not a
 forwarded request: the router never guesses what a backend might answer to.
 
+`capabilities` says which routes the **backend** serves, and is not the list
+`/v1/models` publishes: that one is derived from this
+(`catalog/served-capabilities.ts`) and is wider. A model declaring `chat` is
+published as serving chat, the legacy completions route, streaming and tool
+calling, because the surface serves all four for it — it translates
+`/v1/completions` into a chat call when the backend has no legacy route of its
+own (SUP-450). Declaring `completions` as well is a statement about the backend —
+vLLM and SGLang do serve it — and buys a verbatim forward, which is the only
+form in which `suffix` infilling works. Omitting it costs infilling and nothing
+else.
+
 Rate limits apply per key *and* per workspace, so minting more keys does not
 multiply a tenant's budget:
 
@@ -447,7 +458,7 @@ threshold, no more often than `autoTopUpCooldown`.
 
 ```
 POST /v1/chat/completions      streaming and not
-POST /v1/completions
+POST /v1/completions           legacy; forwarded, or translated into a chat call
 GET  /v1/models
 GET  /v1/generation?id=…       what one request cost, after the fact
 ```

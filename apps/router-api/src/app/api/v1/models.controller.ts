@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Req, UseFilters, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeController } from '@nestjs/swagger';
+import { servedCapabilities } from '../../catalog/served-capabilities.js';
 import { EvidenceService, teeLabelOfBundle } from '../../evidence/index.js';
 import { ApiKeyGuard, type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
 import type { RoutedModel } from './gateway.types.js';
@@ -96,6 +97,10 @@ function presentModel(model: RoutedModel, tee: string | null) {
       // (`docs/contracts/router-api.md`), never a label nobody read.
       ...(tee ? { tee } : {}),
     },
-    capabilities: model.capabilities,
+    // Derived, never the stored list: `capabilities` has to name what this
+    // surface will actually do with the model, including the legacy completions
+    // route it serves by translation and the streaming and tool calling it has
+    // always done without saying so (SUP-450).
+    capabilities: servedCapabilities(model.capabilities),
   };
 }

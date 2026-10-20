@@ -51,7 +51,18 @@ import {
  */
 const EVENT_LIMIT = 50;
 
-/** Every OpenAI-compatible upstream serves chat; the rest an operator states. */
+/**
+ * Every OpenAI-compatible upstream serves chat; the rest an operator states.
+ *
+ * Still only `chat`, and that no longer understates the model: what the
+ * catalogue reports is derived from this list rather than equal to it, so a
+ * model registered without a word about its routes is listed — correctly — as
+ * serving chat, the legacy completions route, streaming and tool calling
+ * (`catalog/served-capabilities.ts`, SUP-450). Declaring `completions` as well
+ * is a statement about the *upstream* — that it serves the legacy route itself —
+ * and the only thing it changes is that the route is forwarded rather than
+ * translated.
+ */
 const DEFAULT_CAPABILITIES = ['chat'] as const;
 
 /**

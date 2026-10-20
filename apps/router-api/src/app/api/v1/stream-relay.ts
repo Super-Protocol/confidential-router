@@ -2,6 +2,7 @@ import type { Response as ExpressResponse } from 'express';
 import type { GenerationStatus } from '../../db/entities/generation.entity.js';
 import { computeCostMicros } from '../../metering/pricing.js';
 import { estimatePromptTokens, estimateTokens } from '../../metering/token-estimator.js';
+import { textCompletionChunkOf } from './completions-bridge.js';
 import type { GatewayContext, GenerationOutcome } from './gateway.types.js';
 import { asOpenAiError, type OpenAiApiError } from './openai-error.js';
 import {
@@ -136,44 +137,56 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
       return;
     }
 
-    let chunk: unknown;
+    let parsed: unknown;
     try {
-      chunk = JSON.parse(payload);
+      parsed = JSON.parse(payload);
     } catch {
       // Not ours to interpret; the client gets exactly what the backend sent.
       emit(event);
       return;
     }
-    if (!chunk || typeof chunk !== 'object') {
+    if (!parsed || typeof parsed !== 'object') {
       emit(event);
       return;
     }
+    const upstreamChunk = parsed as Record<string, unknown>;
+    // Measured on the upstream chunk, emitted as the translated one (SUP-450).
+    //
+    // Not interchangeable, and the asymmetry is the point: a legacy
+    // `text_completion` chunk can hold assistant *text* and nothing else, so a
+    // `delta.tool_calls` or `delta.reasoning_content` has already collapsed to
+    // `text: ''` by the time the translation is done with it. Measuring there
+    // would leave a bridged tool-call stream with no time to first token at all
+    // and start a thinking model's clock at its first word rather than its first
+    // output — the exact hole SUP-424 closed. The upstream chunk strictly
+    // dominates the translated one for both measurements, and for a non-bridged
+    // request the two are the same object.
+    const chunk: Record<string, unknown> = context.bridged ? textCompletionChunkOf(upstreamChunk) : upstreamChunk;
 
     // Any output starts the clock, not only text: a tool call is the first
     // token of a turn that will never have a `content` delta (SUP-424).
-    if (timeToFirstTokenMs === null && hasAssistantOutput(chunk)) {
+    if (timeToFirstTokenMs === null && hasAssistantOutput(upstreamChunk)) {
       timeToFirstTokenMs = Date.now() - context.startedAt;
       stopHeartbeat();
     }
-    completionEstimate += estimateTokens(deltaTextOf(chunk));
-    finishReason = finishReasonOf(chunk) ?? finishReason;
+    completionEstimate += estimateTokens(deltaTextOf(upstreamChunk));
+    finishReason = finishReasonOf(upstreamChunk) ?? finishReason;
 
-    const reported = readUsage(chunk);
+    // Usage survives the translation untouched, so these two read either one; the
+    // upstream chunk is named here for the same reason as above.
+    const reported = readUsage(upstreamChunk);
     if (reported) {
       usage = reported;
     }
-    if (reported && context.suppressUsageChunk && isUsageOnly(chunk)) {
+    if (reported && context.suppressUsageChunk && isUsageOnly(upstreamChunk)) {
       // The router asked for this chunk, not the client. Counted, not forwarded.
       return;
     }
     // Re-emitted as a single `data:` line: the OpenAI stream format uses no
     // `event:` or `id:` fields, and every event that is not a JSON object has
     // already been forwarded untouched above.
-    const record = chunk as Record<string, unknown>;
     emit(
-      formatDataEvent(
-        JSON.stringify(shapeResponse(record, context, reported ? extensionFor(context, reported) : null)),
-      ),
+      formatDataEvent(JSON.stringify(shapeResponse(chunk, context, reported ? extensionFor(context, reported) : null))),
     );
   };
 

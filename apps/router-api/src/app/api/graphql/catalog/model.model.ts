@@ -1,16 +1,55 @@
 import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import type { ModelCapability, ModelOrigin } from '../../../db/entities/model.entity.js';
+import type { RouteCapability, ServedCapability } from '../../../catalog/served-capabilities.js';
+import type { ModelOrigin } from '../../../db/entities/model.entity.js';
 import { EndpointModel } from './endpoint.model.js';
 import { ExternalUpstreamModel } from './external-upstream.model.js';
 
-/** GraphQL spelling of `ModelCapability`; the values are what the config and the database hold. */
+/**
+ * What an operator *declares* about a model: which OpenAI route its upstream
+ * serves itself. The values are the ones the config and the `capabilities`
+ * column hold.
+ */
+export const RouteCapabilityEnum = {
+  CHAT: 'chat',
+  COMPLETIONS: 'completions',
+  EMBEDDINGS: 'embeddings',
+} as const satisfies Record<string, RouteCapability>;
+
+registerEnumType(RouteCapabilityEnum, {
+  name: 'RouteCapability',
+  description:
+    'A route an upstream serves itself, as declared on the model. What the router then serves for it is ' +
+    '`ModelCapability`, which is derived from this and never declared (SUP-450).',
+});
+
+/**
+ * What the router *serves* for a model, which is what the catalogue reports —
+ * `Model.capabilities` here and `capabilities` on `GET /v1/models`, from one
+ * derivation (`catalog/served-capabilities.ts`).
+ *
+ * Wider than {@link RouteCapabilityEnum} in two ways. `COMPLETIONS` is served for
+ * a chat-only model by translating the prompt, so it appears for a model that
+ * never declared it. And `TOOLS` / `STREAMING` are not routes at all: they say
+ * the surface forwards `tools` and relays `tool_calls` untouched, and that
+ * `stream: true` is honoured — both of which were always true and neither of
+ * which the catalogue used to admit (SUP-450).
+ */
 export const ModelCapabilityEnum = {
   CHAT: 'chat',
   COMPLETIONS: 'completions',
   EMBEDDINGS: 'embeddings',
-} as const satisfies Record<string, ModelCapability>;
+  TOOLS: 'tools',
+  STREAMING: 'streaming',
+} as const satisfies Record<string, ServedCapability>;
 
-registerEnumType(ModelCapabilityEnum, { name: 'ModelCapability' });
+registerEnumType(ModelCapabilityEnum, {
+  name: 'ModelCapability',
+  description:
+    'Something the router does with this model: a route it accepts (CHAT, COMPLETIONS, EMBEDDINGS), tool ' +
+    'definitions forwarded and tool-call deltas relayed untouched (TOOLS), or `stream: true` honoured ' +
+    '(STREAMING). Derived from the declared `RouteCapability` list, so it cannot claim what the surface ' +
+    'does not serve.',
+});
 
 /**
  * Where a listed model actually runs, and therefore which of the two attestation
@@ -76,8 +115,8 @@ export class LlmModel {
   @Field(() => Int)
   contextLength!: number;
 
-  @Field(() => [ModelCapabilityEnum])
-  capabilities!: ModelCapability[];
+  @Field(() => [ModelCapabilityEnum], { description: 'What the router serves for this model; derived, not declared.' })
+  capabilities!: ServedCapability[];
 
   @Field(() => PricingModel)
   pricing!: PricingModel;

@@ -131,6 +131,18 @@ const ModelSchema = z.strictObject({
   litellmModel: z.string().min(1),
   endpoint: name,
   contextLength: integerish().pipe(z.number().int().positive()),
+  /**
+   * Which OpenAI routes the *backend* serves for this model, which is not the
+   * same list `/v1/models` reports: that one is derived, and includes the
+   * streaming and tool calling the surface has always done plus the legacy
+   * completions route it serves for a chat model by wrapping the prompt
+   * (`catalog/served-capabilities.ts`, SUP-450).
+   *
+   * So `completions` here is a statement about the backend — vLLM and SGLang
+   * serve `/v1/completions` themselves — and what it buys is a verbatim forward
+   * rather than a translation, which is what keeps `suffix` infilling working.
+   * Dropping it costs infilling and nothing else.
+   */
   capabilities: z.array(z.enum(['chat', 'completions', 'embeddings'])).prefault(['chat', 'completions']),
   pricing: z.strictObject({
     promptPer1mMicros: integerish().pipe(z.number().int().nonnegative()),

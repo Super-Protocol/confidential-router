@@ -20,7 +20,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/chat/completions` | required | non-stream and `stream: true` (SSE) |
 | `GET /v1/models` | required | OpenAI list shape + extension fields |
 | `GET /v1/models/{id}` | required | single model |
-| `POST /v1/completions` | required | legacy text completions, same streaming rules |
+| `POST /v1/completions` | required | legacy text completions, same streaming rules. Served for **every** model with a chat route — forwarded when the backend serves it, translated otherwise |
 | `POST /v1/embeddings` | optional | only if the model's `capabilities` include `embeddings` |
 | `GET /v1/generation?id=` | required | metering record of one generation (OpenRouter-style) |
 | `GET /v1/evidence` | required | raw passthrough of **this deployment's** latest published bundle; no key |
@@ -161,6 +161,36 @@ metered `aborted` with no `errorCode`, and only a verdict withdrawn under a runn
 directions — the official SDK closes the response the instant it sees `[DONE]`, so calling that an abort
 would both misprice the Logs screen and leave `aborted` unable to mean "policy cut this short".
 
+### `POST /v1/completions`
+
+Request: the legacy OpenAI schema — `model`, `prompt`, and the generation parameters of the chat route.
+Response: a `text_completion` object, with `choices[].text` in place of `choices[].message` and the same
+`usage` extension; streaming is the same SSE contract with `text_completion` chunks.
+
+**Served for every model whose `capabilities` include `completions`, which is every model with a chat
+route** — and the two ways it gets served are invisible to the client bar one parameter:
+
+- The backend declares `completions` (`models[].capabilities`, `ExternalModelInput.capabilities`): the
+  request is forwarded verbatim to the backend's own `/v1/completions`. vLLM and SGLang serve it, and
+  this is the only form in which `suffix` (infilling) works, because the prompt reaches the model with
+  no chat template around it.
+- The backend declares `chat` alone: the router serves the route itself, wrapping `prompt` in one user
+  message and translating the answer back (`api/v1/completions-bridge.ts`). Metering, rate limits, the
+  SSE relay and the `usage` extension are the chat route's own code — the translation is at the edges.
+
+In the translated form four legacy-only parameters are refused by name with `400 unsupported_parameter`
+rather than dropped: `suffix`, `echo`, `logprobs` and `best_of > 1`. Silently ignoring `suffix` is the
+dangerous one — an autocomplete client sends the text after the cursor there, and prose written as if
+the file ended at the cursor would be pasted into the middle of it. A batch `prompt` (more than one
+string) and a pre-tokenised one are refused for the same reason `n > 1` is: one metered completion per
+request, and no tokeniser to turn token ids back into text.
+
+Until SUP-450 the route answered `400 unsupported_parameter` for any model that had not declared
+`completions`, which is the default registration — so the production catalogue's only model refused a
+path this table calls required. Continue prompts `/v1/completions` for its *apply* and *autocomplete*
+roles, so the refusal surfaced as `Failed to edit <file>`, a retry of the same edit, and eventually a
+dead session (SUP-447, SUP-448).
+
 ### `GET /v1/models`
 
 ```json
@@ -169,11 +199,34 @@ would both misprice the Logs screen and leave `aborted` unable to mean "policy c
   "name": "Llama 3.3 70B Instruct", "context_length": 131072,
   "pricing": { "prompt_per_1m_micros": 280000, "completion_per_1m_micros": 420000 },
   "endpoint": { "name": "llama-33-70b", "hostname": "llama-33-70b.tee.swarm.cloud", "tee": "Intel TDX (GCP)" },
-  "capabilities": ["chat", "completions"]
+  "capabilities": ["chat", "completions", "tools", "streaming"]
 } ] }
 ```
 
 Only models within the key's scope are listed.
+
+`capabilities` is **what this router serves for the model, derived from what the operator declared** —
+never the declared list itself (`catalog/served-capabilities.ts`). An operator declares routes the
+*backend* serves (`chat`, `completions`, `embeddings`); the catalogue reports what the `/v1` surface
+will accept, which is wider:
+
+| Value | Means |
+| --- | --- |
+| `chat` | `POST /v1/chat/completions` is accepted |
+| `completions` | `POST /v1/completions` is accepted — forwarded or translated, see above |
+| `embeddings` | `POST /v1/embeddings` is accepted |
+| `tools` | `tools` / `tool_choice` are forwarded untouched and `tool_calls` deltas relayed untouched. A statement about this surface, not a promise that the model chooses tools well |
+| `streaming` | `stream: true` is honoured |
+
+So `chat` alone is reported as `["chat", "completions", "tools", "streaming"]`, and an embeddings-only
+model as `["embeddings"]` — no streaming, which that route refuses. The admission gate and this list read
+the same function, so a route is accepted **exactly** when it is listed; `test/v1-completions.e2e.spec.ts`
+asserts that over HTTP for every declarable shape. The declared list stays visible to operators as
+`ExternalEndpointModel.capabilities` / `RouteCapability` in the console schema.
+
+Before SUP-450 this field was the declared list, so production advertised `["chat"]` for a model that
+streams native tool calls all day — and a client that gates agent mode on an advertised capability had
+no way to learn otherwise.
 
 `endpoint.tee` is the TEE the endpoint's **published evidence** names: the hardware branch of the
 `TeeEvidence` in the root certificate of its chain, e.g. `AMD SEV-SNP (Azure)`, read from the latest
@@ -339,6 +392,11 @@ pricing.completion_per_1m_micros / 1e6`, rounded up to 1 micro-USD, written as o
 for a non-streaming completion that is the whole generation, so it has to be the generous figure rather
 than the connect one. Plain HTTP inside the cluster (ADR-002 §4). For CI a mock
 LiteLLM (`docker/mock-litellm`) implements the same three routes with canned streaming output.
+
+One exception to the path mapping: a `/v1/completions` request for a model that declares `chat` alone is
+forwarded to `/v1/chat/completions` with a translated body (SUP-450). The target path is on
+`GatewayContext.upstreamPath` rather than derived from the route, which is the only thing downstream of
+admission that is told about the translation.
 
 ## Router ↔ an external endpoint
 
