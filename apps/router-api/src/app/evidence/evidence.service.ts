@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In, LessThan } from 'typeorm';
+import { DataSource, LessThan } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
+import { snapshotsOnCurrentHostname } from './current-hostname.js';
 import { type ParsedEvidenceBundle, parseEvidenceBundle } from './evidence-bundle.js';
 import { fetchEvidenceBundle } from './evidence-fetcher.js';
 import { type EvidenceState, evidenceStateOf } from './evidence-state.js';
@@ -17,6 +18,19 @@ import { type EvidenceState, evidenceStateOf } from './evidence-state.js';
  * cannot hold up a poll of the others.
  */
 const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * What a *read* waits for the publisher, when it finds nothing stored for the
+ * hostname this deployment answers on (see {@link EvidenceService.refreshOwnIfUnknown}).
+ *
+ * Shorter than the poller's budget on purpose: this one is spent inside a console
+ * query, where "not known yet" after two seconds is a better answer than a page
+ * that hangs for ten.
+ */
+const ON_READ_FETCH_TIMEOUT_MS = 2_000;
+
+/** How long a failed on-read attempt stands before another read tries again. */
+const ON_READ_RETRY_AFTER_MS = 15_000;
 
 /** One distinct thing an endpoint published, and the window it was current for. */
 export interface DigestChange {
@@ -44,6 +58,9 @@ export interface SnapshotPage {
 @Injectable()
 export class EvidenceService {
   private readonly logger = new Logger(EvidenceService.name);
+  /** In-flight on-read refresh, shared so concurrent readers make one request. */
+  private ownRefresh: Promise<void> | null = null;
+  private ownRefreshFailedAt: Date | null = null;
 
   constructor(
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
@@ -99,10 +116,51 @@ export class EvidenceService {
    * the console's "Fetch fresh quote"; the same call in both places is what
    * keeps the button from being a second, subtly different code path.
    */
-  async refresh(endpoint: Endpoint, now: Date = new Date()): Promise<EvidenceSnapshot> {
-    const raw = await fetchEvidenceBundle(endpoint, { timeoutMs: FETCH_TIMEOUT_MS });
+  async refresh(endpoint: Endpoint, now: Date = new Date(), timeoutMs = FETCH_TIMEOUT_MS): Promise<EvidenceSnapshot> {
+    const raw = await fetchEvidenceBundle(endpoint, { timeoutMs });
     const parsed = parseEvidenceBundle(raw, endpoint.hostname);
     return this.record(endpoint.id, parsed, now);
+  }
+
+  /**
+   * Asks the publisher now, when nothing is stored for the hostname this
+   * deployment answers on.
+   *
+   * A reconfigure that renames the deployment leaves the endpoint row in place
+   * and its snapshots behind under the previous name, so the first read after a
+   * cutover has nothing current to report. Waiting for the next poll leaves the
+   * console saying "not published" for up to `evidence.pollInterval` about a
+   * deployment that has been publishing all along; asking at the moment somebody
+   * looks is the same convergence the platform's own hostname registry makes
+   * (SUP-437).
+   *
+   * Never throws and never blocks for long: one shared request per cooldown, a
+   * two-second budget, and a failure that leaves the read to answer "not known
+   * yet" — which is what it would have answered anyway.
+   */
+  async refreshOwnIfUnknown(now: Date = new Date()): Promise<void> {
+    if (this.ownRefresh) return this.ownRefresh;
+    if (this.ownRefreshFailedAt && now.getTime() - this.ownRefreshFailedAt.getTime() < ON_READ_RETRY_AFTER_MS) {
+      return;
+    }
+
+    this.ownRefresh = this.askOwnPublisher(now).finally(() => {
+      this.ownRefresh = null;
+    });
+    return this.ownRefresh;
+  }
+
+  private async askOwnPublisher(now: Date): Promise<void> {
+    const own = await this.ownEndpoint();
+    if (!own || (await this.latestFor(own.id))) return;
+
+    try {
+      await this.refresh(own, now, ON_READ_FETCH_TIMEOUT_MS);
+      this.ownRefreshFailedAt = null;
+    } catch (error) {
+      this.ownRefreshFailedAt = now;
+      this.logFetchFailure(own, error);
+    }
   }
 
   /**
@@ -126,8 +184,13 @@ export class EvidenceService {
 
     const existing = await repository.findOne({ where: identity });
     if (existing) {
-      await repository.update({ id: existing.id }, { fetchedAt: now });
+      // The hostname goes with `fetchedAt` rather than being left as first
+      // filed: a row whose name is not the one it was just served under would be
+      // skipped by the reads below, and a publication that was re-observed is
+      // the opposite of one to hide.
+      await repository.update({ id: existing.id }, { fetchedAt: now, hostname: parsed.hostname });
       existing.fetchedAt = now;
+      existing.hostname = parsed.hostname;
       return existing;
     }
 
@@ -135,6 +198,7 @@ export class EvidenceService {
       ...identity,
       id: randomUUID(),
       fetchedAt: now,
+      hostname: parsed.hostname,
       evidenceDigestHex: parsed.digest.hex,
       quoteFormat: parsed.quoteFormat,
       containerImages: parsed.containerImages,
@@ -155,11 +219,25 @@ export class EvidenceService {
     }
   }
 
-  /** The snapshot the console shows for an endpoint: the most recently issued one. */
+  /**
+   * The snapshot the console shows for an endpoint: the most recently issued one
+   * of the hostname the endpoint answers on *now*.
+   *
+   * Scoped through {@link snapshotsOnCurrentHostname}, which is where the reason
+   * is written down. "Not published yet" is the honest answer until the hostname
+   * this endpoint answers on has published something (SUP-437).
+   *
+   * The history surfaces are deliberately not scoped: `snapshots` and
+   * `digestHistory` are logs, each entry dated, and what a name published before
+   * it was renamed is part of this endpoint's past rather than a claim about its
+   * present.
+   */
   async latestFor(endpointId: string): Promise<EvidenceSnapshot | null> {
-    return this.dataSource
-      .getRepository(EvidenceSnapshot)
-      .findOne({ where: { endpointId }, order: { issuedAt: 'DESC', fetchedAt: 'DESC' } });
+    return snapshotsOnCurrentHostname(this.dataSource, [endpointId])
+      .orderBy('snapshot.issuedAt', 'DESC')
+      .addOrderBy('snapshot.fetchedAt', 'DESC')
+      .limit(1)
+      .getOne();
   }
 
   /** Same, for a list of endpoints — the Overview table's one query. */
@@ -170,10 +248,10 @@ export class EvidenceService {
     }
     // Ordered ascending so that the last row written per endpoint is the newest;
     // a window function would be tighter but is not portable to SQLite.
-    const rows = await this.dataSource.getRepository(EvidenceSnapshot).find({
-      where: { endpointId: In(endpointIds) },
-      order: { issuedAt: 'ASC', fetchedAt: 'ASC' },
-    });
+    const rows = await snapshotsOnCurrentHostname(this.dataSource, endpointIds)
+      .orderBy('snapshot.issuedAt', 'ASC')
+      .addOrderBy('snapshot.fetchedAt', 'ASC')
+      .getMany();
     for (const row of rows) {
       // Narrowing, not filtering: the `where` above names the ids, so a null here
       // would mean the query had picked up an upstream's publication.

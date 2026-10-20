@@ -98,6 +98,7 @@ function snapshot(id: string, evidenceDigest: string): EvidenceSnapshot {
     id,
     endpointId: null,
     externalEndpointId: 'ep-1',
+    hostname: 'upstream.example.test',
     fetchedAt: NOW,
     issuedAt: NOW,
     evidenceDigest,

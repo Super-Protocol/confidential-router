@@ -64,6 +64,18 @@ ever judging them.
      `rootCaTeeQuote.format`, flattened `containerImages[]`, terminal-cert subject, `fetchedAt`).
   Snapshots are idempotent on `(endpointId, evidenceDigest, certFingerprint, issuedAt)` so multiple
   replicas polling concurrently do not duplicate rows and no leader election is needed.
+- **A snapshot belongs to a hostname, not only to an endpoint.** An endpoint row is keyed by its
+  config `name`, so a reconfigure that moves the deployment onto a different hostname keeps the row
+  and the snapshots filed under it. Each snapshot therefore records the `hostname` it was fetched
+  from, and every surface that answers "what is this endpoint publishing *now*" — Overview,
+  `/v1/evidence`, the coverage a generation is stamped with — reads only snapshots of the hostname the
+  endpoint answers on today. What the previous name published stays in the history, which is a dated
+  log rather than a claim about the present (SUP-437).
+- **"Not known yet" over somebody else's digest.** Until the current hostname has published something
+  the endpoint reads as **Not published**, and a read in that state asks the publisher once, there and
+  then, with a short budget. The window it closes is a cutover: between a rename and the first poll
+  afterwards, the newest snapshot under the row was the one the *previous* occupant of that hostname
+  published, and the console presented it as this deployment's own.
 - The router deliberately does **not** run the verifier on its own bundle. Even a self-check would be a
   verdict, and rendering it would put a "verified" signal on the router's surface. Signature
   verification belongs to the user (gatekeeper) and to auditors (evidence export).
