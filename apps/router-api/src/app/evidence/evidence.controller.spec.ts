@@ -248,11 +248,39 @@ describe('relaying this deployment’s own bundle', () => {
   it('says "not fetched yet" for its own endpoint too', async () => {
     const { controller } = controllerOn(`https://${HOSTNAME}`);
     await seedEndpoint(fixture.dataSource, 'router', HOSTNAME);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
 
     const error = await controller.own().catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ServiceUnavailableException);
     expect((error as ServiceUnavailableException).getResponse()).toMatchObject({ reason: 'evidence_not_fetched' });
+  });
+
+  /**
+   * The read after a cutover. Nothing is stored for the hostname this deployment
+   * now answers on, and the caller is a gatekeeper that would rather wait a
+   * moment than be told to come back (SUP-437).
+   */
+  it('asks the publisher when nothing is stored for the hostname it answers on', async () => {
+    const { controller } = controllerOn(`https://${HOSTNAME}`);
+    await seedEndpoint(fixture.dataSource, 'router', HOSTNAME);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(fixtureBundle()), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    );
+
+    expect(await controller.own()).toMatchObject({ hostname: HOSTNAME });
   });
 });
 

@@ -36,6 +36,13 @@ export class CatalogViewService {
    *   the endpoints themselves are workspace-independent, only the usage is not).
    */
   async endpointViews(workspaceId: string | null, now: Date = new Date()): Promise<EndpointModel[]> {
+    // Somebody looking is the moment to find out. Nothing stored for the hostname
+    // this deployment answers on means a rename has just moved it, and the
+    // alternative to asking the publisher now is a screen that says "not
+    // published" about a deployment that has been publishing all along — or, as
+    // it did before this was scoped by hostname, one that shows the digest of
+    // whoever held the name before (SUP-437).
+    await this.evidence.refreshOwnIfUnknown(now);
     const endpoints = await this.evidence.activeEndpoints();
     const ids = endpoints.map((endpoint) => endpoint.id);
     const [latest, tokens] = await Promise.all([

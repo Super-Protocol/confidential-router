@@ -89,6 +89,10 @@ export class EvidenceController {
   @ApiNotFoundResponse({ description: 'This router cannot tell which of its endpoints is its own.' })
   @ApiServiceUnavailableResponse({ description: 'No bundle has been retrieved for it yet.' })
   async own(): Promise<Record<string, unknown>> {
+    // A gatekeeper asking is as good a trigger as a poll: after a rename nothing
+    // is stored for the hostname it just connected to, and the 503 below is
+    // worth one short fetch to avoid (SUP-437).
+    await this.evidence.refreshOwnIfUnknown();
     const endpoint = await this.evidence.ownEndpoint();
     if (!endpoint) {
       throw new NotFoundException(

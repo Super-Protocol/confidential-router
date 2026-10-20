@@ -91,6 +91,7 @@ function build(
     { listCatalogue: () => options.external ?? [externalEntry()] } as unknown as ExternalCatalogService,
     {
       activeEndpoints: vi.fn().mockResolvedValue([OWN_ENDPOINT]),
+      refreshOwnIfUnknown: vi.fn().mockResolvedValue(undefined),
       latestForMany: vi
         .fn()
         .mockResolvedValue(new Map((options.latest ?? []).map((snapshot) => [snapshot.endpointId, snapshot]))),
@@ -107,6 +108,7 @@ function snapshotWithRoot(rootPem: string): EvidenceSnapshot {
     id: 'snap-1',
     endpointId: OWN_ENDPOINT.id,
     externalEndpointId: null,
+    hostname: OWN_ENDPOINT.hostname,
     fetchedAt: new Date('2026-10-09T22:00:00.000Z'),
     issuedAt: new Date('2026-10-09T21:59:00.000Z'),
     evidenceDigest: `sha256/${'A'.repeat(43)}`,

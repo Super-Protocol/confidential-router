@@ -607,6 +607,7 @@ describe('the evidence summary (SUP-221 ruling 1)', () => {
       id: randomUUID(),
       endpointId: null,
       externalEndpointId,
+      hostname: 'upstream.example.test',
       fetchedAt: new Date('2026-10-06T12:00:00.000Z'),
       issuedAt: new Date('2026-10-06T11:50:00.000Z'),
       evidenceDigest,
