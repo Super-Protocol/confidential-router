@@ -490,6 +490,11 @@
           "default": "Confidential Router",
           "description": "Display name in front of `from`."
         },
+        "replyTo": {
+          "type": "string",
+          "format": "email",
+          "description": "Where a reply goes. `from` is a no-reply address on a domain that need not receive mail, so without this a reply lands nowhere."
+        },
         "consoleUrl": {
           "type": "string",
           "format": "uri",
