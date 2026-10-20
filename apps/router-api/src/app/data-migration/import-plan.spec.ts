@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { buildBundle, type ExportBundle, type ExportData } from './export-bundle.js';
+import { generationLedgerKey } from '../billing/ledger.keys.js';
+import {
+  buildBundle,
+  carriedUsageKey,
+  contentSha256,
+  countsOf,
+  EXPORT_FORMAT,
+  EXPORT_SCHEMA_VERSION,
+  type ExportBundle,
+  type ExportData,
+  totalBalanceMicros,
+} from './export-bundle.js';
 import { bundleInconsistencies, type LocalState, planImport, planIsClean } from './import-plan.js';
 
 const AT = '2026-10-01T00:00:00.000Z';
@@ -137,9 +148,69 @@ const CLAIMED: LocalState = {
   ledger: [{ id: 'tx-new', idempotencyKey: 'signup:op-new' }],
 };
 
+/**
+ * A bundle as a build before SUP-446 wrote one: a `usage` debit per metered
+ * request, each naming a generation no bundle has ever carried. Assembled by
+ * hand because `buildBundle` now refuses to write one.
+ */
+function legacyBundleOf(data: ExportData): ExportBundle {
+  return {
+    format: EXPORT_FORMAT,
+    schemaVersion: EXPORT_SCHEMA_VERSION,
+    exportedAt: AT,
+    source: { publicBaseUrl: 'https://old.router.test', routerVersion: '0.17.0', evidenceDigest: null },
+    counts: countsOf(data),
+    totalBalanceMicros: totalBalanceMicros(data),
+    data,
+    integrity: { contentSha256: contentSha256(data) },
+  };
+}
+
 const options = { operatorEmails: [OPERATOR] };
 
 describe('planImport', () => {
+  it('repairs a pre-SUP-446 bundle: per-request debits become one carried entry per workspace', () => {
+    const data = exported();
+    for (const [index, micros] of ['-5', '-7', '-4'].entries()) {
+      data.creditLedger.push({
+        id: `tx-gen-${index}`,
+        workspaceId: 'ws-ada',
+        kind: 'usage',
+        amountMicros: micros,
+        reference: `gen-${index}`,
+        description: null,
+        idempotencyKey: generationLedgerKey(`gen-${index}`),
+        createdAt: '2026-10-19T12:00:00.000Z',
+      });
+    }
+    (data.workspaces[1] as { balanceMicros: string }).balanceMicros = String(100_000_000 - 16);
+
+    const plan = planImport(legacyBundleOf(data), EMPTY, options);
+
+    expect(planIsClean(plan)).toBe(true);
+    // Three debits in, one out — and no row left naming a generation.
+    const ledger = plan.writes.creditLedger;
+    expect(ledger).toHaveLength(3);
+    expect(ledger.filter((row) => row.reference?.startsWith('gen-'))).toEqual([]);
+    expect(ledger.find((row) => row.id === carriedUsageKey('ws-ada', '2026-10'))).toMatchObject({
+      kind: 'usage',
+      amountMicros: '-16',
+      reference: null,
+      idempotencyKey: carriedUsageKey('ws-ada', '2026-10'),
+    });
+    // Reported honestly rather than silently, and the balance still adds up.
+    expect(plan.notes.join(' ')).toContain('3 per-request usage debit(s)');
+    expect(ledger.reduce((sum, row) => sum + BigInt(row.amountMicros), 0n)).toBe(
+      BigInt(data.workspaces[0]?.balanceMicros ?? 0) + BigInt(data.workspaces[1]?.balanceMicros ?? 0),
+    );
+  });
+
+  it('says nothing about carried usage for a bundle that has none', () => {
+    const plan = planImport(bundleOf(exported()), EMPTY, options);
+
+    expect(plan.notes.join(' ')).not.toContain('per-request usage debit');
+  });
+
   it('creates every row in an empty deployment', () => {
     const plan = planImport(bundleOf(exported()), EMPTY, options);
 
