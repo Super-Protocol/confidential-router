@@ -83,7 +83,7 @@ need. A run that overruled the shrink guard carries a fourth file,
 | `MARKETPLACE_ORIGIN` | the marketplace that deployed the router, e.g. `https://marketplace.demo.superprotocol.dev`. Unset means "use the stored token and nothing else" |
 | `MARKETPLACE_EMAIL` | a marketplace account with the `member` role on the organization that owns the deployment |
 | `MARKETPLACE_PASSWORD` | its password. **Not** deployment-scoped — rebuilding the router does not touch it |
-| `MARKETPLACE_ORG_ID` | optional; without it, every organization the account belongs to is searched for the deployment serving `ROUTER_API_ORIGIN` |
+| `MARKETPLACE_ORG_ID` | optional but wanted — see below. Without it, every organization the account belongs to is searched for the deployment serving `ROUTER_API_ORIGIN` |
 | `MARKETPLACE_DEPLOYMENT_ID` | optional pin. Rarely what you want: a rebuild is a *new* deployment, so a pinned id goes stale exactly as a stored token does |
 | `ROUTER_BOOTSTRAP_TOKEN` | the deployment's `auth.bootstrapToken`. The fallback when the marketplace cannot be reached, and the whole credential when none is configured |
 | `EXPORT_CONTAINER` | the container these go in — a container of their own, e.g. `prod-exports` |
@@ -140,14 +140,30 @@ The marketplace account is not deployment-scoped, which is the whole point: a
 rebuild of the router does not touch it. Which deployment a run got its token
 from is recorded in `state.json` as `tokenSource`.
 
+**Pin `MARKETPLACE_ORG_ID`.** It is optional, and leaving it out is the worse
+default: listing an organization's deployments re-syncs *every* one of them
+against its cloud, so an unpinned nightly run does that for every organization
+the account can see. Pinning shrinks both the side effect and the blast radius
+to the one organization that owns the router. Give the host a service account of
+its own at `member` — the narrowest role that may read generated values — rather
+than an operator's login.
+
 **If the marketplace cannot be reached**, the run falls back to a stored
 `ROUTER_BOOTSTRAP_TOKEN` rather than refusing — a backup that stops because a
 *second* system is down is worse than the problem it guards against. But that
 fallback quietly re-arms the original defect, so it is not left in a log: the
 first degraded run comments on `ALERT_ISSUE_ID` and drops a
 `.token-lookup-degraded` marker in `EXPORT_DIR`, and nothing is said again until
-a run reads the token cleanly and clears it. One comment per outage, not one a
-night.
+a run reads the token cleanly, says so, and clears it. One comment per outage,
+not one a night.
+
+**The marker is only dropped if the comment was actually delivered.** A `multica`
+that fails is not a comment that was sent, and remembering it as one would buy
+permanent silence from the second night on — the loud fallback turned back into
+the quiet one by a single lost CLI call. A run that could not announce the
+fallback says so and leaves the next run to try again. (A host with no
+`ALERT_ISSUE_ID` never promised a comment, and is not treated as having failed
+to send one.)
 
 **A deployment not made by a marketplace** — a hand-rolled install, a chart
 applied directly — has no credentials dialog to ask. Leave `MARKETPLACE_ORIGIN`
@@ -334,7 +350,7 @@ bash tools/scheduled-export/router-export.test.sh   # or: pnpm nx run scheduled-
 
 A fake router on loopback, built by the same canonical form the real one hashes
 with, so "the hash matches" means something, and a stand-in `az` in place of the
-real CLI. **103 assertions**, covering:
+real CLI. **120 assertions**, covering:
 
 | | |
 |---|---|
@@ -342,7 +358,9 @@ real CLI. **103 assertions**, covering:
 | sign-in | a refused token, a missing bootstrap endpoint, a 200 that sets no cookie, a router that does not answer at all |
 | the token, across a rebuild | the deployment's token preferred to the stored one and recorded in `tokenSource`; a rebuild that rotates it — old deployment deleting, new one running, config untouched — not stopping the export; the same rotation against a stored-token-only configuration failing *and* raising the alarm |
 | the token, when the lookup cannot run | an unreachable marketplace falling back and saying so, the fallback alarm raised once and not repeated the next night, a recovered lookup saying so and clearing the marker, no stored token to fall back to refused, a marketplace half-configured refused by name |
-| the token, when the lookup runs and finds nothing | no deployment serving this hostname (naming the ones it saw), a sign-in the marketplace refuses, a viewer told which role it needs, a deployment whose token was supplied by hand |
+| the token, when the lookup runs and finds nothing | no deployment serving this hostname (naming the ones it saw), a sign-in the marketplace refuses, a viewer told which role it needs, a deployment whose token was supplied by hand, a pin on a deployment serving another host, a pinned organization the account is not a member of |
+| the alarm nobody received | a failed `multica` not stopping the backup and not being remembered as a delivered comment, the next run saying what the failed one could not, and still only once after that |
+| values this host does not control | a `"` and a `\` in the marketplace's `appVersion` leaving `state.json` and the run manifest parseable, the odd version readable back verbatim, and — the point of it — the shrink guard still firing against the real baseline instead of against zero |
 | the file that arrived | a failing export, a truncated bundle, a hash the header disagrees with, a missing hash header, a foreign `format`, a newer `schemaVersion` |
 | what it carries | an empty export, a codes CSV shorter than the bundle's count, a codes CSV with the wrong header |
 | between runs | a shrinking export naming what shrank, a growing one accepted, local rotation to `LOCAL_KEEP` |

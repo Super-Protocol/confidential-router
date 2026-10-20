@@ -206,18 +206,29 @@ record() {
 # looking for counts as having been said, so the one place a comment is written
 # is here, and both the refusals and the still-running-but-degraded warning go
 # through it.
+#
+# Returns non-zero only when a post was attempted and failed. A host with no
+# ALERT_ISSUE_ID, or none of the CLI, never promised a comment and so has not
+# failed to deliver one — but a caller that remembers "this has been said
+# already" must only remember it when it actually was. One lost CLI call turning
+# a once-per-outage alarm into a never alarm is how the loud path goes quiet.
 alert() {
   local body
   body="$(cat)"
   [ -n "$ALERT_ISSUE_ID" ] && command -v multica > /dev/null 2>&1 || return 0
   printf '%s' "$body" > "$EXPORT_DIR/.alert.md"
+  local posted=0
   # From `$EXPORT_DIR`, with a relative path: the CLI refuses a
   # `--content-file` outside its working directory, and a directory with no
   # task context is what makes it use the host's own credentials.
   (cd "$EXPORT_DIR" && multica issue comment add "$ALERT_ISSUE_ID" --content-file ./.alert.md) \
-    > /dev/null 2>&1 || say 'the alert comment could not be posted — the message above is only in this log'
+    > /dev/null 2>&1 \
+    || {
+      posted=1
+      say 'the alert comment could not be posted — the message above is only in this log'
+    }
   rm -f "$EXPORT_DIR/.alert.md"
-  return 0
+  return "$posted"
 }
 
 # A refusal has to reach a person. systemd would only mark the unit failed, and
@@ -246,6 +257,32 @@ die() {
 json_field() {
   node -e 'const f=require("node:fs");process.stdout.write(String(JSON.parse(f.readFileSync(process.argv[1],"utf8"))[process.argv[2]] ?? ""))' \
     "$1" "$2"
+}
+
+# write_json <file> <key> <value> [<key> <value> …] — a key ending in `#` is
+# written as a number.
+#
+# Through `JSON.stringify` and not a heredoc, because several of these values
+# are not this host's: `tokenSource` carries the marketplace's free-form
+# `appVersion`, `routerVersion` comes out of the bundle the router sent, and
+# `uploadedTo` is assembled from configuration. One `"` in any of them and a
+# heredoc writes a file that is not JSON — and `state.json` unreadable is not
+# cosmetic: the baseline read below treats an unparseable state file as no
+# state at all, so the shrink guard would compare against zero, never fire
+# again, and never heal. That is SUP-363 disarmed by our own bookkeeping.
+write_json() {
+  local target="$1"
+  shift
+  node -e '
+    const out = {};
+    const argv = process.argv.slice(1);
+    for (let i = 0; i < argv.length; i += 2) {
+      const key = argv[i];
+      const number = key.endsWith("#");
+      out[number ? key.slice(0, -1) : key] = number ? Number(argv[i + 1]) : argv[i + 1];
+    }
+    process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+  ' "$@" > "$target"
 }
 
 need() { command -v "$1" > /dev/null 2>&1 || die "$1 is not installed on this host"; }
@@ -285,24 +322,40 @@ if [ -n "$MARKETPLACE_ORIGIN" ]; then
     token_source="deployment $(json_field "$resolved" deploymentId) ($(json_field "$resolved" appVersion), $(json_field "$resolved" status)) on $MARKETPLACE_ORIGIN"
     wipe "$resolved"
     log "token read from $token_source"
-    # Whatever outage the flag was raised for is over; the next one deserves its
-    # own comment.
-    # `|| true`: under `set -e` a bare `test && …` that finds nothing is a
-    # failed command, and the ordinary case here is finding nothing.
-    [ -f "$DEGRADED_FLAG" ] && { rm -f "$DEGRADED_FLAG"; say 'the bootstrap token can be read off the deployment again.'; } || true
+    if [ -f "$DEGRADED_FLAG" ]; then
+      say 'the bootstrap token can be read off the deployment again.'
+      {
+        printf '## The scheduled export is reading the bootstrap token again\n\n'
+        printf 'Run `%s` read the current token off the deployment, so the fallback to the stored copy reported earlier is over.\n\n' "$STAMP"
+        printf 'Read from %s.\n' "$token_source"
+      } | alert || true
+      # Cleared whether or not that comment landed, and deliberately: a flag
+      # left behind would suppress the alarm for the *next* outage, which is
+      # the failure direction that matters. A duplicate alarm is not.
+      rm -f "$DEGRADED_FLAG"
+    fi
   else
     # The refusal is on stdout by design; stderr only has anything in it when
     # node fell over before reaching its own error handling, and that is
-    # precisely the case where the operator needs to be told something.
+    # precisely the case where the operator needs to be told something. That
+    # one is a stack trace, so it is folded onto a single line before it goes
+    # anywhere near `record` — the run log is one tab-separated line per run,
+    # and it is the file the README tells a human to grep.
     lookup_failure="$(cat "$resolved" 2> /dev/null || true)"
-    [ -n "$lookup_failure" ] || lookup_failure="$(head -c 400 "$work/resolve.err" 2> /dev/null || true)"
+    [ -n "$lookup_failure" ] \
+      || lookup_failure="$(head -c 400 "$work/resolve.err" 2> /dev/null | tr '\n\t' '  ' || true)"
     [ -n "$lookup_failure" ] || lookup_failure='the lookup failed without saying why'
     wipe "$resolved"
     [ -n "$ROUTER_BOOTSTRAP_TOKEN" ] \
       || die "the bootstrap token could not be read off the deployment, and no ROUTER_BOOTSTRAP_TOKEN is configured to fall back to: $lookup_failure"
     say "the bootstrap token could not be read off the deployment ($lookup_failure) — falling back to the stored ROUTER_BOOTSTRAP_TOKEN, which a rebuild may already have replaced."
     if [ ! -f "$DEGRADED_FLAG" ]; then
-      {
+      # The marker goes down only if the comment went up. A `multica` that
+      # failed once would otherwise buy permanent silence: the alarm suppressed
+      # from the second night on, having never been delivered on the first, and
+      # the export running on a deployment-scoped token with nothing said
+      # anywhere — the exact failure this whole change removes.
+      if {
         printf '## The scheduled export is back on a stored bootstrap token\n\n'
         printf 'Run `%s` could not read the current token off the deployment, and is using the copy in `%s` instead.\n\n' \
           "$STAMP" "$CONFIG"
@@ -311,9 +364,12 @@ if [ -n "$MARKETPLACE_ORIGIN" ]; then
         printf 'which is the failure SUP-438 removed — so this is the alarm for it rather than a note in a log. '
         printf 'Fix the marketplace credentials in `%s`, or expect to paste a new token by hand after the next deploy.\n\n' "$CONFIG"
         printf 'This is said once per outage: no further comment until a run reads the token cleanly again.\n'
-      } | alert
-      : > "$DEGRADED_FLAG"
-      chmod 600 "$DEGRADED_FLAG" 2> /dev/null || true
+      } | alert; then
+        : > "$DEGRADED_FLAG"
+        chmod 600 "$DEGRADED_FLAG" 2> /dev/null || true
+      else
+        say 'the fallback could not be announced, so the next run will try to announce it again rather than go quiet.'
+      fi
     fi
   fi
 fi
@@ -485,20 +541,17 @@ if [ "$accept_shrink" = 1 ] && [ -z "${shrank:-}" ]; then
   say 'nothing shrank — --accept-shrink was not needed and nothing was accepted'
 fi
 
-cat > "$RUN_DIR/manifest.json" << JSON
-{
-  "run": "$STAMP",
-  "exportedAt": "$exported_at",
-  "source": "$ROUTER_API_ORIGIN",
-  "routerVersion": "$router_version",
-  "contentSha256": "$content_sha",
-  "users": $users,
-  "inviteCodes": $invite_codes,
-  "bundleBytes": $(stat -c%s "$bundle"),
-  "codesCsvBytes": $(stat -c%s "$codes"),
-  "codesCsvRows": $csv_rows
-}
-JSON
+write_json "$RUN_DIR/manifest.json" \
+  run "$STAMP" \
+  exportedAt "$exported_at" \
+  source "$ROUTER_API_ORIGIN" \
+  routerVersion "$router_version" \
+  contentSha256 "$content_sha" \
+  'users#' "$users" \
+  'inviteCodes#' "$invite_codes" \
+  'bundleBytes#' "$(stat -c%s "$bundle")" \
+  'codesCsvBytes#' "$(stat -c%s "$codes")" \
+  'codesCsvRows#' "$csv_rows"
 chmod 600 "$RUN_DIR/manifest.json"
 
 log "verified: $users account(s), $invite_codes code(s), sha256 $content_sha"
@@ -561,16 +614,13 @@ fi
 
 # --- rotation and state -------------------------------------------------------
 
-cat > "$STATE_FILE" << JSON
-{
-  "lastGoodRun": "$STAMP",
-  "contentSha256": "$content_sha",
-  "users": $users,
-  "inviteCodes": $invite_codes,
-  "uploadedTo": "$uploaded",
-  "tokenSource": "$token_source"
-}
-JSON
+write_json "$STATE_FILE" \
+  lastGoodRun "$STAMP" \
+  contentSha256 "$content_sha" \
+  'users#' "$users" \
+  'inviteCodes#' "$invite_codes" \
+  uploadedTo "$uploaded" \
+  tokenSource "$token_source"
 chmod 600 "$STATE_FILE"
 
 # Local copies are the fallback for the day object storage is the thing that is

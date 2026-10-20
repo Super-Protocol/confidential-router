@@ -18,8 +18,14 @@
 //
 // The deployment is found by hostname, not by id, for the same reason: a
 // rebuild is a *new* deployment row serving the same `apiHostname`, so an id
-// pinned in a config file goes stale exactly as the token does. `--pin` the id
-// through MARKETPLACE_DEPLOYMENT_ID only when there is a reason to.
+// pinned in a config file goes stale exactly as the token does. Pin one through
+// MARKETPLACE_DEPLOYMENT_ID only when there is a reason to; the hostname has to
+// match it either way, because a pin left behind on another deployment would
+// otherwise hand this router somebody else's token.
+//
+// MARKETPLACE_ORG_ID, on the other hand, is worth setting: listing an
+// organization's deployments re-syncs every one of them against its cloud, so
+// an unpinned nightly run does that for every organization the account can see.
 
 const TIMEOUT_MS = 30_000;
 
@@ -129,7 +135,19 @@ async function deployments() {
   const found = [];
   for (const organization of await organizations()) {
     const response = await call(`/api/v1/organizations/${organization.id}/deployments`);
-    if (response.status === 403) continue; // Not a member there; its deployments are not ours to read.
+    if (response.status === 403) {
+      // Skipping is right while fanning out — an account in several
+      // organizations is not a member of all of them. It is wrong for an
+      // organization somebody named: that would be reported two refusals
+      // later as "it can see no deployments at all", and send the operator
+      // looking at the hostname instead of at the membership.
+      if (pinnedOrg) {
+        refuse(
+          `${email} is not a member of the organization MARKETPLACE_ORG_ID pins (${pinnedOrg}), so it cannot list its deployments.`,
+        );
+      }
+      continue;
+    }
     if (!response.ok) {
       refuse(`listing the deployments of ${organization.name ?? organization.id} answered HTTP ${response.status}.`);
     }
@@ -156,14 +174,24 @@ if (pinnedDeployment) {
 // A deployment on its way out still answers the hostname question and holds the
 // previous token; taking it would pick yesterday's deployment during a rebuild.
 const live = all.filter((deployment) => deployment.status !== 'deleted' && deployment.status !== 'deleting');
-const matching = pinnedDeployment
-  ? live
-  : live.filter((deployment) => String(deployment.parameters?.apiHostname ?? '').toLowerCase() === apiHostname);
+// The hostname check applies to a pinned row too. A pin left behind on a
+// deployment serving some *other* host would otherwise hand that deployment's
+// token to this router, and the only symptom would be a 401 blaming a rebuild.
+const matching = live.filter(
+  (deployment) => String(deployment.parameters?.apiHostname ?? '').toLowerCase() === apiHostname,
+);
 
 if (matching.length === 0) {
-  const seen = [
-    ...new Set(live.map((deployment) => String(deployment.parameters?.apiHostname ?? '')).filter(Boolean)),
-  ];
+  if (pinnedDeployment) {
+    const pinned = all[0];
+    const serves = String(pinned?.parameters?.apiHostname ?? '');
+    refuse(
+      serves.toLowerCase() === apiHostname
+        ? `MARKETPLACE_DEPLOYMENT_ID pins ${pinnedDeployment}, which serves ${apiHostname} but is ${String(pinned?.status)} — its token belongs to a deployment on its way out. Clear the pin and let the hostname find the current one.`
+        : `MARKETPLACE_DEPLOYMENT_ID pins ${pinnedDeployment}, which serves ${serves || 'no API hostname'} and not ${apiHostname}. Its token opens a different deployment, and presenting it here would read as a rebuild having rotated the token. Clear the pin and let the hostname find the current one.`,
+    );
+  }
+  const seen = [...new Set(live.map((deployment) => String(deployment.parameters?.apiHostname ?? '')).filter(Boolean))];
   refuse(
     `no live deployment this account can see serves ${apiHostname}. ` +
       (seen.length ? `The ones it can see serve: ${seen.join(', ')}.` : 'It can see no deployments at all.'),

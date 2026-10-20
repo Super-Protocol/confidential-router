@@ -180,6 +180,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rest = self.path[len('/api/v1/organizations/'):].split('/')
             # …/<org>/deployments and …/<org>/deployments/<id>/credentials
             if len(rest) == 2 and rest[1] == 'deployments':
+                status = s.get('mpDeploymentsStatus', 200)
+                if status != 200:
+                    self.json(status, {'message': 'no'})
+                    return
                 self.json(200, [d for d in s.get('mpDeployments', []) if d.get('_org', 'org-1') == rest[0]])
                 return
             if len(rest) == 4 and rest[3] == 'credentials':
@@ -323,6 +327,12 @@ while [ $# -gt 0 ]; do
   [ "$1" = --content-file ] && file="$2"
   shift
 done
+# A CLI that fails is the interesting case: a comment nobody received must not
+# be remembered as one that was sent.
+if [ "$(cat "$MULTICA_FAKE_MODE" 2> /dev/null || echo ok)" = fails ]; then
+  echo 'multica: nope' >&2
+  exit 1
+fi
 {
   printf -- '--- alert ---\n'
   [ -n "$file" ] && cat "$file"
@@ -334,6 +344,8 @@ alerts_file="$workdir/alerts.txt"
 alerts() { cat "$alerts_file"; }
 reset_alerts() { : > "$alerts_file"; }
 alert_count() { grep -c -- '--- alert ---' "$alerts_file" || true; }
+multica_mode() { printf '%s' "$1" > "$workdir/multica-mode"; }
+multica_mode ok
 
 # Resolving the container happens before any `az` call, so the container
 # refusals below are reached whether or not `az` can do anything.
@@ -714,15 +726,17 @@ run_watched() {
   HOME="$HOME_DIR" \
     PATH="$workdir/bin:$PATH" \
     MULTICA_FAKE_LOG="$alerts_file" \
+    MULTICA_FAKE_MODE="$workdir/multica-mode" \
     ROUTER_EXPORT_CONFIG="$HOME_DIR/.config/router-export/env" \
     EXPORT_DIR="$HOME_DIR/prod-exports" \
     bash "$script" "$@" 2>&1
 }
 
 # deployment <id> <status> <hostname> <created>
+# deployment <id> <status> <hostname> <created> [appVersion-as-JSON-string-body]
 deployment() {
-  printf '{"id":"%s","status":"%s","appVersion":"0.19.0","createdAt":"%s","parameters":{"apiHostname":"%s"}}' \
-    "$1" "$2" "$4" "$3"
+  printf '{"id":"%s","status":"%s","appVersion":"%s","createdAt":"%s","parameters":{"apiHostname":"%s"}}' \
+    "$1" "$2" "${5:-0.19.0}" "$4" "$3"
 }
 credential() { printf '{"%s":[{"id":"bootstrapToken","title":"First sign-in token","value":"%s","source":"parameter"}]}' "$1" "$2"; }
 
@@ -856,6 +870,113 @@ EOF
 out="$(run --local-only --quiet)"
 expect_eq 'a half-configured marketplace is refused' "$?" '1'
 expect_contains 'and says which half is missing' "$out" 'MARKETPLACE_EMAIL'
+
+# --- an alarm nobody received is not an alarm that was raised -----------------
+#
+# The once-per-outage marker is the dangerous half of the degraded path: one
+# `multica` that fails on the first night, and the suppression it buys would
+# silence a comment that never existed — the export then running nightly on a
+# deployment-scoped token with nothing said anywhere.
+
+reset_state
+reset_alerts
+multica_mode fails
+write_marketplace_config "$SECOND_TOKEN" 'http://127.0.0.1:9' alert-issue
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"mpDeployments\":[]}"
+out="$(run_watched --local-only --quiet)"
+expect_eq 'a failed alert does not stop the backup' "$?" '0'
+expect_contains 'it says the alarm did not go out' "$out" 'could not be announced'
+if [ -f "$HOME_DIR/prod-exports/.token-lookup-degraded" ]; then
+  fail 'an undelivered alarm is not remembered as delivered' 'the marker was dropped anyway'
+else
+  pass 'an undelivered alarm is not remembered as delivered'
+fi
+
+multica_mode ok
+out="$(run_watched --local-only --quiet)"
+expect_eq 'the next run says what the failed one could not' "$(alert_count)" '1'
+expect_contains 'and it is the fallback alarm' "$(alerts)" 'back on a stored bootstrap token'
+
+out="$(run_watched --local-only --quiet)"
+expect_eq 'once delivered, it is not repeated' "$(alert_count)" '1'
+
+# --- values this host does not control cannot break the files it reads back ---
+#
+# `tokenSource` carries the marketplace's free-form appVersion. A `"` in it used
+# to be interpolated straight into state.json, and an unparseable state.json is
+# read as no state at all — so the shrink guard would compare against zero,
+# never fire again, and never heal.
+
+reset_state
+reset_alerts
+write_marketplace_config '' '' alert-issue
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"users\":4,\"codes\":5,
+  \"mpDeployments\":[$(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z '0.19.2 \"odd\" \\ label')],
+  \"mpCredentials\":$(credential dep-2 "$SECOND_TOKEN")}"
+out="$(run_watched --local-only --quiet)"
+expect_eq 'a quote in the marketplace version does not fail the run' "$?" '0'
+if node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"))' \
+  "$HOME_DIR/prod-exports/state.json" 2> /dev/null; then
+  pass 'state.json is still JSON'
+else
+  fail 'state.json is still JSON' "$(cat "$HOME_DIR/prod-exports/state.json")"
+fi
+if node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"))' \
+  "$(ls -d "$HOME_DIR"/prod-exports/*T*Z | tail -1)/manifest.json" 2> /dev/null; then
+  pass 'so is the manifest that travels with the bundle'
+else
+  fail 'so is the manifest that travels with the bundle' 'the manifest did not parse'
+fi
+expect_contains 'and the odd version is in it verbatim' \
+  "$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).tokenSource)' "$HOME_DIR/prod-exports/state.json")" \
+  '0.19.2 "odd" \ label'
+
+# The point of all that: the baseline is still readable, so the guard still
+# fires. This is the assertion that would have caught the bug.
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"users\":1,\"codes\":5,
+  \"mpDeployments\":[$(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z '0.19.2 \"odd\" \\ label')],
+  \"mpCredentials\":$(credential dep-2 "$SECOND_TOKEN")}"
+out="$(run_watched --local-only --quiet)"
+expect_eq 'the shrink guard still fires against that baseline' "$?" '1'
+expect_contains 'and it compares against the real counts, not zero' "$out" '4 → 1 account(s)'
+
+# --- a pin that has gone stale in its own way ---------------------------------
+
+reset_state
+cat > "$HOME_DIR/.config/router-export/env" << EOF
+ROUTER_API_ORIGIN=http://127.0.0.1:$PORT
+ROUTER_CONSOLE_ORIGIN=http://127.0.0.1:$PORT
+MARKETPLACE_ORIGIN=http://127.0.0.1:$PORT
+MARKETPLACE_EMAIL=ops@example.test
+MARKETPLACE_PASSWORD=not-a-real-password
+MARKETPLACE_DEPLOYMENT_ID=dep-9
+ROUTER_BOOTSTRAP_TOKEN=
+ALERT_ISSUE_ID=
+EOF
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",
+  \"mpDeployments\":[$(deployment dep-9 running api.elsewhere.test 2026-10-20T12:00:00Z),
+                     $(deployment dep-2 running 127.0.0.1 2026-10-20T12:00:00Z)],
+  \"mpCredentials\":$(credential dep-9 "$FIRST_TOKEN")}"
+out="$(run --local-only --quiet)"
+expect_eq 'a pin on a deployment serving another host is refused' "$?" '1'
+expect_contains 'and the refusal blames the pin, not a rebuild' "$out" 'MARKETPLACE_DEPLOYMENT_ID pins dep-9'
+expect_contains 'naming what it serves instead' "$out" 'api.elsewhere.test'
+
+reset_state
+cat > "$HOME_DIR/.config/router-export/env" << EOF
+ROUTER_API_ORIGIN=http://127.0.0.1:$PORT
+ROUTER_CONSOLE_ORIGIN=http://127.0.0.1:$PORT
+MARKETPLACE_ORIGIN=http://127.0.0.1:$PORT
+MARKETPLACE_EMAIL=ops@example.test
+MARKETPLACE_PASSWORD=not-a-real-password
+MARKETPLACE_ORG_ID=org-not-ours
+ROUTER_BOOTSTRAP_TOKEN=
+ALERT_ISSUE_ID=
+EOF
+set_scenario "{\"routerToken\":\"$SECOND_TOKEN\",\"mpDeploymentsStatus\":403}"
+out="$(run --local-only --quiet)"
+expect_eq 'a pinned organization the account cannot read is refused' "$?" '1'
+expect_contains 'and the refusal is about membership, not hostnames' "$out" 'is not a member of the organization'
 
 # Back to a plain configuration, so anything added after this starts where the
 # rest of the suite expects to be.
