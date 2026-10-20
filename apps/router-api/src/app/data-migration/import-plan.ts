@@ -199,8 +199,8 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   if (perRequest > 0) {
     notes.push(
       `${perRequest} per-request usage debit(s) in this export name a generation log no export carries; they are ` +
-        'imported as one carried-forward entry per workspace, for the same total. The requests themselves stay on ' +
-        'the deployment that served them, so Activity here counts only traffic this deployment serves.',
+        'imported as one carried-forward entry per workspace per month, for the same total. The requests themselves ' +
+        'stay on the deployment that served them, so Activity here counts only traffic this deployment serves.',
     );
   }
 

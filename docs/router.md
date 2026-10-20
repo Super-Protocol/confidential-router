@@ -902,7 +902,7 @@ built for the request that asked for it and kept nowhere on the server:
 | --- | --- |
 | `users` | id, address, name, `emailVerified`, sign-up date; plus `origin` (invite / bootstrap / open), `invitedByCodeId` and `role`, which are informational |
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
-| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace** for exactly the same total, described as carried over and naming no generation |
+| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
@@ -950,13 +950,15 @@ Three things about what it writes:
   that account (the sign-up credit) is not credited twice.
 - **Balances are re-summed from the imported ledger**, never copied — the same
   invariant every other balance obeys (`contracts/data-model.md`, invariant 3).
-- **Spend made before the migration arrives as one ledger entry per workspace.**
+- **Spend made before the migration arrives as one ledger entry per month.**
   The money is identical to the micro-dollar; what is gone is the per-request
-  breakdown, which lived in the generation log the file does not carry. Activity
-  and Logs on the new deployment therefore count only the traffic it has served
-  itself, and the Credits screen says in words where the rest was spent. A file
-  from a build before SUP-446 still carries the per-request debits: the dry run
-  reports how many, and the import collapses them on the way in.
+  breakdown, which lived in the generation log the file does not carry — the
+  monthly shape survives, so a bill for a month before the migration is still
+  answerable. Activity and Logs on the new deployment therefore count only the
+  traffic it has served itself, and the Credits screen says in words where the
+  rest was spent. A file from a build before SUP-446 still carries the
+  per-request debits: the dry run reports how many, and the import collapses
+  them on the way in.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.

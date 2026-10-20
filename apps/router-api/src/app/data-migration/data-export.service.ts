@@ -42,7 +42,8 @@ const microsOrNull = (value: number | null): string | null => (value === null ? 
  *
  * The ledger is the one section that cannot simply be copied past that list: a
  * per-request usage debit names the generation it charged for, so it is carried
- * forward as one entry per workspace instead — `carryUsageForward`, SUP-446.
+ * forward as one entry per workspace per month instead — `carryUsageForward`,
+ * SUP-446.
  *
  * Nothing is cached or written to disk: the bundle is built for the request
  * that asked for it and is gone when the response has been sent.
@@ -129,10 +130,10 @@ export class DataExportService {
           role: row.role,
           createdAt: isoOf(row.createdAt),
         })),
-      // Per-request usage debits are carried as one entry per workspace: the
-      // generations they name stay behind, and a debit for a request the
-      // importing deployment has no row for is what SUP-446 was. The money is
-      // unchanged.
+      // Per-request usage debits are carried as one entry per workspace per
+      // month: the generations they name stay behind, and a debit for a request
+      // the importing deployment has no row for is what SUP-446 was. The money
+      // is unchanged.
       creditLedger: carryUsageForward(
         ledger.map((entry) => ({
           id: entry.id,

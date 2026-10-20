@@ -5,6 +5,7 @@ import {
   BundleRefusedError,
   buildBundle,
   canonicalJson,
+  carriedUsageKey,
   carryUsageForward,
   contentSha256,
   credentialShapedKeys,
@@ -14,6 +15,7 @@ import {
   encodeBundle,
   isCarriedUsage,
   isPerGenerationUsage,
+  MAX_ID_LENGTH,
   sourceLabelOf,
 } from './export-bundle.js';
 
@@ -100,8 +102,23 @@ function debit(input: { generationId: string; micros: string; at: string; worksp
 describe('carryUsageForward', () => {
   const grant = () => data().creditLedger[0] as ExportedCreditEntry;
 
-  it('replaces a workspace’s per-request debits with one entry for the same money', () => {
-    const carried = carryUsageForward(
+  /** A carried entry as an earlier migration left one. */
+  function carried(input: { workspaceId?: string; month: string; micros: string; at: string }): ExportedCreditEntry {
+    const workspaceId = input.workspaceId ?? 'w1';
+    return {
+      id: carriedUsageKey(workspaceId, input.month),
+      workspaceId,
+      kind: 'usage',
+      amountMicros: input.micros,
+      reference: null,
+      description: `Metered usage carried over from older.router.test: 3 requests served in ${input.month}.`,
+      idempotencyKey: carriedUsageKey(workspaceId, input.month),
+      createdAt: input.at,
+    };
+  }
+
+  it('replaces a month’s per-request debits with one entry for the same money', () => {
+    const result = carryUsageForward(
       [
         grant(),
         debit({ generationId: 'gen-1', micros: '-5', at: '2026-10-19T10:00:00.000Z' }),
@@ -111,23 +128,51 @@ describe('carryUsageForward', () => {
       'old.router.test',
     );
 
-    expect(carried).toHaveLength(2);
-    expect(carried[0]).toEqual(grant());
-    expect(carried[1]).toEqual({
-      id: 'carried-usage:w1',
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual(grant());
+    expect(result[1]).toEqual({
+      id: 'carried-usage:2026-10:w1',
       workspaceId: 'w1',
       kind: 'usage',
       amountMicros: '-16',
       // The whole point: no reference to a generation the bundle does not carry.
       reference: null,
       description:
-        'Metered usage carried over from old.router.test: 3 request(s) up to 2026-10-20T11:00:00.000Z. ' +
+        'Metered usage carried over from old.router.test: 3 requests served in 2026-10. ' +
         'The per-request log stayed on the deployment that served it.',
-      idempotencyKey: 'carried-usage:w1',
-      // The instant the spend stopped, not the first one: the entry is where the
-      // Credits list expects the last charge to be.
+      idempotencyKey: 'carried-usage:2026-10:w1',
+      // The instant the month's spend stopped, not the first one: the entry is
+      // where the Credits list expects the last charge of that month to be.
       createdAt: '2026-10-20T11:00:00.000Z',
     });
+  });
+
+  it('keeps the monthly shape, so a bill before a migration is still answerable', () => {
+    const result = carryUsageForward(
+      [
+        debit({ generationId: 'gen-s1', micros: '-300', at: '2026-09-10T10:00:00.000Z' }),
+        debit({ generationId: 'gen-s2', micros: '-200', at: '2026-09-28T10:00:00.000Z' }),
+        debit({ generationId: 'gen-o1', micros: '-50', at: '2026-10-02T10:00:00.000Z' }),
+      ],
+      'old.router.test',
+    );
+
+    expect(result.map((entry) => [entry.id, entry.amountMicros, entry.createdAt])).toEqual([
+      ['carried-usage:2026-09:w1', '-500', '2026-09-28T10:00:00.000Z'],
+      ['carried-usage:2026-10:w1', '-50', '2026-10-02T10:00:00.000Z'],
+    ]);
+    expect(result[0]?.description).toContain('2 requests served in 2026-09');
+    expect(result[1]?.description).toContain('1 request served in 2026-10');
+  });
+
+  it('buckets by UTC month, as every other total on these screens does', () => {
+    // 00:30+02:00 on 1 October is September in UTC.
+    const result = carryUsageForward(
+      [debit({ generationId: 'gen-1', micros: '-5', at: '2026-10-01T00:30:00+02:00' })],
+      'old.router.test',
+    );
+
+    expect(result[0]?.id).toBe('carried-usage:2026-09:w1');
   });
 
   it('collapses per workspace, and deterministically', () => {
@@ -136,13 +181,13 @@ describe('carryUsageForward', () => {
       debit({ generationId: 'gen-a1', micros: '-3', at: '2026-10-20T10:00:00.000Z', workspaceId: 'w1' }),
     ];
 
-    const carried = carryUsageForward(entries, 'old.router.test');
-    expect(carried.map((entry) => [entry.workspaceId, entry.amountMicros])).toEqual([
+    const result = carryUsageForward(entries, 'old.router.test');
+    expect(result.map((entry) => [entry.workspaceId, entry.amountMicros])).toEqual([
       ['w1', '-3'],
       ['w2', '-2'],
     ]);
     // Same dataset in the other order, same bytes — `canonicalJson` only sorts keys.
-    expect(canonicalJson(carryUsageForward([...entries].reverse(), 'old.router.test'))).toBe(canonicalJson(carried));
+    expect(canonicalJson(carryUsageForward([...entries].reverse(), 'old.router.test'))).toBe(canonicalJson(result));
   });
 
   it('leaves every other entry alone, including a usage debit that is not per-request', () => {
@@ -162,48 +207,42 @@ describe('carryUsageForward', () => {
     expect(isPerGenerationUsage(debit({ generationId: 'gen-1', micros: '-1', at: AT }))).toBe(true);
   });
 
-  it('folds the carried entry of an earlier migration into the new one', () => {
-    const earlier: ExportedCreditEntry = {
-      id: 'carried-usage:w1',
-      workspaceId: 'w1',
-      kind: 'usage',
-      amountMicros: '-16',
-      reference: null,
-      description: 'Metered usage carried over from older.router.test: 3 request(s) up to 2026-10-20T11:00:00.000Z.',
-      idempotencyKey: 'carried-usage:w1',
-      createdAt: '2026-10-20T11:00:00.000Z',
-    };
+  it('folds an earlier migration’s entry into the month it belongs to', () => {
+    const earlier = carried({ month: '2026-10', micros: '-16', at: '2026-10-20T11:00:00.000Z' });
     expect(isCarriedUsage(earlier)).toBe(true);
 
-    const carried = carryUsageForward(
+    const result = carryUsageForward(
       [earlier, debit({ generationId: 'gen-9', micros: '-4', at: '2026-10-21T09:00:00.000Z' })],
       'old.router.test',
     );
 
-    // One row per workspace, whatever the deployment's own history: a second
-    // under the same id is a bundle no deployment would import.
-    expect(carried).toHaveLength(1);
-    expect(carried[0]).toMatchObject({
-      id: 'carried-usage:w1',
+    // One row per workspace per month, whatever the deployment's own history: a
+    // second under the same id is a bundle no deployment would import.
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 'carried-usage:2026-10:w1',
       amountMicros: '-20',
       createdAt: '2026-10-21T09:00:00.000Z',
     });
-    expect(carried[0]?.description).toContain('1 request(s) up to 2026-10-21T09:00:00.000Z, and spend carried from');
+    // The count is this deployment's own requests; the rest is said in words
+    // rather than folded into a number it would make wrong.
+    expect(result[0]?.description).toBe(
+      'Metered usage carried over from old.router.test: 1 request served in 2026-10, plus usage carried from an ' +
+        'earlier migration. The per-request log stayed on the deployment that served it.',
+    );
   });
 
-  it('leaves an earlier carried entry exactly as it is when there is nothing new to collapse', () => {
-    const earlier: ExportedCreditEntry = {
-      id: 'carried-usage:w1',
-      workspaceId: 'w1',
-      kind: 'usage',
-      amountMicros: '-16',
-      reference: null,
-      description: 'Metered usage carried over from older.router.test: 3 request(s) up to 2026-10-20T11:00:00.000Z.',
-      idempotencyKey: 'carried-usage:w1',
-      createdAt: '2026-10-20T11:00:00.000Z',
-    };
+  it('leaves an earlier carried entry exactly as it is when its month has nothing new', () => {
+    const september = carried({ month: '2026-09', micros: '-16', at: '2026-09-28T11:00:00.000Z' });
 
-    expect(carryUsageForward([grant(), earlier], 'old.router.test')).toEqual([grant(), earlier]);
+    const result = carryUsageForward(
+      [grant(), september, debit({ generationId: 'gen-1', micros: '-4', at: '2026-10-02T09:00:00.000Z' })],
+      'old.router.test',
+    );
+
+    // September is passed through byte for byte — rewriting it would re-date
+    // that spend to a deployment which never served a request of it.
+    expect(result).toEqual([grant(), september, expect.objectContaining({ id: 'carried-usage:2026-10:w1' })]);
   });
 
   it('describes the source by host, so the Credits screen does not render it as a receipt link', () => {
@@ -243,6 +282,28 @@ describe('buildBundle', () => {
     expect(() => buildBundle({ data: dangling, source, exportedAt: new Date(AT) })).toThrow(
       /1 usage debit\(s\) naming a generation/,
     );
+  });
+
+  it('refuses to write a composed id that would not fit the column', () => {
+    const wide = data();
+    const workspaceId = 'w'.repeat(50);
+    wide.workspaces.push({
+      ...(wide.workspaces[0] as ExportData['workspaces'][number]),
+      id: workspaceId,
+      slug: 'wide',
+    });
+    wide.creditLedger.push(debit({ generationId: 'gen-1', micros: '0', at: AT, workspaceId }));
+
+    // `carried-usage:` + `2026-10:` + 50 is 72 > MAX_ID_LENGTH. Named here, where
+    // the workspace that caused it can be pointed at, rather than surfacing as a
+    // zod error on importing a file this build had just written.
+    expect(() =>
+      buildBundle({
+        data: { ...wide, creditLedger: carryUsageForward(wide.creditLedger, 'old.router.test') },
+        source,
+        exportedAt: new Date(AT),
+      }),
+    ).toThrow(new RegExp(`exceeds ${MAX_ID_LENGTH} characters \\(workspace ${workspaceId}\\)`));
   });
 
   it('refuses to write a credential-shaped field, whatever section it is in', () => {
