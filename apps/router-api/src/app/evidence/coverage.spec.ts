@@ -12,10 +12,12 @@ describe('coverageOf', () => {
     expect(coverageOf(3, 4)).toEqual({ covered: 3, requests: 4, ratio: 0.75 });
   });
 
-  it('is 0, not 1, for a window with no generations', () => {
-    // An empty window has no evidence behind it; reporting full coverage would
-    // put a reassuring number on a screen backed by nothing.
-    expect(coverageOf(0, 0)).toEqual({ covered: 0, requests: 0, ratio: 0 });
+  it('has no ratio for a window with no generations — neither 1 nor 0', () => {
+    // `1` would put a reassuring "all covered" on a screen backed by nothing.
+    // `0` is worse: it is the measurement "none of your requests was covered",
+    // which is what the console said to an account whose every generation was
+    // served by an endpoint this router had verified (SUP-421).
+    expect(coverageOf(0, 0)).toEqual({ covered: 0, requests: 0, ratio: null });
   });
 
   it('is 1 when every generation was covered', () => {
@@ -133,7 +135,7 @@ describe('EvidenceCoverageStatsService', () => {
   it('ignores generations outside the window', async () => {
     await generation({ createdAt: new Date(NOW.getTime() - 48 * HOUR), covered: true });
 
-    await expect(stats.summary(window())).resolves.toEqual({ requests: 0, covered: 0, ratio: 0 });
+    await expect(stats.summary(window())).resolves.toEqual({ requests: 0, covered: 0, ratio: null });
   });
 
   it('excludes the upper bound and includes the lower one', async () => {
@@ -150,7 +152,7 @@ describe('EvidenceCoverageStatsService', () => {
       .save({ id: other, name: 'other', slug: 'other', balanceMicros: 0, createdAt: NOW });
     await generation({ createdAt: new Date(NOW.getTime() - HOUR), covered: true, workspaceId: other });
 
-    await expect(stats.summary(window())).resolves.toEqual({ requests: 0, covered: 0, ratio: 0 });
+    await expect(stats.summary(window())).resolves.toEqual({ requests: 0, covered: 0, ratio: null });
   });
 
   it('narrows to one endpoint when asked', async () => {

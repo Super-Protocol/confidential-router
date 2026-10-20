@@ -64,7 +64,7 @@ enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS }
 type Pricing { promptPer1m: Micros!, completionPer1m: Micros! }
 
 type EvidenceDigestChange { evidenceDigest: String!, evidenceDigestHex: String!, firstIssuedAt: DateTime!, lastIssuedAt: DateTime!, snapshots: Int! }
-type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float! }
+type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float }   # requests = own-endpoint generations only; ratio is null when that is 0
 
 extend type Query {
   models(tee: String): [Model!]!
