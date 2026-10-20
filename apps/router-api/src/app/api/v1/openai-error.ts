@@ -116,6 +116,12 @@ export const openAiErrors = {
    * (see {@link backendUnavailable}): a 4xx body is *about the caller's request*,
    * not about how this cluster is put together.
    *
+   * Which is also the exception's limit, and why `detail` may be empty: it holds
+   * wording the upstream put in an error field, never a raw body. An
+   * intermediary's HTML page says nothing about the request, so it is logged and
+   * the caller gets the no-reason sentence below (`upstream-failure.ts`,
+   * `UpstreamErrorBody.structured`).
+   *
    * `status` is the upstream's own unless an SDK would retry it; `upstreamStatus`
    * is always what the upstream actually said, because the two can differ and the
    * client should be able to see both.

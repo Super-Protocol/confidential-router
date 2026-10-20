@@ -25,14 +25,33 @@ import { OpenAiApiError, openAiErrors } from './openai-error.js';
  * already in the history, and the session is dead with the gateway taking the
  * blame. A 4xx says "fix the request", which is the truth, and the upstream's own
  * wording goes with it because it is the only thing that names the bad field.
+ *
+ * That wording is forwarded only when the upstream put it in an error field. A
+ * raw body is logged and nothing more — see `UpstreamErrorBody.structured`.
  */
 
 /** How a leg names its upstream in a client-facing sentence. */
 export type UpstreamName = 'The model backend' | 'The external model endpoint';
 
 export interface UpstreamErrorBody {
-  /** The upstream's own wording, or `''` when it sent none we could read. */
+  /**
+   * The best reason available: a structured error message when the body carried
+   * one, otherwise the raw body. Always safe to log; only forwarded to the client
+   * when {@link UpstreamErrorBody.structured} says where it came from.
+   */
   text: string;
+  /**
+   * Did {@link UpstreamErrorBody.text} come from an error field the upstream
+   * filled in, rather than being the raw bytes of the body?
+   *
+   * The 4xx exception below rests on the body being *about the caller's request*,
+   * and only a structured message is. A raw body on that path is as likely to be
+   * an intermediary's HTML error page or a FastAPI `{"detail":[…]}` validation
+   * dump — neither of which the caller can act on, and neither of which it should
+   * be handed. So the raw text stays in the log and the client gets the
+   * "gave no reason" sentence instead.
+   */
+  structured: boolean;
   /** The request field it named, when it named one. */
   param?: string;
   /** The parsed body, for a leg that reads more than the message out of it. */
@@ -69,21 +88,23 @@ export async function readUpstreamError(upstream: Response): Promise<UpstreamErr
   try {
     text = (await upstream.text()).slice(0, MAX_BODY_CHARS);
   } catch {
-    return { text: '', parsed: null };
+    return { text: '', structured: false, parsed: null };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { text, parsed: null };
+    return { text, structured: false, parsed: null };
   }
 
   const body = parsed as { error?: { message?: unknown; param?: unknown }; message?: unknown; param?: unknown } | null;
   const message = body?.error?.message ?? body?.message;
   const param = body?.error?.param ?? body?.param;
+  const structured = typeof message === 'string' && message.length > 0;
   return {
-    text: typeof message === 'string' && message ? message : text,
+    text: structured ? (message as string) : text,
+    structured,
     ...(typeof param === 'string' && param ? { param } : {}),
     parsed,
   };
@@ -124,7 +145,10 @@ export function upstreamFailureOf(who: UpstreamName, upstream: Response, body: U
     who,
     status: RETRIED_BY_SDKS.has(status) ? 400 : status,
     upstreamStatus: status,
-    detail: body.text,
+    // Structured wording only: see `UpstreamErrorBody.structured`. An HTML page
+    // from an intermediary is not the upstream telling the caller what is wrong
+    // with the request, and neither leg ever forwarded one.
+    detail: body.structured ? body.text : '',
     param: body.param,
   });
 }

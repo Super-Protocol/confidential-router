@@ -37,10 +37,23 @@ describe('readUpstreamError', () => {
     expect(body.text).toBe('tool_calls[0].function.arguments is not valid JSON');
   });
 
-  it('keeps a non-JSON body as its own text', async () => {
+  it('keeps a non-JSON body as its own text, and marks it unstructured', async () => {
     const body = await readUpstreamError(new Response('<html>502 Bad Gateway</html>', { status: 502 }));
 
-    expect(body).toMatchObject({ text: '<html>502 Bad Gateway</html>', parsed: null });
+    expect(body).toMatchObject({ text: '<html>502 Bad Gateway</html>', structured: false, parsed: null });
+  });
+
+  it('marks a JSON body with no message of its own unstructured too', async () => {
+    // FastAPI's validation dump: valid JSON, no `message` anywhere, and nothing
+    // in it a client could read as a sentence.
+    const body = await readUpstreamError(answer(422, { detail: [{ loc: ['body', 'messages'], type: 'list_type' }] }));
+
+    expect(body.structured).toBe(false);
+  });
+
+  it('marks a message the upstream actually wrote as structured', async () => {
+    expect((await readUpstreamError(answer(400, { error: { message: 'bad arguments' } }))).structured).toBe(true);
+    expect((await readUpstreamError(answer(400, { message: 'bad arguments' }))).structured).toBe(true);
   });
 
   it('survives a body it cannot read at all', async () => {
@@ -50,7 +63,11 @@ describe('readUpstreamError', () => {
       },
     });
 
-    expect(await readUpstreamError(new Response(stream, { status: 400 }))).toEqual({ text: '', parsed: null });
+    expect(await readUpstreamError(new Response(stream, { status: 400 }))).toEqual({
+      text: '',
+      structured: false,
+      parsed: null,
+    });
   });
 
   it('ignores a param that is not a non-empty string', async () => {
@@ -94,6 +111,30 @@ describe('a 4xx about the request body', () => {
     const error = await mapped(400, '');
 
     expect(error.status).toBe(400);
+    expect(error.message).toContain('Retrying it unchanged will fail the same way.');
+  });
+
+  it('does not hand the caller an intermediary’s error page as the reason', async () => {
+    // An nginx/Envoy 400 in front of the model server. The status is still honest
+    // — the request is not getting through as sent — but the page says nothing
+    // about the request, and neither leg ever forwarded one.
+    const page = '<html><head><title>400 Bad Request</title></head><body><center>nginx/1.27.0</center></body></html>';
+
+    const error = await mapped(400, page);
+
+    expect(error.status).toBe(400);
+    expect(error.code).toBe('upstream_invalid_request');
+    expect(error.message).not.toContain('nginx');
+    expect(error.message).not.toContain('<html>');
+    expect(error.message).toContain('Retrying it unchanged will fail the same way.');
+  });
+
+  it('does not hand the caller a validation dump it cannot read either', async () => {
+    const error = await mapped(422, { detail: [{ loc: ['body', 'messages', 8], type: 'list_type' }] });
+
+    expect(error.status).toBe(422);
+    expect(error.code).toBe('upstream_invalid_request');
+    expect(error.message).not.toContain('list_type');
     expect(error.message).toContain('Retrying it unchanged will fail the same way.');
   });
 
