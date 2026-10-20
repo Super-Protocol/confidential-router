@@ -64,6 +64,13 @@ and `evidence_digest`.
 the time — **evidence coverage, never a verdict**. The router does not know
 whether it was verified; that happens in the user's gatekeeper (ADR-002).
 
+On an **external** endpoint the same field carries a different kind of fact: the
+digest the router's own verdict observed before it routed there (ADR-008 §4,
+`GenerationRecorder.begin`). It is therefore not coverage, and such a generation
+has no `evidence_snapshots` row — which is why the console's coverage ratio
+counts it in neither half and reports "not applicable" for a window made only of
+them, rather than 0% (SUP-421, `activitySummary.coverableRequests`).
+
 Prompts and completions are forwarded and never stored. `generations` has no
 column that could hold them, and `invariants.spec.ts` fails the build if one
 appears.

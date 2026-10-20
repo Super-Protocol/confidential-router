@@ -3,6 +3,15 @@ import type { GenerationStatus } from '../../db/entities/generation.entity.js';
 import type { ModelCapability, ModelOrigin } from '../../db/entities/model.entity.js';
 import type { EvidenceCoverage } from '../../metering/evidence-coverage.service.js';
 
+/**
+ * Where the OpenAI-compatible surface lives, as a mount prefix.
+ *
+ * Shared because two things outside the controllers key off it: the body parser
+ * `configureApp` gives `/v1` its own, larger limit, and the middleware that turns
+ * a parser refusal on this prefix into an OpenAI-shaped error rather than Nest's.
+ */
+export const V1_BASE_PATH = '/v1';
+
 /** Which OpenAI route is being served; decides the upstream path and the shaping. */
 export type RouteKind = 'chat' | 'completions' | 'embeddings';
 

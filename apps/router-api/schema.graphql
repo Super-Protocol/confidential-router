@@ -4,13 +4,18 @@ type ActivityPoint {
   bucket: DateTime!
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
   requests: Int!
 
@@ -25,18 +30,33 @@ type ActivitySummary {
   avgTokensPerSecond: Float
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
+
+  """
+  Of `requests`, how many reported a generation rate — the sample `avgTokensPerSecond` averages. Always at most `timedRequests`: a rate also needs a window large enough to divide.
+  """
+  ratedRequests: Int!
   requests: Int!
 
   """Spend in micro-USD."""
   spendMicros: String!
+
+  """
+  Of `requests`, how many reported a first-token time — the sample `avgTimeToFirstTokenMs` averages. A request that was not streamed never reports one.
+  """
+  timedRequests: Int!
 }
 
 input AddTrustedMeasurementInput {
@@ -461,13 +481,19 @@ type Endpoint {
 }
 
 """
-Of the generations served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate.
+Of the generations this deployment’s own endpoints served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate. Generations routed to an external endpoint are outside the question entirely — they are in neither `requests` nor `covered` — because this platform publishes no bundle for one; the router verified that upstream itself and reports it as “verified by this router” (ADR-008 §4).
 """
 type EvidenceCoverage {
   covered: Int!
 
-  """covered / requests; 0 when nothing was served."""
-  ratio: Float!
+  """
+  covered / requests. Null when `requests` is 0: nothing in the window could have been covered, so there is no ratio — render it as “not applicable”, never as 0%.
+  """
+  ratio: Float
+
+  """
+  Generations this deployment’s own endpoints served — not the workspace’s total.
+  """
   requests: Int!
 }
 
@@ -1199,13 +1225,18 @@ type KeyUsage {
   apiKeyId: ID
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   name: String!
   prefix: String
   promptTokens: Int!
@@ -1283,13 +1314,18 @@ enum ModelOrigin {
 type ModelUsage {
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   modelId: ID!
   name: String!
   promptTokens: Int!

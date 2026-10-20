@@ -401,49 +401,45 @@ test.describe('a deployment where registration is by invitation', () => {
     await expect(alert).not.toContainText('may already have been claimed');
   });
 
+  test('asks for no mail at all for a code the lookup refused (SUP-410)', async ({ page }) => {
+    await mockLookup(page, { valid: false, reason: 'unavailable' });
+    const { codeRequests } = await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
+
+    await page.goto(signUpUrl());
+    await expect(page.getByTestId('invite-unavailable-required')).toBeVisible();
+    await page.getByLabel('Email').fill('invited@example.com');
+
+    // There is no mail to be had: the router will not send one to an address
+    // with no account unless the request carries a code it would admit, so a
+    // pressable button here could only promise a code that never arrives.
+    await expect(page.getByRole('button', { name: 'Email me a code' })).toBeDisabled();
+    expect(codeRequests).toHaveLength(0);
+  });
+
   /**
    * A spent code and a code nobody ever issued, side by side, in a browser
    * (SUP-176).
    *
    * The lookup answers the same `unavailable` to both by design, so the only
-   * place the two come apart is the sign-up's typed 403 — and the console used to
-   * hold the button that would fetch it, which made the two indistinguishable to
-   * everyone who was not using `curl`. Both halves run the same script; the only
-   * difference is what the router answers.
+   * place the two come apart is the router's typed refusal — which now reaches
+   * the screen the way the two navigation paths have always carried it, as
+   * `?error=` on the URL the router sent the browser back to. Both halves run
+   * the same script; the only difference is which code it arrives with.
    */
   for (const [code, sentence] of [
     ['invite_already_claimed', 'already been claimed'],
     ['invite_expired_or_unknown', 'may have expired'],
   ] as const) {
-    test(`submits a code the lookup refused and shows the router's own refusal: ${code}`, async ({ page }) => {
+    test(`reads the router's own refusal when it is carried back: ${code}`, async ({ page }) => {
       await mockLookup(page, { valid: false, reason: 'unavailable' });
       await mockInviteFlow(page, { SignInOptions: INVITE_ONLY });
-      // Registered after `mockInviteFlow`, so it wins: the router refuses instead
-      // of creating the account, and this handler is what records the attempt.
-      const attempts: Array<Record<string, unknown>> = [];
-      await page.route(SIGN_UP_ROUTE, (route) => {
-        attempts.push(route.request().postDataJSON() as Record<string, unknown>);
-        return route.fulfill({
-          status: 403,
-          contentType: 'application/json',
-          body: JSON.stringify({ code, message: 'refused' }),
-        });
-      });
 
-      await page.goto(signUpUrl());
-      await expect(page.getByTestId('invite-unavailable-required')).toBeVisible();
-      await fillInAndSubmit(page);
+      await page.goto(`${signUpUrl()}&error=${code}`);
 
       await expect(page.getByTestId(`invite-refused-${code}`)).toContainText(sentence);
-      // The snapshot it replaces is gone, so there is one sentence on screen.
+      // The lookup's snapshot is gone, so there is one sentence on screen.
       await expect(page.getByTestId('invite-unavailable-required')).toBeHidden();
-      // The refusal the visitor read is the one answered to their own code.
-      expect(attempts).toHaveLength(1);
-      expect(attempts[0]).toMatchObject({ inviteCode: NORMALISED });
-      // Refused before the insert, so the visitor is still on the form — and back
-      // on its first step, where the invitation is: the mailed code went with
-      // the refusal.
-      await expect(page).toHaveURL(/\/signup/);
+      // And the way out is where it always was: another code, on this screen.
       await expect(page.getByLabel('Invitation code')).toBeVisible();
       await expect(page.getByLabel('Code', { exact: true })).toBeHidden();
     });
@@ -451,7 +447,7 @@ test.describe('a deployment where registration is by invitation', () => {
 
   test('lets a good code through, unchanged', async ({ page }) => {
     await mockLookup(page, { valid: true, grantMicros: GRANT_MICROS, campaign: CAMPAIGN });
-    const { signUps } = await mockInviteFlow(page, {
+    const { signUps, codeRequests } = await mockInviteFlow(page, {
       SignInOptions: INVITE_ONLY,
       ...creditsFixtures(GRANT_MICROS),
       ...grantStatus(true, null),
@@ -463,6 +459,9 @@ test.describe('a deployment where registration is by invitation', () => {
 
     await expect(page).toHaveURL(/\/credits/);
     expect(signUps[0]).toMatchObject({ inviteCode: NORMALISED });
+    // On the request for the mail as well, which is what an invite-only
+    // deployment needs before it sends one (SUP-410).
+    expect(codeRequests[0]).toMatchObject({ inviteCode: NORMALISED });
   });
 
   test('shows the refusal the router answered the sign-up with, rather than a generic error', async ({ page }) => {

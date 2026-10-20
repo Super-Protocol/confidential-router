@@ -73,7 +73,11 @@ export class ExternalUpstreamClient {
       url,
       headers,
       body: request.body,
-      connectTimeoutMs: this.config.externalEndpoints.connectTimeout,
+      // `connectTimeout + readTimeout`: one deadline has to cover both the
+      // sidecar accepting on loopback and the upstream in the other cloud
+      // producing something to answer with — which for a non-streaming completion
+      // is the whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
+      responseTimeoutMs: this.config.externalEndpoints.connectTimeout + this.config.externalEndpoints.readTimeout,
       signal: request.signal,
       onRetry: (attempt, attempts) =>
         // The address, never the key: this line goes to the same log an operator

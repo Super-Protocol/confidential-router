@@ -99,34 +99,27 @@ export function SignUpForm() {
    */
   const inviteRequired = data?.signInOptions.inviteRequired ?? false;
   /**
-   * Nothing else can produce an account here, so an unconfirmed code is normally
-   * a submission the router is certain to refuse — held back rather than sent.
+   * Nothing else can produce an account here, so a code the lookup has not
+   * confirmed is a submission the router will refuse — held back rather than
+   * sent.
    *
-   * `unavailable` is the exception, and SUP-176 is why. That answer is settled
-   * and final, and it is deliberately imprecise: the public lookup collapses
-   * claimed, expired, withdrawn and never-issued into one reason so that it
-   * cannot be used to tell a real code from a guess. The router keeps the
-   * distinction and answers it as a typed 403 from `user.create.before` — ahead
-   * of the insert, so a refused submit creates no account, no session and no
-   * grant. Holding the button here is what made a spent link and a typo read
-   * identically in a browser; going through with it is the only way the visitor
-   * reads the one refusal they can act on alone. It leaks nothing new either:
-   * that POST already answers the three codes to any caller, and it costs a
-   * mailed code per guess, where the lookup this protects is a free GET.
+   * Held in every state but `ready`, and `unavailable` stopped being the
+   * exception with SUP-410. It was one while an unusable code could still buy a
+   * mailed code: the public lookup collapses claimed, expired, withdrawn and
+   * never-issued into one `unavailable`, the router kept the distinction, and
+   * submitting was the only way a browser ever read it (SUP-176). An
+   * invite-only deployment no longer mails an address with no account unless
+   * the request carries a code it would admit — it cannot, or the send route is
+   * an open mail relay — so there is no longer a code to submit, and letting the
+   * button through would only promise a mail that never arrives. The notice
+   * above says both possibilities instead of guessing one, which is the part of
+   * SUP-176 that outlives its mechanism.
    *
-   * What is held is the request for a *mailed* code, not the sign-up itself,
-   * because a mailed code is spent by being checked: a sign-up the router
-   * refuses for want of an invitation has burned it. So the invitation is
-   * settled before a code is asked for wherever it can be, and `unavailable`
-   * is the one case where the visitor pays a mailed code to learn which refusal
-   * theirs is — the form goes back to the invitation when they do.
-   *
-   * `checking` and `unknown` stay held, because neither is an answer: one is
-   * about to arrive and the other can be asked for again, and "wait" is honest
-   * advice in both. `none` stays held too — there is no code to submit, and the
-   * notice above already says what the router would.
+   * `checking` and `unknown` are held because neither is an answer: one is about
+   * to arrive and the other can be asked for again, and "wait" is honest advice
+   * in both. `none` is held because there is no code to send at all.
    */
-  const blockedOnInvite = inviteRequired && invite.kind !== 'ready' && invite.kind !== 'unavailable';
+  const blockedOnInvite = inviteRequired && invite.kind !== 'ready';
 
   // One per page load, anonymous, and a volume rather than a funnel step —
   // linking it to the account that appears later would need an identifier stored
@@ -160,7 +153,9 @@ export function SignUpForm() {
     setRefusal(null);
     setPending(kind);
     try {
-      await requestSignInCode(email);
+      // With the invitation, which is what lets the router mail an address that
+      // has no account yet on an invite-only deployment (SUP-410).
+      await requestSignInCode(email, code);
       if (kind === 'resend') {
         // The code on screen may still be good, but the one in the newest mail
         // is the one the visitor is about to read — so the field starts over.

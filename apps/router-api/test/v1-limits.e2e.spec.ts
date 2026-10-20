@@ -15,7 +15,16 @@ let upstreamUrl: string;
 
 beforeAll(async () => {
   upstreamUrl = await upstream.start();
-  harness = await createHarness({ config: routerConfigFor(upstreamUrl) });
+  harness = await createHarness({
+    config: routerConfigFor(upstreamUrl, {
+      // A `/v1` ceiling small enough for a test to cross with a string, and
+      // deadlines short enough for `mock/thinking` to expire inside one.
+      server: { maxInferenceRequestBytes: MAX_BODY_BYTES },
+      backends: {
+        litellm: { baseUrl: upstreamUrl, apiKey: 'mock-litellm-key', connectTimeout: '1s', readTimeout: '1s' },
+      },
+    }),
+  });
   const workspace = await seedWorkspace(harness.app);
   workspaceId = workspace.id;
   secret = (await createKey(harness.app, workspaceId)).secret;
@@ -36,6 +45,14 @@ function server() {
 
 function chat(model = 'mock/chat:tdx') {
   return { model, messages: [{ role: 'user', content: 'Hello there' }] };
+}
+
+/** This suite's `/v1` body ceiling: 2 MiB, twice the 1 MiB the console keeps. */
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+/** A chat body whose single message makes the request about `bytes` long. */
+function chatOfSize(bytes: number) {
+  return { model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'x'.repeat(bytes - 128) }] };
 }
 
 /** Returns the supertest `Test` itself so callers can chain `.expect(...)`. */
@@ -75,6 +92,24 @@ describe('request validation', () => {
 
   it('accepts n = 1, which is what an SDK sends when it sends one at all', async () => {
     await post(secret, { ...chat(), n: 1 }).expect(200);
+  });
+});
+
+/**
+ * SUP-339: `/v1` used to share the console's 1 MiB parser limit, which made the
+ * `context_length` the catalogue advertises a figure no client could spend — prod
+ * advertises 262 144 tokens and serves them, and that is megabytes of prompt.
+ */
+describe('request size', () => {
+  it('accepts a prompt larger than the console surfaces take', async () => {
+    await post(secret, chatOfSize(1_500_000)).expect(200);
+  });
+
+  it('refuses a body over its own ceiling in the OpenAI shape, naming the ceiling', async () => {
+    const response = await post(secret, chatOfSize(MAX_BODY_BYTES + 100_000)).expect(413);
+
+    expect(response.body.error).toMatchObject({ type: 'invalid_request_error', code: 'request_too_large' });
+    expect(response.body.error.message).toContain('2 MiB');
   });
 });
 
@@ -243,6 +278,21 @@ describe('backend failures', () => {
       .getRepository(Generation)
       .findOneOrFail({ where: { modelId: 'mock/boom:tdx' }, order: { createdAt: 'DESC' } });
     expect(row).toMatchObject({ status: 'error', errorCode: 'backend_unavailable', costMicros: 0 });
+  });
+
+  /**
+   * SUP-339: the same message used to cover a refusal the router made itself. A
+   * prompt the upstream was still prefilling, and a burst it had merely queued,
+   * both came back as `backend_unavailable` — sending operators to inspect a model
+   * deployment that was answering the identical request fine one hop over.
+   */
+  it('names a backend that is slow rather than unreachable', async () => {
+    const response = await post(secret, chat('mock/thinking:tdx')).expect(504);
+
+    expect(response.body.error).toMatchObject({ type: 'upstream_error', code: 'upstream_timeout' });
+    expect(response.body.error.message).not.toContain('unreachable');
+    // Not retried: the socket was accepted, so the generation may be running.
+    expect(upstream.requests).toHaveLength(1);
   });
 
   it('does not charge a refused request', async () => {

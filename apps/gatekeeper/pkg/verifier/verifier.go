@@ -195,6 +195,7 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	if !result.OK {
 		report.Stage = string(result.Stage)
 		report.Reason = result.Reason
+		report.Unreachable = result.Unreachable
 		if report.ByMeasurement() && result.Stage == attestation.StageUntrustedRoot {
 			// A cloud-measurement endpoint never trusts a root by certificate,
 			// so the store's "<root fingerprint> not in trusted store" answers a

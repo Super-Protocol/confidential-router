@@ -18,6 +18,11 @@ import (
 // know when, whether or by whom it is attested" true at the wire level.
 const VerdictHeader = "X-Gatekeeper-Verdict"
 
+// CheckedAtHeader stamps a denial with the time the verdict behind it was
+// taken, in RFC 3339. It is written on the client-facing 503 only, for the same
+// reason [VerdictHeader] is.
+const CheckedAtHeader = "X-Gatekeeper-Checked-At"
+
 // headerPrefix is stripped from every proxied request for the same reason: a
 // client must not be able to forge a verdict header into the router's view, and
 // the gatekeeper must not leak its own.
@@ -49,6 +54,11 @@ func (e *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.stats.request()
 
 	current := e.await(r.Context())
+	if current != nil && !current.Admitted {
+		// The request itself is the trigger: an endpoint that is refusing
+		// traffic re-checks now rather than at the next tick (ADR-003 §7).
+		current = e.retryDenied(r.Context(), current)
+	}
 	switch {
 	case current != nil && current.Admitted:
 		e.forward(w, r, start, e.admittedRP, "allow", outcomeAllowed)
@@ -70,23 +80,57 @@ func (e *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // refuse answers a request the endpoint holds no verdict for. `failMode:
 // closed` is the default, and it never opens an upstream connection.
 func (e *endpoint) refuse(w http.ResponseWriter, r *http.Request, start time.Time, current *verdict) {
-	stage, reason := current.denial()
+	denied := refusalOf(current)
 	e.sup.metrics.requests.WithLabelValues(e.name, outcomeBlocked).Inc()
 	e.sup.metrics.duration.WithLabelValues(e.name).Observe(e.sup.now().Sub(start).Seconds())
 	e.sup.audit.record(AuditEntry{
 		At: start, Event: AuditBlocked, Endpoint: e.name, Admitted: false,
-		Stage: stage, Reason: reason, Method: r.Method, Path: r.URL.Path,
+		Stage: denied.stage, Reason: denied.reason, Method: r.Method, Path: r.URL.Path,
 		Status: http.StatusServiceUnavailable, FailMode: config.FailClosed,
 	})
-	writeDenial(w, stage, reason)
+	writeDenial(w, denied)
+}
+
+// The two `code` values a denial carries. They separate the check failing from
+// the check never having run, which is what a reader of the message needs most:
+// `attestation_failed` is a judgement about the upstream, `attestation_unreachable`
+// is a statement about the network between here and it (SUP-422).
+const (
+	codeAttestationFailed      = "attestation_failed"
+	codeAttestationUnreachable = "attestation_unreachable"
+)
+
+// refusal is everything the client is told about a request no verdict admits.
+// It is named apart from [verdict.denial], which is the `stage: reason` pair
+// every surface renders, because this one is dated and routes an error code.
+type refusal struct {
+	stage, reason string
+	// at is when the verdict being reported was taken. A denial is answered
+	// from the verdict in force, so without it the reason reads as current
+	// however old it is.
+	at time.Time
+	// unreachable routes the error code: see [codeAttestationUnreachable].
+	unreachable bool
+}
+
+// refusalOf renders the verdict in force as what the client is told about it. A
+// nil verdict is the endpoint's first moments, undated because no check has
+// finished.
+func refusalOf(current *verdict) refusal {
+	stage, reason := current.denial()
+	out := refusal{stage: stage, reason: reason}
+	if current != nil {
+		out.at, out.unreachable = current.At, current.Unreachable
+	}
+	return out
 }
 
 // denialBody is the 503 an unverified endpoint answers with.
 //
 // The `error` member is the OpenAI-compatible shape ADR-003 §6 specifies, so a
-// client library surfaces the message instead of a bare status; `stage` and
-// `reason` repeat it as machine-readable fields, because "which check failed"
-// is what a script branches on.
+// client library surfaces the message instead of a bare status; `stage`,
+// `reason` and `checkedAt` repeat it as machine-readable fields, because "which
+// check failed, and when" is what a script branches on.
 type denialBody struct {
 	Error struct {
 		Type    string `json:"type"`
@@ -95,16 +139,30 @@ type denialBody struct {
 	} `json:"error"`
 	Stage  string `json:"stage"`
 	Reason string `json:"reason"`
+	// CheckedAt is RFC 3339, omitted only before the first verdict exists.
+	CheckedAt string `json:"checkedAt,omitempty"`
 }
 
-func writeDenial(w http.ResponseWriter, stage, reason string) {
-	body := denialBody{Stage: stage, Reason: reason}
+func writeDenial(w http.ResponseWriter, d refusal) {
+	body := denialBody{Stage: d.stage, Reason: d.reason}
 	body.Error.Type = "gatekeeper_error"
-	body.Error.Code = "attestation_failed"
-	body.Error.Message = stage + ": " + reason
+	body.Error.Code = codeAttestationFailed
+	if d.unreachable {
+		body.Error.Code = codeAttestationUnreachable
+	}
+	body.Error.Message = d.stage + ": " + d.reason
+	if !d.at.IsZero() {
+		body.CheckedAt = d.at.UTC().Format(time.RFC3339)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set(VerdictHeader, "deny "+stage+": "+reason)
+	w.Header().Set(VerdictHeader, "deny "+d.stage+": "+d.reason)
+	if body.CheckedAt != "" {
+		// The age of the verdict, where a human reading a 503 will see it: the
+		// same reason printed for minutes on end is how a brief outage gets
+		// read as a broken router.
+		w.Header().Set(CheckedAtHeader, body.CheckedAt)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(body)
@@ -207,8 +265,10 @@ func (e *endpoint) upstreamFailed(w http.ResponseWriter, r *http.Request, err er
 		})
 		// Not on the request's context: it is about to be cancelled, and the
 		// re-check is for the endpoint, not for this client.
-		go e.attest(context.WithoutCancel(r.Context()), false)
-		writeDenial(w, "tls-fingerprint", mismatch.Error())
+		go e.attest(context.WithoutCancel(r.Context()), e.tuning.VerdictCacheTTL)
+		// The mismatch was observed on this very handshake, so the denial is as
+		// fresh as the request it answers.
+		writeDenial(w, refusal{stage: "tls-fingerprint", reason: mismatch.Error(), at: e.sup.now()})
 		return
 	}
 

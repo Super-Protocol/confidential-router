@@ -18,6 +18,8 @@ export interface MailSettings {
   provider: MailProvider;
   from: string;
   fromName: string;
+  /** Where a reply goes, when the deployment named a mailbox that reads them. */
+  replyTo?: string;
   /** Origin every link in a mail is built on — the console, never the API. */
   consoleUrl: string;
   resendApiKey?: string;
@@ -45,6 +47,9 @@ export function resolveMailSettings(config: Pick<RouterConfig, 'mail' | 'auth' |
     provider,
     from: mail.from ?? legacy.from,
     fromName: mail.fromName,
+    // No legacy twin: `auth.magicLink` never had one, so there is nothing to
+    // fall back to and an older chart simply keeps sending without a Reply-To.
+    replyTo: mail.replyTo,
     consoleUrl: consoleUrlOf(mail.consoleUrl, server),
     resendApiKey: mail.resendApiKey ?? (fromLegacy ? blankToUndefined(legacy.resendApiKey) : undefined),
     smtp: mail.smtp

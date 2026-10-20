@@ -40,8 +40,15 @@ function cookiesOf(response: request.Response): string[] {
   return (Array.isArray(cookies) ? cookies : [cookies].filter(Boolean)) as string[];
 }
 
-function requestCode(current: Harness, email: string) {
-  return request(server(current)).post('/auth/email-otp/send-verification-otp').send({ email, type: 'sign-in' });
+function requestCode(current: Harness, email: string, inviteCode?: string) {
+  return request(server(current))
+    .post('/auth/email-otp/send-verification-otp')
+    .send({ email, type: 'sign-in', ...(inviteCode ? { inviteCode } : {}) });
+}
+
+/** The send route with whatever body a caller felt like posting. */
+function send(current: Harness, body: Record<string, unknown>) {
+  return request(server(current)).post('/auth/email-otp/send-verification-otp').send(body);
 }
 
 function signIn(current: Harness, email: string, otp: string) {
@@ -274,17 +281,82 @@ describe('an invite-only deployment', () => {
     expect((await me(current, cookiesOf(created))).data.me.email).toBe(EMAIL);
   });
 
-  it('refuses an unknown address that has the emailed code but no invitation', async () => {
+  /**
+   * The hole SUP-410 closed. The account gate held — nothing was created — but
+   * the request *before* it mailed a sign-in code to any address a stranger
+   * named, which made the deployment's verified sender an open relay for
+   * whoever found the hostname.
+   */
+  it('mails nothing to an unknown address with no invitation', async () => {
     const { current } = await inviteOnly();
 
-    const refused = await signInWithCode(current, EMAIL);
+    await requestCode(current, EMAIL).expect(200);
+    await current.settleMail();
 
-    expect(refused.status).toBe(403);
-    expect(refused.body.code).toBe('invite_required');
-    expect(cookiesOf(refused).join(';')).not.toContain(`${SESSION_COOKIE_NAME}=`);
+    expect(current.mailer.ofKind('sign-in-code').filter((mail) => mail.to === EMAIL)).toEqual([]);
   });
 
-  it('asks an existing account for the emailed code only', async () => {
+  it('mails nothing for an invitation it would refuse either', async () => {
+    const { current, code } = await inviteOnly();
+    // Spent: the one seat goes to the first account, and the code is worth
+    // nothing to whoever holds it afterwards.
+    await signInWithCode(current, 'first@example.com', { inviteCode: code });
+
+    await requestCode(current, EMAIL, code).expect(200);
+    await requestCode(current, 'other@example.com', 'ZZZZ-ZZZZ-ZZZZ').expect(200);
+    await current.settleMail();
+
+    expect(current.mailer.ofKind('sign-in-code').map((mail) => mail.to)).toEqual(['first@example.com']);
+  });
+
+  /**
+   * The gate is asked where the credential would leave the process, so no body
+   * shape routes around it and none of them changes what the route answers
+   * (CTO review on #131). Both halves matter: an uninvited stranger is mailed
+   * nothing whatever `type` says, and the answer never depends on whether the
+   * address has an account — which it would if a hook in front of the route
+   * answered some of these itself.
+   */
+  it('mails nothing for any body shape, and answers each one as the route always did', async () => {
+    const { current, code } = await inviteOnly();
+    // EMAIL has an account from here on; the other address has none.
+    await signInWithCode(current, EMAIL, { inviteCode: code });
+    const mailed = current.mailer.ofKind('sign-in-code').length;
+    const shapes: Record<string, unknown>[] = [
+      {},
+      { type: 'sign-in' },
+      { type: 'email-verification' },
+      { type: 'forget-password' },
+      { type: 'change-email' },
+      { type: 'not-a-type' },
+    ];
+
+    for (const shape of shapes) {
+      const known = await send(current, { email: EMAIL, ...shape });
+      const unknown = await send(current, { email: 'uninvited@example.com', ...shape });
+
+      expect(unknown.status, JSON.stringify(shape)).toBe(known.status);
+      expect(unknown.body, JSON.stringify(shape)).toEqual(known.body);
+    }
+    await current.settleMail();
+
+    // The account got its codes — `sign-in` is the one type that mails — and the
+    // uninvited address got nothing at all.
+    expect(current.mailer.ofKind('sign-in-code').length).toBeGreaterThan(mailed);
+    expect(current.mailer.ofKind('sign-in-code').filter((mail) => mail.to === 'uninvited@example.com')).toEqual([]);
+  });
+
+  it('answers a withheld request exactly as it answers one it sent', async () => {
+    const { current, code } = await inviteOnly();
+
+    const sent = await requestCode(current, EMAIL, code).expect(200);
+    const withheld = await requestCode(current, 'uninvited@example.com').expect(200);
+
+    expect(withheld.body).toEqual(sent.body);
+    expect(Object.keys(withheld.headers).sort()).toEqual(Object.keys(sent.headers).sort());
+  });
+
+  it('mails an existing account its code with no invitation anywhere near the request', async () => {
     const { current, code } = await inviteOnly();
     await signInWithCode(current, EMAIL, { inviteCode: code });
 
@@ -293,13 +365,42 @@ describe('an invite-only deployment', () => {
     expect(again.status).toBe(200);
   });
 
+  /**
+   * The one window the mail gate leaves, and the only way the typed refusal
+   * still reaches this path: both codes were mailed while the invitation was
+   * usable, and the second sign-up arrives after the first has taken its only
+   * seat.
+   */
   it('does not let one invitation create two accounts', async () => {
     const { current, code } = await inviteOnly();
-    await signInWithCode(current, EMAIL, { inviteCode: code });
+    await requestCode(current, EMAIL, code).expect(200);
+    await requestCode(current, 'other@example.com', code).expect(200);
+    const second = lastCodeFor(current, 'other@example.com');
 
-    const second = await signInWithCode(current, 'other@example.com', { inviteCode: code });
+    await request(server(current))
+      .post('/auth/sign-in/email-otp')
+      .send({ email: EMAIL, otp: lastCodeFor(current, EMAIL), inviteCode: code })
+      .expect(200);
+    const refused = await request(server(current))
+      .post('/auth/sign-in/email-otp')
+      .send({ email: 'other@example.com', otp: second, inviteCode: code });
 
-    expect(second.status).toBe(403);
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('invite_already_claimed');
+    expect(cookiesOf(refused).join(';')).not.toContain(`${SESSION_COOKIE_NAME}=`);
+  });
+
+  it('refuses the sign-up when the code it carries is not the one the mail was asked for with', async () => {
+    const { current, code } = await inviteOnly();
+    await requestCode(current, EMAIL, code).expect(200);
+    const mailed = lastCodeFor(current, EMAIL);
+
+    const refused = await request(server(current))
+      .post('/auth/sign-in/email-otp')
+      .send({ email: EMAIL, otp: mailed, inviteCode: 'ZZZZ-ZZZZ-ZZZZ' });
+
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('invite_expired_or_unknown');
   });
 });
 

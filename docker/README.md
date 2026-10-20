@@ -59,6 +59,40 @@ console. Everything works except generating: `/v1` answers
 read "Not published" because nothing is publishing evidence. Both are states a
 real deployment has, and the console renders them.
 
+### An invite-only stack
+
+Registration by invitation (`auth.requireInviteForSignUp`, SUP-173) is the mode
+the launch runs in, and the one worth checking by hand, because on it a mailed
+code is refused to an address with no account unless the request carries a usable
+invitation (SUP-410). **It cannot be switched on from `docker/.env`**:
+`docker-compose.yml` passes the `api` service a fixed list of keys and this is
+not one of them, so a value in `.env` silently does nothing and the stack comes
+up open. [`docker-compose.invite-only.yml`](./docker-compose.invite-only.yml) is
+the override that does work:
+
+```bash
+docker compose -f docker/docker-compose.yml \
+               -f docker/docker-compose.invite-only.yml up -d --wait
+```
+
+`{ signInOptions { inviteRequired } }` answers `true` once it is on. Codes come
+from the CLI inside the running container — the image carries it, and the
+migration job has already applied the schema:
+
+```bash
+docker compose -f docker/docker-compose.yml exec api \
+  node /app/cli/invites.js generate --count 2 --grant 100 --campaign local --out /tmp/codes.csv
+docker compose -f docker/docker-compose.yml exec api cat /tmp/codes.csv
+```
+
+Open the console at `/signup?invite=<code>`. The mailer is the console one here,
+so what a visitor would be sent is in the log instead — including the line that
+says a mail was *not* sent, which is the whole of SUP-410:
+
+```bash
+docker compose -f docker/docker-compose.yml logs api | grep -E 'Sign-in code for|withheld'
+```
+
 ## What the two demo services are
 
 Neither is published to a registry, and neither belongs anywhere near a

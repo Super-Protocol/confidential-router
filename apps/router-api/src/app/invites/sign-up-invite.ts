@@ -19,8 +19,14 @@
  *    provider built, where nothing of ours survives except a cookie on this
  *    origin.
  *
- * Hence four sources, in that order. All of them are advisory: whatever comes
+ * Hence five sources, in that order. All of them are advisory: whatever comes
  * out is a candidate string, and `InviteService` decides whether it is a code.
+ *
+ * Two of those requests are read one step earlier as well, to decide whether a
+ * sign-up may be *mailed* anything at all (`sign-up-mail-gate.plugin.ts`,
+ * SUP-410) — which is the one place a `callbackURL` in the **body** carries the
+ * code: `POST /auth/sign-in/magic-link` is where the console names the URL the
+ * verification will later arrive on, with the code already on it.
  */
 
 /**
@@ -84,6 +90,7 @@ function inviteCodeOf(context: SignUpRequestContext, headers: HeaderBag | null):
     asCode(query?.[INVITE_QUERY_PARAM]) ??
     asCode(query?.[INVITE_BODY_FIELD]) ??
     inviteCodeInCallback(query?.callbackURL) ??
+    inviteCodeInCallback(body?.callbackURL) ??
     inviteCookie(headers)
   );
 }

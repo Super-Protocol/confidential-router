@@ -18,6 +18,16 @@ const DAY_MS = 86_400_000;
 
 /** The screen asks for a window ending today, so the fixtures follow the clock. */
 const RANGE = lastUtcDays(SPEND_DAYS);
+const HEATMAP_FROM = lastUtcDays(HEATMAP_DAYS).from;
+
+/** The heatmap window's traffic: own-endpoint only, so the graph is the story. */
+const HEATMAP_TOTALS = {
+  __typename: 'ActivitySummary' as const,
+  requests: 30,
+  coveredRequests: 30,
+  coverableRequests: 30,
+  evidenceCoverage: 1,
+};
 
 /** `days` ago, as the UTC day the API returns. */
 function daysAgo(days: number): string {
@@ -48,7 +58,7 @@ function profileMock(overrides: Record<string, unknown> = {}): MockLink.MockedRe
   return {
     request: {
       query: PROFILE_QUERY,
-      variables: { workspaceId: WORKSPACE_ID, ...RANGE, heatmapDays: HEATMAP_DAYS },
+      variables: { workspaceId: WORKSPACE_ID, ...RANGE, heatmapFrom: HEATMAP_FROM, heatmapDays: HEATMAP_DAYS },
     },
     result: {
       data: {
@@ -71,6 +81,7 @@ function profileMock(overrides: Record<string, unknown> = {}): MockLink.MockedRe
           },
         ],
         signedResponseDays: [daysAgo(2), daysAgo(1), daysAgo(0)],
+        heatmapTotals: HEATMAP_TOTALS,
         ...overrides,
       },
     },
@@ -109,6 +120,63 @@ describe('ProfileScreen', () => {
     renderWithSession(<ProfileScreen />, { mocks: [typedSessionMock(), profileMock()] });
 
     expect(await screen.findByText('3 days')).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: `Days with published evidence over the last ${HEATMAP_DAYS} days` }),
+    ).toBeInTheDocument();
+  });
+
+  it('says why the heatmap is empty when every generation went to an external endpoint', async () => {
+    // SUP-421 on a second screen: this account's traffic is attested — by this
+    // router's own verdict — but none of it has a bundle *this platform*
+    // published, so the graph can only draw six months of grey under a legend
+    // reading "No evidence".
+    renderWithSession(<ProfileScreen />, {
+      mocks: [
+        typedSessionMock(),
+        profileMock({
+          signedResponseDays: [],
+          heatmapTotals: {
+            ...HEATMAP_TOTALS,
+            requests: 34,
+            coveredRequests: 0,
+            coverableRequests: 0,
+            evidenceCoverage: null,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText(/coverage does not apply here/)).toBeInTheDocument();
+    expect(screen.getByText(/all 34 generations were served by external endpoints/)).toBeInTheDocument();
+    expect(screen.getByText(/verified by this router/)).toBeInTheDocument();
+    // Not an empty graph with a zero streak beside it.
+    expect(
+      screen.queryByRole('img', { name: `Days with published evidence over the last ${HEATMAP_DAYS} days` }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Days covered')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 days')).not.toBeInTheDocument();
+  });
+
+  it('still draws the graph for a workspace that served nothing at all', async () => {
+    // The other cause of an empty graph, and it needs no explanation: there is
+    // no traffic to have gone anywhere.
+    renderWithSession(<ProfileScreen />, {
+      mocks: [
+        typedSessionMock(),
+        profileMock({
+          signedResponseDays: [],
+          heatmapTotals: {
+            ...HEATMAP_TOTALS,
+            requests: 0,
+            coveredRequests: 0,
+            coverableRequests: 0,
+            evidenceCoverage: null,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('0 days')).toBeInTheDocument();
     expect(
       screen.getByRole('img', { name: `Days with published evidence over the last ${HEATMAP_DAYS} days` }),
     ).toBeInTheDocument();
@@ -174,7 +242,7 @@ describe('ProfileScreen', () => {
         {
           request: {
             query: PROFILE_QUERY,
-            variables: { workspaceId: WORKSPACE_ID, ...RANGE, heatmapDays: HEATMAP_DAYS },
+            variables: { workspaceId: WORKSPACE_ID, ...RANGE, heatmapFrom: HEATMAP_FROM, heatmapDays: HEATMAP_DAYS },
           },
           error: new Error('network down'),
         },

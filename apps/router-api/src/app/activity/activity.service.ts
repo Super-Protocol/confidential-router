@@ -15,15 +15,27 @@ export interface ActivityRange {
 export interface ActivityTotals {
   requests: number;
   coveredRequests: number;
+  /**
+   * Of `requests`, those that could have been covered at all — the denominator
+   * of `evidenceCoverage`, which is not `requests`. Reported alongside the ratio
+   * because a consumer that pairs `coveredRequests` with `requests` states a
+   * fraction neither number is half of (SUP-421).
+   */
+  coverableRequests: number;
   promptTokens: number;
   completionTokens: number;
   spendMicros: number;
-  evidenceCoverage: number;
+  /** Null when `coverableRequests` is 0: no ratio exists, which is not 0%. */
+  evidenceCoverage: number | null;
 }
 
 export interface ActivitySummary extends ActivityTotals {
   avgTimeToFirstTokenMs: number | null;
   avgTokensPerSecond: number | null;
+  /** How many of `requests` reported a first-token time — what the average is over. */
+  timedRequests: number;
+  /** How many reported a generation rate, which is fewer: `tokensPerSecond` refuses a sample too small to divide. */
+  ratedRequests: number;
 }
 
 export interface ActivityPoint extends ActivityTotals {
@@ -84,6 +96,14 @@ export class ActivityService {
       ...totalsOf(row ?? {}),
       avgTimeToFirstTokenMs: average(row?.ttftSum, row?.ttftSamples),
       avgTokensPerSecond: average(row?.tpsSum, row?.tpsSamples),
+      // Reported alongside the averages because neither is over every request: one
+      // that was not streamed has no first token to time, and `tokensPerSecond`
+      // additionally refuses a window too small to divide — so the rate's sample
+      // is a strict subset of the first-token one, and the two counts are not
+      // interchangeable. A tile that showed a mean without its own sample size
+      // claimed to speak for traffic it had never measured (SUP-424).
+      timedRequests: toNumber(row?.ttftSamples),
+      ratedRequests: toNumber(row?.tpsSamples),
     };
   }
 
@@ -214,16 +234,18 @@ const TOTALS_SELECTS = [
 const EMPTY_TOTALS: ActivityTotals = {
   requests: 0,
   coveredRequests: 0,
+  coverableRequests: 0,
   promptTokens: 0,
   completionTokens: 0,
   spendMicros: 0,
-  evidenceCoverage: 0,
+  evidenceCoverage: null,
 };
 
 function totalsOf(row: Record<string, unknown>): ActivityTotals {
   return {
     requests: toNumber(row.requests),
     coveredRequests: toNumber(row.coveredRequests),
+    coverableRequests: toNumber(row.coverableRequests),
     promptTokens: toNumber(row.promptTokens),
     completionTokens: toNumber(row.completionTokens),
     spendMicros: toNumber(row.spendMicros),

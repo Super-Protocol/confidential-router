@@ -461,6 +461,10 @@ describe('a deployment where registration is by invitation', () => {
 
     expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
     await submit();
+    // On both requests: the send route will not mail an address with no account
+    // unless the invitation is on it (SUP-410), and the sign-up is where it is
+    // redeemed.
+    expect(bodyOf(SEND)).toEqual({ email: 'dev@example.com', type: 'sign-in', inviteCode: NORMALISED });
     expect(bodyOf(SIGN_UP)).toEqual({ email: 'dev@example.com', otp: MAILED, name: 'Invited', inviteCode: NORMALISED });
   });
 
@@ -489,7 +493,14 @@ describe('a deployment where registration is by invitation', () => {
     expect(alert).toHaveTextContent('already claimed or was never issued');
   });
 
-  it('lets the form submit on a refused lookup, so the router can say which refusal it is', async () => {
+  /**
+   * SUP-410 took the vehicle away. Submitting an `unavailable` code was the one
+   * way a browser read the typed refusal (SUP-176) — and it worked by spending a
+   * mailed code, which an invite-only deployment no longer sends to an address
+   * with no account unless the request carries a code it would admit. So there
+   * is nothing to submit, and promising a mail would be the lie.
+   */
+  it('holds the submit on a refused lookup rather than promising a mail that will not come', async () => {
     vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}`, assign });
     routeFetch({ invite: { valid: false, reason: 'unavailable' } });
     renderForm(required);
@@ -497,38 +508,27 @@ describe('a deployment where registration is by invitation', () => {
     await screen.findByTestId('invite-unavailable-required');
     await fillIn();
 
-    // Held before SUP-176, which is what kept the typed refusal below out of
-    // every browser: the submit it arrives on could never be made.
-    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
-    expect(screen.queryByTestId('sign-up-blocked-on-invite')).not.toBeInTheDocument();
-
-    await submit();
-    expect(bodyOf(SIGN_UP).inviteCode).toBe(NORMALISED);
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeDisabled();
+    expect(screen.getByTestId('sign-up-blocked-on-invite')).toHaveTextContent('working invitation code');
+    expect(callTo(SEND)).toBeUndefined();
   });
 
   it.each([
     ['invite_already_claimed', 'already been claimed'],
     ['invite_expired_or_unknown', 'may have expired'],
-  ])('reads a spent code and an unissued one differently in the browser: %s', async (code, sentence) => {
-    vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}`, assign });
-    routeFetch({
-      invite: { valid: false, reason: 'unavailable' },
-      // Both codes look identical to the lookup; only the sign-up tells them apart.
-      signUp: jsonResponse({ code, message: 'refused' }, false, 403),
-    });
+  ])('reads a spent code and an unissued one differently when the router says which: %s', async (code, sentence) => {
+    // How a refusal reaches this screen now: the router made it on a sign-up
+    // that was attempted — an OAuth callback, a magic link, or a code that went
+    // bad between the mail and the submit — and redirected here with it.
+    vi.stubGlobal('location', { ...window.location, search: `?invite=${CODE}&error=${code}`, assign });
+    routeFetch({ invite: { valid: false, reason: 'unavailable' } });
     renderForm(required);
 
-    await screen.findByTestId('invite-unavailable-required');
-    await fillIn();
-    await submit();
-
     expect(await screen.findByTestId(`invite-refused-${code}`)).toHaveTextContent(sentence);
+    // It outranks the lookup's snapshot: one is what happened, the other is what
+    // a check said before it.
     expect(screen.queryByTestId('invite-unavailable-required')).not.toBeInTheDocument();
-    // Back on the form, where the invitation is: the mailed code was spent by
-    // the refusal, so the code step has nothing left to offer.
-    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Invitation code')).toBeInTheDocument();
-    expect(screen.getByLabelText('Email')).toHaveValue('dev@example.com');
     expect(assign).not.toHaveBeenCalled();
   });
 

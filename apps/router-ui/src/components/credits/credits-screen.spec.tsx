@@ -358,6 +358,24 @@ describe('CreditsScreen', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 
+  it('prices a usage row to the fraction of a cent it cost, not to -$0.00', async () => {
+    // One generation is a third of a cent. Rounded to cents, thirty of them were
+    // thirty rows of `−$0.00` and a balance that had moved anyway (SUP-424).
+    const usage = transaction({ id: 'txn-usage', kind: 'USAGE', amountMicros: '-3530', description: null });
+
+    render([creditsMock(BALANCE, [usage])]);
+
+    expect(await screen.findByText('-$0.0035')).toBeInTheDocument();
+  });
+
+  it('shows an amount finer than four decimals rather than rounding it away', async () => {
+    const dust = transaction({ id: 'txn-dust', kind: 'USAGE', amountMicros: '-7', description: null });
+
+    render([creditsMock(BALANCE, [dust])]);
+
+    expect(await screen.findByText('-$0.000007')).toBeInTheDocument();
+  });
+
   it('shows an invitation grant as a credit, naming the campaign it came from', async () => {
     const grant = transaction({
       id: 'txn-invite',
