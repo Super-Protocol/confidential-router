@@ -206,6 +206,21 @@ describe('ActivityScreen', () => {
     expect(screen.getByText('Average of 800 of 842 requests · 48.2 tok/s over 780')).toBeInTheDocument();
   });
 
+  it('gives the rate its own total when the first-token clause prints none', async () => {
+    // Every request timed, some unrated: "over 780" alone leaves its denominator
+    // to the Requests tile next to it, which is a tile-ordering accident.
+    renderWithSession(<ActivityScreen />, {
+      mocks: [
+        sessionMock(),
+        activityMock(24, { activitySummary: summary({ requests: 842, timedRequests: 842, ratedRequests: 780 }) }),
+        usageMock(),
+      ],
+    });
+
+    expect(await screen.findByText('312 ms')).toBeInTheDocument();
+    expect(screen.getByText('Average across the period · 48.2 tok/s over 780 of 842')).toBeInTheDocument();
+  });
+
   it('drops the sample size when every request was timed', async () => {
     renderWithSession(<ActivityScreen />, { mocks: defaultMocks() });
 

@@ -93,7 +93,9 @@ const TILE_LABELS = ['Total spend', 'Requests', 'Token volume', 'Time to first t
  * is a strict subset of `timedRequests` — an agent's short tool-call turn is
  * timed and unrated. The tile used to print both under one bare "Average", which
  * read as a claim about the whole period (SUP-424), so each mean now names its
- * own sample and the rate only repeats the count when it differs.
+ * own sample — the rate only repeats the count when it differs from the
+ * first-token one, and carries the total itself when the first clause printed
+ * none to read it against.
  */
 function timeToFirstTokenHint(summary: {
   requests: number;
@@ -113,10 +115,19 @@ function timeToFirstTokenHint(summary: {
     return sample;
   }
   const rate = formatTokensPerSecond(summary.avgTokensPerSecond);
+  if (summary.ratedRequests >= summary.timedRequests) {
+    // One sample behind both means, and `sample` has already named it.
+    return `${sample} · ${rate}`;
+  }
+  // Fewer rated than timed, so the rate states its own count — with the total
+  // when `sample` is "Average across the period" and prints none to read it
+  // against, and without when it already says "of 842 requests".
+  const over =
+    summary.timedRequests >= summary.requests
+      ? `${formatCount(summary.ratedRequests)} of ${formatCount(summary.requests)}`
+      : formatCount(summary.ratedRequests);
 
-  return summary.ratedRequests >= summary.timedRequests
-    ? `${sample} · ${rate}`
-    : `${sample} · ${rate} over ${formatCount(summary.ratedRequests)}`;
+  return `${sample} · ${rate} over ${over}`;
 }
 
 const SERIES = [
