@@ -8,6 +8,28 @@ import { Workspace } from './workspace.entity.js';
 export type GenerationStatus = 'ok' | 'error' | 'aborted';
 
 /**
+ * Which client sent the request, as a **closed set** (SUP-466).
+ *
+ * Extended by pull request and never by passthrough: the point of a closed set is
+ * that `client` is a breakdown with a dozen rows rather than one row per editor
+ * build. The derivation — and the reason the raw `User-Agent` is not here — lives
+ * in `client-dimension.ts`.
+ */
+export type GenerationClient =
+  | 'vscode-chat'
+  | 'cline'
+  | 'roo'
+  | 'continue'
+  | 'cursor'
+  | 'claude-code'
+  | 'openai-python'
+  | 'openai-node'
+  | 'litellm'
+  | 'langchain'
+  | 'curl'
+  | 'other';
+
+/**
  * One metered request. **No prompt or completion content, ever** — the router
  * forwards bodies to LiteLLM and never inspects or persists them
  * (`docs/threat-model.md`). `invariants.spec.ts` walks this entity's metadata
@@ -109,6 +131,20 @@ export class Generation {
   /** Salted hash, for abuse investigation. The address itself is never stored. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   clientIpHash!: string | null;
+
+  /**
+   * Which client sent the request — one of {@link GenerationClient}, `other` for
+   * anything the mapping does not name, and null only on the rows written before
+   * SUP-466.
+   *
+   * **Not the `User-Agent`, and never a version of it.** The agent string is a
+   * fingerprinting vector, which is why `InviteRedemption` keeps only a salted
+   * hash of it; a raw copy here would contradict that decision for every metered
+   * request. `client-dimension.ts` maps and discards it in one place, and nothing
+   * downstream of that function sees it.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  client!: GenerationClient | null;
 
   @Column(timestampColumn())
   createdAt!: Date;

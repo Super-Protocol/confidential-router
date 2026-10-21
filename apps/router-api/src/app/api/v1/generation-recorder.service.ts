@@ -85,6 +85,7 @@ export class GenerationRecorder {
       tokensPerSecond: tokensPerSecond(outcome.completionTokens, generationMs),
       requestId: context.requestId,
       clientIpHash: this.hashClientIp(context.clientIp),
+      client: context.client,
       createdAt: new Date(context.startedAt),
     });
   }

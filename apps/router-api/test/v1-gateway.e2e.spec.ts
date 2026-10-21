@@ -325,6 +325,77 @@ describe('POST /v1/chat/completions', () => {
   });
 });
 
+/**
+ * SUP-466. The dimension exists because SUP-447 spent two days answering "which
+ * editor was the tester using?" from screenshots while the answer was in a
+ * header on all 97 of his requests.
+ *
+ * The agent strings below are real: `GitHubCopilotChat/0.69.0` and
+ * `RooCode/3.54.0` are what VS Code's own chat and Roo Code 3.54.0 sent through
+ * SUP-447's logging proxy, and `node` is what Cline 4.1.25 sent — which is why
+ * the label beside it has to come from `X-Title` instead.
+ */
+describe('which client sent the request', () => {
+  it('is on the row, as a label and never as the agent string', async () => {
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'GitHubCopilotChat/0.69.0')
+      .send(CHAT)
+      .expect(200);
+
+    const row = await generations().findOneByOrFail({ id: response.body.id });
+    expect(row.client).toBe('vscode-chat');
+    // The fingerprint is read and discarded in `client-dimension.ts`; no version,
+    // no editor build and no part of the header itself reaches the column.
+    expect(JSON.stringify(row)).not.toContain('GitHubCopilotChat');
+    expect(JSON.stringify(row)).not.toContain('0.69.0');
+  });
+
+  it('is on the row of a request that failed, which is the row the question is asked of', async () => {
+    // Some of these clients fail in ways the user never reports, so a breakdown
+    // that only covered successes would answer with survivors.
+    await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'RooCode/3.54.0')
+      .send({ ...CHAT, model: 'mock/boom:tdx' })
+      .expect(502);
+
+    const row = await generations().findOneOrFail({
+      where: { modelId: 'mock/boom:tdx' },
+      order: { createdAt: 'DESC' },
+    });
+    expect(row).toMatchObject({ status: 'error', client: 'roo' });
+  });
+
+  it('reads a client that names itself in a header other than its agent string', async () => {
+    // Cline 4.1.25 announces `user-agent: node` against an OpenAI-compatible
+    // endpoint and names itself nowhere else but here.
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'node')
+      .set('x-title', 'Cline')
+      .send(CHAT)
+      .expect(200);
+
+    expect((await generations().findOneByOrFail({ id: response.body.id })).client).toBe('cline');
+  });
+
+  it('is `other` rather than null when nothing recognisable arrived', async () => {
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'SomeoneElsesAgent/4.2')
+      .send(CHAT)
+      .expect(200);
+
+    // A countable population, where null would mean nobody looked.
+    expect((await generations().findOneByOrFail({ id: response.body.id })).client).toBe('other');
+  });
+});
+
 describe('POST /v1/completions', () => {
   it('serves the legacy route with the same shaping', async () => {
     const response = await request(server())
