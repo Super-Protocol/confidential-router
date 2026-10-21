@@ -34,6 +34,8 @@ const MODELS: ModelFixture[] = [
   { id: 'mock/garbage:tdx', litellmModel: 'mock/garbage' },
   { id: 'mock/hangup:tdx', litellmModel: 'mock/hangup' },
   { id: 'mock/thinking:tdx', litellmModel: 'mock/thinking' },
+  { id: 'mock/slow-start:tdx', litellmModel: 'mock/slow-start' },
+  { id: 'mock/slow-boom:tdx', litellmModel: 'mock/slow-boom' },
   { id: 'mock/stream-abort:tdx', litellmModel: 'mock/stream-abort' },
   { id: 'mock/stream-slow:tdx', litellmModel: 'mock/stream-slow' },
   { id: 'mock/stream-tools:tdx', litellmModel: 'mock/stream-tools' },

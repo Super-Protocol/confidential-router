@@ -52,6 +52,7 @@ server:
   validClientOrigins:                              # CORS + Better Auth trusted origins
     - https://console.tee.swarm.cloud
   maxInferenceRequestBytes: 8388608                # /v1 only; the console keeps 1 MiB
+  streamKeepAliveAfter: 15s                        # keep below the ingress read timeout
 
 database:
   type: postgres                # `sqlite` for development

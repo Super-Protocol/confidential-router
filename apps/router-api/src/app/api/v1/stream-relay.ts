@@ -18,6 +18,82 @@ import { dataPayloadOf, formatDataEvent, SSE_DONE, SSE_HEARTBEAT, splitSseEvents
 /** `docs/contracts/router-api.md`: a comment line while waiting for the first token. */
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 
+/**
+ * A streaming response the router has committed to before the upstream answered.
+ *
+ * `relayStream` can only start heart-beating once there is a stream to beat
+ * into, and that is one hop too late: the contract's "a comment line every 15 s
+ * while waiting for the first token" has to cover the *prefill* as well, which
+ * is where the silence actually happens.
+ */
+export interface PendingStream {
+  /** True once the 200 and the SSE headers are on the wire and cannot be unsent. */
+  readonly opened: boolean;
+  /** Stops the timers. Headers already written stay written. */
+  stop(): void;
+}
+
+/**
+ * Opens the event stream early, if the upstream is taking too long to answer.
+ *
+ * Seven of 97 agent turns measured against production stalled for exactly 60 s
+ * and ended in a 502 (SUP-449). Three of those 502s were not the router's: the
+ * ingress in front of it hit its own 60 s read timeout first and minted an
+ * openresty HTML page — no `x-request-id`, no error envelope, and no row in Logs,
+ * because the request never came back through the code that writes one. The
+ * router had been silent on that socket since the request arrived.
+ *
+ * So the router stops being silent. After `openAfterMs` of waiting it writes the
+ * 200 and the SSE preamble and starts the same `: ping` the relay sends, which
+ * resets the read deadline of every proxy on the path and keeps the request
+ * ending where the router can account for it.
+ *
+ * The cost is the status line: once the headers are out, a failure before the
+ * first token has to be delivered as a `data:` error event instead of a 502 —
+ * the channel a mid-stream failure already uses. That trade only applies past
+ * `openAfterMs`; every failure fast enough to beat it keeps its status code,
+ * which in the measured window is all but seven of 169 requests.
+ */
+export function openStreamIfSlow(input: {
+  context: GatewayContext;
+  response: ExpressResponse;
+  /** How long the upstream may stay silent before the stream is opened anyway. */
+  openAfterMs: number;
+  /** Overridable so a test does not have to wait a quarter of a minute. */
+  heartbeatIntervalMs?: number;
+}): PendingStream {
+  let opened = false;
+  let beat: NodeJS.Timeout | undefined;
+
+  const ping = (): void => {
+    if (!input.response.writableEnded) {
+      input.response.write(SSE_HEARTBEAT);
+    }
+  };
+  const open = setTimeout(() => {
+    if (input.response.writableEnded || input.response.destroyed) {
+      return;
+    }
+    opened = true;
+    writeStreamHeaders(input.response, input.context);
+    // Immediately, then on the interval: the first gap a proxy measures starts
+    // when the request arrived, not when this timer fired.
+    ping();
+    beat = setInterval(ping, input.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+  }, input.openAfterMs);
+
+  return {
+    get opened(): boolean {
+      return opened;
+    },
+    stop(): void {
+      clearTimeout(open);
+      clearInterval(beat);
+      beat = undefined;
+    },
+  };
+}
+
 /** What a leg makes of a stream that broke after its headers were out. */
 export interface StreamFailure {
   error: OpenAiApiError;
@@ -75,13 +151,21 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
   /** The client hung up *after* `[DONE]`: the generation ended, the socket did not. */
   let leftAfterDone = false;
 
+  // Was the stream already open? Then `openStreamIfSlow` has been beating into
+  // it, and the handoff must not add a fresh interval's silence on top of the
+  // gap since its last ping — so this relay beats once before arming its own.
+  const resumed = response.headersSent;
   writeStreamHeaders(response, context);
 
-  let heartbeat: NodeJS.Timeout | undefined = setInterval(() => {
+  const beat = (): void => {
     if (!response.writableEnded) {
       response.write(SSE_HEARTBEAT);
     }
-  }, input.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+  };
+  if (resumed) {
+    beat();
+  }
+  let heartbeat: NodeJS.Timeout | undefined = setInterval(beat, input.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
   const stopHeartbeat = (): void => {
     clearInterval(heartbeat);
     heartbeat = undefined;
@@ -277,7 +361,17 @@ function isUsageOnly(chunk: unknown): boolean {
   return Array.isArray(choices) && choices.length === 0;
 }
 
+/**
+ * The SSE preamble, written at most once.
+ *
+ * Idempotent because two callers race for it: {@link openStreamIfSlow} when the
+ * upstream is slow, and {@link relayStream} when it answers. Whichever got there
+ * first owns the headers.
+ */
 function writeStreamHeaders(response: ExpressResponse, context: GatewayContext): void {
+  if (response.headersSent) {
+    return;
+  }
   response.status(200);
   response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   // `no-transform` and the nginx hint together: any proxy that buffers this

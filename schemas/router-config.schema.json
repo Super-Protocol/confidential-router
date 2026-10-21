@@ -50,6 +50,11 @@
           "maximum": 268435456,
           "default": 8388608,
           "description": "Largest /v1 request body the router accepts, in bytes. Its own limit, well above the 1 MiB the console surfaces keep: a prompt that fills the context_length the catalogue advertises is megabytes of JSON. Raise it for a deployment serving a larger context window, remembering that this number times the expected concurrency is memory."
+        },
+        "streamKeepAliveAfter": {
+          "$ref": "#/$defs/durationAtLeast1s",
+          "default": "15s",
+          "description": "How long a streaming /v1 request may wait in silence before the router opens its event stream and starts sending heartbeat comments into it. Keep it below the read timeout of the ingress in front of this deployment (nginx and OpenResty default to 60s), so the router rather than the ingress decides how a slow request ends. Past this point a failure before the first token is delivered as a data: error event instead of a 502. At least 1s: a shorter delay opens the stream before the backend could plausibly have answered, costing every streamed failure its status code, and 0s turns the heartbeat into a busy loop."
         }
       }
     },
@@ -850,6 +855,11 @@
     "duration": {
       "type": "string",
       "pattern": "^([0-9]+(ms|s|m|h))+$"
+    },
+    "durationAtLeast1s": {
+      "description": "A duration of at least one second: the lookahead requires either a non-zero s/m/h component or a four-digit ms one, so \"0s\" and \"500ms\" are refused.",
+      "type": "string",
+      "pattern": "^(?=.*([1-9][0-9]*(s|m(?!s)|h)|[0-9]{4,}ms))([0-9]+(ms|s|m|h))+$"
     },
     "oauthClient": {
       "type": "object",

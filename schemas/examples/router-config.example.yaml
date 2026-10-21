@@ -10,6 +10,12 @@ server:
   # Largest /v1 body, in bytes. Sized against the widest context window the
   # catalogue below advertises — a 262 144-token prompt is ~1.6 MiB of JSON.
   maxInferenceRequestBytes: 8388608
+  # How long a streamed /v1 request may wait in silence before the router opens
+  # its event stream and heartbeats into it. Keep it below the read timeout of
+  # the ingress in front of this deployment — nginx and OpenResty default to 60s
+  # — so a slow model endpoint ends in the router's error envelope rather than
+  # the ingress's HTML page (SUP-449).
+  streamKeepAliveAfter: 15s
 
 database:
   type: postgres
