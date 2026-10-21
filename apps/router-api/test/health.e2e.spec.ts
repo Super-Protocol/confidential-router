@@ -29,6 +29,12 @@ describe('GET /health', () => {
     // No `POSTHOG_PROJECT_KEY` here, which is the point: this is the shape of a
     // deployment whose rebuild forgot the key, and it still answers 200 with
     // `status: 'ok'` because a missing chart is not an outage (SUP-464).
+    //
+    // `disabled` is the default rather than a derivation: the harness replaces
+    // `ANALYTICS_SINK` wholesale, so `createAnalyticsSink` never runs here. What
+    // this asserts is the wiring — the field is served, and it is served without
+    // touching the overall status. That `disabled` follows from a missing key is
+    // `analytics.module.spec.ts`'s job.
     expect(response.body).toMatchObject({ status: 'ok', analytics: { status: 'disabled', dropped: 0 } });
   });
 

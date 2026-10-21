@@ -369,8 +369,20 @@ model, and taking it out of rotation over a lost welcome mail or a missing chart
   configuration. `dropped` counts events lost since boot — discarded by the disabled sink, refused by
   PostHog, or undeliverable — and is monotonic: read it twice and subtract.
 
+**`configured` is not `verified`.** It says a key was present and a sink was built, not that events land in
+a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to nothing, so a mistyped key
+reads `configured` with `dropped: 0` forever. `configured` rules out the failure that has no other symptom
+(the variable never arrived); a key that is present and wrong is still found by looking for the events.
+
 `/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
 else: no project key, no key prefix, no `POSTHOG_HOST`.
+
+One thing it does leak, knowingly: while `status` is `disabled` the counter rises once per captured event,
+so polling `/health` measures the deployment's event rate — and `signup_started` comes from the public
+ingest, which makes part of that rate a sign-up volume. Accepted rather than overlooked: a `disabled`
+deployment is collecting nothing to correlate it against, the resolution is whatever the poller's interval
+is, and `/health` already publishes the version, the uptime and the mail provider. Should that trade ever
+stop being worth it, the fix is to stop serving `dropped` without a session, not to stop counting.
 
 ## Errors
 

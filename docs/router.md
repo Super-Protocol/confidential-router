@@ -831,6 +831,9 @@ monotonic count of events lost since boot, whether the disabled sink discarded
 them, PostHog refused them or the host could not be reached (SUP-464). Like
 `mail`, it never makes `/health` itself fail: a missing chart is not an outage.
 `/health` is public, so that is all it says — no key, no key prefix, no host.
+`configured` answers "did the variable arrive", not "do events land": a key that
+is present and wrong also reads `configured`, since PostHog accepts a capture for
+a project that does not exist.
 
 **Six of the eight events are captured server-side**, at the boundary where the
 fact they report is committed: `signup_completed` and `invite_redeemed` from the
