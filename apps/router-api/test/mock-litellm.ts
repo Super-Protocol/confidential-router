@@ -217,6 +217,18 @@ export class MockLiteLlm {
           error: { message: "This model's maximum context length is 4096 tokens, however you requested 9000." },
         });
         return;
+      case 'mock/invalid-tool-call':
+        // What a vLLM-backed endpoint answers a poisoned conversation with: a
+        // flat body, no `error` wrapper, and the bad field named — the one piece
+        // of information the client has no other way to get (SUP-448).
+        json(response, 400, {
+          object: 'error',
+          message: 'Invalid JSON in messages[8].tool_calls[0].function.arguments: unterminated object.',
+          type: 'BadRequestError',
+          param: 'messages[8].tool_calls[0].function.arguments',
+          code: 400,
+        });
+        return;
       case 'mock/refuses':
         json(response, 401, { error: { message: 'Invalid LiteLLM key.' } });
         return;

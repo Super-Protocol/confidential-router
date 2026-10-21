@@ -6,6 +6,7 @@ import { SecretEnvelopeService } from '../../secrets/index.js';
 import type { ExternalRoute, RoutedModel } from './gateway.types.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import type { StreamFailure } from './stream-relay.js';
+import { readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 import { postToUpstream } from './upstream-fetch.js';
 
 export interface ExternalUpstreamRequest {
@@ -114,17 +115,20 @@ export class ExternalUpstreamClient {
   /**
    * Maps a non-2xx answer from the egress leg onto the router's error table.
    *
-   * The 503 the sidecar writes when it holds no verdict (`writeDenial` in
-   * `pkg/proxy/handler.go`) carries `error.type: "gatekeeper_error"` plus `stage`
-   * and `reason` — and that is the one upstream body this leg forwards the wording
-   * of, because unlike a cluster-internal LiteLLM message it is *about the client's
-   * request being refused* and names which check refused it.
+   * One case belongs to this leg and this leg only: the 503 the sidecar writes
+   * when it holds no verdict (`writeDenial` in `pkg/proxy/handler.go`), which
+   * carries `error.type: "gatekeeper_error"` plus `stage` and `reason`. Nothing
+   * else on the wire distinguishes it from a model server's own 503, so it is read
+   * here, before the shared table in `upstream-failure.ts` decides the rest.
    *
-   * Everything else is read as conservatively as the LiteLLM mapping: a 4xx the
-   * upstream raised about its own key is not the caller's fault to hear about.
+   * That table is still conservative about whose fault a failure is — a 401 the
+   * upstream raised about the *router's* stored key is not the caller's to hear
+   * about. But a 4xx it raised about the request body now reaches the client as a
+   * 4xx carrying the upstream's wording (SUP-448): the request has to change, and
+   * only the upstream knows what about it.
    */
   async mapFailure(model: RoutedModel, upstream: Response): Promise<OpenAiApiError> {
-    const detail = await readBody(upstream);
+    const detail = await readUpstreamError(upstream);
     const denial = gatekeeperDenialOf(upstream.status, detail.parsed);
     if (denial) {
       this.logger.warn(
@@ -137,17 +141,7 @@ export class ExternalUpstreamClient {
     }
 
     this.logger.warn(`External endpoint "${model.endpoint.name}" answered ${upstream.status}: ${detail.text || '—'}.`);
-    if (upstream.status === 429) {
-      const retryAfter = upstream.headers.get('retry-after') ?? '1';
-      return openAiErrors.rateLimited('The external model endpoint is at capacity.', { 'Retry-After': retryAfter });
-    }
-    if (/context[ _-]?length|maximum context|too many tokens/i.test(detail.text)) {
-      return openAiErrors.contextLengthExceeded(detail.text);
-    }
-    if (upstream.status >= 500 || upstream.status === 404) {
-      return openAiErrors.backendUnavailable(`The external model endpoint answered ${upstream.status}.`);
-    }
-    return openAiErrors.backendError(`The external model endpoint rejected the request (${upstream.status}).`);
+    return upstreamFailureOf('The external model endpoint', upstream, detail);
   }
 
   /**
@@ -219,20 +213,4 @@ function asUpstreamFailure(failure: unknown): OpenAiApiError {
   return failure instanceof OpenAiApiError
     ? failure
     : openAiErrors.backendUnavailable('The external model endpoint stopped sending data.');
-}
-
-async function readBody(upstream: Response): Promise<{ text: string; parsed: unknown }> {
-  let text = '';
-  try {
-    text = (await upstream.text()).slice(0, 1000);
-  } catch {
-    return { text: '', parsed: null };
-  }
-  try {
-    const parsed: unknown = JSON.parse(text);
-    const message = (parsed as { error?: { message?: unknown } } | null)?.error?.message;
-    return { text: typeof message === 'string' ? message : text, parsed };
-  } catch {
-    return { text, parsed: null };
-  }
 }
