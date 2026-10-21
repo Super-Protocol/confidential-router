@@ -87,8 +87,17 @@ describe('Generation', () => {
     const columns = dataSource.getMetadata(Generation).columns.map((column) => column.propertyName);
 
     expect(columns).toContain('client');
-    for (const forbidden of ['useragent', 'agent', 'ua']) {
-      expect(columns.filter((name) => name.toLowerCase().replaceAll('_', '') === forbidden)).toEqual([]);
+    const normalised = columns.map((name) => name.toLowerCase().replaceAll('_', ''));
+
+    // A substring rule for this one, because the names a "just for debugging"
+    // column would actually be given are `clientUserAgent`, `userAgentRaw` and
+    // `rawUserAgent` — all of which an equality rule waves through.
+    expect(normalised.filter((name) => name.includes('useragent'))).toEqual([]);
+    // The two short ones stay exact: `agent` as a substring would catch an
+    // unrelated `agentlessEndpointId`-shaped name, and `ua` is in half the
+    // alphabet.
+    for (const forbidden of ['agent', 'ua']) {
+      expect(normalised.filter((name) => name === forbidden)).toEqual([]);
     }
     // Bounded like an identifier, which a browser's agent string is not: the
     // longest value the closed set can produce is thirteen characters.

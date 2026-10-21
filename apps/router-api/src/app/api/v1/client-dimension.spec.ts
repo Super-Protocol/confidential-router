@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { clientOf, GENERATION_CLIENTS } from './client-dimension.js';
+import { GENERATION_CLIENTS } from '../../db/entities/generation.entity.js';
+import { CLIENT_TABLE, clientOf } from './client-dimension.js';
 
 /**
  * The mapping table, with the strings that produced it.
@@ -85,6 +86,26 @@ describe('the client mapping', () => {
     expect(clientOf({ 'user-agent': 'litellm/1.106.2' })).toBe('litellm');
   });
 
+  it('reads a caller-chosen title only when the whole value is a client name', () => {
+    // `X-Title` is an app name the caller picks, so a substring rule here would
+    // label "de-cline-d" as Cline. A wrong label is worse than an honest `other`
+    // — the same argument that keeps the agent string out of the column.
+    expect(clientOf({ 'user-agent': 'node', 'x-title': 'Declined requests' })).toBe('other');
+    expect(clientOf({ 'user-agent': 'node', 'x-title': 'My Copilot Dashboard' })).toBe('other');
+    expect(clientOf({ 'user-agent': 'node', 'x-title': 'langchain-ish experiment' })).toBe('other');
+    // Exactly a client's name is the caller telling us what it is, which is a
+    // different thing from a word that happens to contain one.
+    expect(clientOf({ 'user-agent': 'node', 'x-title': 'Cline' })).toBe('cline');
+  });
+
+  it('does not file every Copilot-shaped thing under VS Code chat', () => {
+    // `copilotchat`, not `copilot`: the row is first in the table, so a loose
+    // needle would claim a future Copilot that is not VS Code's chat instead of
+    // leaving it in the bucket that would have argued for its own row.
+    expect(clientOf({ 'user-agent': 'SomeOtherCopilot/2.0' })).toBe('other');
+    expect(clientOf({ 'user-agent': 'GitHubCopilotChat/0.69.0' })).toBe('vscode-chat');
+  });
+
   it('maps an unknown agent string to other', () => {
     expect(clientOf({ 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' })).toBe('other');
     expect(clientOf({ 'user-agent': 'SomeoneElsesAgent/4.2' })).toBe('other');
@@ -141,13 +162,28 @@ describe('the client mapping', () => {
   });
 
   it('declares every label the table can produce, and no label it cannot', () => {
-    // `GENERATION_CLIENTS` is what the taxonomy's enum and the entity's union are
-    // checked against; a label reachable from the table but missing here would be
-    // a value the analytics allow-list silently drops.
-    const produced = new Set(CAPTURED.map((entry) => entry.client as string));
+    // Against `CLIENT_TABLE` itself, not against this file's own list: a row
+    // added to the table with a label missing from `GENERATION_CLIENTS` would
+    // pass every other test here and then be dropped from `first_request_sent`
+    // with only a log line to say so.
+    //
+    // The converse direction needs no test: `GenerationClient` is derived from
+    // `GENERATION_CLIENTS`, so a union member that is not in the array cannot
+    // exist. `other` is the one label the table does not produce.
+    const produced = new Set<string>(CLIENT_TABLE.map(([, client]) => client));
     produced.add('other');
 
     expect([...GENERATION_CLIENTS].sort()).toEqual([...produced].sort());
+  });
+
+  it('has a captured string for every row of the table', () => {
+    // So a new row cannot land without the evidence that produced it, which is
+    // the whole argument for this file.
+    const covered = new Set<string>(CAPTURED.map((entry) => entry.client));
+
+    for (const [needle, client] of CLIENT_TABLE) {
+      expect(covered, `${client} (needle "${needle}") has no captured agent string`).toContain(client);
+    }
   });
 
   it('says the same thing as the taxonomy, which is the allow-list with teeth', () => {

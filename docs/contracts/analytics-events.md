@@ -237,7 +237,7 @@ There is no `other_raw` escape hatch, deliberately: that would be the agent stri
 
 | Value | Matched on | A real string that produces it |
 | --- | --- | --- |
-| `vscode-chat` | `copilot` | `GitHubCopilotChat/0.69.0` |
+| `vscode-chat` | `copilotchat` | `GitHubCopilotChat/0.69.0` |
 | `cline` | `cline` | `Cline/SDK` |
 | `roo` | `roocode` | `RooCode/3.54.0` |
 | `continue` | `continue/` | `Continue/IDE` |
@@ -260,7 +260,25 @@ capture it came from:
    its size alone is the evidence, so nothing needs to be kept to find out.
 3. **Needles are matched normalised** — lower case, `-`, `_` and spaces removed — and the first match
    wins. `roo` is tried before `cline` because Roo Code is a Cline fork that still carries `Roo-Cline` in
-   its strings; `langchain` and `litellm` before the OpenAI SDKs, because they wrap them.
+   its strings; `langchain` and `litellm` before the OpenAI SDKs, because they wrap them. The needles are
+   as narrow as the captured strings allow: `copilotchat`, not `copilot`, so a future Copilot that is not
+   VS Code's chat lands in `other` rather than under a label that is wrong about it.
+
+Which headers are read, and how much of each, is part of the rule:
+
+- **`User-Agent` and `X-OnBehalf-Extension-Id`** are written by the client's own HTTP stack — a product
+  string rather than free text — so a needle matches anywhere inside them. The second is VS Code's, not
+  the caller's: it carries `github.copilot-chat/<version>` and survives an agent string the editor's
+  fetch chose rather than the editor itself.
+- **`X-Title`** is the OpenRouter-convention app name, and the **caller picks its value**. It is matched
+  only when the whole value *is* a label — `X-Title: Cline`, `X-Title: Roo Code` — never as a substring,
+  because a substring rule would read `X-Title: Declined requests` as `cline` and `X-Title: My Copilot
+  Dashboard` as `vscode-chat`. A wrong label is worse than an honest `other`, by the same argument that
+  keeps the agent string out of the column. Taking the value at face value when it names a client exactly
+  is not a risk of the same kind — that is the caller telling us what it is, and it is the only signal
+  Cline gives on the path where it sets the header at all.
+- **`HTTP-Referer`** is read by nothing, though these clients send it: Roo Code's value is
+  `https://github.com/RooVetGit/Roo-Cline`, which names the editor it was forked from rather than itself.
 
 Three of the twelve are reachable only from some configurations, which is a fact about the clients rather
 than about the mapping, and the `other` bucket is where the difference goes:
