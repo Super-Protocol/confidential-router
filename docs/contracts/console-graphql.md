@@ -1113,3 +1113,50 @@ this router reads none for someone else's hardware.
 | --- | --- | --- |
 | Models | `models` | One table. The origin badge comes from `origin`; the attestation column renders `EvidenceBadge` for a row with an `endpoint`, `ExternalAttestationBadge` for one with an `externalUpstream`, and `available` alone for an anonymous reader. The two badges share no component and no label. |
 | Chat | `chatSettings`, `routerEndpoint`, `models` | `chatModelIds` contains an external model only while its endpoint holds a live admitting verdict, and is also the scope every chat credential is minted with — so the picker and the key cannot disagree. The gate runs on `routerEndpoint`; `externalUpstream` drives the second inspect panel. |
+
+## As shipped (SUP-462) — a withheld mail the operator can see
+
+```graphql
+enum MailProvider { NONE, CONSOLE, RESEND, SMTP }
+enum MailState { DISABLED, UNVERIFIED, OK, FAILING }   # the transport, and only the transport
+enum MailFailureReason { UNREACHABLE, AUTH_FAILED, REJECTED, ERROR }
+
+type MailWithheld {                     # aggregate only; never per address
+  noInvitation: Int!                    # invite-only, and the request carried no code the gate would admit
+  rateLimited: Int!                     # the recipient had already had their `mailsPerAddressPerHour`
+  unusedCodeType: Int!                  # a `type` this deployment does not mail — a client bug, not an outage
+  since: DateTime!                      # the most recent withheld send
+}
+
+type MailDelivery {                     # auth.adminEmails only
+  provider: MailProvider!
+  state: MailState!
+  reason: MailFailureReason             # only while FAILING
+  since: DateTime                       # when `state` was established
+  withheld: MailWithheld                # null until this replica has withheld something
+  inviteOnly: Boolean!                  # auth.requireInviteForSignUp
+}
+
+# Query.mailDelivery: MailDelivery!     # session + admin
+```
+
+"The sign-in mail is not arriving" has three answers with three different remedies — it was sent, it
+was deliberately withheld, or the transport is broken — and before this only the third was visible.
+A withheld send is invisible to the *caller* by design, because an observable refusal is an
+account-existence oracle ([the mail gate](../router.md#what-an-invite-only-deployment-will-not-mail)
+exists to deny exactly that), and on a published cluster space, where the log cannot be read, that
+made it invisible to everybody. It cost a false production incident: five `200 {"success": true}`
+with nothing reaching the mail provider, read as the deployment having stopped sending.
+
+**Why this is behind `AdminGuard` and not on `/health`.** `withheld` moves by one on each refused
+request. A caller who can read the count, post an address and read it again learns whether that
+address was mailed — on an invite-only deployment, whether it has an account. Aggregate counts are
+safe for an operator and are not safe for a stranger, so the surface is what keeps them apart.
+`/health` carries `mail.signUpGate` (`invite_only` | `open`) instead: the same fact the public
+`signInOptions.inviteRequired` already reports, enough to stop the misread, and configuration rather
+than an event, so it moves for nobody.
+
+Read-only and process-local: the counters start at zero on boot and are this replica's own, the same
+caveat `/health`'s `mail` block has always had. Nothing here changes the gate's admitting logic, the
+send route's status code, or its body — `email-code.e2e.spec.ts` pins the withheld and the sent
+response as byte-identical.

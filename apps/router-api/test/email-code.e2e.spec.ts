@@ -256,7 +256,9 @@ describe('an invite-only deployment', () => {
   const ADMIN = 'admin@example.com';
   const ISSUE = `mutation ($input: IssueInviteCodesInput!) { issueInviteCodes(input: $input) { codes { code } } }`;
 
-  async function inviteOnly(): Promise<{ current: Harness; code: string }> {
+  const DELIVERY = '{ mailDelivery { state inviteOnly withheld { noInvitation rateLimited unusedCodeType since } } }';
+
+  async function inviteOnly(): Promise<{ current: Harness; code: string; admin: string[] }> {
     const current = await codeHarness({
       CR_API_AUTH__REQUIRE_INVITE_FOR_SIGN_UP: 'true',
       CR_API_AUTH__BOOTSTRAP_TOKEN: BOOTSTRAP_TOKEN,
@@ -269,7 +271,14 @@ describe('an invite-only deployment', () => {
       .set('Cookie', cookiesOf(admin))
       .send({ query: ISSUE, variables: { input: { campaign: 'e2e', count: 1, grantMicros: '100000000' } } });
     expect(issued.body.errors).toBeUndefined();
-    return { current, code: issued.body.data.issueInviteCodes.codes[0].code };
+    return { current, code: issued.body.data.issueInviteCodes.codes[0].code, admin: cookiesOf(admin) };
+  }
+
+  /** `mailDelivery`, as the operator reads it: `SessionGuard` + `AdminGuard`. */
+  async function delivery(current: Harness, cookies: string[]) {
+    const response = await request(server(current)).post('/graphql').set('Cookie', cookies).send({ query: DELIVERY });
+    expect(response.body.errors).toBeUndefined();
+    return response.body.data.mailDelivery;
   }
 
   it('creates an account for an unknown address with an invitation and the emailed code, in one flow', async () => {
@@ -352,8 +361,96 @@ describe('an invite-only deployment', () => {
     const sent = await requestCode(current, EMAIL, code).expect(200);
     const withheld = await requestCode(current, 'uninvited@example.com').expect(200);
 
+    expect(withheld.status).toBe(sent.status);
+    // Byte for byte, not merely deep-equal: the constraint SUP-462 had to keep
+    // is that the response does not change at all, and a reader comparing two
+    // of these has the text, not the parse.
+    expect(withheld.text).toBe(sent.text);
     expect(withheld.body).toEqual(sent.body);
     expect(Object.keys(withheld.headers).sort()).toEqual(Object.keys(sent.headers).sort());
+  });
+
+  /**
+   * SUP-462. The gate's silence towards the caller is correct and untouched;
+   * its silence towards the deployment's own operator was not, and produced a
+   * false production incident — five `200 {"success":true}` with nothing
+   * reaching the mail provider, read as "production has stopped sending".
+   */
+  it('tells the operator a withheld send from a working transport, counted by reason', async () => {
+    const { current, code, admin } = await inviteOnly();
+
+    expect(await delivery(current, admin)).toMatchObject({ inviteOnly: true, withheld: null });
+
+    await requestCode(current, EMAIL, code).expect(200);
+    await current.settleMail();
+    const afterSend = await delivery(current, admin);
+
+    for (const address of ['a@example.com', 'b@example.com', 'c@example.com']) {
+      await requestCode(current, address).expect(200);
+    }
+    await current.settleMail();
+    const afterWithheld = await delivery(current, admin);
+
+    // Sent: the transport worked and nothing was withheld.
+    expect(afterSend).toMatchObject({ state: 'OK', withheld: null });
+    // Withheld: the transport is *still* fine — which is the distinction the
+    // operator had no way to make, and the reason SUP-460 was filed as urgent.
+    expect(afterWithheld).toMatchObject({
+      state: 'OK',
+      withheld: { noInvitation: 3, rateLimited: 0, unusedCodeType: 0 },
+    });
+    expect(Date.parse(afterWithheld.withheld.since)).not.toBeNaN();
+  });
+
+  /**
+   * The second silent early return in the same callback (CTO review on this
+   * change): the route accepts three code `type`s and this deployment mails
+   * one, so a client asking for either of the others also gets a `200` and no
+   * mail — the same blind spot, one line further down.
+   */
+  it('counts a code type this deployment does not mail, separately from an uninvited address', async () => {
+    const { current, code, admin } = await inviteOnly();
+    await signInWithCode(current, EMAIL, { inviteCode: code });
+
+    await send(current, { email: EMAIL, type: 'forget-password' });
+    await current.settleMail();
+
+    expect((await delivery(current, admin)).withheld).toMatchObject({ noInvitation: 0, unusedCodeType: 1 });
+  });
+
+  it('keeps the withheld count off the public surfaces that would make it an oracle', async () => {
+    const { current, admin } = await inviteOnly();
+    await requestCode(current, 'uninvited@example.com').expect(200);
+    await current.settleMail();
+
+    const health = await request(server(current)).get('/health').expect(200);
+    const anonymous = await request(server(current)).post('/graphql').send({ query: DELIVERY });
+
+    // `/health` says the gate is on — the one line that stops the misread —
+    // and says nothing that moves when an address is named. A count a stranger
+    // could read before and after posting one would tell them by subtraction
+    // whether it was mailed, which is the account-existence oracle SUP-410
+    // exists to deny.
+    expect(health.body.mail).toMatchObject({ signUpGate: 'invite_only' });
+    expect(JSON.stringify(health.body)).not.toContain('withheld');
+    expect(anonymous.body.data?.mailDelivery ?? null).toBeNull();
+    expect(anonymous.body.errors).toBeDefined();
+    // And the operator can still read it.
+    expect((await delivery(current, admin)).withheld).toMatchObject({ noInvitation: 1 });
+  });
+
+  it('refuses the operator surface to a signed-in member who is not an admin', async () => {
+    const { current, code, admin } = await inviteOnly();
+    const member = await signInWithCode(current, EMAIL, { inviteCode: code });
+
+    const response = await request(server(current))
+      .post('/graphql')
+      .set('Cookie', cookiesOf(member))
+      .send({ query: DELIVERY });
+
+    expect(response.body.data?.mailDelivery ?? null).toBeNull();
+    expect(response.body.errors).toBeDefined();
+    expect((await delivery(current, admin)).inviteOnly).toBe(true);
   });
 
   it('mails an existing account its code with no invitation anywhere near the request', async () => {
