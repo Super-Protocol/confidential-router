@@ -219,6 +219,64 @@ The event the whole campaign is judged on: an account that redeemed $100 and nev
 | `model_slug` | string | yes | — | The catalogue slug of the model the first request went to — a closed set in practice, since it can only be a model the router serves. |
 | `hours_since_signup` | integer | yes | — | Whole hours between account creation and this request, floored. Hours rather than a timestamp difference computed in the tool, so the number survives export. |
 | `had_invite_grant` | boolean | yes | — | Whether this workspace's ledger holds an invitation grant — the split that says whether the $100 did anything. |
+| `client` | string | yes | `vscode-chat` `cline` `roo` `continue` `cursor` `claude-code` `openai-python` `openai-node` `litellm` `langchain` `curl` `other` | Which client sent the activating request. [The closed set below](#the-client-dimension); anything unrecognised is `other`. |
+
+### The `client` dimension
+
+A closed set of twelve values, derived in the `/v1` gateway and stored on `generations.client` as well as
+carried on `first_request_sent` (SUP-466). It exists because SUP-447 spent two days establishing which
+editor a tester was using from screenshots, while the answer was in a header on every request he sent —
+and because behaviour differs sharply between these clients, some of them failing in ways the user never
+reports.
+
+**The raw `User-Agent` is never stored and never sent.** It is a fingerprinting vector, and this
+repository already treats it as one: `invite_redemptions.userAgentHash` keeps a salted hash for abuse
+review and the address itself never lands. What the column and the event hold is a label with no version
+in it — `cline`, not `cline/3.2.1` — no operating system, no architecture, no editor build and no locale.
+There is no `other_raw` escape hatch, deliberately: that would be the agent string with extra steps.
+
+| Value | Matched on | A real string that produces it |
+| --- | --- | --- |
+| `vscode-chat` | `copilot` | `GitHubCopilotChat/0.69.0` |
+| `cline` | `cline` | `Cline/SDK` |
+| `roo` | `roocode` | `RooCode/3.54.0` |
+| `continue` | `continue/` | `Continue/IDE` |
+| `cursor` | `cursor/` | `Cursor/1.0` |
+| `claude-code` | `claudecli/`, `claudecode/` | `claude-cli/2.1.291 (external, sdk-cli)` |
+| `openai-python` | `openai/python` | `OpenAI/Python 3.35.1` |
+| `openai-node` | `openai/js` | `OpenAI/JS 5.23.2` |
+| `litellm` | `litellm` | `litellm/1.106.2` |
+| `langchain` | `langchain` | `langchainjs-openai/1.0.0 ((node/v22.23.2; linux; x64))` |
+| `curl` | `curl/` | `curl/8.5.0` |
+| `other` | nothing above | `node`, `axios/1.20.0`, no `User-Agent` at all |
+
+Three rules make the table readable, and `client-dimension.spec.ts` holds every string above with the
+capture it came from:
+
+1. **Unrecognised is `other`, and so is absent.** A request with no `User-Agent` is classified, not
+   skipped — `other` is a countable population, where null would mean "nobody looked". The column is
+   nullable only for the rows written before the dimension existed.
+2. **Extend by pull request, never by passthrough.** A large `other` bucket is the signal to add a row;
+   its size alone is the evidence, so nothing needs to be kept to find out.
+3. **Needles are matched normalised** — lower case, `-`, `_` and spaces removed — and the first match
+   wins. `roo` is tried before `cline` because Roo Code is a Cline fork that still carries `Roo-Cline` in
+   its strings; `langchain` and `litellm` before the OpenAI SDKs, because they wrap them.
+
+Three of the twelve are reachable only from some configurations, which is a fact about the clients rather
+than about the mapping, and the `other` bucket is where the difference goes:
+
+- **Cline 4.1.25** sends `user-agent: node` or an `ai-sdk/openai-compatible/…` string against an
+  OpenAI-compatible endpoint, naming neither itself nor its editor. It identifies itself only on its own
+  routing provider, which is where `Cline/SDK` and `X-Title: Cline` come from.
+- **Continue 2.0.0** sends `OpenAI/JS 5.23.2` — it is the OpenAI Node SDK, and is counted as
+  `openai-node`. `Continue/IDE` is sent only to one specific provider.
+- **LiteLLM** and **LangChain Python** both announce themselves as `OpenAI/Python` on the path most
+  people use; LiteLLM sends `litellm/<version>` only from its own HTTP handler, and only LangChain **JS**
+  carries a `langchain` token.
+
+Nothing in this derivation reads the request body. Those clients *are* distinguishable by their system
+prompts, and that is exactly why we do not look: a label concluded from prompt text is a conclusion
+drawn from content, which is the one thing the metering path does not do.
 
 ### `model_requested`
 

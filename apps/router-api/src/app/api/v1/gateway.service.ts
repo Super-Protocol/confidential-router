@@ -5,6 +5,7 @@ import { bridgesCompletions } from '../../catalog/served-capabilities.js';
 import { routerConfig } from '../../config.js';
 import { estimatePromptTokens } from '../../metering/token-estimator.js';
 import { type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
+import { clientOf } from './client-dimension.js';
 import { chatBodyForPrompt, textCompletionOf } from './completions-bridge.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
 import type { ExternalRoute, GatewayContext, GenerationOutcome, RoutedModel, RouteKind } from './gateway.types.js';
@@ -90,6 +91,7 @@ export class GatewayService {
       rateLimitHeaders,
       requestId: headerOf(request, 'x-request-id'),
       clientIp: request.ip ?? null,
+      client: clientOf(request.headers),
       startedAt: Date.now(),
     };
 
