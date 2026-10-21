@@ -150,8 +150,9 @@ export function mailSendFailed(context: MailSendContext | null | undefined): boo
  * a recipient the server would not take — and that refusal now resolves like a
  * withheld send rather than answering 503, so it carries no bit of its own
  * either. With both gone the window only opens on a real transport outage, any
- * legitimate sign-in closes it first, and it yields one bit per outage. The two ways to close it outright both cost more than that:
- * a transport re-check on a withheld request records `ok` without proof on a
+ * legitimate sign-in closes it first, and it yields one bit per outage. The
+ * two ways to close it outright both cost more than that: a transport
+ * re-check on a withheld request records `ok` without proof on a
  * provider with nothing to probe — reinstating the one-request oracle it was
  * meant to remove — and a refusal cooldown trades the bit for a sign-in outage
  * anyone could trigger.

@@ -64,10 +64,20 @@ export type MailerFailureReason = Exclude<MailFailureReason, 'recipient_refused'
  * `rejected` at all — a `MAIL FROM` the relay would not accept, a `DATA`
  * stage it refused, the API-level envelope checks — which is exactly the
  * distinction the state needs and the code alone does not give.
+ *
+ * The code still has to agree, though it adds nothing on its own. Only those
+ * two stages can refuse a recipient, so anything else carrying a `rejected`
+ * list is a transport error with a field we did not expect — and reading that
+ * as one address would suppress the state flip, which is the direction that
+ * costs a lying `/health` rather than one spare refusal.
  */
 function namesRefusedRecipient(error: unknown): boolean {
   const rejected = (error as { rejected?: unknown } | null)?.rejected;
-  return Array.isArray(rejected) && rejected.length > 0;
+  if (!Array.isArray(rejected) || rejected.length === 0) {
+    return false;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'EENVELOPE' || code === 'EMESSAGE';
 }
 
 const UNREACHABLE_CODES = new Set([
