@@ -48,6 +48,30 @@ function entry(id: string, workspaceId: string, [amountMicros, idempotencyKey]: 
   };
 }
 
+function apiKey(id: string, workspaceId: string, hash: string): ExportData['apiKeys'][number] {
+  return {
+    id,
+    workspaceId,
+    name: `${id} key`,
+    keyHash: hash,
+    prefix: 'sk-tee-v1-4f',
+    purpose: null,
+    modelScope: null,
+    spendLimitMicros: '10000000',
+    spentTotalMicros: '9500000',
+    requestsPerMinute: null,
+    tokensPerMinute: null,
+    expiresAt: null,
+    lastUsedAt: AT,
+    revokedAt: null,
+    createdByUserId: null,
+    createdAt: AT,
+  };
+}
+
+const ADA_KEY_HASH = 'a1'.repeat(32);
+const OP_KEY_HASH = 'b2'.repeat(32);
+
 /** The operator with a sign-up grant, and one invited account that spent its code. */
 function exported(): ExportData {
   return {
@@ -101,6 +125,7 @@ function exported(): ExportData {
         redeemedAt: AT,
       },
     ],
+    apiKeys: [apiKey('key-ada', 'ws-ada', ADA_KEY_HASH), apiKey('key-op', 'ws-op', OP_KEY_HASH)],
     externalEndpoints: [],
     trustedMeasurements: [
       { id: 'tm-1', measurement: 'ab'.repeat(32), note: null, addedByUserId: 'op-old', addedAt: AT },
@@ -123,6 +148,7 @@ const EMPTY: LocalState = {
   ledger: [],
   inviteCodes: [],
   redemptions: [],
+  apiKeys: [],
   externalEndpoints: [],
   models: [],
   trustedMeasurements: [],
@@ -168,6 +194,54 @@ describe('planImport', () => {
     expect(plan.writes.trustedMeasurements[0]?.addedByUserId).toBe('op-new');
   });
 
+  it('carries an API key into the workspace it belongs to, limit and counter intact', () => {
+    const plan = planImport(bundleOf(exported()), CLAIMED, options);
+
+    expect(planIsClean(plan)).toBe(true);
+    expect(plan.writes.apiKeys.map((key) => key.id).sort()).toEqual(['key-ada', 'key-op']);
+    expect(plan.writes.apiKeys.find((key) => key.id === 'key-ada')).toMatchObject({
+      workspaceId: 'ws-ada',
+      keyHash: ADA_KEY_HASH,
+      spendLimitMicros: '10000000',
+      spentTotalMicros: '9500000',
+    });
+    // The operator's own key lands in the workspace they own on this deployment.
+    expect(plan.writes.apiKeys.find((key) => key.id === 'key-op')).toMatchObject({ workspaceId: 'ws-new' });
+    expect(plan.notes.join(' ')).toContain('2 API key(s) are imported, 2 of them still live');
+  });
+
+  it('counts a revoked key as imported but not as live', () => {
+    const data = exported();
+    data.apiKeys = [{ ...apiKey('key-dead', 'ws-ada', ADA_KEY_HASH), revokedAt: AT }];
+
+    const plan = planImport(bundleOf(data), EMPTY, options);
+
+    expect(plan.writes.apiKeys[0]).toMatchObject({ revokedAt: AT });
+    expect(plan.notes.join(' ')).toContain('1 API key(s) are imported, 0 of them still live');
+  });
+
+  it('reports a credential already registered here, and an id that is a different credential', () => {
+    const plan = planImport(
+      bundleOf(exported()),
+      {
+        ...EMPTY,
+        apiKeys: [
+          { id: 'key-else', keyHash: ADA_KEY_HASH },
+          { id: 'key-op', keyHash: 'c3'.repeat(32) },
+        ],
+      },
+      options,
+    );
+
+    const conflicts = plan.sections.find((section) => section.section === 'apiKeys')?.conflicts ?? [];
+    expect(planIsClean(plan)).toBe(false);
+    expect(conflicts).toHaveLength(2);
+    // Named by row id: the hash is a verifier and is not echoed into a message.
+    expect(conflicts.join(' ')).toContain('key-ada');
+    expect(conflicts.join(' ')).toContain('key-op');
+    expect(conflicts.join(' ')).not.toContain(ADA_KEY_HASH);
+  });
+
   it('lands a mapped operator’s other ledger entries in the workspace they own here', () => {
     const data = exported();
     data.creditLedger.push(entry('tx-op-2', 'ws-op', ['5000000', 'adjustment:manual-1']));
@@ -189,6 +263,7 @@ describe('planImport', () => {
       ledger: data.creditLedger.map(({ id, idempotencyKey }) => ({ id, idempotencyKey })),
       inviteCodes: data.inviteCodes.map(({ id, value }) => ({ id, code: value })),
       redemptions: data.inviteRedemptions.map(({ id, userId }) => ({ id, userId })),
+      apiKeys: data.apiKeys.map(({ id, keyHash }) => ({ id, keyHash })),
       externalEndpoints: [],
       models: [],
       trustedMeasurements: data.trustedMeasurements.map(({ id, measurement }) => ({ id, measurement })),
@@ -292,6 +367,18 @@ describe('bundleInconsistencies', () => {
 
     expect(bundleInconsistencies(data).join(' ')).toContain('do not equal the sum of their ledger entries');
     expect(planIsClean(planImport(bundleOf(data), EMPTY, options))).toBe(false);
+  });
+
+  it('refuses a key whose workspace is not in the file, and two keys with one credential', () => {
+    const orphaned = exported();
+    orphaned.apiKeys = [apiKey('key-ghost', 'ws-gone', ADA_KEY_HASH)];
+    expect(bundleInconsistencies(orphaned).join(' ')).toContain(
+      'API key(s) belong to a workspace the export does not carry',
+    );
+
+    const twinned = exported();
+    twinned.apiKeys = [apiKey('key-1', 'ws-ada', ADA_KEY_HASH), apiKey('key-2', 'ws-ada', ADA_KEY_HASH)];
+    expect(bundleInconsistencies(twinned).join(' ')).toContain('the same API key hash more than once');
   });
 
   it('refuses references to rows the export does not carry, and repeated rows', () => {

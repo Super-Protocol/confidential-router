@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BundleRefusedError,
   buildBundle,
+  CARRIED_NON_CREDENTIAL_PATHS,
   canonicalJson,
   contentSha256,
   credentialShapedKeys,
@@ -12,6 +13,7 @@ import {
 } from './export-bundle.js';
 
 const AT = '2026-10-01T00:00:00.000Z';
+const KEY_HASH = 'a1'.repeat(32);
 
 function data(): ExportData {
   return {
@@ -58,6 +60,44 @@ function data(): ExportData {
     ],
     inviteCodes: [],
     inviteRedemptions: [],
+    apiKeys: [
+      {
+        id: 'k1',
+        workspaceId: 'w1',
+        name: 'Production',
+        keyHash: KEY_HASH,
+        prefix: 'sk-tee-v1-4f',
+        purpose: null,
+        modelScope: null,
+        spendLimitMicros: '5000000',
+        spentTotalMicros: '1250000',
+        requestsPerMinute: null,
+        tokensPerMinute: null,
+        expiresAt: null,
+        lastUsedAt: AT,
+        revokedAt: null,
+        createdByUserId: 'u1',
+        createdAt: AT,
+      },
+      {
+        id: 'k2',
+        workspaceId: 'w1',
+        name: 'Retired',
+        keyHash: 'f0'.repeat(32),
+        prefix: 'sk-tee-v1-9a',
+        purpose: 'console_chat',
+        modelScope: ['mock/chat:tdx'],
+        spendLimitMicros: null,
+        spentTotalMicros: '0',
+        requestsPerMinute: 60,
+        tokensPerMinute: 10_000,
+        expiresAt: AT,
+        lastUsedAt: null,
+        revokedAt: AT,
+        createdByUserId: 'u1',
+        createdAt: AT,
+      },
+    ],
     externalEndpoints: [],
     trustedMeasurements: [],
   };
@@ -90,6 +130,8 @@ describe('buildBundle', () => {
 
     expect(built).toMatchObject({ format: 'router-export', schemaVersion: 1, exportedAt: AT, source });
     expect(built.counts).toMatchObject({ users: 1, workspaces: 1, creditEntries: 1, inviteCodes: 0 });
+    // Two keys, one of them revoked: a revoked key is carried, and is not live.
+    expect(built.counts).toMatchObject({ apiKeys: 2, apiKeysLive: 1 });
     expect(built.totalBalanceMicros).toBe('7000000');
     expect(built.integrity.contentSha256).toBe(contentSha256(built.data));
   });
@@ -111,11 +153,54 @@ describe('credentialShapedKeys', () => {
     ).toEqual(['rows[].keyHash', 'rows[].apiKeyCiphertext', 'rows[].sessionToken', 'rows[].password']);
     expect(credentialShapedKeys(bundle())).toEqual([]);
   });
+
+  it('excuses the API-key hash where it is carried, and nowhere else', () => {
+    // The whole point of a path allowlist: the same column name in another
+    // section is still the tripwire it was written to be.
+    expect(CARRIED_NON_CREDENTIAL_PATHS).toEqual([
+      'apiKeys',
+      'apiKeys[].keyHash',
+      'apiKeys[].tokensPerMinute',
+      'counts.apiKeys',
+      'counts.apiKeysLive',
+    ]);
+    expect(credentialShapedKeys({ apiKeys: [{ id: 'k1', keyHash: 'x' }] })).toEqual([]);
+    expect(credentialShapedKeys({ data: { apiKeys: [{ keyHash: 'x' }] } })).toEqual([]);
+    expect(credentialShapedKeys({ apiKeys: [{ keyHash: 'x', sessionToken: 'z' }] })).toEqual([
+      'apiKeys[].sessionToken',
+    ]);
+    expect(credentialShapedKeys({ users: [{ keyHash: 'x' }] })).toEqual(['users[].keyHash']);
+    // Excused by place, not by name: the same two words somewhere nobody judged
+    // are still the tripwire they were written to be.
+    expect(credentialShapedKeys({ users: [{ apiKeys: [{ keyHash: 'x' }] }] })).toEqual([
+      'users[].apiKeys',
+      'users[].apiKeys[].keyHash',
+    ]);
+  });
 });
 
 describe('decodeBundle', () => {
-  it('round-trips what encodeBundle wrote', () => {
-    expect(decodeBundle(encodeBundle(bundle()))).toEqual(bundle());
+  it('round-trips what encodeBundle wrote, hashes included', () => {
+    const read = decodeBundle(encodeBundle(bundle()));
+
+    expect(read).toEqual(bundle());
+    // The hash arrives byte for byte: that is the whole of "the key still works".
+    expect(read.data.apiKeys[0]?.keyHash).toBe(KEY_HASH);
+  });
+
+  it('reads a bundle written before the apiKeys section existed', () => {
+    // The redeploy exports from the old build and imports into the new one, so
+    // this direction is the ordinary case and not a curiosity (SUP-445).
+    const raw = JSON.parse(gunzipSync(encodeBundle(bundle())).toString('utf8'));
+    delete raw.data.apiKeys;
+    delete raw.counts.apiKeys;
+    delete raw.counts.apiKeysLive;
+    raw.integrity.contentSha256 = contentSha256(raw.data);
+
+    const read = decodeBundle(repack(raw));
+
+    expect(read.data.apiKeys).toEqual([]);
+    expect(read.counts).toMatchObject({ apiKeys: 0, apiKeysLive: 0 });
   });
 
   it('keeps reading a bundle that carries a field this build does not know', () => {

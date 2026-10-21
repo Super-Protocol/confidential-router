@@ -4,6 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager, type EntityTarget, In, type ObjectLiteral } from 'typeorm';
 import { AuthService } from '../auth/index.js';
 import { routerConfig } from '../config.js';
+import { ApiKey } from '../db/entities/api-key.entity.js';
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
@@ -131,18 +132,29 @@ export class DataImportService {
 
   private async localState(): Promise<LocalState> {
     const repository = <T extends ObjectLiteral>(entity: EntityTarget<T>) => this.dataSource.getRepository(entity);
-    const [users, workspaces, members, ledger, inviteCodes, redemptions, externalEndpoints, models, measurements] =
-      await Promise.all([
-        this.auth.listUsers(),
-        repository(Workspace).find({ select: { id: true, slug: true } }),
-        repository(WorkspaceMember).find({ select: { workspaceId: true, userId: true, role: true } }),
-        repository(CreditTransaction).find({ select: { id: true, idempotencyKey: true } }),
-        repository(InviteCode).find({ select: { id: true, code: true } }),
-        repository(InviteRedemption).find({ select: { id: true, userId: true } }),
-        repository(ExternalEndpoint).find({ select: { id: true, name: true } }),
-        repository(Model).find({ select: { id: true, externalEndpointId: true } }),
-        repository(TrustedMeasurement).find({ select: { id: true, measurement: true } }),
-      ]);
+    const [
+      users,
+      workspaces,
+      members,
+      ledger,
+      inviteCodes,
+      redemptions,
+      apiKeys,
+      externalEndpoints,
+      models,
+      measurements,
+    ] = await Promise.all([
+      this.auth.listUsers(),
+      repository(Workspace).find({ select: { id: true, slug: true } }),
+      repository(WorkspaceMember).find({ select: { workspaceId: true, userId: true, role: true } }),
+      repository(CreditTransaction).find({ select: { id: true, idempotencyKey: true } }),
+      repository(InviteCode).find({ select: { id: true, code: true } }),
+      repository(InviteRedemption).find({ select: { id: true, userId: true } }),
+      repository(ApiKey).find({ select: { id: true, keyHash: true } }),
+      repository(ExternalEndpoint).find({ select: { id: true, name: true } }),
+      repository(Model).find({ select: { id: true, externalEndpointId: true } }),
+      repository(TrustedMeasurement).find({ select: { id: true, measurement: true } }),
+    ]);
     return {
       users,
       workspaces,
@@ -150,6 +162,7 @@ export class DataImportService {
       ledger,
       inviteCodes,
       redemptions,
+      apiKeys,
       externalEndpoints,
       models,
       trustedMeasurements: measurements,
@@ -234,6 +247,32 @@ export class DataImportService {
         ipHash: null,
         userAgentHash: null,
         redeemedAt: dateOf(row.redeemedAt),
+      })),
+    );
+
+    // After the workspaces they belong to, and with the hash exactly as exported:
+    // that column is what `ApiKeyService.authenticate` looks a presented key up
+    // by, so writing it unchanged is the whole of "the key still works" (SUP-445).
+    await insert(
+      manager,
+      ApiKey,
+      writes.apiKeys.map((key) => ({
+        id: key.id,
+        workspaceId: key.workspaceId,
+        name: key.name,
+        keyHash: key.keyHash,
+        prefix: key.prefix,
+        purpose: key.purpose,
+        modelScope: key.modelScope,
+        spendLimitMicros: numberOrNull(key.spendLimitMicros),
+        spentTotalMicros: numberOf(key.spentTotalMicros),
+        requestsPerMinute: key.requestsPerMinute,
+        tokensPerMinute: key.tokensPerMinute,
+        expiresAt: dateOrNull(key.expiresAt),
+        lastUsedAt: dateOrNull(key.lastUsedAt),
+        revokedAt: dateOrNull(key.revokedAt),
+        createdByUserId: key.createdByUserId,
+        createdAt: dateOf(key.createdAt),
       })),
     );
 

@@ -7,11 +7,21 @@ import * as z from 'zod';
  *
  * It is what carries a small production dataset across a redeploy — accounts,
  * workspaces and their credit ledger, invitation codes with their redemptions,
- * and the external-endpoint trust configuration — and it is deliberately *not* a
- * database dump: chats, generations, sessions, API keys and every credential are
- * left behind, so the file holds no secret at all. What it does hold is personal
- * data and live invitation codes, which is why only an operator can ask for one
- * and nothing keeps a copy.
+ * the `/v1` credentials those accounts hold, and the external-endpoint trust
+ * configuration — and it is deliberately *not* a database dump: chats,
+ * generations, sessions and every sign-in credential are left behind. What it
+ * does hold is personal data, live invitation codes and the API-key hashes
+ * below, which is why only an operator can ask for one and nothing keeps a copy.
+ *
+ * **Why the API-key hashes are in it, and why that is still no secret** (SUP-445):
+ * a `/v1` key is stored as `sha256(secret)` over 32 bytes of CSPRNG entropy
+ * (`api-keys/api-key-token.ts`), so the stored form has no feasible preimage —
+ * holding the file does not let anyone authenticate as that key, the way holding
+ * a password hash would eventually let them in. Carrying it is what keeps a key
+ * a user configured into a Gatekeeper, an IDE or a script working after a
+ * redeploy; leaving it behind revoked every such key silently, which is the bug
+ * this section exists to close. Nothing else about a key is recoverable from the
+ * bundle, and `CREDENTIAL_KEY_PATTERN` still refuses every other shape.
  *
  * Ids are the rows' own, so every reference survives as written; instants are
  * ISO-8601 UTC; money is integer micro-USD as a decimal string, the ledger's
@@ -24,6 +34,13 @@ export const EXPORT_FORMAT = 'router-export';
  * Gates import: a version this build does not know is refused. An additive
  * field does not bump it — the importer ignores what it does not read — and a
  * change to the meaning of an existing field does.
+ *
+ * `apiKeys` was added without a bump on purpose. A redeploy exports from the
+ * *old* build and imports into the new one, so bumping would refuse exactly the
+ * file the runbook produces; instead the new section defaults to empty, which
+ * is what a file written before it says, and an older build handed a newer file
+ * refuses it loudly on the credential guard below rather than dropping the
+ * section in silence.
  */
 export const EXPORT_SCHEMA_VERSION = 1;
 
@@ -38,9 +55,37 @@ export const MAX_INFLATED_BYTES = 256 * 1024 * 1024;
  * build wrote — it is the tripwire for the day somebody adds a column to a
  * section without reading the paragraph above, and the reason an import refuses
  * a hand-edited file that tries to carry one in. `idempotencyKey` is the ledger's
- * retry key, not a secret, and is the one spelling let through.
+ * retry key, not a secret, and is the one spelling let through by name;
+ * {@link CARRIED_NON_CREDENTIAL_PATHS} lists the exact paths let through by place.
  */
 export const CREDENTIAL_KEY_PATTERN = /pass(word|phrase)|hash|token|secret|ciphertext|api_?key|credential|session/i;
+
+/**
+ * The exceptions to {@link CREDENTIAL_KEY_PATTERN}, by path rather than by name.
+ *
+ * One entry per place whose name matches the pattern without being a credential,
+ * and the judgement is the comment beside it. By path and not by name so the
+ * tripwire keeps its reach: a `keyHash` or a `token…` added to any other section
+ * still refuses the export, because only these places are excused.
+ *
+ * Matched whole, or under a leading `data.` — the guard is pointed either at a
+ * bundle or at its `data` alone, and those are the only two roots a path can
+ * have. Not a suffix match: `users[].apiKeys[].keyHash` is a place no one has
+ * judged, and it should read as the surprise it would be.
+ */
+export const CARRIED_NON_CREDENTIAL_PATHS: readonly string[] = [
+  // The section name itself matches `api_?key`. The rows under it carry no secret.
+  'apiKeys',
+  // `sha256(secret)` over 32 CSPRNG bytes: no feasible preimage, so the file
+  // cannot be presented as the key. See the paragraph at the top (SUP-445).
+  'apiKeys[].keyHash',
+  // A rate limit measured in model tokens. "Token" as a unit of text, not a
+  // credential — the one word the pattern cannot tell apart.
+  'apiKeys[].tokensPerMinute',
+  // The two manifest counts, named after the section they count.
+  'counts.apiKeys',
+  'counts.apiKeysLive',
+];
 
 const iso = z.iso.datetime({ offset: true });
 const micros = z.string().regex(/^-?\d+$/, 'must be an integer amount of micro-USD');
@@ -117,6 +162,48 @@ const InviteRedemptionSchema = z.object({
   redeemedAt: iso,
 });
 
+/**
+ * A `/v1` credential, hash and all (SUP-445).
+ *
+ * Everything a key *is* travels — the verifier, the display prefix, the scope,
+ * the limit and the counter that limit is measured against, the revocation and
+ * the expiry — because a key that comes back without one of them is not the key
+ * its owner configured. In particular:
+ *
+ *  - `spentTotalMicros` travels with `spendLimitMicros`. A limit without its
+ *    counter is a limit reset: a key capped at $10 that has spent $9.50 would
+ *    arrive able to spend $10 more. The generations behind the counter stay
+ *    behind, so this column is the only record of that spend after a redeploy.
+ *  - `revokedAt` travels, so a revoked key stays revoked. Dropping the section
+ *    lost live keys; dropping only the state would resurrect dead ones, which is
+ *    the worse half of the same mistake.
+ *  - `purpose: 'console_chat'` keys travel like any other. The console rotates
+ *    its own on the next visit and they expire by themselves; judging which
+ *    credentials are worth carrying is how a category goes missing in silence.
+ */
+const ApiKeySchema = z.object({
+  id,
+  workspaceId: id,
+  name: z.string().max(255),
+  /** `sha256(secret)`, hex — the stored form, which no one can turn back into a key. */
+  keyHash: z.string().regex(/^[0-9a-f]{64}$/),
+  /** Leading characters of the secret, kept for display (`sk-tee-v1-4f`). */
+  prefix: z.string().max(16),
+  /** `console_chat` for the key the console's Chat screen mints for itself; null for a person's. */
+  purpose: z.enum(['console_chat']).nullable(),
+  /** Model ids this key may call. `null` means every model. */
+  modelScope: z.array(z.string().max(255)).nullable(),
+  spendLimitMicros: micros.nullable(),
+  spentTotalMicros: micros,
+  requestsPerMinute: z.number().int().nullable(),
+  tokensPerMinute: z.number().int().nullable(),
+  expiresAt: iso.nullable(),
+  lastUsedAt: iso.nullable(),
+  revokedAt: iso.nullable(),
+  createdByUserId: id.nullable(),
+  createdAt: iso,
+});
+
 const ExternalModelSchema = z.object({
   id: z.string().min(1).max(255),
   name: z.string().min(1).max(255),
@@ -156,9 +243,15 @@ const DataSchema = z.object({
   creditLedger: z.array(CreditEntrySchema),
   inviteCodes: z.array(InviteCodeSchema),
   inviteRedemptions: z.array(InviteRedemptionSchema),
+  // Defaulted, not optional: a bundle written before this section existed reads
+  // as "no keys" rather than as a malformed file. See EXPORT_SCHEMA_VERSION.
+  apiKeys: z.array(ApiKeySchema).default([]),
   externalEndpoints: z.array(ExternalEndpointSchema),
   trustedMeasurements: z.array(TrustedMeasurementSchema),
 });
+
+/** Every section of `data`, in schema order — the list a new entity has to join. */
+export const BUNDLE_SECTIONS = Object.keys(DataSchema.shape) as readonly (keyof z.infer<typeof DataSchema>)[];
 
 const CountsSchema = z.object({
   users: z.number().int(),
@@ -169,6 +262,9 @@ const CountsSchema = z.object({
   inviteCodes: z.number().int(),
   inviteCodesUnredeemed: z.number().int(),
   inviteRedemptions: z.number().int(),
+  /** Defaulted for the same reason the section is, so an older file still adds up. */
+  apiKeys: z.number().int().default(0),
+  apiKeysLive: z.number().int().default(0),
   externalEndpoints: z.number().int(),
   externalModels: z.number().int(),
   trustedMeasurements: z.number().int(),
@@ -204,6 +300,7 @@ export type ExportSource = ExportBundle['source'];
 export type ExportedUser = ExportData['users'][number];
 export type ExportedWorkspace = ExportData['workspaces'][number];
 export type ExportedInviteCode = ExportData['inviteCodes'][number];
+export type ExportedApiKey = ExportData['apiKeys'][number];
 export type ExportedExternalEndpoint = ExportData['externalEndpoints'][number];
 
 /** Why a file is not a bundle this build will read. Always safe to show the operator. */
@@ -242,6 +339,10 @@ export function countsOf(data: ExportData): ExportCounts {
     inviteCodes: data.inviteCodes.length,
     inviteCodesUnredeemed: data.inviteCodes.filter((code) => code.status === 'unredeemed').length,
     inviteRedemptions: data.inviteRedemptions.length,
+    apiKeys: data.apiKeys.length,
+    // The number that matters to a reader: a revoked key is carried for the
+    // generations metered against it, not for anyone to authenticate with.
+    apiKeysLive: data.apiKeys.filter((key) => key.revokedAt === null).length,
     externalEndpoints: data.externalEndpoints.length,
     externalModels: data.externalEndpoints.reduce((sum, endpoint) => sum + endpoint.models.length, 0),
     trustedMeasurements: data.trustedMeasurements.length,
@@ -252,7 +353,15 @@ export function totalBalanceMicros(data: ExportData): string {
   return String(data.workspaces.reduce((sum, workspace) => sum + BigInt(workspace.balanceMicros), 0n));
 }
 
-/** Every key path in `value` that {@link CREDENTIAL_KEY_PATTERN} matches. */
+/** True when `path` is one of the {@link CARRIED_NON_CREDENTIAL_PATHS}, at either root. */
+function isExcusedPath(path: string): boolean {
+  return CARRIED_NON_CREDENTIAL_PATHS.some((allowed) => path === allowed || path === `data.${allowed}`);
+}
+
+/**
+ * Every key path in `value` that {@link CREDENTIAL_KEY_PATTERN} matches and
+ * {@link CARRIED_NON_CREDENTIAL_PATHS} does not excuse.
+ */
 export function credentialShapedKeys(value: unknown, path = ''): string[] {
   if (Array.isArray(value)) {
     // One row stands for its section: the rows of a section share their keys.
@@ -263,7 +372,7 @@ export function credentialShapedKeys(value: unknown, path = ''): string[] {
   }
   return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => {
     const here = path ? `${path}.${key}` : key;
-    const own = key !== 'idempotencyKey' && CREDENTIAL_KEY_PATTERN.test(key) ? [here] : [];
+    const own = key !== 'idempotencyKey' && !isExcusedPath(here) && CREDENTIAL_KEY_PATTERN.test(key) ? [here] : [];
     return [...own, ...credentialShapedKeys(entry, here)];
   });
 }
