@@ -591,6 +591,41 @@ describe('SignInForm, the emailed-code path', () => {
     expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
   });
 
+  /**
+   * SUP-460: the router used to answer `200 {"success": true}` for a code it
+   * never managed to send, which put the viewer on the code step waiting for a
+   * mail that was not coming. It refuses with a 503 now, and the card has to
+   * keep them where they can try again.
+   */
+  it('keeps the viewer on the address when the router could not send the code', async () => {
+    routeCode({
+      send: jsonResponse({ code: 'MAIL_SEND_FAILED', message: 'The sign-in code could not be sent.' }, false, 503),
+    });
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be sent just now');
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
+  });
+
+  /**
+   * A gateway in front of the router answers the same status with no body —
+   * the viewer must not be told "Sign-in failed" for an outage they can only
+   * wait out.
+   */
+  it('says the same thing when the 503 carries no body at all', async () => {
+    routeCode({ send: { ok: false, status: 503, json: async () => undefined } as unknown as Response });
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be sent just now');
+  });
+
   it('says so when the deployment turns out to have no mailer after all', async () => {
     // Only reachable from the fallback that offers everything: the options
     // query failed, so the card guessed.

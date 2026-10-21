@@ -112,18 +112,64 @@ describe('an SMTP server the deployment cannot reach', () => {
     expect((await health(current)).mail).toMatchObject({ provider: 'smtp', state: 'failing', reason: 'unreachable' });
   });
 
-  it('answers a code request the same for every address, and keeps reporting the failure', async () => {
+  /**
+   * SUP-460: for days the production router answered `200 {"success": true}`
+   * to every sign-in-code request while nothing reached the mail provider, and
+   * sign-in there is by emailed code only — so the deployment reported success
+   * at the exact moment it had locked everybody out. Better Auth catches and
+   * logs whatever the send callback rejects with and returns its own body
+   * anyway; the after hook in `mail-send-failure.plugin.ts` is what turns that
+   * back into a refusal.
+   */
+  it('refuses a code request it could not send, under one name', async () => {
     const current = await smtpHarness(await closedPort());
 
-    const first = await requestCode(current, EMAIL);
-    const second = await requestCode(current, 'nobody@example.com');
+    const refused = await requestCode(current);
 
-    // Better Auth swallows a failed send, so the requester is told nothing —
-    // the same nothing for an account and for a stranger. Where it shows is
-    // here, and in the log.
-    expect(first.status).toBe(200);
-    expect(second.body).toEqual(first.body);
+    expect(refused.status).toBe(503);
+    expect(refused.body).toEqual({ code: 'MAIL_SEND_FAILED', message: expect.any(String) });
+    // Not a word about the host it could not reach, or the account it tried.
+    expect(JSON.stringify(refused.body)).not.toContain('127.0.0.1');
     expect((await health(current)).mail).toMatchObject({ state: 'failing', reason: 'unreachable' });
+  });
+
+  it('refuses it the same way for every address', async () => {
+    const current = await smtpHarness(await closedPort());
+
+    const known = await requestCode(current, EMAIL);
+    const unknown = await requestCode(current, 'nobody@example.com');
+
+    // The transport is down for everybody, so the refusal says nothing about
+    // who asked — which is the property the 200 used to carry and this has to
+    // keep.
+    expect(unknown.status).toBe(known.status);
+    expect(unknown.body).toEqual(known.body);
+    expect(Object.keys(unknown.headers).sort()).toEqual(Object.keys(known.headers).sort());
+  });
+
+  /**
+   * The send that was never attempted is not a failed one. An address past its
+   * hourly allowance is `MailService`'s deliberate silence, and it has to keep
+   * answering exactly as it does when the mailer is healthy.
+   */
+  it('still answers 200 for a recipient it chose not to mail', async () => {
+    const current = await smtpHarness(await closedPort(), {
+      CR_API_AUTH__EMAIL_CODE__MAILS_PER_ADDRESS_PER_HOUR: '1',
+    });
+
+    await requestCode(current).expect(503);
+    await requestCode(current).expect(200);
+  });
+
+  it('refuses a magic link it could not send the same way', async () => {
+    const current = await smtpHarness(await closedPort());
+
+    const refused = await request(current.app.getHttpServer())
+      .post('/auth/sign-in/magic-link')
+      .send({ email: EMAIL, callbackURL: '/' });
+
+    expect(refused.status).toBe(503);
+    expect(refused.body).toMatchObject({ code: 'MAIL_SEND_FAILED' });
   });
 
   it('reports refused credentials as such', async () => {

@@ -76,10 +76,10 @@ const HOUR_MS = 3_600_000;
  * set and delivered through whichever provider is configured (SUP-269).
  *
  * Two kinds of caller, two contracts. A sign-in code or link is awaited and
- * rejects when it could not be sent; what the requester then sees is Better
- * Auth's decision, and for a code it is nothing — the send route swallows the
- * failure and answers every address alike. Awaiting leaks nothing either way:
- * a code is mailed to any address that asks, account or not, so the answer and
+ * rejects when it could not be sent, and that rejection is what the requester
+ * is told about: a 503 from either route, the same one for every address
+ * (SUP-460, `mail-send-failure.plugin.ts`). Awaiting leaks nothing by it — a
+ * code is mailed to any address that asks, account or not, so the answer and
  * the time it takes are the same for both. The welcome mail is fire-and-forget:
  * a sign-up must not fail because the greeting did not go out. Every failure
  * is the operator's to see, so each goes to the log at error level and into
@@ -157,7 +157,10 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
    * A recipient past their hourly allowance is the one case that resolves
    * without sending: the allowance exists so that nobody can flood somebody
    * else's inbox, and answering the flooder differently would hand them a way
-   * to tell when the victim's sign-in has been silenced.
+   * to tell when the victim's sign-in has been silenced. It is the one thing
+   * a 503 for a failed send can still be told apart from, and only while the
+   * mailer is down for everybody — at which point nobody's sign-in works and
+   * there is nothing left to learn.
    */
   async sendSignInCode(email: string, code: string): Promise<void> {
     if (!this.codeWindow.admit(email)) {

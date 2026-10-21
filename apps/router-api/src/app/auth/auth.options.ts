@@ -7,6 +7,7 @@ import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
+import { mailSendFailure, recordMailSendFailure, reportMailSendFailure } from './mail-send-failure.plugin.js';
 import { mayMailSignUp, signUpInviteCarrier } from './sign-up-mail-gate.plugin.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
@@ -265,9 +266,21 @@ function authPlugins(
           if (type !== 'sign-in') {
             return;
           }
-          await mail.sendSignInCode(email, otp);
+          try {
+            await mail.sendSignInCode(email, otp);
+          } catch (error) {
+            // Better Auth swallows whatever this callback throws and answers
+            // `200 {"success": true}` regardless, so the failure is parked on
+            // the request and `reportMailSendFailure` answers 503 with it
+            // (SUP-460). With no request to park it on — an `auth.api` call —
+            // it travels as it always did.
+            if (!recordMailSendFailure(context)) {
+              throw error;
+            }
+          }
         },
       }),
+      reportMailSendFailure(),
     );
   }
 
@@ -282,7 +295,15 @@ function authPlugins(
           if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
             return;
           }
-          await mail.sendMagicLink(email, url);
+          try {
+            await mail.sendMagicLink(email, url);
+          } catch {
+            // This route awaits its callback, so a rejection already refuses
+            // the request — as a bodyless 500 carrying nothing the console can
+            // say anything about. Named instead, so a link that could not be
+            // sent reads the same as a code that could not (SUP-460).
+            throw mailSendFailure('link');
+          }
         },
       }),
     );
