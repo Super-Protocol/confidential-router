@@ -7,8 +7,12 @@ import { resolveMailSettings } from './mail-settings.js';
 import { createMailTransport, MAIL_TRANSPORT } from './mail-transport.js';
 
 /**
- * Outbound mail (SUP-269). Imported by `AuthModule`, whose flows send the
- * mail, and by `HealthModule`, which reports whether it is getting through.
+ * Outbound mail (SUP-269). Imported by `AuthModule`, whose flows send the mail,
+ * by `HealthModule`, which reports whether it is getting through, and by
+ * `GraphQLApiModule`, whose `mailDelivery` reports what was deliberately not
+ * sent (SUP-462). One static module, so all three share one `MailService` —
+ * which is what makes a counter written by an auth callback readable from a
+ * resolver.
  *
  * `MAIL_TRANSPORT` is the only thing that leaves the process, so it is the one
  * provider the e2e harness replaces; rendering and the throttles run for real.

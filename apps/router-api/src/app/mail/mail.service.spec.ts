@@ -138,6 +138,111 @@ describe('MailService', () => {
     expect(without.service.status()).toEqual({ provider: 'none', state: 'disabled' });
   });
 
+  /**
+   * The operator's half of a withheld send (SUP-462). A refusal must stay
+   * invisible in the response — that is SUP-410's whole argument — and it must
+   * stop being invisible to the deployment that made it, because "withheld" and
+   * "the transport is broken" have opposite remedies and used to look alike.
+   */
+  describe('a withheld send', () => {
+    it('counts nothing until something is withheld', () => {
+      const { service } = build();
+
+      expect(service.delivery().withheld).toBeUndefined();
+      expect(service.delivery()).toMatchObject({ provider: 'smtp', state: 'unverified' });
+    });
+
+    it('counts each reason separately, with the time of the last one', () => {
+      const { service } = build();
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      service.recordWithheld('no_invitation');
+      service.recordWithheld('no_invitation');
+      service.recordWithheld('rate_limited');
+      service.recordWithheld('unused_code_type');
+
+      expect(service.delivery().withheld).toMatchObject({ noInvitation: 2, rateLimited: 1, unusedCodeType: 1 });
+      expect(Date.parse(service.delivery().withheld?.lastWithheldAt ?? '')).not.toBeNaN();
+    });
+
+    it('leaves the transport state alone — the two facts are orthogonal', async () => {
+      const { service } = build();
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await service.sendSignInCode('a@example.com', '482913');
+      const sent = service.status();
+      service.recordWithheld('no_invitation');
+
+      // A refusal says nothing about whether the mail server works, so it must
+      // not overwrite `ok` — nor clear a `failing` nobody has fixed.
+      expect(service.status()).toEqual(sent);
+      expect(service.delivery()).toMatchObject({ state: 'ok', withheld: { noInvitation: 1 } });
+    });
+
+    it('stays out of the public status, which `/health` publishes', () => {
+      const { service } = build();
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      service.recordWithheld('no_invitation');
+
+      // A count a stranger can read before and after naming an address tells
+      // them by subtraction whether it was mailed. `delivery()` is guarded.
+      expect(service.status()).not.toHaveProperty('withheld');
+    });
+
+    it('counts a recipient past their hourly allowance, and names no address', async () => {
+      const { service, transport } = build({ auth: { emailCode: { mailsPerAddressPerHour: 1 } } });
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await service.sendSignInCode('A@example.com', '000001');
+      await expect(service.sendSignInCode('A@example.com', '000002')).resolves.toBeUndefined();
+
+      expect(transport.sent).toHaveLength(1);
+      expect(service.delivery().withheld).toMatchObject({ noInvitation: 0, rateLimited: 1, unusedCodeType: 0 });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('A@example.com');
+    });
+
+    it('never writes the address into the log for any reason', () => {
+      const { service } = build();
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      service.recordWithheld('rate_limited');
+      service.recordWithheld('unused_code_type');
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('@');
+      expect(JSON.stringify(service.delivery())).not.toContain('@');
+    });
+
+    /**
+     * `SignUpGate.admits` already logs this refusal, and with the one detail
+     * that matters — which refusal it was. A second line here would make
+     * grep-counting the event double-count it (CTO review on #152).
+     */
+    it('logs nothing of its own for the gate refusal, which SignUpGate already names', () => {
+      const { service } = build();
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      service.recordWithheld('no_invitation');
+
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      // Counted all the same — the record is this call's contribution.
+      expect(service.delivery().withheld).toMatchObject({ noInvitation: 1 });
+    });
+
+    it('is a plain increment: it returns nothing, throws nothing and awaits nothing', () => {
+      const { service } = build();
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      // The send callbacks call this on the request path. Anything that could
+      // throw or block there would hand the caller back exactly the difference
+      // the gate exists to remove.
+      expect(service.recordWithheld('no_invitation')).toBeUndefined();
+    });
+  });
+
   describe('the boot-time check', () => {
     it('reports ok when the SMTP server accepts the connection and credentials', async () => {
       const { service } = build();

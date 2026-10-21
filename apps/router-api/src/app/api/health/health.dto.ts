@@ -27,6 +27,17 @@ export class MailHealthDto {
 
   @ApiProperty({ required: false, description: 'When `state` was last established.' })
   since?: string;
+
+  @ApiProperty({
+    enum: ['invite_only', 'open'],
+    description:
+      'Whether this deployment withholds sign-up mail. `invite_only`: an address with no invitation is mailed ' +
+      'nothing and the send route answers it exactly as it answers a send (SUP-410), so a healthy `state` here ' +
+      'does not mean any particular request was delivered — look at `mailDelivery` on the console API for the ' +
+      'withheld count. Deployment configuration rather than an event, and the same fact the public ' +
+      '`signInOptions.inviteRequired` already reports, so it tells a caller nothing new about any address.',
+  })
+  signUpGate!: 'invite_only' | 'open';
 }
 
 export class HealthResponseDto {

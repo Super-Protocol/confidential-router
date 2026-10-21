@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { serviceVersion } from '../../config.js';
+import { routerConfig, serviceVersion } from '../../config.js';
 import { MailService } from '../../mail/mail.service.js';
 import type { HealthResponseDto } from './health.dto.js';
 
@@ -12,6 +13,7 @@ export class HealthService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly mail: MailService,
+    @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
 
   /**
@@ -26,6 +28,14 @@ export class HealthService {
    * that would turn a lost welcome mail into an outage. It is here so that mail
    * which is not getting through is visible somewhere other than a log line
    * (SUP-269).
+   *
+   * `mail.signUpGate` is the one line that keeps the rest of the block from
+   * being read wrong on an invite-only deployment, where a `200` from the send
+   * route and a healthy `state` are both compatible with nothing having been
+   * sent (SUP-462). It is configuration, not an event — the *counts* move per
+   * request and so live behind the admin guard, on `mailDelivery`, because a
+   * number a stranger can read before and after naming an address tells them
+   * by subtraction whether that address was mailed.
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();
@@ -34,7 +44,10 @@ export class HealthService {
       version: serviceVersion(),
       uptimeSeconds: Math.round(process.uptime()),
       database,
-      mail: this.mail.status(),
+      mail: {
+        ...this.mail.status(),
+        signUpGate: this.config.auth.requireInviteForSignUp ? 'invite_only' : 'open',
+      },
     };
   }
 

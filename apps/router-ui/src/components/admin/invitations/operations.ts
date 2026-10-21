@@ -109,3 +109,21 @@ export const WITHDRAW_INVITE_CODE = graphql(`
     }
   }
 `);
+
+export const MAIL_DELIVERY_QUERY = graphql(`
+  query MailDelivery {
+    mailDelivery {
+      provider
+      state
+      reason
+      since
+      inviteOnly
+      withheld {
+        noInvitation
+        rateLimited
+        unusedCodeType
+        lastWithheldAt
+      }
+    }
+  }
+`);
