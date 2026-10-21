@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LedgerService } from '../src/app/billing/index.js';
 import {
+  CARRIED_NON_CREDENTIAL_PATHS,
   CREDENTIAL_KEY_PATTERN,
   credentialShapedKeys,
   DATA_EXPORT_CONTENT_TYPE,
@@ -37,13 +38,21 @@ const OPERATOR = 'admin@confidential-router.local';
 const GRANT_MICROS = 25_000_000;
 const SPENT_MICROS = 1_500_000;
 const SEALED_UPSTREAM_KEY = 'v1.sealed-upstream-key-ciphertext';
-const API_KEY_HASH = 'a1b2c3d4'.repeat(8);
+const KEY_LIMIT_MICROS = 5_000_000;
 
 const ISSUE = `
   mutation Issue($input: IssueInviteCodesInput!) {
     issueInviteCodes(input: $input) { codes { id code } }
   }
 `;
+
+const CREATE_KEY = `
+  mutation CreateKey($input: CreateApiKeyInput!) {
+    createApiKey(input: $input) { secret key { id prefix spendLimitMicros } }
+  }
+`;
+
+const REVOKE_KEY = 'mutation Revoke($id: ID!) { revokeApiKey(id: $id) { id revokedAt } }';
 
 const harnesses: Harness[] = [];
 
@@ -139,6 +148,24 @@ interface Used {
   users: ConsoleSession[];
   codes: { id: string; code: string }[];
   spender: ConsoleSession;
+  /** A live key with a spend limit, and one the user revoked. Plaintext included. */
+  keys: { live: MintedKey; revoked: MintedKey };
+}
+
+interface MintedKey {
+  id: string;
+  secret: string;
+}
+
+async function mintKey(session: ConsoleSession, name: string, spendLimitMicros?: number): Promise<MintedKey> {
+  const created = await expectData(session, CREATE_KEY, {
+    input: {
+      workspaceId: session.workspaceId,
+      name,
+      ...(spendLimitMicros === undefined ? {} : { spendLimitMicros: String(spendLimitMicros) }),
+    },
+  });
+  return { id: created.createApiKey.key.id, secret: created.createApiKey.secret };
 }
 
 /** Deployment A after a small life: three invited accounts, one of which spent, and two codes left over. */
@@ -162,19 +189,16 @@ async function usedDeployment(): Promise<Used> {
     reference: 'gen-0001',
   });
 
-  // Things that must stay behind: an API key, and an upstream's sealed key.
+  // The credentials a user configured elsewhere: one live, one they revoked.
+  // Minted through the console, so the plaintext is the real thing a Gatekeeper
+  // would be holding — which is what the import has to keep working (SUP-445).
   const dataSource = dataSourceOf(a.harness);
-  await dataSource.getRepository(ApiKey).insert({
-    id: randomUUID(),
-    workspaceId: spender.workspaceId,
-    name: 'Production',
-    keyHash: API_KEY_HASH,
-    prefix: 'sk-tee-v1-4f',
-    modelScope: null,
-    spentTotalMicros: 0,
-    createdByUserId: spender.email,
-    createdAt: new Date(),
-  });
+  const live = await mintKey(spender, 'Gatekeeper', KEY_LIMIT_MICROS);
+  const revoked = await mintKey(spender, 'Retired');
+  await expectData(spender, REVOKE_KEY, { id: revoked.id });
+  await dataSource.getRepository(ApiKey).update({ id: live.id }, { spentTotalMicros: SPENT_MICROS });
+
+  // Things that must stay behind: an upstream's sealed key.
   await dataSource.getRepository(ExternalEndpoint).insert({
     id: randomUUID(),
     name: 'partner-cloud',
@@ -198,7 +222,12 @@ async function usedDeployment(): Promise<Used> {
     addedByUserId: null,
     addedAt: new Date(),
   });
-  return { a, users, codes, spender };
+  return { a, users, codes, spender, keys: { live, revoked } };
+}
+
+/** `GET /v1/models` behind the key guard: the cheapest question that is really "does this key work?". */
+function callWithKey(harness: Harness, secret: string) {
+  return request(harness.app.getHttpServer()).get('/v1/models').set('Authorization', `Bearer ${secret}`);
 }
 
 async function balancesByEmail(harness: Harness): Promise<Map<string, number>> {
@@ -247,6 +276,8 @@ describe('deployment export', () => {
       inviteRedemptions: 3,
       externalEndpoints: 1,
       trustedMeasurements: 1,
+      apiKeys: 2,
+      apiKeysLive: 1,
     });
     // Three invitation grants and one debit.
     expect(bundle.counts.creditEntries).toBe(4);
@@ -267,16 +298,18 @@ describe('deployment export', () => {
     });
   });
 
-  it('holds no password hash, session token, API key or sealed upstream key — and no chats', async () => {
-    const { a } = await usedDeployment();
+  it('holds no password, session token, key plaintext or sealed upstream key — and no chats', async () => {
+    const { a, keys } = await usedDeployment();
     const file = await exportFile(a.operator);
     const text = gunzipSync(file).toString('utf8');
     const bundle = JSON.parse(text) as ExportBundle;
     const dataSource = dataSourceOf(a.harness);
 
-    // By name: no field anywhere in the file is credential-shaped.
+    // By name: nothing in the file is credential-shaped beyond the API-key
+    // fields the guard excuses on purpose (SUP-445).
     expect(credentialShapedKeys(bundle)).toEqual([]);
     expect(Object.keys(bundle.data).sort()).toEqual([
+      'apiKeys',
       'creditLedger',
       'externalEndpoints',
       'inviteCodes',
@@ -286,10 +319,12 @@ describe('deployment export', () => {
       'workspaceMembers',
       'workspaces',
     ]);
+    const excused = new Set(CARRIED_NON_CREDENTIAL_PATHS);
     for (const [name, rows] of Object.entries(bundle.data)) {
       for (const row of rows as Record<string, unknown>[]) {
         for (const key of Object.keys(row)) {
-          expect(key === 'idempotencyKey' || !CREDENTIAL_KEY_PATTERN.test(key), `${name}.${key}`).toBe(true);
+          const allowed = key === 'idempotencyKey' || excused.has(`${name}[].${key}`);
+          expect(allowed || !CREDENTIAL_KEY_PATTERN.test(key), `${name}.${key}`).toBe(true);
         }
       }
     }
@@ -297,7 +332,8 @@ describe('deployment export', () => {
     // By value: the secrets this deployment really holds are not in the bytes.
     // There is no password hash among them to leak — accounts sign in with a
     // mailed code and none is stored (SUP-269) — so what is left to keep out is
-    // the sessions, the pending sign-in codes, and the two kinds of key.
+    // the sessions, the pending sign-in codes, the sealed upstream key, and the
+    // plaintext of an API key, which nothing on this deployment still has.
     const passwords: { password: string | null }[] = await dataSource.query('SELECT "password" FROM "account"');
     const sessions: { token: string }[] = await dataSource.query('SELECT "token" FROM "session"');
     const pendingCodes: { value: string }[] = await dataSource.query('SELECT "value" FROM "verification"');
@@ -306,13 +342,28 @@ describe('deployment export', () => {
     for (const secret of [
       ...sessions.map((row) => row.token),
       ...pendingCodes.map((row) => row.value),
-      API_KEY_HASH,
+      keys.live.secret,
+      keys.revoked.secret,
       SEALED_UPSTREAM_KEY,
     ]) {
       if (secret) {
         expect(text.includes(secret)).toBe(false);
       }
     }
+
+    // What the keys section does carry: the stored hash, and nothing a reader
+    // could turn back into the key above.
+    const stored = await dataSource.getRepository(ApiKey).findOneByOrFail({ id: keys.live.id });
+    expect(bundle.data.apiKeys.map((key) => key.id).sort()).toEqual([keys.live.id, keys.revoked.id].sort());
+    expect(bundle.data.apiKeys.find((key) => key.id === keys.live.id)).toMatchObject({
+      keyHash: stored.keyHash,
+      prefix: stored.prefix,
+      name: 'Gatekeeper',
+      spendLimitMicros: String(KEY_LIMIT_MICROS),
+      spentTotalMicros: String(SPENT_MICROS),
+      revokedAt: null,
+    });
+    expect(bundle.data.apiKeys.find((key) => key.id === keys.revoked.id)?.revokedAt).not.toBeNull();
   });
 
   it('leaves an audit line that names the operator and the counts, never a code or an address', async () => {
@@ -329,6 +380,7 @@ describe('deployment export', () => {
     expect(audit).toHaveLength(2);
     expect(audit[0]).toContain(`Deployment export downloaded by ${OPERATOR}`);
     expect(audit[0]).toContain('5 invitation code(s) (2 unredeemed)');
+    expect(audit[0]).toContain('2 API key(s) (1 live)');
     expect(audit[1]).toContain(`Deployment import dry run by ${OPERATOR}`);
     for (const line of audit) {
       for (const code of codes) {
@@ -389,8 +441,8 @@ describe('deployment import', () => {
     );
     expect(String(sums[0]?.total)).toBe(exported.totalBalanceMicros);
 
-    // Nothing that was left out arrived, and no credential was invented.
-    expect(await target.getRepository(ApiKey).count()).toBe(0);
+    // The keys came across, and nothing that was left out arrived.
+    expect(await target.getRepository(ApiKey).count()).toBe(exported.counts.apiKeys);
     const accounts: { n: number }[] = await target.query('SELECT COUNT(*) AS "n" FROM "account"');
     expect(Number(accounts[0]?.n)).toBe(0);
 
@@ -433,6 +485,42 @@ describe('deployment import', () => {
     expect((await balancesByEmail(b.harness)).get(dee.email)).toBe(GRANT_MICROS);
     const eve = await signUp(b.harness, 'eve@example.test', codes[0]?.code);
     expect((await balancesByEmail(b.harness)).get(eve.email)).toBe(0);
+  });
+
+  it('keeps a key minted before the export working after the import, limit and all', async () => {
+    // The rebuild drill SUP-445 asks for, and the reason the section exists: a
+    // tester whose Gatekeeper holds this secret must not meet a 401 because an
+    // operator replaced the deployment.
+    const { a, keys, spender } = await usedDeployment();
+    const file = await exportFile(a.operator);
+    const sha = decodeBundle(file).integrity.contentSha256;
+    await callWithKey(a.harness, keys.live.secret).expect(200);
+    await a.harness.close();
+    harnesses.splice(0);
+
+    const b = await deploy();
+    const report = await apply(b.operator, file, sha);
+
+    expect(report).toMatchObject({ applied: true, ok: true });
+    expect(section(report, 'apiKeys')).toMatchObject({ inBundle: 2, toCreate: 2, conflicts: [] });
+    expect(report.notes.join(' ')).toContain('2 API key(s) are imported, 1 of them still live');
+
+    // The same plaintext, against a deployment that has never seen it before.
+    await callWithKey(b.harness, keys.live.secret).expect(200);
+    // And the state that travelled with it: the limit, the counter that limit is
+    // measured against, the workspace it bills, and the revocation of the other.
+    const imported = await dataSourceOf(b.harness).getRepository(ApiKey).findOneByOrFail({ id: keys.live.id });
+    expect(imported).toMatchObject({
+      workspaceId: spender.workspaceId,
+      name: 'Gatekeeper',
+      spendLimitMicros: KEY_LIMIT_MICROS,
+      spentTotalMicros: SPENT_MICROS,
+      revokedAt: null,
+    });
+    const refused = await callWithKey(b.harness, keys.revoked.secret).expect(401);
+    expect(refused.body.error.code).toBe('api_key_revoked');
+    // A key this deployment never had is still nobody's.
+    await callWithKey(b.harness, `sk-tee-v1-${'z'.repeat(43)}`).expect(401);
   });
 
   it('is idempotent: importing the same file again creates nothing and changes no balance', async () => {

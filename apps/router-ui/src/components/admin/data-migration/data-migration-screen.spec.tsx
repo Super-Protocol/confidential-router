@@ -29,6 +29,7 @@ function report(overrides: Partial<ImportReport> = {}): ImportReport {
     sections: [
       { section: 'users', inBundle: 4, toCreate: 3, alreadyPresent: 1, conflicts: [] },
       { section: 'inviteCodes', inBundle: 5, toCreate: 5, alreadyPresent: 0, conflicts: [] },
+      { section: 'apiKeys', inBundle: 2, toCreate: 2, alreadyPresent: 0, conflicts: [] },
     ],
     notes: [],
     ...overrides,
@@ -69,12 +70,13 @@ describe('DataMigrationScreen', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('says what the export leaves behind, API keys included', async () => {
+  it('says that API keys travel and what the export still leaves behind', async () => {
     renderScreen();
 
     const card = await screen.findByTestId('export-card');
     expect(card).toHaveTextContent('Chats, generation logs and activity history');
-    expect(card).toHaveTextContent('everyone issues new keys after a migration');
+    expect(card).toHaveTextContent('each key keeps working on the new deployment');
+    expect(card).toHaveTextContent('API keys travel as their hashes');
     expect(card).toHaveTextContent('invitation codes that can still be redeemed');
   });
 
@@ -137,9 +139,29 @@ describe('DataMigrationScreen', () => {
 
     await waitFor(() => expect(screen.getByTestId('import-verdict')).toHaveTextContent('Imported'));
     expect(fetchMock.mock.calls[1]?.[0]).toMatch(new RegExp(`/admin/data/import\\?apply=true&expect=${SHA}$`));
-    expect(screen.getByTestId('import-next-steps')).toHaveTextContent('each person issues new ones under API Keys');
+    expect(screen.getByTestId('import-next-steps')).toHaveTextContent(
+      'API keys came across and keep working — nobody has to issue a new one',
+    );
     // Imported once: the button does not offer to do it again.
     expect(screen.getByTestId('import-apply')).toBeDisabled();
+  });
+
+  it('tells the operator to re-issue keys only when the file carried none', async () => {
+    // A bundle written before the apiKeys section existed (SUP-445): no keys
+    // travelled, so here the old advice is the true one. The screen must not
+    // print it the rest of the time — it was read at exactly the moment an
+    // operator decides whether to tell their testers to re-issue.
+    const older = report({ sections: report().sections.filter((section) => section.section !== 'apiKeys') });
+    fetchMock.mockResolvedValueOnce(json(older)).mockResolvedValueOnce(json({ ...older, applied: true }));
+    renderScreen();
+
+    await userEvent.upload(await screen.findByTestId('import-file'), exportFile());
+    await userEvent.click(screen.getByTestId('import-check'));
+    await waitFor(() => expect(screen.getByTestId('import-apply')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('import-apply'));
+
+    await waitFor(() => expect(screen.getByTestId('import-verdict')).toHaveTextContent('Imported'));
+    expect(screen.getByTestId('import-next-steps')).toHaveTextContent('The file carried no API keys');
   });
 
   it('will not import a file the check refused, and says why', async () => {

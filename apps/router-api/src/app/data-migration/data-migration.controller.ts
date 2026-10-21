@@ -110,8 +110,8 @@ function summaryOf(bundle: Pick<ExportBundle, 'counts'> & { integrity: { content
   return (
     `sha256 ${bundle.integrity.contentSha256}: ${counts.users} account(s), ${counts.workspaces} workspace(s), ` +
     `${counts.creditEntries} ledger entr(y/ies), ${counts.inviteCodes} invitation code(s) ` +
-    `(${counts.inviteCodesUnredeemed} unredeemed), ${counts.externalEndpoints} external endpoint(s), ` +
-    `${counts.trustedMeasurements} trusted measurement(s)`
+    `(${counts.inviteCodesUnredeemed} unredeemed), ${counts.apiKeys} API key(s) (${counts.apiKeysLive} live), ` +
+    `${counts.externalEndpoints} external endpoint(s), ${counts.trustedMeasurements} trusted measurement(s)`
   );
 }
 

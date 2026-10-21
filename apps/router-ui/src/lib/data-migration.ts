@@ -16,6 +16,7 @@ export type ImportSectionName =
   | 'creditLedger'
   | 'inviteCodes'
   | 'inviteRedemptions'
+  | 'apiKeys'
   | 'externalEndpoints'
   | 'externalModels'
   | 'trustedMeasurements';
