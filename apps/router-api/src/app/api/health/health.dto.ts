@@ -20,10 +20,12 @@ export class MailHealthDto {
 
   @ApiProperty({
     required: false,
-    enum: ['unreachable', 'auth_failed', 'rejected', 'error'],
-    description: 'Present only while failing. `unreachable`: the mail server could not be connected to at all.',
+    enum: ['unreachable', 'auth_failed', 'error'],
+    description:
+      'Present only while failing. `unreachable`: the mail server could not be connected to at all. A message ' +
+      'the server refused is not reported here — that is one address, not the mailer, and it stays in the log.',
   })
-  reason?: 'unreachable' | 'auth_failed' | 'rejected' | 'error';
+  reason?: 'unreachable' | 'auth_failed' | 'error';
 
   @ApiProperty({ required: false, description: 'When `state` was last established.' })
   since?: string;

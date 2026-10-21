@@ -51,6 +51,35 @@ export interface MailTransport {
 export const MAIL_TRANSPORT = Symbol('MAIL_TRANSPORT');
 
 /**
+ * What a provider refusal was about, when the provider can say.
+ *
+ * `rejected` is the one that matters: the server took the connection and the
+ * credentials and refused *this message* — a bad recipient, a body it will not
+ * carry. That says nothing about the next message, so `MailService` logs it
+ * and leaves the deployment-wide state alone. The other two are the mailer
+ * itself, and do flip it.
+ */
+export type ProviderFailure = 'auth_failed' | 'rejected' | 'error';
+
+/**
+ * A refusal a provider named, for `failureReasonOf` to read.
+ *
+ * nodemailer puts an SMTP classification in `code` and the SMTP transport
+ * needs nothing more. An HTTP provider has a status instead, and inventing an
+ * SMTP code for it would be a lie in the one place the distinction is load
+ * bearing — so it carries the classification outright.
+ */
+export class MailProviderError extends Error {
+  constructor(
+    message: string,
+    readonly failure: ProviderFailure,
+  ) {
+    super(message);
+    this.name = 'MailProviderError';
+  }
+}
+
+/**
  * Refuses to send anything: `provider: none` means the deployment has no mail.
  *
  * Every flow that would reach this is switched off on such a deployment —
@@ -128,7 +157,10 @@ export class ResendMailTransport implements MailTransport {
       }),
     });
     if (!response.ok) {
-      throw new Error(`Resend rejected the "${message.kind}" email: ${response.status} ${await response.text()}`);
+      throw new MailProviderError(
+        `Resend rejected the "${message.kind}" email: ${response.status} ${await response.text()}`,
+        resendFailure(response.status),
+      );
     }
   }
 
@@ -228,4 +260,22 @@ export function createMailTransport(settings: MailSettings, nodeEnv = process.en
     default:
       throw new Error(`Unknown mail provider: ${String(settings.provider)}`);
   }
+}
+
+/**
+ * Resend's HTTP status, as the three things that can be wrong.
+ *
+ * A rejected key is `401`/`403`, which is how a deployment that never gets a
+ * boot-time check (`verify` sends nothing here, so there is none) finds out at
+ * all. `429` and `5xx` are Resend being unavailable to everybody. Everything
+ * else in the 4xx range is about the message this call carried.
+ */
+function resendFailure(status: number): ProviderFailure {
+  if (status === 401 || status === 403) {
+    return 'auth_failed';
+  }
+  if (status === 429 || status >= 500) {
+    return 'error';
+  }
+  return 'rejected';
 }

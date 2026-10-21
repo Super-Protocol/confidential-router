@@ -138,6 +138,47 @@ describe('MailService', () => {
     expect(without.service.status()).toEqual({ provider: 'none', state: 'disabled' });
   });
 
+  /**
+   * A refusal of one message is not the mailer going down, and the difference
+   * is load bearing: `mail-send-failure.plugin.ts` answers the send route from
+   * this state, so a state anyone could set by getting one send attempted —
+   * a bogus recipient, an address the relay will not carry — would be a
+   * refusal anyone could induce.
+   */
+  it('does not report the deployment as failing when the server refused one message', async () => {
+    const { service, transport } = build();
+    transport.sendError = errorWithCode('550 no such user', 'EENVELOPE');
+
+    await expect(service.sendSignInCode('nobody@example.com', '482913')).rejects.toThrow('550 no such user');
+
+    expect(service.status()).toMatchObject({ state: 'unverified' });
+    expect(service.status().reason).toBeUndefined();
+  });
+
+  it('leaves a state it had already established alone when one message is refused', async () => {
+    const { service, transport } = build();
+    await service.sendSignInCode('someone@example.com', '482913');
+    expect(service.status().state).toBe('ok');
+
+    transport.sendError = errorWithCode('550 no such user', 'EENVELOPE');
+    await expect(service.sendSignInCode('nobody@example.com', '482913')).rejects.toThrow();
+
+    expect(service.status()).toMatchObject({ state: 'ok' });
+  });
+
+  it.each([
+    ['ECONNECTION', 'unreachable'],
+    ['EAUTH', 'auth_failed'],
+    ['EWHATEVER', 'error'],
+  ])('still reports the deployment failing for %s', async (code, reason) => {
+    const { service, transport } = build();
+    transport.sendError = errorWithCode('x', code);
+
+    await expect(service.sendSignInCode('someone@example.com', '482913')).rejects.toThrow();
+
+    expect(service.status()).toMatchObject({ state: 'failing', reason });
+  });
+
   describe('the boot-time check', () => {
     it('reports ok when the SMTP server accepts the connection and credentials', async () => {
       const { service } = build();

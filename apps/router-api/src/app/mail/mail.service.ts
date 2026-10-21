@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleD
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../config.js';
 import { type MailSettings, resolveMailSettings } from './mail-settings.js';
-import { MAIL_TRANSPORT, type MailKind, type MailTransport } from './mail-transport.js';
+import { MAIL_TRANSPORT, type MailKind, MailProviderError, type MailTransport } from './mail-transport.js';
 import { RecipientWindow } from './recipient-window.js';
 import { type RenderedMail, renderMagicLinkMail, renderSignInCodeMail, renderWelcomeMail } from './templates.js';
 
@@ -21,7 +21,12 @@ export interface MailStatus {
    * `failing` — the last one did not.
    */
   state: 'disabled' | 'unverified' | 'ok' | 'failing';
-  reason?: MailFailureReason;
+  /**
+   * Never `rejected`: that one is about a message rather than the mailer and
+   * does not reach `state` at all, so the type says so rather than the
+   * convention — see {@link MailFailureReason} and `reportFailure`.
+   */
+  reason?: MailerFailureReason;
   /** ISO time of the check or send `state` is from. */
   since?: string;
 }
@@ -31,8 +36,16 @@ export interface MailStatus {
  * reached a mail server — DNS, a refused or timed-out connect, a dropped
  * socket. `auth_failed` means it did and the credentials were refused;
  * `rejected` is the server refusing the message itself.
+ *
+ * Only `rejected` is about one message rather than the mailer, which is why it
+ * is the one reason that does not make `state` `failing` — see
+ * `reportFailure`. It never reaches `/health` for that reason, and stays here
+ * for the log line.
  */
 export type MailFailureReason = 'unreachable' | 'auth_failed' | 'rejected' | 'error';
+
+/** The reasons that are the mailer's, and so the ones `/health` can report. */
+export type MailerFailureReason = Exclude<MailFailureReason, 'rejected'>;
 
 const UNREACHABLE_CODES = new Set([
   'ECONNECTION',
@@ -45,6 +58,11 @@ const UNREACHABLE_CODES = new Set([
 ]);
 
 export function failureReasonOf(error: unknown): MailFailureReason {
+  // A provider that can name the cause has already done so. nodemailer cannot,
+  // and leaves an SMTP `code` to read instead.
+  if (error instanceof MailProviderError) {
+    return error.failure;
+  }
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === 'string') {
     if (UNREACHABLE_CODES.has(code)) {
@@ -216,9 +234,23 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
     this.pending.add(tracked);
   }
 
+  /**
+   * Logs a failure, and decides whether it was the *mailer* that failed.
+   *
+   * `rejected` is not: the server took the connection and the credentials and
+   * refused this one message, which says nothing about the next one. Letting
+   * it flip the deployment-wide state made that state settable by anyone who
+   * could get one send attempted — a bogus recipient through the
+   * fire-and-forget welcome mail, or one unspent invitation and an address the
+   * relay refuses — and `mail-send-failure.plugin.ts` answers from that state,
+   * so an inducible `failing` is an inducible refusal. `unreachable`,
+   * `auth_failed` and `error` are the mailer, and still flip it.
+   */
   private reportFailure(what: MailKind | 'verify', error: unknown): void {
     const reason = failureReasonOf(error);
-    this.record({ state: 'failing', reason });
+    if (reason !== 'rejected') {
+      this.record({ state: 'failing', reason });
+    }
     const where = this.settings.provider === 'smtp' ? ` (SMTP ${this.describeSmtp()})` : ` (${this.settings.provider})`;
     const hint =
       reason === 'unreachable'

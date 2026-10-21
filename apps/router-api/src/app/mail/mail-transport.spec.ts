@@ -154,6 +154,28 @@ describe('ResendMailTransport', () => {
       /403 domain not verified/,
     );
   });
+
+  /**
+   * Which of the three a status is, because `MailService` treats one of them
+   * as the mailer being down and the other as this message being wrong, and a
+   * plain `Error` left every Resend refusal in the first bucket.
+   */
+  it.each([
+    [401, 'auth_failed'],
+    [403, 'auth_failed'],
+    [400, 'rejected'],
+    [422, 'rejected'],
+    [429, 'error'],
+    [500, 'error'],
+    [503, 'error'],
+  ])('classifies a %i from Resend as %s', async (status, failure) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('no', { status })));
+
+    await expect(new ResendMailTransport('k', 'a@example.com').send(MESSAGE)).rejects.toMatchObject({
+      name: 'MailProviderError',
+      failure,
+    });
+  });
 });
 
 describe('SmtpMailTransport', () => {
