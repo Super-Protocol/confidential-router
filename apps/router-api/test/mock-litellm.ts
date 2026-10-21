@@ -154,6 +154,16 @@ export const TEXT_COMPLETION_STREAM_CHUNKS: Record<string, unknown>[] = [
   },
 ];
 
+/**
+ * How long `mock/slow-*` sits on a request before answering at all.
+ *
+ * Production's version of this gap is 60 s (SUP-449); what the suite needs is
+ * only that it clears the `server.streamKeepAliveAfter` the slow-upstream
+ * harness boots with, so the router reaches the point of opening the stream on
+ * its own. That setting is floored at 1 s, so this cannot go below it.
+ */
+const SLOW_START_MS = 1_500;
+
 export const COMPLETION_BODY = {
   id: 'chatcmpl-upstream',
   object: 'chat.completion',
@@ -240,6 +250,25 @@ export class MockLiteLlm {
         // Killed before a byte of the response: a connection error, which is
         // the only failure the client is allowed to retry.
         response.socket?.destroy();
+        return;
+      case 'mock/slow-start':
+        // Answers, but only after a wait no proxy on the path will sit through
+        // quietly: the long-prefill shape the keep-alive stream exists for.
+        setTimeout(() => {
+          if (body.stream === true) {
+            this.stream(body, response);
+          } else {
+            json(response, 200, COMPLETION_BODY);
+          }
+        }, SLOW_START_MS);
+        return;
+      case 'mock/slow-boom':
+        // The seven measured failures, in miniature: silence, then the 502 a
+        // gateway in front of the model mints when it gives up on it.
+        setTimeout(
+          () => json(response, 502, { error: { message: 'The gateway in front of the model gave up.' } }),
+          SLOW_START_MS,
+        );
         return;
       case 'mock/thinking':
         // Took the request and never answered — a long prefill or a queued burst

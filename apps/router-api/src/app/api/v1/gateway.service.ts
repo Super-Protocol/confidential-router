@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
 import type { Response as ExpressResponse } from 'express';
 import { bridgesCompletions } from '../../catalog/served-capabilities.js';
+import { routerConfig } from '../../config.js';
 import { estimatePromptTokens } from '../../metering/token-estimator.js';
 import { type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
 import { chatBodyForPrompt, textCompletionOf } from './completions-bridge.js';
@@ -12,7 +14,15 @@ import { GenerationRecorder } from './generation-recorder.service.js';
 import { LiteLlmClient } from './litellm.client.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import { readUsage, shapeResponse } from './response-shaping.js';
-import { extensionFor, relayStream, type StreamFailure } from './stream-relay.js';
+import { formatDataEvent, SSE_DONE } from './sse.js';
+import {
+  extensionFor,
+  HEARTBEAT_INTERVAL_MS,
+  openStreamIfSlow,
+  type PendingStream,
+  relayStream,
+  type StreamFailure,
+} from './stream-relay.js';
 import { readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 import { UpstreamTimeoutError } from './upstream-fetch.js';
 
@@ -40,6 +50,7 @@ export class GatewayService {
 
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
+    @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
     private readonly policy: GatewayPolicyService,
     private readonly recorder: GenerationRecorder,
     private readonly upstream: LiteLlmClient,
@@ -91,6 +102,43 @@ export class GatewayService {
 
     const leg = externalOf(model);
     const abort = new AbortController();
+
+    // A streamed request that waits too long gets its stream opened anyway, so
+    // the router rather than an impatient proxy decides how this request ends.
+    // The cadence is shared with the relay that takes over: an operator who
+    // tunes the delay down for a tight ingress tunes the whole stream's silence
+    // down with it.
+    const keepAliveAfterMs = this.config.server.streamKeepAliveAfter;
+    const heartbeatIntervalMs = Math.min(HEARTBEAT_INTERVAL_MS, keepAliveAfterMs);
+    const pending = stream
+      ? openStreamIfSlow({ context, response, openAfterMs: keepAliveAfterMs, heartbeatIntervalMs })
+      : null;
+
+    // The client's socket is watched from here, not from `relayStream`: the
+    // window SUP-449 lives in is the one *before* the upstream answers, and a
+    // hang-up there left the fetch running with nothing watching it.
+    //
+    // Streamed requests only. A non-streamed completion that is cancelled
+    // mid-flight is still finished and metered as it always was: its tokens were
+    // produced whether or not anyone is left to read them, and `aborted` is
+    // defined in streaming terms (`docs/contracts/router-api.md`).
+    let clientLeft = false;
+    const onClose = (): void => {
+      if (response.writableEnded) {
+        return;
+      }
+      clientLeft = true;
+      abort.abort(new Error('Client closed the connection.'));
+    };
+    if (stream) {
+      response.on('close', onClose);
+    }
+    /** Hands the socket back to whoever runs next — the relay, or nobody. */
+    const releaseSocket = (): void => {
+      pending?.stop();
+      response.off('close', onClose);
+    };
+
     let upstreamResponse: Response;
     try {
       upstreamResponse = leg
@@ -109,16 +157,29 @@ export class GatewayService {
             signal: abort.signal,
           });
     } catch (error) {
+      releaseSocket();
+      if (clientLeft) {
+        return this.recordAbandoned(context);
+      }
       // Nothing was forwarded, and which failure this was decides who the caller
       // is told to look at — see `transportFailureOf`.
-      throw await this.fail(context, transportFailureOf(error));
+      return this.endBeforeTokens({ context, response, pending }, transportFailureOf(error));
+    }
+    releaseSocket();
+    if (clientLeft) {
+      // The hang-up and the upstream's headers crossed. Nothing failed and
+      // nobody is left to tell, so this is the same `aborted` as a hang-up one
+      // tick earlier — not the `error` the relay would read off a body the
+      // abort has already torn down.
+      void upstreamResponse.body?.cancel().catch(() => undefined);
+      return this.recordAbandoned(context);
     }
 
     if (!upstreamResponse.ok) {
       const error = leg
         ? await this.external.mapFailure(leg, upstreamResponse)
         : await this.mapUpstreamFailure(upstreamResponse);
-      throw await this.fail(context, error);
+      return this.endBeforeTokens({ context, response, pending }, error);
     }
 
     const outcome = stream
@@ -128,6 +189,7 @@ export class GatewayService {
           response,
           readTimeoutMs: leg ? this.external.readTimeoutMs : this.upstream.readTimeoutMs,
           abort,
+          heartbeatIntervalMs,
           failureMapper: leg
             ? (failure): Promise<StreamFailure> => this.external.classifyStreamFailure(leg, failure)
             : undefined,
@@ -194,6 +256,57 @@ export class GatewayService {
     const body = await readUpstreamError(upstream);
     this.logger.warn(`LiteLLM answered ${upstream.status}: ${body.text || '(no detail)'}`);
     return upstreamFailureOf('The model backend', upstream, body);
+  }
+
+  /**
+   * Ends a request that failed before a single token, by whichever channel is
+   * still open.
+   *
+   * Normally that is the status line, and the error is thrown for the filter to
+   * render as a 502/503/504. Once the keep-alive stream has been opened there is
+   * no status line left, so the error goes where a mid-stream failure already
+   * goes: one last `data:` event carrying the OpenAI error object, then the
+   * terminator the client is waiting for. Either way exactly one metering row is
+   * written, which is the half of SUP-423 the router owns.
+   */
+  private async endBeforeTokens(
+    ending: { context: GatewayContext; response: ExpressResponse; pending: PendingStream | null },
+    error: OpenAiApiError,
+  ): Promise<void> {
+    const { context, response, pending } = ending;
+    if (!pending?.opened) {
+      throw await this.fail(context, error);
+    }
+    // The stream is closed before the row is written, not after: a metering
+    // failure must not leave the client with a truncated stream carrying neither
+    // the error object nor the terminator it is waiting for.
+    if (!response.writableEnded) {
+      response.write(formatDataEvent(JSON.stringify(error.toBody())));
+      response.write(SSE_DONE);
+      response.end();
+    }
+    await this.fail(context, error);
+  }
+
+  /**
+   * Meters a request whose client hung up before the upstream answered.
+   *
+   * `aborted` with no `errorCode`, the same thing the relay records for a client
+   * that leaves mid-stream (`docs/contracts/router-api.md`): nothing failed, the
+   * caller simply stopped waiting. Without this the request left Logs with no row
+   * at all — the reporting gap three of the seven SUP-449 stalls fell into, once
+   * the ingress had closed the socket under a request the router was still
+   * serving.
+   */
+  private async recordAbandoned(context: GatewayContext): Promise<void> {
+    await this.recorder.finish(context, {
+      promptTokens: 0,
+      completionTokens: 0,
+      status: 'aborted',
+      errorCode: null,
+      finishReason: null,
+      timeToFirstTokenMs: null,
+    });
   }
 
   /**
