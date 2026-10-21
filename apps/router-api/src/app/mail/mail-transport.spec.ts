@@ -156,15 +156,17 @@ describe('ResendMailTransport', () => {
   });
 
   /**
-   * Which of the three a status is, because `MailService` treats one of them
-   * as the mailer being down and the other as this message being wrong, and a
-   * plain `Error` left every Resend refusal in the first bucket.
+   * A rejected key is the one thing the status says unambiguously, and the one
+   * signal a Resend deployment has for it — `verify` sends nothing, so there
+   * is no boot check. Everything else is the mailer: Resend does not say whose
+   * address it objected to, and reading a 4xx as "that recipient" would leave
+   * `/health` reporting `ok` through an unverified sender domain.
    */
   it.each([
     [401, 'auth_failed'],
     [403, 'auth_failed'],
-    [400, 'rejected'],
-    [422, 'rejected'],
+    [400, 'error'],
+    [422, 'error'],
     [429, 'error'],
     [500, 'error'],
     [503, 'error'],

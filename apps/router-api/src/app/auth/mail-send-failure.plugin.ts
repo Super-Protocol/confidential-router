@@ -146,10 +146,11 @@ export function mailSendFailed(context: MailSendContext | null | undefined): boo
  * It is kept rather than closed, because what made it worth anything was that
  * the `failing` state could be *induced*: a refused recipient used to flip the
  * deployment-wide state, so one unspent invitation bought an attacker as many
- * windows as the per-source 429 allowed. `MailService.reportFailure` no longer
- * flips it for `rejected`, and with that gone the window only opens on a real
- * transport outage, any legitimate sign-in closes it first, and it yields one
- * bit per outage. The two ways to close it outright both cost more than that:
+ * windows as the per-source 429 allowed. `MailService` no longer flips it for
+ * a recipient the server would not take — and that refusal now resolves like a
+ * withheld send rather than answering 503, so it carries no bit of its own
+ * either. With both gone the window only opens on a real transport outage, any
+ * legitimate sign-in closes it first, and it yields one bit per outage. The two ways to close it outright both cost more than that:
  * a transport re-check on a withheld request records `ok` without proof on a
  * provider with nothing to probe — reinstating the one-request oracle it was
  * meant to remove — and a refusal cooldown trades the bit for a sign-in outage
