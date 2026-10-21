@@ -129,7 +129,6 @@ export class FeedbackGrantRecorder {
       uuid: input.delivery.submissionId,
       distinctId: input.userId,
       outcome: 'refused',
-      grantMicros: 0,
       reason: input.reason,
     });
     return { status: 'refused', reason: input.reason };

@@ -28,7 +28,6 @@ const refused: FeedbackGrantAppliedEvent = {
   uuid: 'submission-1',
   distinctId: USER_ID,
   outcome: 'refused',
-  grantMicros: 0,
   reason: 'already_granted',
 };
 
@@ -107,7 +106,7 @@ describe('whatever analytics does', () => {
   });
 
   it('sends nothing the respondent wrote, and nothing that identifies them by email', () => {
-    analytics.grantApplied({ ...granted, reason: undefined });
+    analytics.grantApplied(granted);
 
     const envelope = sink.one('feedback_grant_applied');
     expect(Object.keys(envelope.properties).sort()).toEqual(['grant_micros', 'outcome']);

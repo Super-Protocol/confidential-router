@@ -1,24 +1,37 @@
 import { Injectable } from '@nestjs/common';
 import { AnalyticsService, eventUuid } from '../analytics/index.js';
+import type { FeedbackRefusalReason } from '../db/entities/feedback-submission.entity.js';
 
 /** Injection token for whatever forwards `feedback_grant_applied`. */
 export const FEEDBACK_ANALYTICS = Symbol('FEEDBACK_ANALYTICS');
+
+/** What both outcomes report: which account, and which event this is. */
+interface FeedbackGrantEvent {
+  /**
+   * The idempotency key PostHog deduplicates on: the ledger entry id when the
+   * grant landed, and the webhook delivery id when it did not — so a provider
+   * redelivery can never show up as two grants.
+   */
+  uuid: string;
+  distinctId: string;
+}
 
 /**
  * `feedback_grant_applied`, with the properties the taxonomy declares for it
  * (`schemas/analytics-taxonomy.json`).
  *
- * `uuid` is the idempotency key PostHog deduplicates on: the ledger entry id
- * when the grant landed, and the webhook delivery id when it did not — so a
- * provider redelivery can never show up as two grants.
+ * A union on `outcome` rather than one shape with optional halves, so the
+ * combinations that mean nothing cannot be written: a refusal credited no
+ * micros, and a grant was declined for no reason.
+ *
+ * `reason` is the entity's closed set and not `string`, which matters now that
+ * the event leaves the process: `AnalyticsService` validates a property's *name*
+ * against the taxonomy and never its value, so free text in `reason` would reach
+ * PostHog unchecked. The type is the only thing standing there.
  */
-export interface FeedbackGrantAppliedEvent {
-  uuid: string;
-  distinctId: string;
-  outcome: 'granted' | 'refused';
-  grantMicros: number;
-  reason?: string;
-}
+export type FeedbackGrantAppliedEvent =
+  | (FeedbackGrantEvent & { outcome: 'granted'; grantMicros: number })
+  | (FeedbackGrantEvent & { outcome: 'refused'; reason: FeedbackRefusalReason });
 
 /**
  * Where a server-side analytics event goes.
@@ -64,10 +77,11 @@ export class CapturingFeedbackAnalytics implements FeedbackAnalytics {
       uuid: eventUuid('feedback_grant_applied', event.uuid),
       properties: {
         outcome: event.outcome,
-        // "Present only when `outcome` is `granted`" — a refusal credited
-        // nothing, and a zero here would be counted as an amount.
+        // Each half of the union contributes the one property the taxonomy
+        // declares for it. `grant_micros` is "present only when `outcome` is
+        // `granted`", and a zero there would be counted as an amount.
         grant_micros: event.outcome === 'granted' ? event.grantMicros : undefined,
-        reason: event.reason,
+        reason: event.outcome === 'refused' ? event.reason : undefined,
       },
     });
   }

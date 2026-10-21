@@ -343,9 +343,7 @@ describe('a submission that has not', () => {
     expect(await balance()).toBe(0);
     // Nothing is filed against an account the token invented.
     expect(await dataSource.getRepository(FeedbackSubmission).count()).toBe(0);
-    expect(captured).toEqual([
-      expect.objectContaining({ outcome: 'refused', reason: 'unknown_account', grantMicros: 0 }),
-    ]);
+    expect(captured).toEqual([expect.objectContaining({ outcome: 'refused', reason: 'unknown_account' })]);
   });
 
   it('refuses an account that is no longer eligible, and keeps its answers anyway', async () => {
