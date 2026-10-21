@@ -17,26 +17,37 @@ import type { GenerationClient } from '../../db/entities/generation.entity.js';
  * request, and its size alone says that much.
  *
  * Nothing here reads the request body. "The request shape" extends exactly as far
- * as {@link ANNOUNCING_HEADERS} and no further: a label derived from the first
- * bytes of a system prompt would be a conclusion drawn from content, which is the
- * one thing the metering path does not do.
+ * as the headers below and no further: a label derived from the first bytes of a
+ * system prompt would be a conclusion drawn from content, which is the one thing
+ * the metering path does not do.
  */
 
 /**
- * The headers a client announces *itself* in, as opposed to describing its
- * request.
+ * Headers whose value a client's own HTTP stack writes — a product string, not
+ * free text — so a needle may match **anywhere inside** them.
  *
- * `user-agent` is the one that matters. The other two are OpenRouter conventions
- * that editors carry on every request, and they survive a `User-Agent` chosen by
- * the editor's HTTP stack rather than by the editor: Roo Code sends
- * `X-Title: Roo Code`, VS Code's own chat sends
- * `X-OnBehalf-Extension-Id: github.copilot-chat/<version>`.
- *
- * Nothing else is read. `HTTP-Referer` is deliberately absent even though those
- * same clients send it: Roo Code's value is `https://github.com/RooVetGit/Roo-Cline`,
- * which names the editor it was forked from rather than itself.
+ * `user-agent` is the one that matters. `x-onbehalf-extension-id` is VS Code's,
+ * not the caller's: it carries `github.copilot-chat/<version>` and survives an
+ * agent string the editor's fetch chose rather than the editor itself.
  */
-const ANNOUNCING_HEADERS = ['user-agent', 'x-title', 'x-onbehalf-extension-id'] as const;
+const PRODUCT_HEADERS = ['user-agent', 'x-onbehalf-extension-id'] as const;
+
+/**
+ * The OpenRouter-convention app name, which the **caller** picks.
+ *
+ * Matched only when the whole value *is* a label — `X-Title: Cline`,
+ * `X-Title: Roo Code` — never as a substring. A substring rule here would read
+ * `X-Title: Declined requests` as `cline` and `X-Title: My Copilot Dashboard` as
+ * `vscode-chat`, and a wrong label is worse than an honest `other` by the same
+ * argument that keeps the raw agent string out of the column. Taking the value at
+ * face value when it names a client exactly is not a risk of the same kind: it is
+ * what the caller told us it is.
+ *
+ * `HTTP-Referer` is deliberately absent even though these clients send it: Roo
+ * Code's is `https://github.com/RooVetGit/Roo-Cline`, which names the editor it
+ * was forked from rather than itself.
+ */
+const CALLER_TITLE_HEADER = 'x-title';
 
 /** Enough of a header to classify by, bounded so a long one cannot cost anything. */
 const MAX_HEADER_LENGTH = 200;
@@ -44,10 +55,10 @@ const MAX_HEADER_LENGTH = 200;
 /**
  * The table people will argue with, which is why it is a table.
  *
- * Needles are matched against the announcement after {@link normalise} — lower
- * case with `-`, `_` and spaces removed — so one row covers `RooCode/3.54.0`,
- * `Roo-Code` and `X-Title: Roo Code` alike, and a client that re-spells itself
- * between releases does not need a new row.
+ * Needles are matched after {@link normalise} — lower case with `-`, `_` and
+ * spaces removed — so one row covers `RooCode/3.54.0`, `Roo-Code` and
+ * `X-Title: Roo Code` alike, and a client that re-spells itself between releases
+ * does not need a new row.
  *
  * **The first row that matches wins**, so the order is part of the rule rather
  * than an accident of the loop:
@@ -59,14 +70,20 @@ const MAX_HEADER_LENGTH = 200;
  *   wrappers around them: when they announce themselves at all, they do it in
  *   front of the SDK they are built on.
  *
+ * The needles are as narrow as the captured strings allow, because a label that
+ * is wrong is worse than `other`. `copilotchat` rather than `copilot`: the first
+ * row matching anything Copilot-shaped would file a future Copilot that is not
+ * VS Code's chat under `vscode-chat` instead of leaving it in the bucket that
+ * would have argued for its own row.
+ *
  * Every needle is drawn from a string an actual client sent or ships.
  * `client-dimension.spec.ts` holds those strings and where each was captured —
- * including the two clients that announce nothing at all on an OpenAI-compatible
- * endpoint, which the spec names rather than leaving the reader to assume
- * coverage we do not have.
+ * including the clients that announce nothing at all on an OpenAI-compatible
+ * endpoint, which it names rather than leaving the reader to assume coverage we
+ * do not have.
  */
-const CLIENT_TABLE: readonly (readonly [needle: string, client: GenerationClient])[] = [
-  ['copilot', 'vscode-chat'],
+export const CLIENT_TABLE: readonly (readonly [needle: string, client: GenerationClient])[] = [
+  ['copilotchat', 'vscode-chat'],
   ['roocode', 'roo'],
   ['cline', 'cline'],
   ['continue/', 'continue'],
@@ -80,22 +97,6 @@ const CLIENT_TABLE: readonly (readonly [needle: string, client: GenerationClient
   ['curl/', 'curl'],
 ];
 
-/** Every value the column may hold: the table's labels, plus `other`. */
-export const GENERATION_CLIENTS = [
-  'vscode-chat',
-  'cline',
-  'roo',
-  'continue',
-  'cursor',
-  'claude-code',
-  'openai-python',
-  'openai-node',
-  'litellm',
-  'langchain',
-  'curl',
-  'other',
-] as const satisfies readonly GenerationClient[];
-
 type HeaderBag = Record<string, string | string[] | undefined>;
 
 /**
@@ -108,31 +109,27 @@ type HeaderBag = Record<string, string | string[] | undefined>;
  * nullable only because the rows written before SUP-466 were never classified.
  */
 export function clientOf(headers: HeaderBag | undefined): GenerationClient {
-  const announcement = announcementOf(headers);
+  // Joined with a separator that survives normalisation, so the tail of one
+  // header and the head of the next cannot spell a needle between them.
+  const product = PRODUCT_HEADERS.map((name) => headerValue(headers, name)).join('|');
+  const title = headerValue(headers, CALLER_TITLE_HEADER);
+
   for (const [needle, client] of CLIENT_TABLE) {
-    if (announcement.includes(needle)) {
+    if (product.includes(needle) || title === needle) {
       return client;
     }
   }
   return 'other';
 }
 
-/** The announcing headers as one normalised string, each bounded in length. */
-function announcementOf(headers: HeaderBag | undefined): string {
-  if (!headers) {
-    return '';
-  }
-  const announced = ANNOUNCING_HEADERS.map((name) => {
-    const value = headers[name];
-    const first = Array.isArray(value) ? value[0] : value;
-    return typeof first === 'string' ? first.slice(0, MAX_HEADER_LENGTH) : '';
-  });
-  // Joined with a separator that survives normalisation, so the tail of one
-  // header and the head of the next cannot spell a needle between them.
-  return normalise(announced.join('|'));
+/** One header, normalised and bounded in length; `''` when it is not there. */
+function headerValue(headers: HeaderBag | undefined, name: string): string {
+  const value = headers?.[name];
+  const first = Array.isArray(value) ? value[0] : value;
+  return typeof first === 'string' ? normalise(first.slice(0, MAX_HEADER_LENGTH)) : '';
 }
 
 /** Lower case, with the separators clients spell their own names with removed. */
-function normalise(announcement: string): string {
-  return announcement.toLowerCase().replaceAll(/[-_\s]/g, '');
+function normalise(value: string): string {
+  return value.toLowerCase().replaceAll(/[-_\s]/g, '');
 }

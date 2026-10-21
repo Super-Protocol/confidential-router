@@ -8,26 +8,36 @@ import { Workspace } from './workspace.entity.js';
 export type GenerationStatus = 'ok' | 'error' | 'aborted';
 
 /**
- * Which client sent the request, as a **closed set** (SUP-466).
+ * Every value `generations.client` may hold, as a **closed set** (SUP-466).
  *
  * Extended by pull request and never by passthrough: the point of a closed set is
  * that `client` is a breakdown with a dozen rows rather than one row per editor
  * build. The derivation — and the reason the raw `User-Agent` is not here — lives
- * in `client-dimension.ts`.
+ * in `client-dimension.ts`; `other` is the only label that mapping does not read
+ * off the wire.
+ *
+ * An array with the union derived from it, rather than a union with an array
+ * beside it, because the two have to agree with the enum in
+ * `schemas/analytics-taxonomy.json` and a label the array omitted would be
+ * dropped from `first_request_sent` with only a log line to say so. One
+ * declaration cannot drift from itself.
  */
-export type GenerationClient =
-  | 'vscode-chat'
-  | 'cline'
-  | 'roo'
-  | 'continue'
-  | 'cursor'
-  | 'claude-code'
-  | 'openai-python'
-  | 'openai-node'
-  | 'litellm'
-  | 'langchain'
-  | 'curl'
-  | 'other';
+export const GENERATION_CLIENTS = [
+  'vscode-chat',
+  'cline',
+  'roo',
+  'continue',
+  'cursor',
+  'claude-code',
+  'openai-python',
+  'openai-node',
+  'litellm',
+  'langchain',
+  'curl',
+  'other',
+] as const;
+
+export type GenerationClient = (typeof GENERATION_CLIENTS)[number];
 
 /**
  * One metered request. **No prompt or completion content, ever** — the router
