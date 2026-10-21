@@ -24,7 +24,15 @@ export class FakeSmtpServer {
   private server?: Server;
   private readonly sockets = new Set<Socket>();
 
-  constructor(private readonly credentials?: { user: string; password: string }) {}
+  constructor(
+    private readonly credentials?: { user: string; password: string },
+    /**
+     * Recipients this server answers `550` to — a server that takes the
+     * connection and the credentials and refuses one message, which is what
+     * nodemailer reports as `EENVELOPE`.
+     */
+    private readonly refuses: readonly string[] = [],
+  ) {}
 
   /**
    * `port` is for the one case that needs a *particular* one: a harness booted
@@ -153,15 +161,19 @@ export class FakeSmtpServer {
               .split(' ')[0];
             reply('250 2.1.0 OK');
             break;
-          case 'RCPT':
-            current.to.push(
-              line
-                .replace(/^RCPT TO:\s*/i, '')
-                .replace(/[<>]/g, '')
-                .split(' ')[0],
-            );
+          case 'RCPT': {
+            const recipient = line
+              .replace(/^RCPT TO:\s*/i, '')
+              .replace(/[<>]/g, '')
+              .split(' ')[0];
+            if (this.refuses.includes(recipient)) {
+              reply('550 5.1.1 No such user here');
+              break;
+            }
+            current.to.push(recipient);
             reply('250 2.1.5 OK');
             break;
+          }
           case 'DATA':
             inData = true;
             reply('354 End data with <CR><LF>.<CR><LF>');

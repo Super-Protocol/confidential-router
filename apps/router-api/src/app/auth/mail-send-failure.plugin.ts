@@ -135,16 +135,25 @@ export function mailSendFailed(context: MailSendContext | null | undefined): boo
  * 503 anyway. The code is in the inbox and still valid, and the retry gets a
  * 200.
  *
- * **One residual, named rather than hidden.** Because only an admitted address
+ * **One residual, accepted on purpose.** Because only an admitted address
  * reaches a send, only an admitted address can heal `failing` → `ok`, and that
  * transition is observable to whoever asks next. So a *pair* of probes still
- * separates the two: put the state back to `failing`, probe an address twice,
- * and a second answer of 200 means the first probe's send went out. Every
- * single probe is uniform, which is what closes the one-request oracle above;
- * a sequence is not. Closing it needs the state healed by something
- * address-independent — a transport re-check on a withheld request, or a
- * cooldown that ignores intervening successes — and each costs something the
- * other does not. SUP-460 carries the decision.
+ * separates the two: probe an address twice into a failing state, and a second
+ * answer of 200 means the first probe's send went out. Every single probe is
+ * uniform, which is what closes the one-request oracle above; a sequence is
+ * not.
+ *
+ * It is kept rather than closed, because what made it worth anything was that
+ * the `failing` state could be *induced*: a refused recipient used to flip the
+ * deployment-wide state, so one unspent invitation bought an attacker as many
+ * windows as the per-source 429 allowed. `MailService.reportFailure` no longer
+ * flips it for `rejected`, and with that gone the window only opens on a real
+ * transport outage, any legitimate sign-in closes it first, and it yields one
+ * bit per outage. The two ways to close it outright both cost more than that:
+ * a transport re-check on a withheld request records `ok` without proof on a
+ * provider with nothing to probe — reinstating the one-request oracle it was
+ * meant to remove — and a refusal cooldown trades the bit for a sign-in outage
+ * anyone could trigger.
  *
  * The magic-link route needs no hook: it awaits its own callback, so
  * {@link mailSendFailure} thrown from there is already the answer. It captures

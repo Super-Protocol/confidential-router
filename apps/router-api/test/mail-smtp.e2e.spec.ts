@@ -108,6 +108,62 @@ describe('an SMTP server the deployment can reach', () => {
   });
 });
 
+/**
+ * A server that takes the connection and the credentials and refuses one
+ * message. That is the address, not the mailer — and the distinction is load
+ * bearing, because `mail-send-failure.plugin.ts` answers the send route from
+ * `mail.state`. While a refusal flipped it, anyone who could get one send
+ * attempted could put the deployment into `failing` on demand and keep it
+ * there: a sign-up with a bogus address does it through the fire-and-forget
+ * welcome mail, and one unspent invitation does it on the code route.
+ */
+describe('an SMTP server that refuses one recipient', () => {
+  const REFUSED = 'nobody@example.com';
+
+  /** The harness and the server it talks to, so neither needs a `!` to read. */
+  async function refusingHarness(): Promise<{ current: Harness; server: FakeSmtpServer }> {
+    const server = new FakeSmtpServer({ user: SMTP_USER, password: SMTP_PASSWORD }, [REFUSED]);
+    smtp = server;
+    return { current: await smtpHarness(await server.listen()), server };
+  }
+
+  it('refuses that request and leaves the deployment reported as ok', async () => {
+    const { current } = await refusingHarness();
+
+    const refused = await requestCode(current, REFUSED);
+
+    // The requester learns only about the address they supplied.
+    expect(refused.status).toBe(503);
+    expect((await health(current)).mail).toMatchObject({ state: 'ok' });
+    expect((await health(current)).mail.reason).toBeUndefined();
+  });
+
+  it('keeps mailing everybody else, with no 503 in between', async () => {
+    const { current, server } = await refusingHarness();
+
+    await requestCode(current, REFUSED).expect(503);
+    await requestCode(current, EMAIL).expect(200);
+
+    expect((await server.waitFor(1))[0].to).toEqual([EMAIL]);
+  });
+
+  it('is not poisoned by the welcome mail of a sign-up to an address the server refuses', async () => {
+    const { current, server } = await refusingHarness();
+    await requestCode(current, EMAIL).expect(200);
+    const [codeMail] = await server.waitFor(1);
+
+    // The sign-up succeeds and its welcome mail is refused — fire-and-forget,
+    // so nothing fails, and nothing may be left behind in the state either.
+    await request(current.app.getHttpServer())
+      .post('/auth/sign-in/email-otp')
+      .send({ email: EMAIL, otp: codeIn(codeMail.data), name: 'Some One' })
+      .expect(200);
+    await current.settleMail();
+
+    expect((await health(current)).mail).toMatchObject({ state: 'ok' });
+  });
+});
+
 describe('an SMTP server the deployment cannot reach', () => {
   it('is reported unreachable at boot — visibly, not as silence', async () => {
     const current = await smtpHarness(await closedPort());

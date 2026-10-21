@@ -341,6 +341,15 @@ send is still attempted, so the first one that works puts `mail.state` back to
 `ok` and the route recovers on its own — at the cost of one 503 for a code that
 did reach the inbox, whose retry succeeds.
 
+**One message the server refused is not the mailer being down.** A `rejected`
+send — a bad recipient, a body the relay will not carry — is logged and fails
+that one request, and leaves `mail.state` alone; only `unreachable`,
+`auth_failed` and `error` make it `failing`. That keeps the state from being
+something an outsider can set: while a refusal flipped it, a sign-up to a bogus
+address was enough to put the whole deployment into `failing` and have every
+sign-in refused with it. For the same reason `/health` never reports
+`reason: rejected`.
+
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and
 `/auth/reset-password` are 404 on every deployment. `auth.password` is still
