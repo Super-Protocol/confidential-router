@@ -333,6 +333,7 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | HTTP | `type` | `code` |
 | --- | --- | --- |
 | 400 | `invalid_request_error` | `invalid_json`, `missing_field`, `unsupported_parameter`, `context_length_exceeded` |
+| the upstream's own 4xx (`400`, `422`, …) | `invalid_request_error` | `upstream_invalid_request` — see below |
 | 401 | `authentication_error` | `invalid_api_key`, `api_key_revoked`, `api_key_expired` |
 | 402 | `insufficient_credits` | `insufficient_credits`, `key_spend_limit_reached` |
 | 403 | `permission_error` | `model_not_in_key_scope` |
@@ -349,6 +350,28 @@ the 1 MiB the console surfaces keep: a prompt that fills the `context_length` a 
 megabytes of JSON, and a client that trusts the advertised figure has to be able to spend it. Over the
 ceiling the answer is `413 request_too_large`, and its message names the ceiling — the only way a client
 learns a deployment's value.
+
+`upstream_invalid_request` is the one 4xx the router does not decide itself: the upstream read the
+request, called it invalid, and said why. **It is the only code whose HTTP status is not fixed by this
+table** — the status is the upstream's own, `400`, `422`, whatever it answered, except for `408`, `409`
+and `425`, which collapse to `400` because an OpenAI-compatible SDK retries those by itself and a
+request the upstream has already refused does not become valid on a second send.
+
+Its `message` carries the upstream's wording and its `param` the field the upstream named, which is a
+deliberate exception to this surface's rule of not forwarding upstream text: a 4xx body is about *the
+caller's request*, and nothing else in the chain knows which field is wrong. The exception is exactly
+that wide and no wider — only a message the upstream put in an error field (`error.message`, or the
+flat `message` vLLM uses) is forwarded. A raw body is not: an intermediary's HTML error page or a
+`{"detail":[…]}` validation dump says nothing about the request, so it goes to the log and the client
+is told the upstream gave no reason. A 4xx the upstream raised about the **router's** credential or
+account — `401`, `402`, `403`, `407` — is not forwarded either and stays `502 backend_error`; the key
+the caller sent was accepted here.
+
+This used to be `502 backend_error`, and SUP-448 is what that cost: `502` means "transient, retry" to
+every OpenAI-compatible SDK, the message that upset the upstream was already in the conversation
+history, so each retry rebuilt the identical invalid request. One truncated
+`tool_calls[].function.arguments` from a client killed the session permanently and the user read it as
+the platform being down.
 
 The two 5xx upstream codes name different parties, and the difference is the point. **`backend_unavailable`**
 means the backend could not be reached — refused, reset, unresolvable — or answered 5xx itself.
