@@ -717,8 +717,9 @@ runs to completion and answers exactly as it always did — `200 {"success":
 true}`, or `{"status": true}` for the link, or whatever 400 the body earned —
 and the only difference is that nothing left the process. The reason is in the
 log (`Sign-up mail withheld: …`) and, since SUP-462, in `mailDelivery` on the
-console API — `withheld { noInvitation, rateLimited, unusedCodeType, since }`,
-counted since this replica started, behind `auth.adminEmails`. That is the whole of what changed:
+console API — `withheld { noInvitation, rateLimited, unusedCodeType,
+lastWithheldAt }`, counted since this replica started, behind
+`auth.adminEmails`. That is the whole of what changed:
 the caller still cannot tell a refusal from a send, and the deployment's own
 operator no longer has to read a log inside a cluster space they cannot enter to
 tell a withheld send from a dead mail server. Aggregate counts only — a

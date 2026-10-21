@@ -68,8 +68,12 @@ export class MailWithheldModel {
   })
   unusedCodeType!: number;
 
-  @Field({ description: 'When the most recent send was withheld.' })
-  since!: Date;
+  @Field({
+    description:
+      'When the most recent send was withheld. A latest occurrence, not a `since`: `MailDelivery.since` is ' +
+      'the start of a state that still holds, and this is not one.',
+  })
+  lastWithheldAt!: Date;
 }
 
 @ObjectType('MailDelivery', {

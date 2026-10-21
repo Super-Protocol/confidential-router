@@ -256,7 +256,8 @@ describe('an invite-only deployment', () => {
   const ADMIN = 'admin@example.com';
   const ISSUE = `mutation ($input: IssueInviteCodesInput!) { issueInviteCodes(input: $input) { codes { code } } }`;
 
-  const DELIVERY = '{ mailDelivery { state inviteOnly withheld { noInvitation rateLimited unusedCodeType since } } }';
+  const DELIVERY =
+    '{ mailDelivery { state inviteOnly withheld { noInvitation rateLimited unusedCodeType lastWithheldAt } } }';
 
   async function inviteOnly(): Promise<{ current: Harness; code: string; admin: string[] }> {
     const current = await codeHarness({
@@ -399,7 +400,7 @@ describe('an invite-only deployment', () => {
       state: 'OK',
       withheld: { noInvitation: 3, rateLimited: 0, unusedCodeType: 0 },
     });
-    expect(Date.parse(afterWithheld.withheld.since)).not.toBeNaN();
+    expect(Date.parse(afterWithheld.withheld.lastWithheldAt)).not.toBeNaN();
   });
 
   /**

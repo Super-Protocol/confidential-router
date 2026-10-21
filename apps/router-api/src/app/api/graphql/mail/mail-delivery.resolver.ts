@@ -97,7 +97,7 @@ export class MailDeliveryResolver {
             noInvitation: withheld.noInvitation,
             rateLimited: withheld.rateLimited,
             unusedCodeType: withheld.unusedCodeType,
-            since: new Date(withheld.since),
+            lastWithheldAt: new Date(withheld.lastWithheldAt),
           } satisfies MailWithheldModel)
         : null,
       inviteOnly: this.config.auth.requireInviteForSignUp,
