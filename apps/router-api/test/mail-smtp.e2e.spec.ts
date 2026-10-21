@@ -194,6 +194,51 @@ describe('an SMTP server the deployment cannot reach', () => {
     expect(Object.keys(uninvited.headers).sort()).toEqual(Object.keys(account.headers).sort());
   });
 
+  /**
+   * The edge of the outage, where deciding on the way *out* of the request
+   * would still have leaked. The state says `failing` and the transport works
+   * again — the moment an outage ends, or any time after one transient send
+   * failure. Only an address the gate admits reaches a send, so only that
+   * address can heal the state; reading the state after the handler would have
+   * answered it 200 by its own repair while a withheld address still got 503.
+   * Read on arrival, both are refused.
+   *
+   * The probes run withheld-first on purpose: that is the state an attacker
+   * finds, and the order in which no send has yet healed anything. A *second*
+   * probe after an admitted send does still differ — see the residual noted on
+   * SUP-460; it is not closed by the capture and is not pinned here.
+   */
+  it('refuses both alike on the first probe into a stale-failing window', async () => {
+    const port = await closedPort();
+    const current = await smtpHarness(port, {
+      CR_API_AUTH__REQUIRE_INVITE_FOR_SIGN_UP: 'true',
+      CR_API_AUTH__BOOTSTRAP_TOKEN: BOOTSTRAP_TOKEN,
+      CR_API_AUTH__BOOTSTRAP_EMAIL: ADMIN,
+    });
+    await request(current.app.getHttpServer()).post('/auth/bootstrap').send({ token: BOOTSTRAP_TOKEN }).expect(200);
+    // The welcome mail that sign-up started is fire-and-forget; let it finish
+    // failing, or it lands after the server below comes up and heals the state.
+    await current.settleMail();
+    expect((await health(current)).mail).toMatchObject({ state: 'failing' });
+    // The transport comes back underneath a deployment that still says it is down.
+    smtp = new FakeSmtpServer();
+    await smtp.listen(port);
+
+    const uninvited = await requestCode(current, 'stranger@example.com');
+    const account = await requestCode(current, ADMIN);
+
+    expect(uninvited.status).toBe(503);
+    expect(account.status).toBe(uninvited.status);
+    expect(account.body).toEqual(uninvited.body);
+
+    // The account's mail did go out — that is the one cost of reading on
+    // arrival: a 503 for a code that is in the inbox and still works. The state
+    // it healed is what makes the retry a 200.
+    expect((await smtp.waitFor(1))[0].to).toEqual([ADMIN]);
+    expect((await health(current)).mail).toMatchObject({ state: 'ok' });
+    await requestCode(current, ADMIN).expect(200);
+  });
+
   it('refuses a magic link it could not send the same way', async () => {
     const current = await smtpHarness(await closedPort());
 

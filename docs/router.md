@@ -330,15 +330,16 @@ with `emailCode` on and `magicLink` off has no other way in but the
 reported as success would be every account locked out while the router says
 everything is fine.
 
-The refusal is decided from the **mailer's** state and not from what happened
-to the request in hand, which is what keeps it from saying anything about who
-asked. Deciding it per request would not: the invitation gate above returns
-before the send for an uninvited address, so during an outage an account holder
-would get the 503 and a stranger the 200, and the difference would be
-unauthenticated account enumeration. Decided this way, a withheld send, a
-recipient past their allowance and an attempted send all answer alike. The send
-is still attempted, so the first one that works puts `mail.state` back to `ok`
-and the route recovers on its own.
+The refusal is decided from the **mailer's** state as the request found it, and
+not from what happened to that request, which is what keeps it from saying
+anything about who asked. Deciding it per request would not: the invitation gate
+above returns before the send for an uninvited address, so during an outage an
+account holder would get the 503 and a stranger the 200, and the difference
+would be unauthenticated account enumeration. Decided this way, a withheld send,
+a recipient past their allowance and an attempted send all answer alike. The
+send is still attempted, so the first one that works puts `mail.state` back to
+`ok` and the route recovers on its own — at the cost of one 503 for a code that
+did reach the inbox, whose retry succeeds.
 
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and

@@ -26,9 +26,14 @@ export class FakeSmtpServer {
 
   constructor(private readonly credentials?: { user: string; password: string }) {}
 
-  async listen(): Promise<number> {
+  /**
+   * `port` is for the one case that needs a *particular* one: a harness booted
+   * against a dead port, so its mail state starts out `failing`, and then a
+   * server brought up underneath it. Everywhere else, an ephemeral port.
+   */
+  async listen(port = 0): Promise<number> {
     this.server = createServer((socket) => this.session(socket));
-    await new Promise<void>((resolve) => this.server?.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => this.server?.listen(port, '127.0.0.1', resolve));
     const address = this.server.address();
     if (!address || typeof address === 'string') {
       throw new Error('fake SMTP server has no port');
