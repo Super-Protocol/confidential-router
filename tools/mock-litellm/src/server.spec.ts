@@ -184,4 +184,51 @@ describe('mock-litellm', () => {
     });
     expect(((await embedding.json()) as { data: unknown[] }).data).toHaveLength(2);
   });
+
+  /*
+   * Without this the shipped stand could not exercise the forwarded half of
+   * SUP-450's streaming at all: the backend answered the legacy route with one
+   * JSON body, so the router relayed a non-SSE payload and then its own
+   * `[DONE]`. vLLM and SGLang stream it, in `text_completion` objects carrying
+   * `choices[].text` rather than chat's `delta`.
+   */
+  it('streams the legacy route in its own shape, not chat’s', async () => {
+    const { url } = await start();
+
+    const response = await fetch(`${url}/v1/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'vllm/llama-3.3-70b', prompt: 'Ping', stream: true }),
+    });
+
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    const events = await readEvents(response);
+    expect(events.every((event) => event.object === 'text_completion')).toBe(true);
+
+    const choices = events.flatMap((event) => (event.choices as Record<string, unknown>[]) ?? []);
+    // `text`, and no `delta` anywhere: a legacy client reads one and not the other.
+    expect(choices.every((choice) => 'text' in choice && !('delta' in choice))).toBe(true);
+    expect(choices.map((choice) => choice.text as string).join('')).toContain('You said: Ping');
+    expect(choices.at(-1)?.finish_reason).toBe('stop');
+  });
+
+  it('emits the usage-only chunk on the legacy route too, so the meter stays exact', async () => {
+    const { url } = await start();
+
+    const response = await fetch(`${url}/v1/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'vllm/llama-3.3-70b',
+        prompt: 'Ping',
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+
+    const events = await readEvents(response);
+    const usageOnly = events.filter((event) => (event.choices as unknown[]).length === 0);
+    expect(usageOnly).toHaveLength(1);
+    expect(usageOnly[0].usage).toMatchObject({ prompt_tokens: expect.any(Number) });
+  });
 });

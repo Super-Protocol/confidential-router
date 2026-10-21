@@ -90,9 +90,26 @@ export interface GatewayContext {
   generationId: string;
   model: RoutedModel;
   auth: AuthenticatedApiKey;
-  /** The client's body, forwarded with only `model` rewritten. Never stored. */
+  /**
+   * The body the upstream will receive, bar the `model` rewrite the forwarding
+   * path applies: the client's own, or — for a bridged legacy completions
+   * request ({@link bridged}) — the chat body translated from it. Never stored.
+   */
   body: Record<string, unknown>;
   stream: boolean;
+  /**
+   * The upstream path this request is forwarded to. Normally
+   * `UPSTREAM_PATHS[kind]`; the chat one for a legacy completions request the
+   * router serves by translation ({@link bridged}).
+   */
+  upstreamPath: string;
+  /**
+   * True when `POST /v1/completions` is being served by wrapping the prompt in a
+   * chat request (`completions-bridge.ts`, SUP-450). The forwarding path, the
+   * relay and the meter are told nothing else about it: the translation happens
+   * on the way in and on the way out, and this flag is what the two edges read.
+   */
+  bridged: boolean;
   /**
    * True when the router asked the backend for a usage chunk the client did
    * not: the meter needs the real counts, the client asked for a stream that

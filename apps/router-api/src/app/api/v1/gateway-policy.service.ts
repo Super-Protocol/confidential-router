@@ -1,8 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AuthenticatedApiKey } from '../../api-keys/index.js';
 import { CatalogService } from '../../catalog/catalog.service.js';
+import { type RouteCapability, servedCapabilities, servesRoute } from '../../catalog/served-capabilities.js';
 import type { ApiKey } from '../../db/entities/api-key.entity.js';
-import type { ModelCapability } from '../../db/entities/model.entity.js';
 import { ExternalCatalogService, type UnadmittedExternalModel } from '../../external-endpoints/index.js';
 import { CREDITS_GATEWAY, type CreditsGateway } from '../../metering/credits.gateway.js';
 import type { RoutedModel, RouteKind } from './gateway.types.js';
@@ -10,8 +10,8 @@ import { type OpenAiApiError, openAiErrors } from './openai-error.js';
 import { RateLimitService } from './rate-limit.service.js';
 import { routedConfigModel, routedExternalModel } from './routed-model.js';
 
-/** Which capability each route needs the model to declare. */
-const REQUIRED_CAPABILITY: Record<RouteKind, ModelCapability> = {
+/** Which capability each route needs the model to serve. */
+const REQUIRED_CAPABILITY: Record<RouteKind, RouteCapability> = {
   chat: 'chat',
   completions: 'completions',
   embeddings: 'embeddings',
@@ -57,8 +57,19 @@ export class GatewayPolicyService {
     }
 
     const model = found.model;
-    if (!model.capabilities.includes(REQUIRED_CAPABILITY[kind])) {
-      throw openAiErrors.unsupportedParameter('model', `Model "${model.id}" does not support ${kind} requests.`);
+    // `servesRoute`, not `capabilities.includes`: the declared list is what the
+    // *upstream* serves, and the router serves more than that — the legacy
+    // completions route for a chat-only model among it (SUP-450). One function
+    // answers this and `GET /v1/models`, so the gate and the catalogue cannot
+    // drift apart.
+    if (!servesRoute(model.capabilities, REQUIRED_CAPABILITY[kind])) {
+      const served = servedCapabilities(model.capabilities);
+      throw openAiErrors.unsupportedParameter(
+        'model',
+        `Model "${model.id}" does not support ${kind} requests; it serves ${
+          served.length > 0 ? served.join(', ') : 'nothing — its catalogue entry declares no route'
+        }.`,
+      );
     }
     assertSupportedParameters(body);
     return model;

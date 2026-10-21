@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
+import { bridgesCompletions } from '../../catalog/served-capabilities.js';
 import { estimatePromptTokens } from '../../metering/token-estimator.js';
 import { type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
+import { chatBodyForPrompt, textCompletionOf } from './completions-bridge.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
 import type { ExternalRoute, GatewayContext, GenerationOutcome, RoutedModel, RouteKind } from './gateway.types.js';
 import { UPSTREAM_PATHS } from './gateway.types.js';
@@ -47,6 +49,14 @@ export class GatewayService {
     const auth = apiKeyOf(request);
     const body = bodyOf(request);
     const model = this.policy.resolve(kind, body, auth.key);
+    // The legacy route for a chat-only model is served here rather than refused
+    // (SUP-450): the prompt becomes a chat request, and the answer is translated
+    // back on the way out. Beside `resolve` and before `admit`, because an
+    // untranslatable legacy parameter is a request shape the router rejects —
+    // the same class of 400 as `n > 1`, and it should cost no rate-limit slot
+    // and leave no metering row.
+    const bridged = kind === 'completions' && bridgesCompletions(model.capabilities);
+    const upstreamBody = bridged ? chatBodyForPrompt(body) : body;
     const rateLimitHeaders = await this.policy.admit(auth);
 
     const start = await this.recorder.begin(model);
@@ -58,8 +68,10 @@ export class GatewayService {
       generationId: start.id,
       model,
       auth,
-      body,
+      body: upstreamBody,
       stream,
+      upstreamPath: bridged ? UPSTREAM_PATHS.chat : UPSTREAM_PATHS[kind],
+      bridged,
       suppressUsageChunk: stream && !clientWantsUsage,
       coverage: start.coverage,
       evidenceDigest: start.evidenceDigest,
@@ -83,13 +95,13 @@ export class GatewayService {
       upstreamResponse = leg
         ? await this.external.send({
             model: leg,
-            path: UPSTREAM_PATHS[kind],
+            path: context.upstreamPath,
             body: upstreamBodyFor(context),
             stream,
             signal: abort.signal,
           })
         : await this.upstream.send({
-            path: UPSTREAM_PATHS[kind],
+            path: context.upstreamPath,
             body: upstreamBodyFor(context),
             generationId: context.generationId,
             stream,
@@ -147,7 +159,12 @@ export class GatewayService {
     }
 
     const counts = readUsage(payload) ?? { promptTokens: estimatePromptTokens(context.body), completionTokens: 0 };
-    const shaped = shapeResponse(payload as Record<string, unknown>, context, extensionFor(context, counts));
+    // Translated before shaping, so the identity rewrite and the usage extension
+    // land on the object the client will actually read.
+    const body = context.bridged
+      ? textCompletionOf(payload as Record<string, unknown>)
+      : (payload as Record<string, unknown>);
+    const shaped = shapeResponse(body, context, extensionFor(context, counts));
 
     response.setHeader('X-Confidential-Router-Endpoint', context.model.endpoint.hostname);
     response.setHeader('X-Confidential-Router-Generation-Id', context.generationId);

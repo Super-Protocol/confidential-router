@@ -21,6 +21,9 @@ interface ModelFixture {
  */
 const MODELS: ModelFixture[] = [
   { id: 'mock/chat:tdx', litellmModel: 'mock/chat', capabilities: ['chat', 'completions'] },
+  // Declares chat and nothing else, which is the common registration and the one
+  // `/v1/completions` used to refuse: here it exercises the translation (SUP-450).
+  { id: 'mock/chat-only:tdx', litellmModel: 'mock/chat' },
   { id: 'mock/scoped:tdx', litellmModel: 'mock/chat' },
   { id: 'mock/no-usage:tdx', litellmModel: 'mock/no-usage' },
   { id: 'mock/boom:tdx', litellmModel: 'mock/boom' },

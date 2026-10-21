@@ -143,7 +143,9 @@ describe('GET /v1/models', () => {
       context_length: 4096,
       pricing: { prompt_per_1m_micros: 1_000_000, completion_per_1m_micros: 1_000_000 },
       endpoint: { name: 'mock-primary', hostname: PRIMARY_ENDPOINT_HOSTNAME },
-      capabilities: ['chat', 'completions'],
+      // Derived from the declared `[chat, completions]`, and wider than it: the
+      // surface streams and forwards tools for every chat model (SUP-450).
+      capabilities: ['chat', 'completions', 'tools', 'streaming'],
     });
     // Nothing has published evidence for the endpoint yet, so there is no TEE to
     // name — and no config label to fall back on (SUP-260).
