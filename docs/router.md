@@ -319,9 +319,18 @@ console checks the invitation before it asks for one.
 address and is rate-limited per source (429). One recipient is mailed at most
 `mailsPerAddressPerHour` codes — past that the answer is the same 200 and
 nothing is sent, so the limit cannot be used to learn or to silence anything. A
-send the mail server refused is also a 200: it shows in the log and in
-`/health`, not to the requester. A send an invite-only deployment withheld is
-the same 200 again, for the same reason.
+send an invite-only deployment withheld is the same 200 again, for the same
+reason.
+
+**A send that failed is not a 200.** A code the mailer could not get out is a
+`503 {"code": "MAIL_SEND_FAILED"}`, and so is a magic link (SUP-460). It is the
+same refusal for every address — the transport is down for all of them — so it
+still says nothing about who asked, and the reason stays in the log and in
+`/health` where `mail.state` turns `failing`. This matters because a deployment
+with `emailCode` on and `magicLink` off has no other way in but the
+[bootstrap token](#first-sign-in-on-a-fresh-deployment): a mail outage reported
+as success is every account locked out while the router says everything is
+fine.
 
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and
