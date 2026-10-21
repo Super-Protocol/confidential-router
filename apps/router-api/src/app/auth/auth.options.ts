@@ -264,7 +264,16 @@ function authPlugins(
         // `mayMailSignUp` below.
         disableSignUp: false,
         sendVerificationOTP: async ({ email, otp, type }, context) => {
-          // First, and for every type: an invite-only deployment mails nothing
+          // Read before the send below can heal it. `deliver` records `ok` on
+          // a send that works, so deciding afterwards would answer an address
+          // the gate admits 200 — its own send repaired the state — and a
+          // withheld one 503, at the edge of every outage. That difference is
+          // the oracle `reportMailSendFailure` exists to avoid, so the state
+          // this request arrived to is what it is answered from.
+          if (mailerFailing(mail)) {
+            recordMailSendFailure(context);
+          }
+          // Then, and for every type: an invite-only deployment mails nothing
           // to an address it would refuse an account to. Asked here, where the
           // credential would leave the process, so no route, body shape or
           // code type can get past it — see `mayMailSignUp`.
@@ -299,28 +308,39 @@ function authPlugins(
     plugins.push(
       magicLink({
         sendMagicLink: async ({ email, url }, context) => {
-          // In front of the gate, not after it: a deployment whose mailer is
-          // down has to refuse every address alike, including the ones the
-          // gate would withhold from, or the difference between a refusal and
-          // a withheld send is an account-existence oracle. Same reasoning as
-          // the code route's after hook — `reportMailSendFailure` has it.
-          if (mailerFailing(mail)) {
-            throw mailSendFailure('link');
-          }
+          // Captured first and for the same reason as the code route above —
+          // this route has no after hook, so it does both halves itself.
+          const failing = mailerFailing(mail);
           // The same gate as the code above: a link is a sign-in credential
           // too, and this route checks nothing about the address at all
           // (SUP-410). The code rides the `callbackURL` the console names,
           // which this route's schema keeps.
           if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
+            if (failing) {
+              throw mailSendFailure('link');
+            }
             return;
           }
           try {
+            // Attempted even while the state says `failing`: a send that works
+            // is the only thing that heals it, and skipping the send would
+            // leave a deployment refusing every link until someone restarted
+            // it — `onApplicationBootstrap` checks once, at boot, and only for
+            // SMTP. Today a code route is always mounted beside this one to do
+            // the healing (`emailCodeEnabled === mailEnabled`); attempting here
+            // is what keeps this route correct the day they diverge.
             await mail.sendMagicLink(email, url);
           } catch {
             // This route awaits its callback, so a rejection already refuses
             // the request — as a bodyless 500 carrying nothing the console can
             // say anything about. Named instead, so a link that could not be
             // sent reads the same as a code that could not (SUP-460).
+            throw mailSendFailure('link');
+          }
+          // The link is in the inbox and it works; this request is still
+          // refused, because the one that was withheld a moment ago was. The
+          // retry gets a 200.
+          if (failing) {
             throw mailSendFailure('link');
           }
         },

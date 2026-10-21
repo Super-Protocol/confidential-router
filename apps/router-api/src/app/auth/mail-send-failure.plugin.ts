@@ -115,17 +115,41 @@ export function mailSendFailed(context: MailSendContext | null | undefined): boo
  * before the send for an address with no account and no invitation, so during
  * an outage an account holder would get a 503 and a stranger a 200 —
  * unauthenticated account enumeration, available exactly when the mailer is
- * down. So the hook refuses on {@link mailerFailing} as well, and then
- * withheld, past-allowance and attempted all answer alike. The send is still
- * attempted first: `deliver` records `ok` on the first one that works, so the
- * route recovers on its own without a pre-flight check's blind spot. A
- * deployment whose state is a stale `failing` keeps refusing until some
- * admitted address heals it — uniformly, which is the property worth having.
+ * down. So the answer comes from {@link mailerFailing}, and then withheld,
+ * past-allowance and attempted all answer alike.
+ *
+ * **Read on arrival, not on the way out.** The callback marks the request the
+ * moment it sees a failing mailer, before its own send can heal it, and the
+ * hook's `|| mailerFailing(mail)` covers the requests whose callback never ran
+ * — an unknown address with a non-`sign-in` type returns before Better Auth
+ * calls it. Deciding on the way out would leave the same bit in a narrower
+ * window: `deliver` records `ok` on the first send that works, so at the edge
+ * of an outage an admitted address would be answered 200 by its own repair
+ * while a withheld one still got the 503.
+ *
+ * The send is attempted either way, because a send that works is the only
+ * thing that heals the state: skipping it while `failing` would leave a
+ * deployment refusing every sign-in until someone restarted it —
+ * `onApplicationBootstrap` checks once, at boot, and only for SMTP. The cost
+ * is one request at the recovery edge whose mail did go out and is answered
+ * 503 anyway. The code is in the inbox and still valid, and the retry gets a
+ * 200.
+ *
+ * **One residual, named rather than hidden.** Because only an admitted address
+ * reaches a send, only an admitted address can heal `failing` → `ok`, and that
+ * transition is observable to whoever asks next. So a *pair* of probes still
+ * separates the two: put the state back to `failing`, probe an address twice,
+ * and a second answer of 200 means the first probe's send went out. Every
+ * single probe is uniform, which is what closes the one-request oracle above;
+ * a sequence is not. Closing it needs the state healed by something
+ * address-independent — a transport re-check on a withheld request, or a
+ * cooldown that ignores intervening successes — and each costs something the
+ * other does not. SUP-460 carries the decision.
  *
  * The magic-link route needs no hook: it awaits its own callback, so
- * {@link mailSendFailure} thrown from there is already the answer. It does
- * need the same `mailerFailing` check, in front of the gate, for the same
- * reason.
+ * {@link mailSendFailure} thrown from there is already the answer. It captures
+ * the state the same way, and attempts the send even while `failing` — it is
+ * the only route on a link-only deployment that could ever heal it.
  *
  * **This depends on `advanced.backgroundTasks.handler` staying unset.** With
  * one configured, `runInBackgroundOrAwait` stops awaiting the callback, the
