@@ -3,6 +3,7 @@
 import { useQuery } from '@apollo/client/react';
 import * as React from 'react';
 import { toast } from 'sonner';
+import { captureConsoleEvent } from '../../lib/console-analytics';
 import { FEEDBACK_OFFER } from './operations';
 
 /** While waiting for the webhook. The grant is usually there on the first or second poll. */
@@ -19,6 +20,15 @@ const IDLE_POLL_MS = 10 * 60_000;
 
 /** How long to keep watching before giving up quietly. */
 const WAITING_TIMEOUT_MS = 3 * 60_000;
+
+/**
+ * Where the invitation to give feedback was shown — the taxonomy's `source`
+ * (`docs/contracts/analytics-events.md`, `feedback_form_opened`).
+ *
+ * Two of its three values. The third, `email_link`, belongs to a mail that opens
+ * the form without passing through the console, so no caller here can report it.
+ */
+export type FeedbackOfferSource = 'balance_banner' | 'credits_page';
 
 export interface FeedbackOfferState {
   /** Non-null only while the viewer is actually being offered the grant. */
@@ -38,7 +48,7 @@ export interface FeedbackOfferState {
  * (`feedback-eligibility.service.ts`), and the balance is read back rather than
  * predicted, for the same reason the Stripe return only triggers a refetch.
  */
-export function useFeedbackOffer(onGranted?: () => void): FeedbackOfferState {
+export function useFeedbackOffer(source: FeedbackOfferSource, onGranted?: () => void): FeedbackOfferState {
   const [waiting, setWaiting] = React.useState(false);
   const { data, refetch, startPolling, stopPolling } = useQuery(FEEDBACK_OFFER, {
     // The offer changes with the balance, which every generation moves.
@@ -80,9 +90,16 @@ export function useFeedbackOffer(onGranted?: () => void): FeedbackOfferState {
   }, [waiting]);
 
   const opened = React.useCallback(() => {
+    // The click, not the form provider's own view event: this is the step the
+    // funnel loses track of otherwise, because the form is another origin and
+    // its analytics are not ours to join on. `grant_eligible` is the server's
+    // answer as of the last poll rather than a constant — the link is only
+    // rendered for an eligible account today, and a future surface that shows it
+    // to someone who has already been granted should report that honestly.
+    void captureConsoleEvent('feedback_form_opened', { source, grant_eligible: eligible });
     setWaiting(true);
     void refetch();
-  }, [refetch]);
+  }, [refetch, source, eligible]);
 
   return {
     offer: eligible && offer ? { grantMicros: offer.grantMicros, formUrl: offer.formUrl } : null,
