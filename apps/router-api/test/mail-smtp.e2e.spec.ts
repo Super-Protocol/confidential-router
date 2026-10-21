@@ -109,13 +109,17 @@ describe('an SMTP server the deployment can reach', () => {
 });
 
 /**
- * A server that takes the connection and the credentials and refuses one
- * message. That is the address, not the mailer — and the distinction is load
- * bearing, because `mail-send-failure.plugin.ts` answers the send route from
- * `mail.state`. While a refusal flipped it, anyone who could get one send
- * attempted could put the deployment into `failing` on demand and keep it
- * there: a sign-up with a bogus address does it through the fire-and-forget
- * welcome mail, and one unspent invitation does it on the code route.
+ * A server that takes the connection, the credentials and our sender, and
+ * will not take one recipient. That is the address the caller named, not the
+ * mailer — and the distinction is load bearing twice over, because
+ * `mail-send-failure.plugin.ts` answers the send route from `mail.state`.
+ * While a refusal flipped the state, anyone who could get one send attempted
+ * could put the deployment into `failing` on demand and keep it there: a
+ * sign-up with a bogus address does it through the fire-and-forget welcome
+ * mail, and one unspent invitation does it on the code route. And answering
+ * the refused request differently from a withheld one is the same
+ * account-existence differential in miniature, wherever an address can be
+ * both refused and registered.
  */
 describe('an SMTP server that refuses one recipient', () => {
   const REFUSED = 'nobody@example.com';
@@ -127,21 +131,22 @@ describe('an SMTP server that refuses one recipient', () => {
     return { current: await smtpHarness(await server.listen()), server };
   }
 
-  it('refuses that request and leaves the deployment reported as ok', async () => {
+  it('answers it exactly as it answers a send it withheld, and stays reported as ok', async () => {
     const { current } = await refusingHarness();
 
     const refused = await requestCode(current, REFUSED);
+    const sent = await requestCode(current, EMAIL);
 
-    // The requester learns only about the address they supplied.
-    expect(refused.status).toBe(503);
+    expect(refused.status).toBe(200);
+    expect(refused.body).toEqual(sent.body);
     expect((await health(current)).mail).toMatchObject({ state: 'ok' });
     expect((await health(current)).mail.reason).toBeUndefined();
   });
 
-  it('keeps mailing everybody else, with no 503 in between', async () => {
+  it('keeps mailing everybody else', async () => {
     const { current, server } = await refusingHarness();
 
-    await requestCode(current, REFUSED).expect(503);
+    await requestCode(current, REFUSED).expect(200);
     await requestCode(current, EMAIL).expect(200);
 
     expect((await server.waitFor(1))[0].to).toEqual([EMAIL]);
@@ -161,6 +166,29 @@ describe('an SMTP server that refuses one recipient', () => {
     await current.settleMail();
 
     expect((await health(current)).mail).toMatchObject({ state: 'ok' });
+  });
+});
+
+/**
+ * The refusal that looks like the one above and is the opposite of it. A relay
+ * that will not carry our *sender* — an unverified domain, a suspended account
+ * — answers at the same SMTP stage with the same `EENVELOPE`, and nothing can
+ * be sent for anybody. Reading that as "one address" would leave `/health`
+ * saying `ok` through a total outage while the send route answered an account
+ * holder 503 and a stranger 200, for as long as the misconfiguration lasted.
+ */
+describe('an SMTP server that will not carry this deployment as a sender', () => {
+  it('reports the deployment failing and refuses every address alike', async () => {
+    smtp = new FakeSmtpServer({ user: SMTP_USER, password: SMTP_PASSWORD }, [], true);
+    const current = await smtpHarness(await smtp.listen());
+
+    const first = await requestCode(current, EMAIL);
+    const second = await requestCode(current, 'somebody-else@example.com');
+
+    expect(first.status).toBe(503);
+    expect(second.status).toBe(first.status);
+    expect(second.body).toEqual(first.body);
+    expect((await health(current)).mail).toMatchObject({ state: 'failing', reason: 'error' });
   });
 });
 

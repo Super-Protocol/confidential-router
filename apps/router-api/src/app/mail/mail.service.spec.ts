@@ -31,6 +31,19 @@ function errorWithCode(message: string, code: string): Error {
   return Object.assign(new Error(message), { code });
 }
 
+/**
+ * What nodemailer throws when every recipient was refused: `EENVELOPE` *and* a
+ * `rejected` list naming them (`smtp-connection/index.js`, `_actionRCPT`). The
+ * list is the whole discriminator — the refusals that are not about the
+ * recipient carry the same code without it.
+ */
+function refusedRecipient(address: string): Error {
+  return Object.assign(new Error("Can't send mail - all recipients were rejected: 550 5.1.1 No such user here"), {
+    code: 'EENVELOPE',
+    rejected: [address],
+  });
+}
+
 function build(overrides: { mail?: object; auth?: object } = {}) {
   const config = RouterConfigSchema.parse({
     server: { validClientOrigins: ['https://console.example.com'] },
@@ -139,36 +152,53 @@ describe('MailService', () => {
   });
 
   /**
-   * A refusal of one message is not the mailer going down, and the difference
-   * is load bearing: `mail-send-failure.plugin.ts` answers the send route from
-   * this state, so a state anyone could set by getting one send attempted —
-   * a bogus recipient, an address the relay will not carry — would be a
-   * refusal anyone could induce.
+   * A recipient the server will not take is the address the caller named, not
+   * the mailer going down — and the difference is load bearing twice.
+   * `mail-send-failure.plugin.ts` answers the send route from this state, so a
+   * state anyone could set by getting one send attempted would be a refusal
+   * anyone could induce; and answering the caller differently from a send this
+   * deployment withheld is the same account-existence differential in
+   * miniature.
    */
-  it('does not report the deployment as failing when the server refused one message', async () => {
+  it('resolves and leaves the deployment reported as it was when a recipient was refused', async () => {
     const { service, transport } = build();
-    transport.sendError = errorWithCode('550 no such user', 'EENVELOPE');
+    transport.sendError = refusedRecipient('nobody@example.com');
 
-    await expect(service.sendSignInCode('nobody@example.com', '482913')).rejects.toThrow('550 no such user');
+    await expect(service.sendSignInCode('nobody@example.com', '482913')).resolves.toBeUndefined();
 
     expect(service.status()).toMatchObject({ state: 'unverified' });
     expect(service.status().reason).toBeUndefined();
   });
 
-  it('leaves a state it had already established alone when one message is refused', async () => {
+  it('leaves an established state alone when a recipient is refused', async () => {
     const { service, transport } = build();
     await service.sendSignInCode('someone@example.com', '482913');
     expect(service.status().state).toBe('ok');
 
-    transport.sendError = errorWithCode('550 no such user', 'EENVELOPE');
-    await expect(service.sendSignInCode('nobody@example.com', '482913')).rejects.toThrow();
+    transport.sendError = refusedRecipient('nobody@example.com');
+    await expect(service.sendSignInCode('nobody@example.com', '482913')).resolves.toBeUndefined();
 
     expect(service.status()).toMatchObject({ state: 'ok' });
+  });
+
+  /**
+   * The refusal that looks like a refused recipient and is the opposite of it:
+   * a relay that will not carry our sender answers at the same SMTP stage with
+   * the same code and no `rejected` list, and can send nothing for anybody.
+   */
+  it('reports the deployment failing when the envelope was refused without naming a recipient', async () => {
+    const { service, transport } = build();
+    transport.sendError = errorWithCode('Mail command failed: 550 sender not verified', 'EENVELOPE');
+
+    await expect(service.sendSignInCode('someone@example.com', '482913')).rejects.toThrow(/sender not verified/);
+
+    expect(service.status()).toMatchObject({ state: 'failing', reason: 'error' });
   });
 
   it.each([
     ['ECONNECTION', 'unreachable'],
     ['EAUTH', 'auth_failed'],
+    ['EMESSAGE', 'error'],
     ['EWHATEVER', 'error'],
   ])('still reports the deployment failing for %s', async (code, reason) => {
     const { service, transport } = build();
@@ -235,10 +265,18 @@ describe('failureReasonOf', () => {
     ['ESOCKET', 'unreachable'],
     ['EDNS', 'unreachable'],
     ['EAUTH', 'auth_failed'],
-    ['EENVELOPE', 'rejected'],
+    // Without a `rejected` list these are the sender, the body or an API
+    // misuse — every one of them the mailer rather than the address.
+    ['EENVELOPE', 'error'],
+    ['EMESSAGE', 'error'],
     ['EWHATEVER', 'error'],
   ])('maps %s to %s', (code, reason) => {
     expect(failureReasonOf(errorWithCode('x', code))).toBe(reason);
+  });
+
+  it('reads the recipient list, not the code, to find a refused recipient', () => {
+    expect(failureReasonOf(refusedRecipient('nobody@example.com'))).toBe('recipient_refused');
+    expect(failureReasonOf(Object.assign(new Error('x'), { code: 'EENVELOPE', rejected: [] }))).toBe('error');
   });
 
   it('sees through a fetch TypeError to the connect failure under it', () => {

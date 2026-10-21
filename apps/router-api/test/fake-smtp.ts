@@ -32,6 +32,12 @@ export class FakeSmtpServer {
      * nodemailer reports as `EENVELOPE`.
      */
     private readonly refuses: readonly string[] = [],
+    /**
+     * Refuse `MAIL FROM` instead — a relay that will not carry this sender at
+     * all, which is what an unverified domain or a suspended account looks
+     * like. Same `EENVELOPE` as a refused recipient, and no `rejected` list.
+     */
+    private readonly refusesSender = false,
   ) {}
 
   /**
@@ -153,6 +159,10 @@ export class FakeSmtpServer {
           case 'MAIL':
             if (this.credentials && !auth) {
               reply('530 5.7.0 Authentication required');
+              break;
+            }
+            if (this.refusesSender) {
+              reply('550 5.7.1 Sender domain is not verified');
               break;
             }
             current.from = line
