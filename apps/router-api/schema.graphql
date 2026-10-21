@@ -1302,6 +1302,11 @@ Mail this deployment was asked for and deliberately did not send, counted since 
 """
 type MailWithheld {
   """
+  When the most recent send was withheld. A latest occurrence, not a `since`: `MailDelivery.since` is the start of a state that still holds, and this is not one.
+  """
+  lastWithheldAt: DateTime!
+
+  """
   Sign-up mail withheld because this deployment is invite-only and the request carried no invitation it would admit (SUP-410). A non-zero count beside a healthy `state` is the signature of “uninvited addresses asked for a code”, not of an outage.
   """
   noInvitation: Int!
@@ -1310,9 +1315,6 @@ type MailWithheld {
   Sign-in codes withheld because that recipient had already had their hourly allowance.
   """
   rateLimited: Int!
-
-  """When the most recent send was withheld."""
-  since: DateTime!
 
   """
   Code requests for a `type` this deployment does not mail — only `sign-in` is, and the flows the other two belong to have their routes disabled. A non-zero count here is a client bug, and it looks exactly like mail that stopped arriving.

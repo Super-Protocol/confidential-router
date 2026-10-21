@@ -122,7 +122,7 @@ export const MAIL_DELIVERY_QUERY = graphql(`
         noInvitation
         rateLimited
         unusedCodeType
-        since
+        lastWithheldAt
       }
     }
   }

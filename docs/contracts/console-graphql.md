@@ -1125,7 +1125,7 @@ type MailWithheld {                     # aggregate only; never per address
   noInvitation: Int!                    # invite-only, and the request carried no code the gate would admit
   rateLimited: Int!                     # the recipient had already had their `mailsPerAddressPerHour`
   unusedCodeType: Int!                  # a `type` this deployment does not mail — a client bug, not an outage
-  since: DateTime!                      # the most recent withheld send
+  lastWithheldAt: DateTime!             # the most recent withheld send — a latest occurrence, not a `since`
 }
 
 type MailDelivery {                     # auth.adminEmails only

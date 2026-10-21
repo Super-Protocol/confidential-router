@@ -162,7 +162,7 @@ describe('MailService', () => {
       service.recordWithheld('unused_code_type');
 
       expect(service.delivery().withheld).toMatchObject({ noInvitation: 2, rateLimited: 1, unusedCodeType: 1 });
-      expect(Date.parse(service.delivery().withheld?.since ?? '')).not.toBeNaN();
+      expect(Date.parse(service.delivery().withheld?.lastWithheldAt ?? '')).not.toBeNaN();
     });
 
     it('leaves the transport state alone — the two facts are orthogonal', async () => {
@@ -202,16 +202,34 @@ describe('MailService', () => {
       expect(JSON.stringify(warn.mock.calls)).not.toContain('A@example.com');
     });
 
-    it('never writes the address into the log for either reason', () => {
+    it('never writes the address into the log for any reason', () => {
       const { service } = build();
       const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-      service.recordWithheld('no_invitation');
       service.recordWithheld('rate_limited');
+      service.recordWithheld('unused_code_type');
 
       expect(warn).toHaveBeenCalledTimes(2);
-      expect(String(warn.mock.calls[0][0])).toContain('SUP-410');
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('@');
       expect(JSON.stringify(service.delivery())).not.toContain('@');
+    });
+
+    /**
+     * `SignUpGate.admits` already logs this refusal, and with the one detail
+     * that matters — which refusal it was. A second line here would make
+     * grep-counting the event double-count it (CTO review on #152).
+     */
+    it('logs nothing of its own for the gate refusal, which SignUpGate already names', () => {
+      const { service } = build();
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      service.recordWithheld('no_invitation');
+
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      // Counted all the same — the record is this call's contribution.
+      expect(service.delivery().withheld).toMatchObject({ noInvitation: 1 });
     });
 
     it('is a plain increment: it returns nothing, throws nothing and awaits nothing', () => {

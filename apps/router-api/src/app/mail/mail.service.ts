@@ -81,8 +81,11 @@ export interface MailWithheldTally {
    * it looks exactly like mail that stopped arriving.
    */
   unusedCodeType: number;
-  /** ISO time of the most recent withheld send. */
-  since: string;
+  /**
+   * ISO time of the most recent withheld send. Not `since`: `MailStatus.since`
+   * is the start of a state that still holds, and this is a latest occurrence.
+   */
+  lastWithheldAt: string;
 }
 
 /**
@@ -138,21 +141,26 @@ function messageOf(error: unknown): string {
 const HOUR_MS = 3_600_000;
 
 /**
- * What the log says for each reason. No address in either: the recipient is the
- * one thing a withheld-send record must not keep, and the counter the operator
- * reads is aggregate for the same reason.
+ * What the log says for each reason, or `null` where somebody else already says
+ * it. No address in any of them: the recipient is the one thing a withheld-send
+ * record must not keep, and the counter the operator reads is aggregate for the
+ * same reason.
  */
-const WITHHELD_LOG: Record<MailWithheldReason, string> = {
-  no_invitation:
-    'Sign-up mail withheld: this deployment is invite-only and the request carried no invitation it would ' +
-    'admit (SUP-410). The route answered as if it had sent, by design — the count is on `mailDelivery`.',
+const WITHHELD_LOG: Record<MailWithheldReason, string | null> = {
+  // Nothing. `SignUpGate.admits` logs this refusal already, and with the one
+  // detail that matters — *which* refusal it was: `missing`, `spent`, `expired`
+  // or `withdrawn`. A second line opening with the same five words and less in
+  // it would make grep-counting the event double-count it, and would sit next
+  // to the only line worth reading. The count is this record's contribution.
+  no_invitation: null,
   rate_limited: 'Sign-in code not sent: this address has had its hourly allowance.',
   unused_code_type:
     'No code mailed: the request asked for a code `type` this deployment does not use — only "sign-in" is ' +
-    'mailed, and the flows the other types belong to have their routes disabled.',
+    'mailed, and the flows the other types belong to have their routes disabled. The count is on ' +
+    '`mailDelivery`.',
 };
 
-const EMPTY_TALLY: Omit<MailWithheldTally, 'since'> = { noInvitation: 0, rateLimited: 0, unusedCodeType: 0 };
+const EMPTY_TALLY: Omit<MailWithheldTally, 'lastWithheldAt'> = { noInvitation: 0, rateLimited: 0, unusedCodeType: 0 };
 
 /** Which counter each reason increments — a map rather than a branch, so a new reason cannot forget one. */
 const WITHHELD_COUNTER: Record<MailWithheldReason, keyof typeof EMPTY_TALLY> = {
@@ -231,11 +239,14 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
    * is the defect, not the fix.
    */
   recordWithheld(reason: MailWithheldReason): void {
-    const tally = this.withheld ?? { ...EMPTY_TALLY, since: '' };
+    const tally = this.withheld ?? { ...EMPTY_TALLY, lastWithheldAt: '' };
     tally[WITHHELD_COUNTER[reason]] += 1;
-    tally.since = new Date().toISOString();
+    tally.lastWithheldAt = new Date().toISOString();
     this.withheld = tally;
-    this.logger.warn(WITHHELD_LOG[reason]);
+    const line = WITHHELD_LOG[reason];
+    if (line) {
+      this.logger.warn(line);
+    }
   }
 
   /**
