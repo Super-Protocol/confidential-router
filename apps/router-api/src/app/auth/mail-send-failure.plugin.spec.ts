@@ -3,6 +3,8 @@ import { EMAIL_CODE_SEND_PATH } from '../mail/email-code-throttle.js';
 import {
   MAIL_SEND_FAILED,
   type MailSendContext,
+  type MailStateReader,
+  mailerFailing,
   mailSendFailed,
   mailSendFailure,
   recordMailSendFailure,
@@ -20,6 +22,11 @@ import {
 /** A request Better Auth would hand both the callback and the hook. */
 function request(path = EMAIL_CODE_SEND_PATH): MailSendContext & { path: string } {
   return { path, context: {} };
+}
+
+/** A deployment whose mailer is in the given state. */
+function mailer(state: ReturnType<MailStateReader['status']>['state']): MailStateReader {
+  return { status: () => ({ state }) };
 }
 
 describe('the mark a failed send leaves', () => {
@@ -67,9 +74,18 @@ describe('what the requester is told', () => {
   });
 });
 
+describe('whether the deployment can mail at all', () => {
+  it('is only false while the last check or send worked, or none has run', () => {
+    expect(mailerFailing(mailer('failing'))).toBe(true);
+    for (const state of ['ok', 'unverified', 'disabled'] as const) {
+      expect(mailerFailing(mailer(state)), state).toBe(false);
+    }
+  });
+});
+
 describe('the after hook', () => {
-  const plugin = reportMailSendFailure();
-  const hook = plugin.hooks?.after?.[0];
+  const hookOf = (mail: MailStateReader) => reportMailSendFailure(mail).hooks?.after?.[0];
+  const hook = hookOf(mailer('ok'));
 
   it('watches the send route and nothing else', () => {
     expect(hook?.matcher(request() as never)).toBe(true);
@@ -85,6 +101,22 @@ describe('the after hook', () => {
     recordMailSendFailure(failed);
 
     await expect(hook?.handler(failed as never)).rejects.toMatchObject({
+      statusCode: 503,
+      body: { code: MAIL_SEND_FAILED },
+    });
+  });
+
+  /**
+   * The oracle this is built to avoid. On an invite-only deployment the gate
+   * returns before the send for an uninvited address, so that request carries
+   * no mark however broken the mailer is — and answering it 200 while an
+   * account holder's request gets a 503 is account enumeration. The mailer's
+   * own state is what both are answered from.
+   */
+  it('refuses an unmarked request too while the mailer is down', async () => {
+    const withheld = request();
+
+    await expect(hookOf(mailer('failing'))?.handler(withheld as never)).rejects.toMatchObject({
       statusCode: 503,
       body: { code: MAIL_SEND_FAILED },
     });

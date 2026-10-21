@@ -592,10 +592,10 @@ describe('SignInForm, the emailed-code path', () => {
   });
 
   /**
-   * SUP-460: the router used to answer `200 {"success": true}` for a code it
-   * never managed to send, which put the viewer on the code step waiting for a
-   * mail that was not coming. It refuses with a 503 now, and the card has to
-   * keep them where they can try again.
+   * SUP-460: a code the router could not send used to come back as
+   * `200 {"success": true}`, which put the viewer on the code step waiting for
+   * a mail that was never coming. It refuses with a 503 now, and the card has
+   * to keep them where they can try again.
    */
   it('keeps the viewer on the address when the router could not send the code', async () => {
     routeCode({

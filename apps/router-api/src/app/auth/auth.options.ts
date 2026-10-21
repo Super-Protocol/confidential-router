@@ -7,7 +7,13 @@ import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
 import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
-import { mailSendFailure, recordMailSendFailure, reportMailSendFailure } from './mail-send-failure.plugin.js';
+import {
+  type MailStateReader,
+  mailerFailing,
+  mailSendFailure,
+  recordMailSendFailure,
+  reportMailSendFailure,
+} from './mail-send-failure.plugin.js';
 import { mayMailSignUp, signUpInviteCarrier } from './sign-up-mail-gate.plugin.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
@@ -61,10 +67,15 @@ export const EMAIL_CODE_LENGTH = 6;
  * What the auth flows need from the mail service — narrower than
  * `MailService`, so this file stays a function of its inputs.
  *
- * Both are awaited and reject when the mail could not be sent. Neither leaks
- * anything by that — see `MailService`.
+ * Both sends are awaited and reject when the mail could not be sent. Neither
+ * leaks anything by that — see `MailService`.
+ *
+ * `status` is what the refusal is decided from, and it is deliberately the
+ * deployment's state rather than this request's outcome: see
+ * `reportMailSendFailure` for why answering only the requests that tried
+ * would be an account-existence oracle on an invite-only deployment.
  */
-export interface AuthMail {
+export interface AuthMail extends MailStateReader {
   sendMagicLink(email: string, url: string): Promise<void>;
   sendSignInCode(email: string, code: string): Promise<void>;
 }
@@ -280,7 +291,7 @@ function authPlugins(
           }
         },
       }),
-      reportMailSendFailure(),
+      reportMailSendFailure(mail),
     );
   }
 
@@ -288,6 +299,14 @@ function authPlugins(
     plugins.push(
       magicLink({
         sendMagicLink: async ({ email, url }, context) => {
+          // In front of the gate, not after it: a deployment whose mailer is
+          // down has to refuse every address alike, including the ones the
+          // gate would withhold from, or the difference between a refusal and
+          // a withheld send is an account-existence oracle. Same reasoning as
+          // the code route's after hook — `reportMailSendFailure` has it.
+          if (mailerFailing(mail)) {
+            throw mailSendFailure('link');
+          }
           // The same gate as the code above: a link is a sign-in credential
           // too, and this route checks nothing about the address at all
           // (SUP-410). The code rides the `callbackURL` the console names,
