@@ -276,7 +276,23 @@ describe('failureReasonOf', () => {
 
   it('reads the recipient list, not the code, to find a refused recipient', () => {
     expect(failureReasonOf(refusedRecipient('nobody@example.com'))).toBe('recipient_refused');
+    expect(failureReasonOf(Object.assign(new Error('x'), { code: 'EMESSAGE', rejected: ['a@b.c'] }))).toBe(
+      'recipient_refused',
+    );
     expect(failureReasonOf(Object.assign(new Error('x'), { code: 'EENVELOPE', rejected: [] }))).toBe('error');
+  });
+
+  /**
+   * Only the envelope and message stages can refuse a recipient, so a
+   * `rejected` list anywhere else is a field we did not expect — and the
+   * reading that suppresses the state flip is the expensive one to get wrong.
+   */
+  it('does not let a stray recipient list suppress a transport failure', () => {
+    for (const code of ['ECONNECTION', 'EAUTH', 'EWHATEVER'] as const) {
+      const strayed = Object.assign(new Error('x'), { code, rejected: ['nobody@example.com'] });
+
+      expect(failureReasonOf(strayed), code).not.toBe('recipient_refused');
+    }
   });
 
   it('sees through a fetch TypeError to the connect failure under it', () => {
