@@ -9,7 +9,10 @@ import { ExternalEndpoint } from './external-endpoint.entity.js';
  * two-factor trust (SUP-252) a digest change is also *gating* — the pinned digest
  * no longer matches, so the same pass records the `denied` it caused — and
  * `digest_pinned` is the admin's approval of a deployment, carrying the digest
- * approved.
+ * approved. `digest_unpinned` is its counterpart: the approval an edit withdrew,
+ * carrying the digest that is no longer approved and the reason it went (SUP-435)
+ * — without it, an endpoint that stops serving after a re-point has nothing in
+ * its own history that says why.
  */
 export type ExternalEndpointEventKind =
   | 'registered'
@@ -17,6 +20,7 @@ export type ExternalEndpointEventKind =
   | 'denied'
   | 'digest_changed'
   | 'digest_pinned'
+  | 'digest_unpinned'
   | 'measurement_changed'
   | 'disabled'
   | 'key_rotated';

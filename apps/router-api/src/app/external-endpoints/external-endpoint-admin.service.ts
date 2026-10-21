@@ -55,6 +55,14 @@ export interface UpdateExternalEndpointSpec {
   baseUrl?: string;
   /** Replaces the registered set. A model dropped here is retired, never deleted. */
   models?: readonly ExternalModelSpec[];
+  /**
+   * The deployment this edit approves — the approval {@link
+   * ExternalEndpointAdminService.pinDigest} takes, stated inside the edit so a
+   * re-point does not have to pass through an unapproved endpoint (SUP-435).
+   * Omitted — or stated as null, which is what a GraphQL caller re-sending an
+   * unpinned endpoint's own pin sends — says nothing about the pin.
+   */
+  evidenceDigest?: string | null;
 }
 
 /**
@@ -263,6 +271,17 @@ export class ExternalEndpointAdminService {
    * which says exactly that, rather than `digest-mismatch`, which would read as a
    * redeploy of the old upstream.
    *
+   * Which is why the edit can carry an approval with it (`evidenceDigest`,
+   * SUP-435). An operator correcting a URL usually knows which deployment they
+   * mean to keep approved, and without a way to say so the only route is
+   * re-point, watch the endpoint fall to `digest-not-pinned`, then pin again —
+   * an outage of every model on it for as long as those two calls are apart,
+   * which on production was 28 minutes. Stating the digest here makes the edit
+   * and the approval one write; omitting it leaves the pin exactly as the
+   * paragraph above describes, and the withdrawal is recorded as
+   * `digest_unpinned` and logged at WARN rather than only showing up as the next
+   * check's refusal.
+   *
    * The name is **not** among the things this changes, and the contract says so
    * out loud (`UpdateExternalEndpointInput` has no `name`): it is also the
    * sidecar's key for the upstream and the id the rendered config, the allocated
@@ -272,6 +291,12 @@ export class ExternalEndpointAdminService {
   async update(spec: UpdateExternalEndpointSpec): Promise<ExternalEndpointView> {
     const endpoint = await this.require(spec.id);
     const baseUrl = spec.baseUrl === undefined ? endpoint.baseUrl : canonicalBaseUrl(spec.baseUrl);
+    // Before the transaction: a digest the parser refuses must not leave the
+    // models re-priced and the approval half-written. A null is "said nothing"
+    // rather than a value, because the generated client types the optional field
+    // as `string | null | undefined` and a console re-sending an unpinned
+    // endpoint's own pin sends exactly that.
+    const approved = spec.evidenceDigest == null ? undefined : this.requireDigest(spec.evidenceDigest);
 
     if (spec.models) {
       assertDistinctModelIds(spec.models);
@@ -280,6 +305,8 @@ export class ExternalEndpointAdminService {
 
     const now = new Date();
     const repointed = baseUrl !== endpoint.baseUrl;
+    const pinned = approved ?? (repointed ? null : endpoint.pinnedEvidenceDigest);
+    const withdrawn = endpoint.pinnedEvidenceDigest !== null && pinned === null;
     await this.dataSource.transaction(async (manager) => {
       await manager.update(
         ExternalEndpoint,
@@ -288,7 +315,7 @@ export class ExternalEndpointAdminService {
           baseUrl,
           hostname: new URL(baseUrl).hostname,
           ...(repointed && endpoint.enabled ? PENDING_VERDICT : {}),
-          ...(repointed ? { pinnedEvidenceDigest: null } : {}),
+          ...(pinned === endpoint.pinnedEvidenceDigest ? {} : { pinnedEvidenceDigest: pinned }),
           updatedAt: now,
         },
       );
@@ -297,7 +324,36 @@ export class ExternalEndpointAdminService {
         await this.writeModels(write);
         await this.retireModels(write);
       }
+      // On the same transaction as the column they are about: an approval that
+      // changed with no entry behind it is the state SUP-435 is about — an
+      // endpoint out of service and nothing saying why. Both entries are written
+      // on a change of the pin's *value*, not on every edit that mentions it, so
+      // re-sending the digest an endpoint already holds records nothing: it
+      // approves nothing new.
+      if (pinned !== null && pinned !== endpoint.pinnedEvidenceDigest) {
+        await this.status.recordEvent(endpoint.id, 'digest_pinned', { now, evidenceDigest: pinned, manager });
+      }
+      if (withdrawn) {
+        await this.status.recordEvent(endpoint.id, 'digest_unpinned', {
+          now,
+          evidenceDigest: endpoint.pinnedEvidenceDigest,
+          reason: `Re-pointed to ${baseUrl}; the approval was of the deployment that answered at ${endpoint.baseUrl}.`,
+          manager,
+        });
+      }
     });
+
+    if (withdrawn) {
+      // WARN, because nothing else about this call says the endpoint has stopped
+      // serving: it answers with the row it wrote, and the refusal only arrives
+      // at the next check (SUP-435).
+      this.logger.warn(
+        `External endpoint "${endpoint.name}" lost its approved deployment ${endpoint.pinnedEvidenceDigest}: ` +
+          `the update re-points it from ${endpoint.baseUrl} to ${baseUrl}, and the pin approved the deployment ` +
+          'that answered at the old URL. It will serve nothing until a digest is pinned again — pass ' +
+          'evidenceDigest on the update, or call pinExternalEndpointDigest.',
+      );
+    }
 
     await this.publish();
     return this.view(endpoint.id);

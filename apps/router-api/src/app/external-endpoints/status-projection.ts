@@ -177,7 +177,12 @@ function differs(endpoint: ExternalEndpoint, patch: ExternalEndpointStatusPatch)
   });
 }
 
-function clip(value: string | null, length: number): string | null {
+/**
+ * Keeps a reason inside `external_endpoint_events.reason` / `lastReason`, both
+ * varchar(255). Exported because the reasons a mutation writes are as long as the
+ * base URLs they quote, and one column should not have two guards.
+ */
+export function clip(value: string | null, length: number): string | null {
   if (!value) {
     return null;
   }

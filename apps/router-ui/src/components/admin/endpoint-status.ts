@@ -67,7 +67,10 @@ export interface EventPresentation {
  * The timeline's labels. `DIGEST_CHANGED` and `MEASUREMENT_CHANGED` are warnings
  * rather than neutral notes on purpose: under two-factor trust (SUP-252) a digest
  * change fails the endpoint closed until an admin approves it, so it is the one
- * thing in here an operator has to read. `DIGEST_PINNED` is that approval.
+ * thing in here an operator has to read. `DIGEST_PINNED` is that approval, and
+ * `DIGEST_UNPINNED` is a warning for the same reason as a digest change: the
+ * endpoint has no approved deployment left, so it serves nothing until it has
+ * one again (SUP-435).
  */
 const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> = {
   REGISTERED: { label: 'Registered', variant: 'secondary' },
@@ -75,6 +78,7 @@ const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> =
   DENIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER, variant: 'destructive' },
   DIGEST_CHANGED: { label: 'Deployment digest changed', variant: 'warning' },
   DIGEST_PINNED: { label: 'Deployment digest pinned', variant: 'secondary' },
+  DIGEST_UNPINNED: { label: 'Deployment approval withdrawn', variant: 'warning' },
   MEASUREMENT_CHANGED: { label: 'Measurement changed', variant: 'warning' },
   DISABLED: { label: 'Disabled', variant: 'outline' },
   KEY_ROTATED: { label: 'Key rotated', variant: 'secondary' },

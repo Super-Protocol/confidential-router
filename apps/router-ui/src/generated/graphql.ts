@@ -82,11 +82,12 @@ export type EvidenceState =
   | 'PUBLISHED'
   | 'STALE';
 
-/** DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. */
+/** DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. */
 export type ExternalEndpointEventKind =
   | 'DENIED_BY_THIS_ROUTER'
   | 'DIGEST_CHANGED'
   | 'DIGEST_PINNED'
+  | 'DIGEST_UNPINNED'
   | 'DISABLED'
   | 'KEY_ROTATED'
   | 'MEASUREMENT_CHANGED'
@@ -254,6 +255,8 @@ export type UpdateApiKeyInput = {
 
 export type UpdateExternalEndpointInput = {
   baseUrl?: string | null | undefined;
+  /** The deployment this edit approves — the same value pinExternalEndpointDigest takes, in either spelling. Omitted says nothing about the pin: an edit that leaves baseUrl alone keeps the approval, and re-pointing still withdraws it (SUP-252), which is why a re-point that means to keep its approval states it here rather than pinning again afterwards with the endpoint out of service in between. */
+  evidenceDigest?: string | null | undefined;
   /** Replaces the registered set. A model left out is retired, never deleted. */
   models?: Array<ExternalModelInput> | null | undefined;
 };
