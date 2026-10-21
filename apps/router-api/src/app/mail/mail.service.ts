@@ -157,10 +157,10 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
    * A recipient past their hourly allowance is the one case that resolves
    * without sending: the allowance exists so that nobody can flood somebody
    * else's inbox, and answering the flooder differently would hand them a way
-   * to tell when the victim's sign-in has been silenced. It is the one thing
-   * a 503 for a failed send can still be told apart from, and only while the
-   * mailer is down for everybody — at which point nobody's sign-in works and
-   * there is nothing left to learn.
+   * to tell when the victim's sign-in has been silenced. Nothing downstream
+   * can tell it from a send either — the route's refusal is decided from
+   * `status()` and not from whether a particular request reached `deliver`
+   * (`mail-send-failure.plugin.ts`).
    */
   async sendSignInCode(email: string, code: string): Promise<void> {
     if (!this.codeWindow.admit(email)) {

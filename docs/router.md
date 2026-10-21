@@ -322,15 +322,23 @@ nothing is sent, so the limit cannot be used to learn or to silence anything. A
 send an invite-only deployment withheld is the same 200 again, for the same
 reason.
 
-**A send that failed is not a 200.** A code the mailer could not get out is a
-`503 {"code": "MAIL_SEND_FAILED"}`, and so is a magic link (SUP-460). It is the
-same refusal for every address — the transport is down for all of them — so it
-still says nothing about who asked, and the reason stays in the log and in
-`/health` where `mail.state` turns `failing`. This matters because a deployment
+**A send that failed is not a 200.** While the mailer is down — `/health`
+reports `mail.state: failing` — both mail routes answer
+`503 {"code": "MAIL_SEND_FAILED"}` (SUP-460). This matters because a deployment
 with `emailCode` on and `magicLink` off has no other way in but the
-[bootstrap token](#first-sign-in-on-a-fresh-deployment): a mail outage reported
-as success is every account locked out while the router says everything is
-fine.
+[bootstrap token](#first-sign-in-on-a-fresh-deployment), so a mail outage
+reported as success would be every account locked out while the router says
+everything is fine.
+
+The refusal is decided from the **mailer's** state and not from what happened
+to the request in hand, which is what keeps it from saying anything about who
+asked. Deciding it per request would not: the invitation gate above returns
+before the send for an uninvited address, so during an outage an account holder
+would get the 503 and a stranger the 200, and the difference would be
+unauthenticated account enumeration. Decided this way, a withheld send, a
+recipient past their allowance and an attempted send all answer alike. The send
+is still attempted, so the first one that works puts `mail.state` back to `ok`
+and the route recovers on its own.
 
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and

@@ -18,6 +18,9 @@ import { closedPort, FakeSmtpServer } from './fake-smtp.js';
 const EMAIL = 'someone@example.com';
 const SMTP_USER = 'mailer@example.com';
 const SMTP_PASSWORD = 'throwaway-smtp-password';
+/** For the invite-only case: the one account that exists without an invitation. */
+const BOOTSTRAP_TOKEN = 'bootstrap-token-'.padEnd(40, 'x');
+const ADMIN = 'admin@example.com';
 
 let harness: Harness | undefined;
 let smtp: FakeSmtpServer | undefined;
@@ -113,13 +116,13 @@ describe('an SMTP server the deployment cannot reach', () => {
   });
 
   /**
-   * SUP-460: for days the production router answered `200 {"success": true}`
-   * to every sign-in-code request while nothing reached the mail provider, and
-   * sign-in there is by emailed code only — so the deployment reported success
-   * at the exact moment it had locked everybody out. Better Auth catches and
-   * logs whatever the send callback rejects with and returns its own body
-   * anyway; the after hook in `mail-send-failure.plugin.ts` is what turns that
-   * back into a refusal.
+   * SUP-460. Better Auth catches and logs whatever the send callback rejects
+   * with and returns its own `{"success": true}` anyway, so a code the mailer
+   * could not get out used to read as a code that went out. On a deployment
+   * where sign-in is by emailed code only — which is what production runs —
+   * that is every account locked out while the router reports success, and
+   * nobody finds out until a user complains. The after hook in
+   * `mail-send-failure.plugin.ts` is what turns it back into a refusal.
    */
   it('refuses a code request it could not send, under one name', async () => {
     const current = await smtpHarness(await closedPort());
@@ -133,7 +136,7 @@ describe('an SMTP server the deployment cannot reach', () => {
     expect((await health(current)).mail).toMatchObject({ state: 'failing', reason: 'unreachable' });
   });
 
-  it('refuses it the same way for every address', async () => {
+  it('refuses it the same way for every address on an open deployment', async () => {
     const current = await smtpHarness(await closedPort());
 
     const known = await requestCode(current, EMAIL);
@@ -148,17 +151,47 @@ describe('an SMTP server the deployment cannot reach', () => {
   });
 
   /**
-   * The send that was never attempted is not a failed one. An address past its
-   * hourly allowance is `MailService`'s deliberate silence, and it has to keep
-   * answering exactly as it does when the mailer is healthy.
+   * The send that was never attempted is answered like the ones that were.
+   * `MailService` stays silent for a recipient past its hourly allowance, and
+   * the gate below stays silent for an uninvited address — but neither may be
+   * *visible* as silence, so the refusal is read off the mailer's state rather
+   * than off whether this request reached `deliver`.
    */
-  it('still answers 200 for a recipient it chose not to mail', async () => {
+  it('refuses a recipient past its allowance the same way', async () => {
     const current = await smtpHarness(await closedPort(), {
       CR_API_AUTH__EMAIL_CODE__MAILS_PER_ADDRESS_PER_HOUR: '1',
     });
 
     await requestCode(current).expect(503);
-    await requestCode(current).expect(200);
+    await requestCode(current).expect(503);
+  });
+
+  /**
+   * The shape production runs, and the one the uniformity claim is worth
+   * anything on. `#131`'s gate returns before the send for an address with no
+   * account and no invitation (SUP-410), so that request never fails — and if
+   * the refusal were a function of *this request* rather than of the mailer, an
+   * account holder would get a 503 here while a stranger got a 200. That
+   * differential is unauthenticated account enumeration, available exactly
+   * while the mailer is down, and it is the property `#131` was written to buy.
+   */
+  it('refuses an uninvited address and an account holder alike on an invite-only deployment', async () => {
+    const current = await smtpHarness(await closedPort(), {
+      CR_API_AUTH__REQUIRE_INVITE_FOR_SIGN_UP: 'true',
+      CR_API_AUTH__BOOTSTRAP_TOKEN: BOOTSTRAP_TOKEN,
+      CR_API_AUTH__BOOTSTRAP_EMAIL: ADMIN,
+    });
+    // The bootstrap account is the one address the gate admits with no
+    // invitation anywhere near the request.
+    await request(current.app.getHttpServer()).post('/auth/bootstrap').send({ token: BOOTSTRAP_TOKEN }).expect(200);
+
+    const account = await requestCode(current, ADMIN);
+    const uninvited = await requestCode(current, 'stranger@example.com');
+
+    expect(account.status).toBe(503);
+    expect(uninvited.status).toBe(account.status);
+    expect(uninvited.body).toEqual(account.body);
+    expect(Object.keys(uninvited.headers).sort()).toEqual(Object.keys(account.headers).sort());
   });
 
   it('refuses a magic link it could not send the same way', async () => {

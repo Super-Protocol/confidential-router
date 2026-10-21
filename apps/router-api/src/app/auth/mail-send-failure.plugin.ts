@@ -26,6 +26,27 @@ export function mailSendFailure(what: 'code' | 'link'): APIError {
 }
 
 /**
+ * The part of `MailService.status()` the refusal is decided from — structural,
+ * so this file stays a function of its inputs and the decision can be tested
+ * without a mail service.
+ */
+export interface MailStateReader {
+  status(): { state: 'disabled' | 'unverified' | 'ok' | 'failing' };
+}
+
+/**
+ * Whether this deployment's mailer is known to be down — its last check or
+ * send did not work (`mail.service.ts`, surfaced by `/health` as
+ * `mail.state`).
+ *
+ * This, and not what happened to the request in hand, is what a refusal is a
+ * function of. See {@link reportMailSendFailure}.
+ */
+export function mailerFailing(mail: MailStateReader): boolean {
+  return mail.status().state === 'failing';
+}
+
+/**
  * Where a failed send parks itself until the after hook can answer with it.
  *
  * Module-local, so nothing outside this file can set it, and a symbol so it
@@ -65,38 +86,53 @@ export function mailSendFailed(context: MailSendContext | null | undefined): boo
 }
 
 /**
- * Makes a sign-in code that was never sent a failed request (SUP-460).
+ * Makes a sign-in code that was never sent a failed request.
  *
- * `POST /auth/email-otp/send-verification-otp` answered `200 {"success":
- * true}` for a code that never reached the mail provider, for days, on the
- * production deployment — and sign-in there is by emailed code only, so every
- * account was locked out while the router reported success. `MailService`
- * had done its part: `sendSignInCode` delivers with `rethrow: true` precisely
- * so a failed send rejects. It is the route that loses it. Better Auth hands
- * the `sendVerificationOTP` callback's promise to `runInBackgroundOrAwait`,
- * which awaits it and then catches and logs whatever it rejects with, and
- * returns its `{"success": true}` either way. Nothing a callback throws can
- * change that answer.
+ * `POST /auth/email-otp/send-verification-otp` answers `200 {"success":
+ * true}` for a code the mailer could not get out. `MailService` does its part:
+ * `sendSignInCode` delivers with `rethrow: true` precisely so a failed send
+ * rejects, and it logs and records the failure. It is the route that loses it.
+ * Better Auth hands the `sendVerificationOTP` callback's promise to
+ * `runInBackgroundOrAwait`, which awaits it and then catches and logs whatever
+ * it rejects with, and returns its `{"success": true}` either way. Nothing a
+ * callback throws can change that answer.
  *
- * An after hook can, so the failure travels the one step between them on the
- * request itself and this turns it into a 503. The alternative — refusing in
- * front of the route on `MailService.status()` — would answer for sends that
- * have not been tried yet and would still have said 200 to every one of the
- * production requests, because the status only turns `failing` after a send
- * has already failed.
+ * Found while diagnosing SUP-460 — a report of production dropping sign-in
+ * mail silently, which turned out to be `#131`'s invite gate withholding mail
+ * from uninvited addresses exactly as designed. Nothing was failing. But the
+ * two are indistinguishable from outside, which is how a working deployment
+ * came to be read as a broken one, and a *genuine* mail outage would have been
+ * just as silent: on a deployment where sign-in is by emailed code only, every
+ * account would have been locked out while the router answered success. That
+ * is the latent defect this closes. The withheld half is SUP-462's.
  *
- * **It is still the same answer for every address.** The failure this reports
- * is the transport's and has nothing to do with who asked: an outage refuses
- * an account holder and a stranger alike, which is what keeps the route from
- * becoming an account-existence oracle. The two cases that deliberately send
- * nothing — an address past its hourly allowance, and a sign-up an invite-only
- * deployment would refuse — do not fail, so they keep answering 200 exactly as
- * they did.
+ * An after hook can change the answer, so the failure travels the one step
+ * between them on the request itself.
  *
- * The magic-link route needs none of this: it awaits its callback itself, so
- * {@link mailSendFailure} thrown from there is already the answer.
+ * **The refusal is a function of the mailer, not of this request.** Refusing
+ * only the requests that got as far as a failed send would build the thing
+ * `#131` exists to prevent: on an invite-only deployment the gate returns
+ * before the send for an address with no account and no invitation, so during
+ * an outage an account holder would get a 503 and a stranger a 200 —
+ * unauthenticated account enumeration, available exactly when the mailer is
+ * down. So the hook refuses on {@link mailerFailing} as well, and then
+ * withheld, past-allowance and attempted all answer alike. The send is still
+ * attempted first: `deliver` records `ok` on the first one that works, so the
+ * route recovers on its own without a pre-flight check's blind spot. A
+ * deployment whose state is a stale `failing` keeps refusing until some
+ * admitted address heals it — uniformly, which is the property worth having.
+ *
+ * The magic-link route needs no hook: it awaits its own callback, so
+ * {@link mailSendFailure} thrown from there is already the answer. It does
+ * need the same `mailerFailing` check, in front of the gate, for the same
+ * reason.
+ *
+ * **This depends on `advanced.backgroundTasks.handler` staying unset.** With
+ * one configured, `runInBackgroundOrAwait` stops awaiting the callback, the
+ * send outruns the hook, and the 503 silently becomes a 200 again. This repo
+ * sets no such handler.
  */
-export function reportMailSendFailure(): BetterAuthPlugin {
+export function reportMailSendFailure(mail: MailStateReader): BetterAuthPlugin {
   return {
     id: 'mail-send-failure',
     hooks: {
@@ -104,7 +140,7 @@ export function reportMailSendFailure(): BetterAuthPlugin {
         {
           matcher: (context) => context.path === EMAIL_CODE_SEND_PATH,
           handler: createAuthMiddleware(async (context) => {
-            if (mailSendFailed(context)) {
+            if (mailSendFailed(context) || mailerFailing(mail)) {
               throw mailSendFailure('code');
             }
           }),
