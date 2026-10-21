@@ -913,6 +913,41 @@ TOFU-with-approval loop: *Measurement seen* with the registry-signed badge and "
 new digest with the evidence diff and "Approve new digest". The register dialog shows the same two
 approvals in the stage that waits for them.
 
+## As shipped (SUP-435) — an edit can carry the approval it would otherwise drop
+
+Re-pointing an endpoint withdraws its pin, which is SUP-252 being fail-closed: the approval was of
+the deployment that answered at the old URL. What it was missing is a way to say otherwise, and any
+trace of having happened. `UpdateExternalEndpointInput` carried `baseUrl` and `models` only, so the
+one mutation an operator reaches for to correct an upstream URL left the endpoint `PENDING` /
+`digest-not-pinned` with every model on it answering 503 until someone pinned the same digest again
+— on production, 28 minutes of it, and nothing in the response or the timeline said the approval had
+gone.
+
+- **`UpdateExternalEndpointInput.evidenceDigest`** — optional, the same value and spellings
+  `pinExternalEndpointDigest` takes. Stating it makes the edit and the approval one write, so a
+  re-point does not pass through an unapproved endpoint; it also pins on an edit that re-points
+  nothing, which is `pinExternalEndpointDigest` reached from inside an edit. Omitting it says nothing
+  about the pin: the approval survives an edit that leaves `baseUrl` alone, and a re-point still
+  withdraws it. A digest the parser refuses fails the whole mutation before any of it is written.
+- **`DIGEST_UNPINNED`** joins the event kinds — an approval an edit withdrew, carrying the digest that
+  is no longer approved and the reason (which URL it was re-pointed to from where). The withdrawal is
+  also a WARN naming the endpoint, the digest and both URLs, because the mutation itself answers with
+  the row it wrote and the refusal only arrives at the next check. An approval *carried* records
+  `DIGEST_PINNED` as a pin always does, and re-sending the digest the endpoint already holds records
+  nothing: it approves nothing new.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  DIGEST_UNPINNED
+}
+
+input UpdateExternalEndpointInput {
+  # …as above, plus:
+  evidenceDigest: String
+}
+```
+
 ## As shipped (SUP-249) — model discovery, attest-then-list
 
 The register dialog's primary path is now *paste a URL and a key*, not *type every model*. The
