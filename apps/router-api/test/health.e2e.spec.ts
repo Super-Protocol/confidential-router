@@ -23,6 +23,18 @@ describe('GET /health', () => {
     expect(response.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  /**
+   * The line that keeps the rest of the `mail` block from being read wrong
+   * (SUP-462): on an invite-only deployment a `200` from the send route and a
+   * healthy `state` are both compatible with nothing having been sent.
+   */
+  it('says whether sign-up mail can be withheld, and publishes no count that could be', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    expect(response.body.mail).toMatchObject({ signUpGate: 'open' });
+    expect(response.body.mail).not.toHaveProperty('withheld');
+  });
+
   it('echoes the request id back so a client can correlate a failure', async () => {
     const response = await request(harness.app.getHttpServer())
       .get('/health')

@@ -9,6 +9,7 @@ import {
   ADMIN_SIGN_UPS_QUERY,
   INVITE_STATISTICS_QUERY,
   ISSUE_INVITE_CODES,
+  MAIL_DELIVERY_QUERY,
   WITHDRAW_INVITE_CODE,
 } from './operations';
 
@@ -106,9 +107,50 @@ function codesMock(nodes: unknown[]): MockLink.MockedResponse {
   };
 }
 
-function renderScreen({ admin = true, mocks = [] }: { admin?: boolean; mocks?: MockLink.MockedResponse[] } = {}) {
+/** `mailDelivery` — per-replica, so it is its own query and its own mock (SUP-462). */
+function deliveryMock(overrides: Record<string, unknown> = {}): MockLink.MockedResponse {
+  return {
+    request: { query: MAIL_DELIVERY_QUERY },
+    result: {
+      data: {
+        mailDelivery: {
+          __typename: 'MailDelivery',
+          provider: 'SMTP',
+          state: 'OK',
+          reason: null,
+          since: '2026-10-21T09:00:00.000Z',
+          inviteOnly: true,
+          withheld: null,
+          ...overrides,
+        },
+      },
+    },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+function withheld(values: { noInvitation?: number; rateLimited?: number; unusedCodeType?: number } = {}) {
+  return {
+    __typename: 'MailWithheld' as const,
+    noInvitation: 0,
+    rateLimited: 0,
+    unusedCodeType: 0,
+    since: '2026-10-21T10:00:00.000Z',
+    ...values,
+  };
+}
+
+function renderScreen({
+  admin = true,
+  mocks = [],
+  delivery = deliveryMock(),
+}: {
+  admin?: boolean;
+  mocks?: MockLink.MockedResponse[];
+  delivery?: MockLink.MockedResponse;
+} = {}) {
   return renderWithSession(<InvitationsScreen />, {
-    mocks: [sessionMock(), isAdminMock(admin), statisticsMock(), ...mocks],
+    mocks: [sessionMock(), isAdminMock(admin), statisticsMock(), delivery, ...mocks],
   });
 }
 
@@ -134,6 +176,61 @@ describe('InvitationsScreen', () => {
     expect(screen.getAllByText('$300')).toHaveLength(2);
     const campaigns = screen.getByRole('table', { name: 'Campaigns' });
     expect(within(campaigns).getByRole('row', { name: /launch/ })).toHaveTextContent('5.8%');
+  });
+
+  /**
+   * SUP-462. The gate's silence towards the caller is correct; its silence
+   * towards the operator read as a transport outage and cost a false
+   * production incident, so the three answers are side by side here: sent,
+   * withheld because uninvited, or the transport is broken.
+   */
+  it('separates mail withheld for want of an invitation from a failing transport', async () => {
+    renderScreen({
+      delivery: deliveryMock({ withheld: withheld({ noInvitation: 5, rateLimited: 2, unusedCodeType: 1 }) }),
+    });
+
+    expect(await screen.findByTestId('withheld-no-invitation')).toHaveTextContent('5');
+    const card = screen.getByTestId('mail-delivery');
+    expect(within(card).getByTestId('withheld-rate-limited')).toHaveTextContent('2');
+    expect(within(card).getByTestId('withheld-unused-type')).toHaveTextContent('1');
+    // Withheld, and the mail server is fine — which is exactly the pair that
+    // used to be unreadable from outside the cluster space.
+    expect(card).toHaveTextContent('Working');
+    expect(card).toHaveTextContent('Not an outage');
+  });
+
+  it('names the transport fault when that is what it is, and withholds nothing', async () => {
+    renderScreen({
+      delivery: deliveryMock({ state: 'FAILING', reason: 'UNREACHABLE', withheld: null }),
+    });
+
+    expect(await screen.findByTestId('withheld-no-invitation')).toHaveTextContent('0');
+    const card = screen.getByTestId('mail-delivery');
+
+    expect(card).toHaveTextContent('Failing');
+    expect(card).toHaveTextContent('could not be reached');
+    expect(within(card).getByTestId('withheld-no-invitation')).toHaveTextContent('0');
+  });
+
+  it('says nothing is withheld for want of an invitation on an open deployment', async () => {
+    renderScreen({ delivery: deliveryMock({ inviteOnly: false }) });
+
+    expect(await screen.findByTestId('withheld-no-invitation')).toHaveTextContent('0');
+    const card = screen.getByTestId('mail-delivery');
+
+    expect(card).toHaveTextContent('Registration is open');
+    expect(within(card).getByTestId('withheld-no-invitation')).toHaveTextContent('0');
+  });
+
+  it('says the mail panel could not be read rather than quietly disappearing', async () => {
+    renderScreen({
+      delivery: { request: { query: MAIL_DELIVERY_QUERY }, error: new Error('unreachable') },
+    });
+
+    // The only place a withheld send shows. A panel that vanished on a failed
+    // query would put the operator back where SUP-462 found them.
+    expect(await screen.findByTestId('mail-delivery-error')).toHaveTextContent('could not be read');
+    expect(screen.getByRole('button', { name: /Try again|Retry/i })).toBeInTheDocument();
   });
 
   it('masks codes until asked, and copies or reveals one row at a time', async () => {

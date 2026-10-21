@@ -1248,6 +1248,78 @@ type KeyUsage {
   spendMicros: String!
 }
 
+"""
+Where outbound mail stands and what was withheld — the operator’s answer to “the sign-in mail is not arriving”, which has three answers with three different remedies: sent, withheld, or the transport is broken. Restricted to auth.adminEmails: every field moves in response to one request, so a caller who could read it before and after naming an address would learn by subtraction whether that address was mailed. The public half is `/health`’s `mail` block.
+"""
+type MailDelivery {
+  """
+  This deployment is invite-only, so sign-up mail to an address with no invitation is withheld and the send route answers it exactly as it answers a send. While this is false, `withheld.noInvitation` can only stay at zero.
+  """
+  inviteOnly: Boolean!
+  provider: MailProvider!
+
+  """Present only while `state` is `FAILING`."""
+  reason: MailFailureReason
+
+  """When `state` was last established."""
+  since: DateTime
+  state: MailState!
+
+  """Null until this process has withheld something."""
+  withheld: MailWithheld
+}
+
+"""
+Why the last attempt failed. `UNREACHABLE`: the connection never reached a mail server at all — DNS, a refused or timed-out connect, a dropped socket.
+"""
+enum MailFailureReason {
+  AUTH_FAILED
+  ERROR
+  REJECTED
+  UNREACHABLE
+}
+
+"""Which mailer this deployment is configured with."""
+enum MailProvider {
+  CONSOLE
+  NONE
+  RESEND
+  SMTP
+}
+
+"""
+Where the transport stands, from the boot-time check or the most recent send, whichever is later. About the transport only: a send the deployment chose not to make leaves this alone.
+"""
+enum MailState {
+  DISABLED
+  FAILING
+  OK
+  UNVERIFIED
+}
+
+"""
+Mail this deployment was asked for and deliberately did not send, counted since the process started. Aggregate only and never per address: a queryable list of withheld addresses would rebuild the account-existence oracle the sign-up mail gate exists to deny.
+"""
+type MailWithheld {
+  """
+  Sign-up mail withheld because this deployment is invite-only and the request carried no invitation it would admit (SUP-410). A non-zero count beside a healthy `state` is the signature of “uninvited addresses asked for a code”, not of an outage.
+  """
+  noInvitation: Int!
+
+  """
+  Sign-in codes withheld because that recipient had already had their hourly allowance.
+  """
+  rateLimited: Int!
+
+  """When the most recent send was withheld."""
+  since: DateTime!
+
+  """
+  Code requests for a `type` this deployment does not mail — only `sign-in` is, and the flows the other two belong to have their routes disabled. A non-zero count here is a client bug, and it looks exactly like mail that stopped arriving.
+  """
+  unusedCodeType: Int!
+}
+
 """A measurement register the producer published (MRTD, RTMR0-2, GPU…)."""
 type Measurement {
   name: String!
@@ -1602,6 +1674,11 @@ type Query {
     """Days of daily series, ending today (UTC)."""
     days: Int! = 30
   ): InviteStatistics!
+
+  """
+  Outbound mail: where the transport stands and how much mail was deliberately withheld, by reason. Counted since this replica started. Restricted to auth.adminEmails.
+  """
+  mailDelivery: MailDelivery!
 
   """The signed-in user, or an error when anonymous."""
   me: User!

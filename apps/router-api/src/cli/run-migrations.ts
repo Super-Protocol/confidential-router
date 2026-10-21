@@ -41,6 +41,8 @@ async function main(): Promise<void> {
           sendSignInCode: async () => {
             throw new Error('The migration runner must not send email.');
           },
+          // Nothing is sent here, so nothing is withheld either.
+          recordWithheld: () => undefined,
         },
         database: authDatabase,
       }),
