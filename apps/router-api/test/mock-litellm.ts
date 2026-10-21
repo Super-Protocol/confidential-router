@@ -121,6 +121,39 @@ export const STREAM_USAGE = { prompt_tokens: 11, completion_tokens: 7, total_tok
  */
 const CHUNK_GAP_MS = 12;
 
+/**
+ * What the backend answers on its own `/v1/completions`, for a model whose
+ * router entry declares `completions`. A `text_completion`, not a chat one: the
+ * router forwards that request verbatim and must pass the answer back the same
+ * way — the translation path is for models that declare chat alone (SUP-450).
+ */
+export const TEXT_COMPLETION_BODY = {
+  id: 'cmpl-upstream',
+  object: 'text_completion',
+  created: 1_756_550_000,
+  model: 'mock/chat',
+  choices: [{ index: 0, text: 'native legacy text', logprobs: null, finish_reason: 'stop' }],
+  usage: STREAM_USAGE,
+};
+
+/** The chunks the backend streams on its own `/v1/completions`. */
+export const TEXT_COMPLETION_STREAM_CHUNKS: Record<string, unknown>[] = [
+  {
+    id: 'cmpl-upstream',
+    object: 'text_completion',
+    created: 1_756_550_000,
+    model: 'mock/chat',
+    choices: [{ index: 0, text: 'native', logprobs: null, finish_reason: null }],
+  },
+  {
+    id: 'cmpl-upstream',
+    object: 'text_completion',
+    created: 1_756_550_000,
+    model: 'mock/chat',
+    choices: [{ index: 0, text: ' legacy', logprobs: null, finish_reason: 'stop' }],
+  },
+];
+
 export const COMPLETION_BODY = {
   id: 'chatcmpl-upstream',
   object: 'chat.completion',
@@ -148,7 +181,7 @@ export class MockLiteLlm {
           metadata: request.headers['x-litellm-metadata'] as string | undefined,
           accept: request.headers.accept,
         });
-        this.respond(String(body.model ?? ''), body, response);
+        this.respond(body, response, request.url ?? '');
       });
     });
     this.server = server;
@@ -169,7 +202,8 @@ export class MockLiteLlm {
     this.requests.length = 0;
   }
 
-  private respond(model: string, body: Record<string, unknown>, response: ServerResponse): void {
+  private respond(body: Record<string, unknown>, response: ServerResponse, path: string): void {
+    const model = String(body.model ?? '');
     switch (model) {
       case 'mock/boom':
         json(response, 500, { error: { message: 'The worker crashed.', type: 'server_error' } });
@@ -213,6 +247,16 @@ export class MockLiteLlm {
         break;
     }
 
+    // The legacy route, served by the backend itself: the router only forwards
+    // here, so the shape has to be the legacy one both ways.
+    if (path === '/v1/completions') {
+      if (body.stream === true) {
+        this.stream(body, response, TEXT_COMPLETION_STREAM_CHUNKS);
+        return;
+      }
+      json(response, 200, TEXT_COMPLETION_BODY);
+      return;
+    }
     if (body.stream === true) {
       this.stream(body, response);
       return;
@@ -225,21 +269,21 @@ export class MockLiteLlm {
     json(response, 200, COMPLETION_BODY);
   }
 
-  private stream(body: Record<string, unknown>, response: ServerResponse): void {
+  private stream(body: Record<string, unknown>, response: ServerResponse, override?: Record<string, unknown>[]): void {
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
 
-    const chunks = body.model === 'mock/stream-tools' ? TOOL_CALL_STREAM_CHUNKS : STREAM_CHUNKS;
+    const chunks = override ?? (body.model === 'mock/stream-tools' ? TOOL_CALL_STREAM_CHUNKS : STREAM_CHUNKS);
     const events = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`);
     const includeUsage = Boolean((body.stream_options as { include_usage?: unknown } | undefined)?.include_usage);
     if (includeUsage && body.model !== 'mock/no-usage') {
       events.push(
         `data: ${JSON.stringify({
           id: 'chatcmpl-upstream',
-          object: 'chat.completion.chunk',
+          object: override ? 'text_completion' : 'chat.completion.chunk',
           created: 1_756_550_000,
           model: 'mock/chat',
           choices: [],

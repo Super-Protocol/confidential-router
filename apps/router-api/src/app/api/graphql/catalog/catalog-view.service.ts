@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { CatalogModel } from '../../../catalog/catalog.service.js';
 import { CatalogService } from '../../../catalog/catalog.service.js';
+import { servedCapabilities } from '../../../catalog/served-capabilities.js';
 import { EvidenceCoverageStatsService, EvidenceService } from '../../../evidence/index.js';
 import { ExternalCatalogService, type ExternalCatalogueEntry } from '../../../external-endpoints/index.js';
 import { EndpointModel } from './endpoint.model.js';
@@ -140,7 +141,7 @@ function toModelView(model: CatalogModel, endpoint: EndpointModel): LlmModel {
     slug: model.id,
     name: model.name,
     contextLength: model.contextLength,
-    capabilities: model.capabilities,
+    capabilities: servedCapabilities(model.capabilities),
     pricing: {
       promptPer1m: String(model.promptPer1mMicros),
       completionPer1m: String(model.completionPer1mMicros),
@@ -166,7 +167,7 @@ function toExternalModelView(entry: ExternalCatalogueEntry, signedIn: boolean): 
     slug: entry.id,
     name: entry.name,
     contextLength: entry.contextLength,
-    capabilities: entry.capabilities,
+    capabilities: servedCapabilities(entry.capabilities),
     pricing: {
       promptPer1m: String(entry.promptPer1mMicros),
       completionPer1m: String(entry.completionPer1mMicros),

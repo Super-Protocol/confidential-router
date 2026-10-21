@@ -20,7 +20,7 @@ import type { ExternalEndpointStatus } from '../../../db/entities/external-endpo
 import type { ExternalEndpointEventKind } from '../../../db/entities/external-endpoint-event.entity.js';
 import type { ModelCapability } from '../../../db/entities/model.entity.js';
 import { MeasurementModel } from '../catalog/evidence.model.js';
-import { ModelCapabilityEnum, PricingModel } from '../catalog/model.model.js';
+import { PricingModel, RouteCapabilityEnum } from '../catalog/model.model.js';
 import { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
 
 export { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
@@ -182,7 +182,12 @@ export class ExternalModelModel {
   @Field(() => PricingModel, { description: 'What this router charges for it, in micro-USD per 1M tokens.' })
   pricing!: PricingModel;
 
-  @Field(() => [ModelCapabilityEnum])
+  /**
+   * What the operator declared this upstream serves itself — the editable value,
+   * not the derived one the catalogue reports. `Model.capabilities` is the wider
+   * list, and this is the one a mutation can set (SUP-450).
+   */
+  @Field(() => [RouteCapabilityEnum], { description: 'Declared routes of the upstream; the editable value.' })
   capabilities!: ModelCapability[];
 }
 
@@ -459,14 +464,18 @@ export class ExternalModelInputModel {
   @Max(100_000_000)
   contextLength!: number;
 
-  @Field(() => [ModelCapabilityEnum], {
+  @Field(() => [RouteCapabilityEnum], {
     nullable: true,
-    description: 'Defaults to CHAT — the one capability every OpenAI-compatible upstream serves.',
+    description:
+      'Which routes the upstream serves itself. Defaults to CHAT — the one every OpenAI-compatible upstream ' +
+      'serves — and the router then serves /v1/completions for it by wrapping the prompt. Add COMPLETIONS when ' +
+      'the upstream serves the legacy route natively (vLLM and SGLang do), which forwards it verbatim and keeps ' +
+      '`suffix` infilling working. What the catalogue ends up reporting is `Model.capabilities`, derived from this.',
   })
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @IsEnum(ModelCapabilityEnum, { each: true })
+  @IsEnum(RouteCapabilityEnum, { each: true })
   capabilities?: ModelCapability[];
 
   @Field(() => String, { description: 'Micro-USD per 1M prompt tokens.' })

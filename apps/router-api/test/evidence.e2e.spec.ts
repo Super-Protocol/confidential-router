@@ -388,7 +388,7 @@ describe('the console view', () => {
       id: 'meta/llama-3.3-70b-instruct:tdx',
       slug: 'meta/llama-3.3-70b-instruct:tdx',
       contextLength: 131072,
-      capabilities: ['CHAT', 'COMPLETIONS'],
+      capabilities: ['CHAT', 'COMPLETIONS', 'TOOLS', 'STREAMING'],
       // The conformance fixture's root is an ordinary CA carrying no TeeEvidence,
       // so the published bundle names no TEE — and there is nowhere else the
       // label is read from (SUP-260).

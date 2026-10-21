@@ -60,7 +60,12 @@ type Model {
   id: ID!, slug: String!, name: String!, contextLength: Int!, capabilities: [ModelCapability!]!
   pricing: Pricing!, endpoint: Endpoint!, tee: String                 # = endpoint.latestEvidence.tee (SUP-260)
 }
-enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS }
+# What the router serves, derived from the declared routes (SUP-450): COMPLETIONS
+# appears for a chat model too, because the surface translates that route, and
+# TOOLS / STREAMING are facts about the surface rather than routes.
+enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS TOOLS STREAMING }
+# What an operator declares the upstream serves itself; the editable value.
+enum RouteCapability { CHAT COMPLETIONS EMBEDDINGS }
 type Pricing { promptPer1m: Micros!, completionPer1m: Micros! }
 
 type EvidenceDigestChange { evidenceDigest: String!, evidenceDigestHex: String!, firstIssuedAt: DateTime!, lastIssuedAt: DateTime!, snapshots: Int! }
@@ -708,7 +713,11 @@ type ExternalEndpointModel {
   upstreamModel: String
   contextLength: Int!
   pricing: Pricing!
-  capabilities: [ModelCapability!]!
+  """
+  The declared routes of the upstream — the editable value, not the wider list
+  `Model.capabilities` reports (SUP-450).
+  """
+  capabilities: [RouteCapability!]!
 }
 
 """
@@ -778,7 +787,12 @@ input ExternalModelInput {
   contextLength: Int!
   promptPer1mMicros: String!
   completionPer1mMicros: String!
-  capabilities: [ModelCapability!]
+  """
+  Which routes the upstream serves itself; defaults to `[CHAT]`. Add
+  `COMPLETIONS` when it serves the legacy route natively, which forwards that
+  route verbatim instead of translating it (SUP-450).
+  """
+  capabilities: [RouteCapability!]
 }
 
 input RegisterExternalEndpointInput {

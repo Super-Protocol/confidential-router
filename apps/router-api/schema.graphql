@@ -773,7 +773,8 @@ type ExternalEndpointEvidence {
 A model an operator registered on an external endpoint, with the prices every generation freezes.
 """
 type ExternalEndpointModel {
-  capabilities: [ModelCapability!]!
+  """Declared routes of the upstream; the editable value."""
+  capabilities: [RouteCapability!]!
   contextLength: Int!
 
   """The public model id, as /v1/models reports it."""
@@ -802,9 +803,9 @@ enum ExternalEndpointStatus {
 """A model on an external endpoint, and what this router charges for it."""
 input ExternalModelInput {
   """
-  Defaults to CHAT — the one capability every OpenAI-compatible upstream serves.
+  Which routes the upstream serves itself. Defaults to CHAT — the one every OpenAI-compatible upstream serves — and the router then serves /v1/completions for it by wrapping the prompt. Add COMPLETIONS when the upstream serves the legacy route natively (vLLM and SGLang do), which forwards it verbatim and keeps `suffix` infilling working. What the catalogue ends up reporting is `Model.capabilities`, derived from this.
   """
-  capabilities: [ModelCapability!]
+  capabilities: [RouteCapability!]
 
   """Micro-USD per 1M completion tokens."""
   completionPer1mMicros: String!
@@ -1266,6 +1267,8 @@ type Model {
   Whether this router will route to it right now. Always true for a CONFIG model; for an EXTERNAL one it is false unless the endpoint holds a live verdict admitting it.
   """
   available: Boolean!
+
+  """What the router serves for this model; derived, not declared."""
   capabilities: [ModelCapability!]!
   contextLength: Int!
 
@@ -1296,10 +1299,15 @@ type Model {
   tee: String
 }
 
+"""
+Something the router does with this model: a route it accepts (CHAT, COMPLETIONS, EMBEDDINGS), tool definitions forwarded and tool-call deltas relayed untouched (TOOLS), or `stream: true` honoured (STREAMING). Derived from the declared `RouteCapability` list, so it cannot claim what the surface does not serve.
+"""
 enum ModelCapability {
   CHAT
   COMPLETIONS
   EMBEDDINGS
+  STREAMING
+  TOOLS
 }
 
 """
@@ -1680,6 +1688,15 @@ input RotateExternalEndpointKeyInput {
   The replacement upstream key. Rotation is a write; there is nothing to read.
   """
   apiKey: String!
+}
+
+"""
+A route an upstream serves itself, as declared on the model. What the router then serves for it is `ModelCapability`, which is derived from this and never declared (SUP-450).
+"""
+enum RouteCapability {
+  CHAT
+  COMPLETIONS
+  EMBEDDINGS
 }
 
 input SetAutoTopUpInput {
