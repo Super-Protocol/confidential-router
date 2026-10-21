@@ -29,6 +29,22 @@ export class MailHealthDto {
   since?: string;
 }
 
+export class AnalyticsHealthDto {
+  @ApiProperty({
+    enum: ['configured', 'disabled'],
+    description:
+      'Which sink this process built. `disabled`: no `POSTHOG_PROJECT_KEY`, so every product event is discarded.',
+  })
+  status!: 'configured' | 'disabled';
+
+  @ApiProperty({
+    description:
+      'Events lost since this process started — discarded by the disabled sink, refused by PostHog or ' +
+      'undeliverable. Monotonic; read it twice and subtract.',
+  })
+  dropped!: number;
+}
+
 export class HealthResponseDto {
   @ApiProperty({ enum: ['ok', 'error'] })
   status!: 'ok' | 'error';
@@ -44,4 +60,7 @@ export class HealthResponseDto {
 
   @ApiProperty({ type: () => MailHealthDto, description: 'Reported only; never makes the status `error`.' })
   mail!: MailHealthDto;
+
+  @ApiProperty({ type: () => AnalyticsHealthDto, description: 'Reported only; never makes the status `error`.' })
+  analytics!: AnalyticsHealthDto;
 }

@@ -23,6 +23,23 @@ describe('GET /health', () => {
     expect(response.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  it('says whether product analytics is configured, without deciding the status', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    // No `POSTHOG_PROJECT_KEY` here, which is the point: this is the shape of a
+    // deployment whose rebuild forgot the key, and it still answers 200 with
+    // `status: 'ok'` because a missing chart is not an outage (SUP-464).
+    expect(response.body).toMatchObject({ status: 'ok', analytics: { status: 'disabled', dropped: 0 } });
+  });
+
+  it('reports analytics without naming the project or the host', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    // `/health` is public: `configured`/`disabled` and a count, nothing that
+    // describes the key or where events go.
+    expect(Object.keys(response.body.analytics).sort()).toEqual(['dropped', 'status']);
+  });
+
   it('echoes the request id back so a client can correlate a failure', async () => {
     const response = await request(harness.app.getHttpServer())
       .get('/health')
