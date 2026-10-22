@@ -821,6 +821,20 @@ section as its lowest-precedence layer. With no key every event is discarded and
 the boot says so once, which is the state of every developer machine and every
 test.
 
+**Whether it is alive is reported, not assumed.** The key is a deployment
+environment value rather than an image build argument, so nothing stops a rebuild
+from leaving it out — and a deployment that lost it looks exactly like a working
+one, since the ingest answers `202` either way and both sinks swallow what they
+lose. `/health` therefore carries `analytics: { status, dropped }`:
+`configured` or `disabled` for the sink the process actually built, and a
+monotonic count of events lost since boot, whether the disabled sink discarded
+them, PostHog refused them or the host could not be reached (SUP-464). Like
+`mail`, it never makes `/health` itself fail: a missing chart is not an outage.
+`/health` is public, so that is all it says — no key, no key prefix, no host.
+`configured` answers "did the variable arrive", not "do events land": a key that
+is present and wrong also reads `configured`, since PostHog accepts a capture for
+a project that does not exist.
+
 **Six of the eight events are captured server-side**, at the boundary where the
 fact they report is committed: `signup_completed` and `invite_redeemed` from the
 sign-up hook, `api_key_created` from the mutation, `first_request_sent` from the

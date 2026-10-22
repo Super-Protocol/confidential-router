@@ -2,6 +2,7 @@ import { Logger, Module } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../config.js';
 import { AnalyticsService } from './analytics.service.js';
+import { AnalyticsHealth } from './analytics-health.js';
 import { ANALYTICS_SINK, type AnalyticsSink, DisabledAnalyticsSink, PostHogSink } from './analytics-sink.js';
 
 /**
@@ -15,21 +16,29 @@ import { ANALYTICS_SINK, type AnalyticsSink, DisabledAnalyticsSink, PostHogSink 
  * money and is therefore fatal in production: a missing chart is not a
  * correctness problem, and failing the boot over one would make the campaign's
  * instrumentation a deployment prerequisite for serving traffic.
+ *
+ * Which sink it picked is recorded on {@link AnalyticsHealth} and served by
+ * `/health`, because a boot warning nobody was watching for is how a rebuild
+ * that forgets `POSTHOG_PROJECT_KEY` disables analytics for good (SUP-464).
  */
-export function createAnalyticsSink(config: ConfigType<typeof routerConfig>): AnalyticsSink {
+export function createAnalyticsSink(config: ConfigType<typeof routerConfig>, health: AnalyticsHealth): AnalyticsSink {
   const { posthog } = config.analytics;
   if (!posthog.projectKey) {
     new Logger('AnalyticsModule').warn(
       'analytics.posthog.projectKey is not configured; product events are discarded. ' +
-        'Set POSTHOG_PROJECT_KEY to capture them.',
+        'Set POSTHOG_PROJECT_KEY to capture them. GET /health reports analytics.status: disabled.',
     );
-    return new DisabledAnalyticsSink();
+    return new DisabledAnalyticsSink(health);
   }
-  return new PostHogSink({
-    projectKey: posthog.projectKey,
-    host: posthog.host,
-    requestTimeoutMs: posthog.requestTimeout,
-  });
+  health.sinkConfigured();
+  return new PostHogSink(
+    {
+      projectKey: posthog.projectKey,
+      host: posthog.host,
+      requestTimeoutMs: posthog.requestTimeout,
+    },
+    health,
+  );
 }
 
 /**
@@ -44,13 +53,14 @@ export function createAnalyticsSink(config: ConfigType<typeof routerConfig>): An
  */
 @Module({
   providers: [
+    AnalyticsHealth,
     {
       provide: ANALYTICS_SINK,
-      inject: [routerConfig.KEY],
+      inject: [routerConfig.KEY, AnalyticsHealth],
       useFactory: createAnalyticsSink,
     },
     AnalyticsService,
   ],
-  exports: [AnalyticsService, ANALYTICS_SINK],
+  exports: [AnalyticsService, AnalyticsHealth, ANALYTICS_SINK],
 })
 export class AnalyticsModule {}

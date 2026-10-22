@@ -29,6 +29,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
+| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
 
@@ -348,6 +349,53 @@ signature whichever copy it got.
 
 Returns the `Generation` record (tokens, cost, model, endpoint, timings, `evidence_digest`) for a
 generation owned by the key's workspace. Never any content.
+
+### `GET /health`
+
+Liveness, a real database round-trip, and the state of the two subsystems that can fail without anyone
+noticing. `200` when `status` is `ok`, `503` when it is `error` — the body says which dependency is down,
+the status code is what a probe reads.
+
+```json
+{
+  "status": "ok",
+  "version": "0.3.2",
+  "uptimeSeconds": 4821,
+  "database": { "status": "up" },
+  "mail": { "provider": "smtp", "state": "ok", "since": "2026-10-21T09:12:04.000Z" },
+  "analytics": { "status": "disabled", "dropped": 412 }
+}
+```
+
+**Only `database` decides `status`.** A process that cannot reach PostgreSQL cannot meter a single
+generation and must leave the rotation. `mail` (SUP-269) and `analytics` (SUP-464) are reported and never
+promoted: a deployment whose mail server is down or whose analytics key went missing still serves every
+model, and taking it out of rotation over a lost welcome mail or a missing chart would be the worse bug.
+
+- `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
+  `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
+  the boot-time check or the most recent send, whichever is later. Never the SMTP password.
+- `analytics`: `status` is `configured` once the process has built a sink that can deliver, `disabled` when
+  it has not — which is what a rebuild that forgot `POSTHOG_PROJECT_KEY` looks like, since that key is a
+  deployment environment value rather than an image build argument
+  (`docs/contracts/analytics-events.md`). It is read from the sink the process actually built, not from
+  configuration. `dropped` counts events lost since boot — discarded by the disabled sink, refused by
+  PostHog, or undeliverable — and is monotonic: read it twice and subtract.
+
+**`configured` is not `verified`.** It says a key was present and a sink was built, not that events land in
+a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to nothing, so a mistyped key
+reads `configured` with `dropped: 0` forever. `configured` rules out the failure that has no other symptom
+(the variable never arrived); a key that is present and wrong is still found by looking for the events.
+
+`/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
+else: no project key, no key prefix, no `POSTHOG_HOST`.
+
+One thing it does leak, knowingly: while `status` is `disabled` the counter rises once per captured event,
+so polling `/health` measures the deployment's event rate — and `signup_started` comes from the public
+ingest, which makes part of that rate a sign-up volume. Accepted rather than overlooked: a `disabled`
+deployment is collecting nothing to correlate it against, the resolution is whatever the poller's interval
+is, and `/health` already publishes the version, the uptime and the mail provider. Should that trade ever
+stop being worth it, the fix is to stop serving `dropped` without a session, not to stop counting.
 
 ## Errors
 

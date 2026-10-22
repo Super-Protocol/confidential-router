@@ -320,6 +320,13 @@ Note that `POSTHOG_PROJECT_KEY` is read by `router-api`, not by the browser — 
 PostHog only through our own server (ADR-006 §3), it never needs to travel in the console's runtime
 public config (SUP-100). It stays a deployment value rather than an image build argument either way.
 
+Which means a deployment can be rebuilt without it, so **whether it arrived is checkable**:
+`GET /health` reports `analytics: { status: "configured" | "disabled", dropped: <count> }` — the sink the
+process actually built, plus a monotonic count of events lost since boot (SUP-464). A deployment that
+should be capturing and reads `disabled` is missing the variable; `dropped` climbing while `configured` is
+PostHog refusing or unreachable. Neither ever makes `/health` fail — see `docs/contracts/router-api.md`,
+`GET /health`.
+
 ## Verification (SUP-148)
 
 The launch rehearsal proves the funnel with one scripted pass, on staging, with a campaign of its own
