@@ -560,7 +560,17 @@ describe('deployment import', () => {
     const again = await apply(b.operator, file, sha);
     expect(again).toMatchObject({ applied: true, ok: true });
     for (const entry of again.sections) {
-      expect(entry, entry.section).toMatchObject({ toCreate: 0, alreadyPresent: entry.inBundle, conflicts: [] });
+      // `toRefresh: 0` is the one that needs a real round trip to mean anything:
+      // the same file twice says nothing new about any row, so a refresh here
+      // would be a database-to-bundle format mismatch — an instant's precision,
+      // a micros column, `capabilities` ordering — showing up as a pointless
+      // UPDATE and a non-zero "Updated" mid-cutover (SUP-481).
+      expect(entry, entry.section).toMatchObject({
+        toCreate: 0,
+        alreadyPresent: entry.inBundle,
+        toRefresh: 0,
+        conflicts: [],
+      });
     }
     expect(await balancesByEmail(b.harness)).toEqual(balances);
     expect(await dataSourceOf(b.harness).getRepository(CreditTransaction).count()).toBe(ledger);
