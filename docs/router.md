@@ -918,7 +918,15 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    code still redeems; API Keys is empty for everyone (expected) and a new key
    works; chat history is empty (expected). Re-enter upstream keys for any
    external endpoint and enable it.
-7. **Delete the export file.**
+7. **Re-arm the scheduled export.** The new deployment has a bootstrap token of
+   its own, and the old one's is now a 401. If the timer host is configured with
+   `MARKETPLACE_ORIGIN` it finds the new token by itself and there is nothing to
+   do — confirm it with one manual run. If it is not, paste the new token into
+   `ROUTER_BOOTSTRAP_TOKEN` in `~/.config/router-export/env` on the agent host
+   and run `router-export.sh --local-only` to prove it. **A redeploy that skips
+   this leaves the backup dead until the next failed run is noticed**, which is
+   how the 2026-10-20 export came to 401 (SUP-438).
+8. **Delete the export file.**
 
 ### Taking the export on a schedule
 
@@ -936,7 +944,17 @@ every other sign-in path is a code mailed to a mailbox — so each run leaves a
 `Break-glass sign-in` line in the log.
 
 It is operator tooling and not part of the router: nothing in it deploys, and the
-deployment does not know it exists. The right version of this is the router
+deployment does not know it exists. Because that credential belongs to one
+deployment and a redeploy mints a new one, the timer reads it off the current
+deployment at run time — from the marketplace that made it, the same value its
+credentials dialog shows — rather than keeping a copy that a redeploy turns into
+a 401 (SUP-438). A stored `ROUTER_BOOTSTRAP_TOKEN` is still honoured, as the
+fallback for a marketplace that cannot be reached and as the whole credential
+for a deployment that was not made by one; a run that falls back says so on the
+alert issue, because a backup quietly back on a deployment-scoped secret is the
+defect re-arming itself.
+
+The right version of this is the router
 pushing its own bundle to an export target given as a deployment parameter, the
 way the SMTP password is given, so the file never transits an operator's machine
 at all. Until that exists, the timer is what stands between an incident and a
