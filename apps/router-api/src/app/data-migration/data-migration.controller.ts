@@ -14,6 +14,9 @@ export const DATA_EXPORT_CONTENT_TYPE = 'application/gzip';
  * The deployment export and its import (SUP-271) — the way a small production
  * dataset survives a redeploy.
  *
+ * The import is not once-only: a cutover ends with a second one, to catch up
+ * what the old deployment served while the new one was being verified (SUP-481).
+ *
  * REST and not GraphQL because both ends are a file: a download the browser
  * saves, and an upload of the same bytes. Authenticated by the operator's own
  * session and `auth.adminEmails`, never by a link — unlike the evidence export
@@ -81,7 +84,7 @@ export class DataMigrationController {
           'This is not the file the dry run looked at. Run the dry run again, then import.',
         );
       }
-      const report = await this.imports.apply(file);
+      const report = await this.imports.apply(file, user);
       this.logger.warn(`Deployment import by ${user.email} — ${outcomeOf(report)}.`);
       return report;
     } catch (error) {
@@ -118,10 +121,14 @@ function summaryOf(bundle: Pick<ExportBundle, 'counts'> & { integrity: { content
 function outcomeOf(report: ImportReport): string {
   const created = report.sections.map((section) => `${section.section} +${section.toCreate}`).join(', ');
   const conflicts = report.sections.reduce((sum, section) => sum + section.conflicts.length, 0);
+  // What a second import left alone, as one number: the audit line is where an
+  // operator later reads that the rows it found here were kept (SUP-481).
+  const kept = report.sections.reduce((sum, section) => sum + section.localOnly, 0);
   const verdict = report.applied
     ? 'applied'
     : report.ok
       ? 'clean, nothing written'
       : `refused (${report.refusals.length} refusal(s), ${conflicts} conflict(s)), nothing written`;
-  return `${verdict}; from ${report.source.publicBaseUrl}, sha256 ${report.contentSha256}: ${created}`;
+  const local = kept > 0 ? `; ${kept} local row(s) kept` : '';
+  return `${verdict}; from ${report.source.publicBaseUrl}, sha256 ${report.contentSha256}: ${created}${local}`;
 }

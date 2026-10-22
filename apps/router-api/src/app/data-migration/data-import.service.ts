@@ -1,11 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager, type EntityTarget, In, type ObjectLiteral } from 'typeorm';
-import { AuthService } from '../auth/index.js';
+import { AuthService, type SessionUser } from '../auth/index.js';
 import { routerConfig } from '../config.js';
 import { ApiKey } from '../db/entities/api-key.entity.js';
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
+import { DataImport } from '../db/entities/data-import.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
@@ -21,7 +23,14 @@ import {
   type ExportData,
   type ExportSource,
 } from './export-bundle.js';
-import { type ImportPlan, type LocalState, planImport, planIsClean, type SectionPlan } from './import-plan.js';
+import {
+  type ImportPlan,
+  type LocalState,
+  type PriorImport,
+  planImport,
+  planIsClean,
+  type SectionPlan,
+} from './import-plan.js';
 
 /** What the console shows for a dry run, and again for the import that followed it. */
 export interface ImportReport {
@@ -38,6 +47,12 @@ export interface ImportReport {
   refusals: string[];
   sections: SectionPlan[];
   notes: string[];
+  /**
+   * The export this deployment had already taken when this file was read, if any
+   * (SUP-481) — what makes a second import of the same dataset legal, and the
+   * line the console shows above the plan.
+   */
+  lastImport: PriorImport | null;
 }
 
 /** SQLite caps a statement's bound parameters; this keeps the widest table well inside it. */
@@ -49,7 +64,8 @@ const numberOf = (value: string): number => Number(value);
 const numberOrNull = (value: string | null): number | null => (value === null ? null : Number(value));
 
 /**
- * Loads a deployment export into a fresh deployment (SUP-271).
+ * Loads a deployment export into a deployment that holds nobody else's data
+ * (SUP-271, SUP-481).
  *
  * `plan` is the dry run and `apply` is the import; both start from the same
  * `planImport`, and `apply` writes nothing unless the plan it just computed is
@@ -58,6 +74,12 @@ const numberOrNull = (value: string | null): number | null => (value === null ? 
  * The two cannot share one, so the order is what makes a failure between them
  * harmless: an account with no workspace yet is exactly what a retry expects to
  * find, and every write is skipped when its row is already there.
+ *
+ * An applied import leaves a `data_imports` row naming the file it took. That
+ * row is what lets the *next* import of the same source run on a deployment
+ * somebody has signed up to since — the catch-up a cutover ends with — and it is
+ * written in the same transaction as the rows, so a deployment never remembers an
+ * import that did not happen.
  */
 @Injectable()
 export class DataImportService {
@@ -82,7 +104,7 @@ export class DataImportService {
    * The import. Answers the same report as the dry run, with `applied` saying
    * whether it went in; a bundle that cannot be taken changes nothing.
    */
-  async apply(file: Buffer): Promise<ImportReport> {
+  async apply(file: Buffer, by: SessionUser): Promise<ImportReport> {
     const bundle = decodeBundle(file);
     const plan = await this.planFor(bundle);
     if (!planIsClean(plan)) {
@@ -99,7 +121,7 @@ export class DataImportService {
         createdAt: dateOf(user.createdAt),
       })),
     );
-    await this.dataSource.transaction((manager) => this.write(manager, plan));
+    await this.dataSource.transaction((manager) => this.write(manager, plan, this.recordOf(bundle, by)));
 
     const report = reportOf(bundle, plan, true);
     if (plan.writes.externalEndpoints.length > 0 || plan.writes.trustedMeasurements.length > 0) {
@@ -124,6 +146,19 @@ export class DataImportService {
     return report;
   }
 
+  /** The `data_imports` row for an import that is about to be written. */
+  private recordOf(bundle: ExportBundle, by: SessionUser): DataImport {
+    return {
+      id: randomUUID(),
+      sourcePublicBaseUrl: bundle.source.publicBaseUrl,
+      sourceRouterVersion: bundle.source.routerVersion,
+      bundleExportedAt: new Date(bundle.exportedAt),
+      contentSha256: bundle.integrity.contentSha256,
+      importedByUserId: by.id,
+      importedAt: new Date(),
+    };
+  }
+
   private async planFor(bundle: ExportBundle): Promise<ImportPlan> {
     return planImport(bundle, await this.localState(), {
       operatorEmails: [this.config.auth.bootstrapEmail, ...this.config.auth.adminEmails],
@@ -143,6 +178,7 @@ export class DataImportService {
       externalEndpoints,
       models,
       measurements,
+      priorImports,
     ] = await Promise.all([
       this.auth.listUsers(),
       repository(Workspace).find({ select: { id: true, slug: true } }),
@@ -154,6 +190,7 @@ export class DataImportService {
       repository(ExternalEndpoint).find({ select: { id: true, name: true } }),
       repository(Model).find({ select: { id: true, externalEndpointId: true } }),
       repository(TrustedMeasurement).find({ select: { id: true, measurement: true } }),
+      repository(DataImport).find({ order: { importedAt: 'DESC' } }),
     ]);
     return {
       users,
@@ -166,10 +203,15 @@ export class DataImportService {
       externalEndpoints,
       models,
       trustedMeasurements: measurements,
+      priorImports: priorImports.map((row) => ({
+        sourcePublicBaseUrl: row.sourcePublicBaseUrl,
+        bundleExportedAt: row.bundleExportedAt.toISOString(),
+        importedAt: row.importedAt.toISOString(),
+      })),
     };
   }
 
-  private async write(manager: EntityManager, plan: ImportPlan): Promise<void> {
+  private async write(manager: EntityManager, plan: ImportPlan, record: DataImport): Promise<void> {
     const { writes } = plan;
     const now = new Date();
 
@@ -312,15 +354,22 @@ export class DataImportService {
         addedAt: dateOf(row.addedAt),
       })),
     );
+
+    // Last, and in this transaction: this deployment now remembers which dataset
+    // it holds, which is what admits the next import of the same source (SUP-481).
+    await insert(manager, DataImport, [record]);
   }
 
   /**
    * Sets each touched workspace's cached balance to the sum of its ledger.
    *
    * An absolute write, where `LedgerService` only ever writes relatively — and
-   * safe here for the reason it would not be there: this runs inside the import's
-   * own transaction against workspaces that have had no traffic yet, and the
-   * sum is the definition of the column.
+   * safe here for the reason it would not be there: it runs inside the import's
+   * own transaction, over the whole of each workspace's ledger, and the sum is
+   * the definition of the column. On a second import (SUP-481) that ledger
+   * includes the rows this deployment wrote itself, so the balance it arrives at
+   * is the imported rows *and* the local ones — which is why the sum is taken
+   * from the table rather than from the bundle's own `balanceMicros`.
    */
   private async resumBalances(manager: EntityManager, workspaceIds: readonly string[]): Promise<void> {
     for (let start = 0; start < workspaceIds.length; start += INSERT_CHUNK) {
@@ -402,5 +451,6 @@ function reportOf(bundle: ExportBundle, plan: ImportPlan, applied: boolean): Imp
     refusals: plan.refusals,
     sections: plan.sections,
     notes: plan.notes,
+    lastImport: plan.lastImport,
   };
 }

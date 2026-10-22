@@ -48,17 +48,18 @@ function report(overrides: Record<string, unknown> = {}) {
     totalBalanceMicros: '3187250000',
     refusals: [],
     sections: [
-      { section: 'users', inBundle: 42, toCreate: 41, alreadyPresent: 1, conflicts: [] },
-      { section: 'workspaces', inBundle: 42, toCreate: 41, alreadyPresent: 1, conflicts: [] },
-      { section: 'workspaceMembers', inBundle: 42, toCreate: 41, alreadyPresent: 1, conflicts: [] },
-      { section: 'creditLedger', inBundle: 118, toCreate: 118, alreadyPresent: 0, conflicts: [] },
-      { section: 'inviteCodes', inBundle: 50, toCreate: 50, alreadyPresent: 0, conflicts: [] },
-      { section: 'inviteRedemptions', inBundle: 19, toCreate: 19, alreadyPresent: 0, conflicts: [] },
-      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, conflicts: [] },
-      { section: 'externalEndpoints', inBundle: 2, toCreate: 2, alreadyPresent: 0, conflicts: [] },
-      { section: 'externalModels', inBundle: 5, toCreate: 5, alreadyPresent: 0, conflicts: [] },
-      { section: 'trustedMeasurements', inBundle: 3, toCreate: 3, alreadyPresent: 0, conflicts: [] },
+      { section: 'users', inBundle: 42, toCreate: 41, alreadyPresent: 1, localOnly: 0, conflicts: [] },
+      { section: 'workspaces', inBundle: 42, toCreate: 41, alreadyPresent: 1, localOnly: 0, conflicts: [] },
+      { section: 'workspaceMembers', inBundle: 42, toCreate: 41, alreadyPresent: 1, localOnly: 0, conflicts: [] },
+      { section: 'creditLedger', inBundle: 118, toCreate: 118, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'inviteCodes', inBundle: 50, toCreate: 50, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'inviteRedemptions', inBundle: 19, toCreate: 19, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'externalEndpoints', inBundle: 2, toCreate: 2, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'externalModels', inBundle: 5, toCreate: 5, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'trustedMeasurements', inBundle: 3, toCreate: 3, alreadyPresent: 0, localOnly: 0, conflicts: [] },
     ],
+    lastImport: null,
     notes: [
       '1 operator account(s) already exist here under a new id; the exported account of the same address is merged into each, with its workspace, balance and attribution.',
       '37 API key(s) are imported, 29 of them still live: a key configured in a Gatekeeper, an IDE or a script keeps working here, and nobody has to issue a new one. A revoked key arrives revoked.',
@@ -152,9 +153,9 @@ test.describe('the Export & import section', () => {
     await expect(page.getByTestId('import-sha')).toHaveText(SHA);
     await expect(page.getByTestId('import-total-balance')).toHaveText('$3,187.25');
     const accounts = page.getByTestId('import-section-users').getByRole('cell');
-    await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0']);
+    await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0', '0']);
     const keys = page.getByTestId('import-section-apiKeys').getByRole('cell');
-    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0']);
+    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0', '0']);
     await expect(page.getByTestId('import-notes')).toContainText('29 of them still live');
     await expect(page.getByTestId('import-notes')).toContainText('without an upstream API key');
     expect(api.urls).toHaveLength(1);
@@ -174,7 +175,7 @@ test.describe('the Export & import section', () => {
       report({
         ok: false,
         refusals: [
-          'This deployment is not fresh: 7 account(s) exist here that are neither in the export nor an operator’s own. An export is only imported into a deployment nobody has signed up to yet.',
+          'This deployment is not fresh: 7 account(s) exist here that are neither in the export nor an operator’s own, and nothing here came from this export’s deployment. An export is only imported into a deployment nobody else has signed up to yet — or again, into the one it was already imported into.',
         ],
       }),
     ]);

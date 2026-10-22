@@ -236,8 +236,10 @@ function ImportCard() {
       <CardHeader>
         <CardTitle>Import into this deployment</CardTitle>
         <CardDescription>
-          Only into a fresh deployment — one where nobody but its administrators has signed in yet. Check the file
-          first: the check shows what would be created and writes nothing.
+          Into a deployment holding nobody else’s data: a fresh one, or one this same export’s deployment was already
+          imported into — importing again just before the cutover is how the rows served in the meantime are caught up,
+          and anything that signed up here since is kept. Check the file first: the check shows what would happen and
+          writes nothing.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
@@ -321,6 +323,16 @@ function ImportReportView({ report }: { report: ImportReport }) {
         <dd data-testid="import-total-balance">{formatUsd(report.totalBalanceMicros)}</dd>
         <dt className="text-muted-foreground">Unredeemed invitation codes</dt>
         <dd>{report.counts.inviteCodesUnredeemed ?? 0}</dd>
+        {report.lastImport ? (
+          <>
+            <dt className="text-muted-foreground">Already imported here</dt>
+            <dd data-testid="import-last">
+              An export of {report.lastImport.sourcePublicBaseUrl} taken at{' '}
+              {formatTimestamp(report.lastImport.bundleExportedAt)}, imported{' '}
+              {formatTimestamp(report.lastImport.importedAt)}
+            </dd>
+          </>
+        ) : null}
       </dl>
 
       {report.refusals.length > 0 ? (
@@ -341,6 +353,7 @@ function ImportReportView({ report }: { report: ImportReport }) {
             <TableHead className="text-right">In the file</TableHead>
             <TableHead className="text-right">{report.applied ? 'Created' : 'Will be created'}</TableHead>
             <TableHead className="text-right">Already here</TableHead>
+            <TableHead className="text-right">Here only, kept</TableHead>
             <TableHead className="text-right">Collisions</TableHead>
           </TableRow>
         </TableHeader>
@@ -351,6 +364,7 @@ function ImportReportView({ report }: { report: ImportReport }) {
               <TableCell className="text-right tabular-nums">{section.inBundle}</TableCell>
               <TableCell className="text-right tabular-nums">{section.toCreate}</TableCell>
               <TableCell className="text-right tabular-nums">{section.alreadyPresent}</TableCell>
+              <TableCell className="text-right tabular-nums text-muted-foreground">{section.localOnly}</TableCell>
               <TableCell
                 className={`text-right tabular-nums ${section.conflicts.length > 0 ? 'text-destructive' : ''}`}
               >

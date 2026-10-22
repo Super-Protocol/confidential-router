@@ -968,8 +968,9 @@ will not read one; the exact paths excused are listed, with their reasons, in
 `CARRIED_NON_CREDENTIAL_PATHS`. An older build handed a file that carries the new
 section refuses it on that guard rather than importing it without the keys.
 
-The import takes the file **only into a fresh deployment**, and always in two
-steps:
+The import takes the file into a deployment that holds **nobody else's data** —
+a fresh one, or one this same source was already imported into (SUP-481) — and
+always in two steps:
 
 1. **Check file** — a dry run. It shows where and when the file was exported, its
    SHA-256 (compare it with the value the export screen showed), the total credit
@@ -979,8 +980,9 @@ steps:
    checked (the request carries the hash the check reported).
 
 It refuses, writing nothing, when: an account exists here that is neither in the
-file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`); the
-file's schema version is not this build's; its contents do not match its own
+file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`) **and**
+nothing here came from this file's deployment; the file's schema version is not
+this build's; its contents do not match its own
 hash, counts or total; a workspace balance does not equal the sum of its ledger
 entries; or a row collides with a different one here (a taken slug, an invitation
 code already issued here under another id, an API key whose credential is already
@@ -1015,6 +1017,24 @@ connection and everything else in one transaction, so an import interrupted
 between the two is completed by running it again: rows already present are
 counted as such and skipped.
 
+**Importing a *later* export of the same deployment is the normal last step of a
+cutover** (SUP-481). The old deployment keeps serving while the new one is
+imported and verified, so by the time the hostname moves the new one is a few
+rows behind — and the only way to close that gap is to export again and import
+again. That second import is allowed on a deployment that has been signed up to
+in the meantime, because the deployment remembers where its data came from: a
+`data_imports` row from the same `source.publicBaseUrl`, or a row here under an
+exported row's own id (which is the evidence left on a deployment imported by an
+older build, or when the source was renamed between the two exports). What it
+does is add what the file holds and this deployment does not — it never updates
+or deletes a row — so the account that verified the deployment, its workspace,
+its balance and its keys stay exactly as they are. The report counts them, per
+section, under **here only, kept**, and names the export already taken; the dry
+run shows all of it before anything is written. Two things still refuse: an
+exported address that a *different* account here holds (merging two identities is
+not something an import may guess at), and a deployment whose own accounts came
+from some other source.
+
 Both actions leave an audit line (`warn`) naming the operator, the bundle's hash
 and its row counts, and never an address or a code:
 
@@ -1025,8 +1045,8 @@ Deployment import by admin@example.com — applied; from https://api.old.example
 
 ### Redeploy runbook
 
-1. **Announce the window.** Anything that happens on the old deployment after the
-   export is not in the file; there is no merge of a second export.
+1. **Announce the window.** Anything that happens on the old deployment after an
+   export is not in that file — step 7 is what catches it up.
 2. **Export** on the old deployment (Administration → Export & import → Download
    export). Note the SHA-256 the screen shows.
 3. **Delete the old deployment first**, then **deploy the new version** — the
@@ -1043,8 +1063,14 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    `curl -H "Authorization: Bearer sk-tee-v1-…" https://<new-host>/v1/models` —
    and API Keys lists the same keys with the same spend used; chat history is
    empty (expected). Re-enter upstream keys for any external endpoint and enable
-   it.
-7. **Delete the export file.**
+   it. A real invited sign-up here is part of this step and does **not** spoil
+   the import below.
+7. **Catch up the drift, immediately before the handover:** export the old
+   deployment again, Check file, and import. The check reports what the first
+   import already brought as *already here*, whatever this deployment grew during
+   step 6 as *here only, kept*, and only the rows served in between as new. Then
+   hand the hostname over.
+8. **Delete the export files.**
 
 **If you have to go back to an older build**, know what its import will say. A
 file written by a build that carries the `apiKeys` section is refused by any
