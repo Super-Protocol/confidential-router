@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import request from 'supertest';
 import type { DataSource } from 'typeorm';
 import { afterEach, describe, expect, it } from 'vitest';
+import { eventUuid } from '../src/app/analytics/index.js';
 import { LedgerService } from '../src/app/billing/index.js';
 import { generateInvites } from '../src/app/invites/index.js';
 import { createHarness, type Harness, signUpWithCode } from './app-harness.js';
@@ -77,6 +78,8 @@ function server() {
 
 interface Account extends ConsoleSession {
   catalog: Catalog;
+  /** The account the funnel follows — `distinct_id` on every event about it. */
+  userId: string;
 }
 
 /**
@@ -110,8 +113,9 @@ async function seedSpentAccount(
   const created = await signUpWithCode(harness, body).expect(200);
   const raw = created.headers['set-cookie'];
   const cookies = (Array.isArray(raw) ? raw : [raw].filter(Boolean)) as string[];
-  const me = await graphql({ harness, cookies, email, workspaceId: '' }, '{ me { workspaces { id } } }');
+  const me = await graphql({ harness, cookies, email, workspaceId: '' }, '{ me { id workspaces { id } } }');
   const workspaceId: string = me.data.me.workspaces[0].id;
+  const userId: string = me.data.me.id;
 
   const catalog = await seedCatalog(dataSource);
   const tokens = options.tokens ?? 50_000;
@@ -135,7 +139,7 @@ async function seedSpentAccount(
     });
   }
 
-  return { harness, cookies, email, workspaceId, catalog };
+  return { harness, cookies, email, workspaceId, catalog, userId };
 }
 
 /** The bytes and header the form provider would have sent for one submission. */
@@ -383,5 +387,96 @@ describe('the webhook route itself', () => {
     const signature = `sha256=${createHmac('sha256', WEBHOOK_SECRET).update(body).digest('base64')}`;
 
     await post({ body, signature }).expect(200).expect({ outcome: 'ignored' });
+  });
+});
+
+/**
+ * The funnel's last step, through the production module graph.
+ *
+ * `FeedbackModule` binds the analytics port to `AnalyticsService`, so what the
+ * harness records here is what a configured deployment would post to PostHog
+ * (SUP-465). Before that binding the event reached a `Logger.log` and stopped
+ * there, which is why every case below asserts on a captured envelope rather
+ * than on the webhook's answer.
+ */
+describe('what the second grant reports to analytics', () => {
+  function captures() {
+    return harness.events.all('feedback_grant_applied');
+  }
+
+  it('captures a grant against the account, keyed on the ledger entry it wrote', async () => {
+    await feedbackHarness();
+    const account = await seedSpentAccount();
+
+    await post(delivery(tokenOf((await offerFor(account)).formUrl))).expect(200);
+
+    const { granted } = await offerFor(account);
+    const envelope = harness.events.one('feedback_grant_applied');
+    expect(envelope.distinctId).toBe(account.userId);
+    expect(envelope.properties).toEqual({ outcome: 'granted', grant_micros: FEEDBACK_GRANT });
+    // The idempotency key PostHog deduplicates on. Derived from the ledger entry,
+    // so it is the same value however many times the event is sent.
+    expect(envelope.uuid).toBe(eventUuid('feedback_grant_applied', granted.creditTransactionId));
+  });
+
+  it('reports one grant however many times the provider redelivers the submission', async () => {
+    await feedbackHarness();
+    const account = await seedSpentAccount();
+    const sent = delivery(tokenOf((await offerFor(account)).formUrl));
+
+    await post(sent).expect(200).expect({ outcome: 'granted' });
+    await post(sent).expect(200).expect({ outcome: 'replayed' });
+    await post(sent).expect(200).expect({ outcome: 'replayed' });
+
+    // One event, not three — and one $100 in the chart rather than three.
+    expect(captures()).toHaveLength(1);
+    expect(captures()[0].properties).toMatchObject({ outcome: 'granted' });
+  });
+
+  it('reports a refusal with its reason, and no amount, because nothing was credited', async () => {
+    await feedbackHarness();
+    const account = await seedSpentAccount();
+    const token = tokenOf((await offerFor(account)).formUrl);
+    await post(delivery(token)).expect(200);
+    harness.events.reset();
+
+    await post(delivery(token, { submissionId: 'submission-2' }))
+      .expect(200)
+      .expect({ outcome: 'refused', reason: 'already_granted' });
+
+    // A campaign whose second grants are all being refused looks identical to one
+    // nobody opened the form for, unless refusals are counted.
+    expect(harness.events.one('feedback_grant_applied').properties).toEqual({
+      outcome: 'refused',
+      reason: 'already_granted',
+    });
+  });
+
+  it('sends nothing the respondent wrote, and nothing that identifies them by name', async () => {
+    await feedbackHarness();
+    const account = await seedSpentAccount();
+    const formUrl = (await offerFor(account)).formUrl;
+
+    await post(delivery(tokenOf(formUrl))).expect(200);
+
+    // The answers, the address and the signed link are all in the delivery this
+    // event reports; none of them may leave the process (ADR-006 §5).
+    const serialised = JSON.stringify(captures());
+    expect(serialised).not.toContain('A retrieval pipeline');
+    expect(serialised).not.toContain(account.email);
+    expect(serialised).not.toContain(tokenOf(formUrl));
+    expect(harness.events.one('feedback_grant_applied').person).toEqual({});
+  });
+
+  it('says nothing at all about a delivery it refused to believe', async () => {
+    await feedbackHarness();
+    const account = await seedSpentAccount();
+
+    await post(delivery(tokenOf((await offerFor(account)).formUrl), { secret: 'not-our-secret' })).expect(401);
+    await post(delivery('bm90LWEtdG9rZW4.c2lnbmF0dXJl')).expect(401);
+
+    // A forged submission names no account, so there is no funnel step to report
+    // and nothing to attribute it to.
+    expect(captures()).toEqual([]);
   });
 });
