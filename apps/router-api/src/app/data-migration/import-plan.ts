@@ -1,4 +1,4 @@
-import type { ExportBundle, ExportData } from './export-bundle.js';
+import { canonicalJson, type ExportBundle, type ExportData } from './export-bundle.js';
 
 /**
  * What an import would do, worked out without writing anything (SUP-271).
@@ -27,6 +27,13 @@ import type { ExportBundle, ExportData } from './export-bundle.js';
  *    counted and skipped, so an import interrupted between its two halves (the
  *    accounts are written through Better Auth's connection, everything else in
  *    one transaction) is finished by running it again.
+ *  - **A row of the bundle that is already here is brought up to date**, which is
+ *    the third outcome beside create and skip (SUP-481). A *later* export of the
+ *    same deployment carries the same row with its mutable columns moved on, and
+ *    skipping it froze them at the first export: an invitation code spent on the
+ *    old deployment arrived with its seat unspent and could be redeemed a second
+ *    time, a key revoked there arrived live. Which columns travel, and which of
+ *    them a counter rather than an assignment, is {@link ImportRefreshes}.
  *  - **The operator who claimed the new deployment is the same person as the
  *    operator in the bundle.** The bootstrap account gets a new id here, so the
  *    bundle's account of the same address is *mapped* onto it — its workspace,
@@ -45,19 +52,165 @@ export interface PriorImport {
   importedAt: string;
 }
 
+/**
+ * What a second import brings up to date on a row that is already here, and what
+ * it deliberately leaves alone (SUP-481).
+ *
+ * The bundle is the source of truth for the rows it owns, so a row here under an
+ * exported row's own id is that row, one export later. Three rules shape the list
+ * below, and the reason each section is in it or out of it is beside it:
+ *
+ *  - **Never through a mapping.** An operator's account and personal workspace
+ *    are *mapped* onto the ids they have here — a different row, with this
+ *    deployment's own name. Only a row matched under its own id is refreshed.
+ *  - **Never a column another row could already hold.** A workspace slug, an
+ *    endpoint name, a sidecar listen port: moving one of those could collide
+ *    with a local-only row and refuse the catch-up import at the worst possible
+ *    moment, for a rename nothing behaves differently about.
+ *  - **Never backwards.** A counter this deployment advanced itself, and a state
+ *    that only ever goes one way, are resolved rather than assigned: `max` for a
+ *    spend counter and a last-used instant, the earlier of the two for a
+ *    revocation or a withdrawal, the number of seats actually spent on both
+ *    deployments for a redemption count.
+ *
+ * Out, with the reason: **users** — Better Auth owns the table and the mutable
+ * columns are the account's own profile; a changed address is a conflict, not a
+ * refresh. **creditLedger** and **inviteRedemptions** — append-only records of
+ * things that happened (data-model invariant 3). **trustedMeasurements** — the
+ * list is a set and its only mutable column is an operator's note; note that an
+ * import never *removes* a trust entry, so one withdrawn on the source has to be
+ * withdrawn here by hand.
+ */
+export interface ImportRefreshes {
+  workspaces: RowRefresh<WorkspaceRefresh>[];
+  workspaceMembers: MemberRefresh[];
+  inviteCodes: RowRefresh<InviteCodeRefresh>[];
+  apiKeys: RowRefresh<ApiKeyRefresh>[];
+  externalEndpoints: RowRefresh<ExternalEndpointRefresh>[];
+  externalModels: RowRefresh<ExternalModelRefresh>[];
+}
+
+/** One row to bring up to date, named by the id it has here. */
+export interface RowRefresh<Changes> {
+  id: string;
+  changes: Changes;
+}
+
+/** Settings and the first-request claim. `balanceMicros` is never copied — it is re-summed. */
+export interface WorkspaceRefresh {
+  name: string;
+  stripeCustomerId: string | null;
+  autoTopUpEnabled: boolean;
+  autoTopUpThresholdMicros: string | null;
+  autoTopUpAmountMicros: string | null;
+  autoTopUpLastAt: string | null;
+  firstRequestAt: string | null;
+}
+
+/** A membership has no id of its own, so its own pair names it. */
+export interface MemberRefresh {
+  workspaceId: string;
+  userId: string;
+  role: 'owner' | 'member';
+}
+
+export interface InviteCodeRefresh {
+  campaign: string;
+  grantMicros: string;
+  maxRedemptions: number;
+  /** Seats spent on both deployments — never the exported count on its own. */
+  redemptionCount: number;
+  expiresAt: string | null;
+  /** Withdrawn on either deployment stays withdrawn. */
+  withdrawnAt: string | null;
+  note: string | null;
+}
+
+export interface ApiKeyRefresh {
+  name: string;
+  modelScope: string[] | null;
+  spendLimitMicros: string | null;
+  /** Never backwards: the verification may have spent against this very key. */
+  spentTotalMicros: string;
+  requestsPerMinute: number | null;
+  tokensPerMinute: number | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  /** Revoked on either deployment stays revoked. */
+  revokedAt: string | null;
+}
+
+/**
+ * Where the upstream is and which deployment of it the operator approved.
+ *
+ * Not `enabled`, `status`, a verdict column or the sealed key: an imported
+ * endpoint arrives switched off and keyless, and if an operator has since
+ * entered the key and enabled it here, that is this deployment's own state.
+ * `pinnedEvidenceDigest` travels *with* `baseUrl`, which is exactly the shape
+ * SUP-435 asks of an edit that re-points an endpoint: an approval of its own.
+ */
+export interface ExternalEndpointRefresh {
+  baseUrl: string;
+  pinnedEvidenceDigest: string | null;
+}
+
+export interface ExternalModelRefresh {
+  name: string;
+  upstreamModel: string;
+  contextLength: number;
+  capabilities: ExportedModel['capabilities'];
+  promptPer1mMicros: string;
+  completionPer1mMicros: string;
+  enabled: boolean;
+}
+
+type ExportedModel = ExportData['externalEndpoints'][number]['models'][number];
+
+/** An external model to write, under the endpoint it belongs to. */
+export interface ExternalModelWrite extends ExportedModel {
+  externalEndpointId: string;
+}
+
+/**
+ * A local row as the plan compares it: the identity columns it is matched by, and
+ * the refreshable ones in the bundle's own units — ISO-8601 instants, micro-USD
+ * as decimal strings — so the comparison is like for like.
+ */
+export interface LocalWorkspace extends WorkspaceRefresh {
+  id: string;
+  slug: string;
+  balanceMicros: string;
+}
+export interface LocalInviteCode extends InviteCodeRefresh {
+  id: string;
+  code: string;
+}
+export interface LocalApiKey extends ApiKeyRefresh {
+  id: string;
+  keyHash: string;
+}
+export interface LocalExternalEndpoint extends ExternalEndpointRefresh {
+  id: string;
+  name: string;
+}
+export interface LocalModel extends ExternalModelRefresh {
+  id: string;
+  externalEndpointId: string | null;
+}
+
 /** What is already in the database the import would write into. */
 export interface LocalState {
   users: readonly { id: string; email: string }[];
-  workspaces: readonly { id: string; slug: string }[];
+  workspaces: readonly LocalWorkspace[];
   members: readonly { workspaceId: string; userId: string; role: string }[];
   /** Ledger row id by idempotency key — the two things a ledger row can collide on. */
   ledger: readonly { id: string; idempotencyKey: string }[];
-  inviteCodes: readonly { id: string; code: string }[];
+  inviteCodes: readonly LocalInviteCode[];
   redemptions: readonly { id: string; userId: string }[];
   /** Key id and the hash it authenticates by — the two things an API key can collide on. */
-  apiKeys: readonly { id: string; keyHash: string }[];
-  externalEndpoints: readonly { id: string; name: string }[];
-  models: readonly { id: string; externalEndpointId: string | null }[];
+  apiKeys: readonly LocalApiKey[];
+  externalEndpoints: readonly LocalExternalEndpoint[];
+  models: readonly LocalModel[];
   trustedMeasurements: readonly { id: string; measurement: string }[];
   /** Imports this deployment has applied, **newest first**. Empty on one that has taken none. */
   priorImports: readonly PriorImport[];
@@ -87,6 +240,12 @@ export interface SectionPlan {
   /** Already here under the same identity — a retry, or the operator's own account. */
   alreadyPresent: number;
   /**
+   * Of the {@link alreadyPresent}, how many the export has moved on from and the
+   * import brings up to date (SUP-481). A subset of that count, not a third
+   * total: `inBundle` is still `toCreate` plus `alreadyPresent`.
+   */
+  toRefresh: number;
+  /**
    * Here and not in the bundle, and therefore left exactly as they are: the rows
    * this deployment grew since it was imported, which a second import keeps
    * rather than refuses (SUP-481).
@@ -103,6 +262,14 @@ export interface ImportPlan {
   /** Things the operator should know that do not stop the import. */
   notes: string[];
   writes: ExportData;
+  /**
+   * External models to write, under the endpoint they belong to — a new
+   * endpoint's whole list, and any model a later export added to an endpoint
+   * already here (SUP-481).
+   */
+  modelWrites: ExternalModelWrite[];
+  /** Rows already here that the export has moved on from. */
+  refreshes: ImportRefreshes;
   /** Workspaces whose cached balance has to be re-summed from the ledger afterwards. */
   touchedWorkspaceIds: string[];
   /** The last export this deployment had taken before this one, if any. */
@@ -115,9 +282,47 @@ export function planIsClean(plan: ImportPlan): boolean {
 
 const lower = (value: string): string => value.trim().toLowerCase();
 
+/**
+ * The earlier of two instants, either of which may be absent.
+ *
+ * Absent means "has not happened", so it loses to an instant: a revocation or a
+ * withdrawal on either deployment is one that happened, and a refresh never
+ * un-does it.
+ */
+const earliest = (here: string | null, there: string | null): string | null => {
+  if (here === null) return there;
+  if (there === null) return here;
+  return Date.parse(here) <= Date.parse(there) ? here : there;
+};
+
+/** The later of two instants, for a column that only ever moves forward. */
+const latest = (here: string | null, there: string | null): string | null => {
+  if (here === null) return there;
+  if (there === null) return here;
+  return Date.parse(here) >= Date.parse(there) ? here : there;
+};
+
+/** The larger of two micro-USD amounts, in the decimal string they travel as. */
+const larger = (here: string, there: string): string => (BigInt(here) >= BigInt(there) ? here : there);
+
+/**
+ * `wanted` when it says something the row here does not already say, else
+ * nothing.
+ *
+ * Compared through {@link canonicalJson} over the keys of `wanted` alone, so the
+ * test is one of value: a row whose columns already agree with the export is
+ * `alreadyPresent` and nothing else, and the plan's refresh count is the number
+ * of rows an operator would see change.
+ */
+function movedOn<Changes extends object>(here: object, wanted: Changes): Changes | undefined {
+  const mine = Object.fromEntries(Object.keys(wanted).map((key) => [key, (here as Record<string, unknown>)[key]]));
+  return canonicalJson(mine) === canonicalJson(wanted) ? undefined : wanted;
+}
+
 class Section {
   toCreate = 0;
   alreadyPresent = 0;
+  toRefresh = 0;
   localOnly = 0;
   readonly conflicts: string[] = [];
   /**
@@ -146,8 +351,8 @@ class Section {
   }
 
   done(): SectionPlan {
-    const { section, inBundle, toCreate, alreadyPresent, localOnly, conflicts } = this;
-    return { section, inBundle, toCreate, alreadyPresent, localOnly, conflicts };
+    const { section, inBundle, toCreate, alreadyPresent, toRefresh, localOnly, conflicts } = this;
+    return { section, inBundle, toCreate, alreadyPresent, toRefresh, localOnly, conflicts };
   }
 }
 
@@ -256,6 +461,17 @@ export function bundleInconsistencies(data: ExportData): string[] {
  * written under the exported ones, so a deployment whose only account is the
  * operator leaves its trace somewhere else — in the invitation codes, the keys
  * or the trust list.
+ *
+ * It is a little wider than "the same source", and knowingly: two deployments
+ * imported from one export share its ids, so this says yes to a bundle from a
+ * *sibling* rebuild as well as from the source itself. Every id generator on the
+ * other side of it mints a fresh UUID — including the SUP-272 codes CSV, which
+ * does not carry the ids it reads — so an overlap can still only come from an
+ * import of this dataset, and nothing is admitted that did not. Merging two
+ * siblings that have diverged is guesswork of the kind the original refusal
+ * existed to prevent, and `docs/router.md` says so beside the refusals that
+ * remain; it is a thing an operator can do deliberately, not one they can
+ * stumble into.
  */
 function holdsRowsOf(data: ExportData, local: LocalState): boolean {
   const overlaps = (exported: readonly { id: string }[], present: readonly { id: string }[]): boolean => {
@@ -317,7 +533,13 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
         '“here only” column counts what is kept, section by section.',
     );
   }
-  const taken = fromSameSource[0];
+  // The newest *export* taken from this source, not the newest import of one:
+  // two files imported out of order would otherwise hide the staler of them.
+  const taken = fromSameSource.reduce<PriorImport | null>(
+    (newest, prior) =>
+      newest && Date.parse(newest.bundleExportedAt) >= Date.parse(prior.bundleExportedAt) ? newest : prior,
+    null,
+  );
   if (taken && Date.parse(taken.bundleExportedAt) >= Date.parse(bundle.exportedAt)) {
     notes.push(
       `This file was exported at ${bundle.exportedAt}, no later than the export of the same deployment already ` +
@@ -384,10 +606,38 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   const workspaceIdOf = (value: string): string => workspaceIds.get(value) ?? value;
 
   const workspaceWrites: ExportData['workspaces'] = [];
+  const localWorkspaceById = new Map(local.workspaces.map((workspace) => [workspace.id, workspace]));
+  const workspaceRefreshes: RowRefresh<WorkspaceRefresh>[] = [];
   for (const workspace of data.workspaces) {
-    if (workspaceIds.has(workspace.id) || localWorkspaceIds.has(workspace.id)) {
+    if (workspaceIds.has(workspace.id)) {
+      // Folded into the workspace the operator already owns here. A different
+      // row with this deployment's own name: mapped, never refreshed.
+      workspaces.accountFor(workspaceIdOf(workspace.id));
+      workspaces.alreadyPresent += 1;
+      continue;
+    }
+    const mine = localWorkspaceById.get(workspace.id);
+    if (mine) {
       workspaces.accountFor(workspace.id);
       workspaces.alreadyPresent += 1;
+      const changes = movedOn(mine, {
+        name: workspace.name,
+        stripeCustomerId: workspace.stripeCustomerId,
+        autoTopUpEnabled: workspace.autoTopUpEnabled,
+        autoTopUpThresholdMicros: workspace.autoTopUpThresholdMicros,
+        autoTopUpAmountMicros: workspace.autoTopUpAmountMicros,
+        autoTopUpLastAt: latest(mine.autoTopUpLastAt, workspace.autoTopUpLastAt),
+        // A claim already made here is not un-made: `first_request_sent` fires
+        // once per workspace and this column is when it did.
+        firstRequestAt: earliest(mine.firstRequestAt, workspace.firstRequestAt),
+      } satisfies WorkspaceRefresh);
+      if (changes) {
+        workspaces.toRefresh += 1;
+        workspaceRefreshes.push({ id: workspace.id, changes });
+        // Re-summed afterwards like any touched workspace: a refreshed row never
+        // keeps a cached balance nobody has checked against its ledger.
+        touched.add(workspace.id);
+      }
       continue;
     }
     const slugOwner = localSlugs.get(workspace.slug);
@@ -404,16 +654,25 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   const members = new Section('workspaceMembers', data.workspaceMembers.length);
   const localMembers = new Set(local.members.map((row) => `${row.workspaceId}\n${row.userId}`));
   const memberWrites: ExportData['workspaceMembers'] = [];
+  const localMemberRoles = new Map(local.members.map((row) => [`${row.workspaceId}\n${row.userId}`, row.role]));
+  const memberRefreshes: MemberRefresh[] = [];
   const mappedMembers = new Set<string>();
   for (const row of data.workspaceMembers) {
     const mapped = { ...row, workspaceId: workspaceIdOf(row.workspaceId), userId: userIdOf(row.userId) };
     const key = `${mapped.workspaceId}\n${mapped.userId}`;
     mappedMembers.add(key);
-    if (localMembers.has(key)) {
-      members.alreadyPresent += 1;
-    } else {
+    if (!localMembers.has(key)) {
       members.toCreate += 1;
       memberWrites.push(mapped);
+      continue;
+    }
+    members.alreadyPresent += 1;
+    const through = workspaceIds.has(row.workspaceId) || userIds.has(row.userId);
+    if (!through && localMemberRoles.get(key) !== mapped.role) {
+      // A role is authority: a member demoted on the old deployment must not
+      // arrive here still owning the workspace.
+      members.toRefresh += 1;
+      memberRefreshes.push({ workspaceId: mapped.workspaceId, userId: mapped.userId, role: mapped.role });
     }
   }
   // A membership has no id of its own, so its own pair is what is counted.
@@ -467,19 +726,56 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   }
 
   // ── invitations ─────────────────────────────────────────────────────────
+  // Read before the codes, because a code's counter is a function of them: the
+  // seat gate is `redemptionCount` on the code row (`invites.service.ts`), not a
+  // count of redemption rows, so the plan has to know which redemptions it is
+  // about to write before it can say what the counter should read.
+  const localRedemptionIds = new Set(local.redemptions.map((row) => row.id));
+  const localRedeemers = new Map(local.redemptions.map((row) => [row.userId, row.id]));
+  const newRedemptionsByCode = new Map<string, number>();
+  for (const row of data.inviteRedemptions) {
+    const userId = userIdOf(row.userId);
+    if (!localRedemptionIds.has(row.id) && localRedeemers.get(userId) === undefined) {
+      newRedemptionsByCode.set(row.inviteCodeId, (newRedemptionsByCode.get(row.inviteCodeId) ?? 0) + 1);
+    }
+  }
+
   const codes = new Section('inviteCodes', data.inviteCodes.length);
-  const localCodeIds = new Map(local.inviteCodes.map((code) => [code.id, code.code]));
+  const localCodeById = new Map(local.inviteCodes.map((code) => [code.id, code]));
   const localCodeValues = new Map(local.inviteCodes.map((code) => [code.code, code.id]));
   const codeWrites: ExportData['inviteCodes'] = [];
+  const codeRefreshes: RowRefresh<InviteCodeRefresh>[] = [];
+  const oversold: string[] = [];
   for (const code of data.inviteCodes) {
-    const here = localCodeIds.get(code.id);
+    const mine = localCodeById.get(code.id);
     const sameValue = localCodeValues.get(code.value);
-    if (here !== undefined) {
+    if (mine !== undefined) {
       codes.accountFor(code.id);
-      if (here === code.value) {
-        codes.alreadyPresent += 1;
-      } else {
+      if (mine.code !== code.value) {
         codes.conflicts.push(`Invitation code ${code.id} exists here with a different value.`);
+        continue;
+      }
+      codes.alreadyPresent += 1;
+      // Seats spent on *both* deployments, never the exported count on its own:
+      // this deployment may have spent one of its own during the verification,
+      // and assigning the file's number would put that seat back on sale.
+      const redemptionCount = mine.redemptionCount + (newRedemptionsByCode.get(code.id) ?? 0);
+      const changes = movedOn(mine, {
+        campaign: code.campaign,
+        grantMicros: code.grantMicros,
+        maxRedemptions: code.maxRedemptions,
+        redemptionCount,
+        expiresAt: code.expiresAt,
+        // Withdrawn on either deployment stays withdrawn.
+        withdrawnAt: earliest(mine.withdrawnAt, code.withdrawnAt),
+        note: code.note,
+      } satisfies InviteCodeRefresh);
+      if (changes) {
+        codes.toRefresh += 1;
+        codeRefreshes.push({ id: code.id, changes });
+      }
+      if (redemptionCount > code.maxRedemptions) {
+        oversold.push(code.id);
       }
     } else if (sameValue !== undefined) {
       // Named by row id on purpose: the value is a live code and is never echoed.
@@ -491,10 +787,15 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     }
   }
   codes.keeps(local.inviteCodes);
+  if (oversold.length > 0) {
+    notes.push(
+      `Invitation code(s) ${oversold.join(', ')} were redeemed on this deployment and on the exported one both, ` +
+        'past the seats they have. Every grant already made stands — the ledger carries them — and the code will ' +
+        'not redeem again here. Named by row id: an invitation code is never echoed.',
+    );
+  }
 
   const redemptions = new Section('inviteRedemptions', data.inviteRedemptions.length);
-  const localRedemptionIds = new Set(local.redemptions.map((row) => row.id));
-  const localRedeemers = new Map(local.redemptions.map((row) => [row.userId, row.id]));
   const redemptionWrites: ExportData['inviteRedemptions'] = [];
   for (const row of data.inviteRedemptions) {
     const userId = userIdOf(row.userId);
@@ -523,17 +824,37 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   // here under another id is the one thing that cannot be written as it is.
   const keys = new Section('apiKeys', data.apiKeys.length);
   const localKeyHashes = new Map(local.apiKeys.map((key) => [key.keyHash, key.id]));
-  const localKeysById = new Map(local.apiKeys.map((key) => [key.id, key.keyHash]));
+  const localKeysById = new Map(local.apiKeys.map((key) => [key.id, key]));
   const keyWrites: ExportData['apiKeys'] = [];
+  const keyRefreshes: RowRefresh<ApiKeyRefresh>[] = [];
   for (const key of data.apiKeys) {
-    const here = localKeysById.get(key.id);
+    const mine = localKeysById.get(key.id);
     const sameCredential = localKeyHashes.get(key.keyHash);
-    if (here !== undefined) {
+    if (mine !== undefined) {
       keys.accountFor(key.id);
-      if (here === key.keyHash) {
-        keys.alreadyPresent += 1;
-      } else {
+      if (mine.keyHash !== key.keyHash) {
         keys.conflicts.push(`API key ${key.id} exists here as a different credential.`);
+        continue;
+      }
+      keys.alreadyPresent += 1;
+      const changes = movedOn(mine, {
+        name: key.name,
+        modelScope: key.modelScope,
+        spendLimitMicros: key.spendLimitMicros,
+        // Never backwards: the verification may have spent against this very
+        // key, and that spend is the only record of those generations here.
+        spentTotalMicros: larger(mine.spentTotalMicros, key.spentTotalMicros),
+        requestsPerMinute: key.requestsPerMinute,
+        tokensPerMinute: key.tokensPerMinute,
+        expiresAt: key.expiresAt,
+        lastUsedAt: latest(mine.lastUsedAt, key.lastUsedAt),
+        // SUP-445 carries a key so it keeps working; a key revoked on either
+        // deployment has to stay dead just as firmly.
+        revokedAt: earliest(mine.revokedAt, key.revokedAt),
+      } satisfies ApiKeyRefresh);
+      if (changes) {
+        keys.toRefresh += 1;
+        keyRefreshes.push({ id: key.id, changes });
       }
       continue;
     }
@@ -564,19 +885,66 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     'externalModels',
     data.externalEndpoints.reduce((sum, endpoint) => sum + endpoint.models.length, 0),
   );
-  const localEndpointIds = new Set(local.externalEndpoints.map((endpoint) => endpoint.id));
+  const localEndpointById = new Map(local.externalEndpoints.map((endpoint) => [endpoint.id, endpoint]));
   const localEndpointNames = new Map(local.externalEndpoints.map((endpoint) => [endpoint.name, endpoint.id]));
-  const localModels = new Map(local.models.map((model) => [model.id, model.externalEndpointId]));
+  const localModelById = new Map(local.models.map((model) => [model.id, model]));
   const endpointWrites: ExportData['externalEndpoints'] = [];
+  const endpointRefreshes: RowRefresh<ExternalEndpointRefresh>[] = [];
+  const modelWrites: ExternalModelWrite[] = [];
+  const modelRefreshes: RowRefresh<ExternalModelRefresh>[] = [];
+
+  /** Each model of an endpoint that is here: written, brought up to date, or a collision. */
+  const planModelsOf = (endpoint: ExportData['externalEndpoints'][number]): void => {
+    for (const model of endpoint.models) {
+      const mine = localModelById.get(model.id);
+      if (mine === undefined) {
+        // A model the later export added to an endpoint already here. Counted
+        // and written per model: a whole list skipped is how a model the file
+        // carries gets reported as "already here" and never arrives.
+        models.toCreate += 1;
+        modelWrites.push({ ...model, externalEndpointId: endpoint.id });
+        continue;
+      }
+      models.accountFor(model.id);
+      if (mine.externalEndpointId !== endpoint.id) {
+        models.conflicts.push(
+          `Model id ${model.id} of “${endpoint.name}” is already in this catalogue under ` +
+            `${mine.externalEndpointId === null ? 'this deployment’s own configuration' : 'another endpoint'}.`,
+        );
+        continue;
+      }
+      models.alreadyPresent += 1;
+      const changes = movedOn(mine, {
+        name: model.name,
+        upstreamModel: model.upstreamModel,
+        contextLength: model.contextLength,
+        capabilities: model.capabilities,
+        promptPer1mMicros: model.promptPer1mMicros,
+        completionPer1mMicros: model.completionPer1mMicros,
+        enabled: model.enabled,
+      } satisfies ExternalModelRefresh);
+      if (changes) {
+        models.toRefresh += 1;
+        modelRefreshes.push({ id: model.id, changes });
+      }
+    }
+  };
+
   for (const endpoint of data.externalEndpoints) {
     const sameName = localEndpointNames.get(endpoint.name);
-    if (localEndpointIds.has(endpoint.id)) {
+    const mine = localEndpointById.get(endpoint.id);
+    if (mine !== undefined) {
       endpoints.accountFor(endpoint.id);
       endpoints.alreadyPresent += 1;
-      for (const model of endpoint.models) {
-        models.accountFor(model.id);
+      const changes = movedOn(mine, {
+        baseUrl: endpoint.baseUrl,
+        pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
+      } satisfies ExternalEndpointRefresh);
+      if (changes) {
+        endpoints.toRefresh += 1;
+        endpointRefreshes.push({ id: endpoint.id, changes });
       }
-      models.alreadyPresent += endpoint.models.length;
+      planModelsOf(endpoint);
       continue;
     }
     if (sameName !== undefined) {
@@ -584,7 +952,7 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
       endpoints.conflicts.push(`An external endpoint named “${endpoint.name}” is already registered here.`);
       continue;
     }
-    const taken = endpoint.models.filter((model) => localModels.has(model.id));
+    const taken = endpoint.models.filter((model) => localModelById.has(model.id));
     if (taken.length > 0) {
       for (const model of taken) {
         models.accountFor(model.id);
@@ -597,6 +965,9 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     endpoints.toCreate += 1;
     models.toCreate += endpoint.models.length;
     endpointWrites.push({ ...endpoint, createdByUserId: userIdOrNull(endpoint.createdByUserId) });
+    for (const model of endpoint.models) {
+      modelWrites.push({ ...model, externalEndpointId: endpoint.id });
+    }
   }
   endpoints.keeps(local.externalEndpoints);
   // Only the external rows: a `config` model is a projection of router.yaml,
@@ -625,6 +996,13 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     }
   }
   measurements.keeps(local.trustedMeasurements);
+  if (takenBefore && measurements.localOnly > 0) {
+    notes.push(
+      `${measurements.localOnly} trusted measurement(s) here are not in the export. An import never removes a trust ` +
+        'entry — only adds — so if one of them was withdrawn on the exported deployment, withdraw it here by hand ' +
+        'under Administration → External endpoints.',
+    );
+  }
 
   return {
     refusals,
@@ -642,6 +1020,15 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
       apiKeys: keyWrites,
       externalEndpoints: endpointWrites,
       trustedMeasurements: measurementWrites,
+    },
+    modelWrites,
+    refreshes: {
+      workspaces: workspaceRefreshes,
+      workspaceMembers: memberRefreshes,
+      inviteCodes: codeRefreshes,
+      apiKeys: keyRefreshes,
+      externalEndpoints: endpointRefreshes,
+      externalModels: modelRefreshes,
     },
     touchedWorkspaceIds: [...touched],
     lastImport,

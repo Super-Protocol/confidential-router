@@ -26,6 +26,8 @@ export interface ImportSection {
   inBundle: number;
   toCreate: number;
   alreadyPresent: number;
+  /** Of those, how many the file has moved on from and the import brings up to date (SUP-481). */
+  toRefresh: number;
   /** Here and not in the file, and kept as it is — what grew since the last import (SUP-481). */
   localOnly: number;
   conflicts: string[];

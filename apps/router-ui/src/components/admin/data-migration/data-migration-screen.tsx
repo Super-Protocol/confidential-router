@@ -237,9 +237,9 @@ function ImportCard() {
         <CardTitle>Import into this deployment</CardTitle>
         <CardDescription>
           Into a deployment holding nobody else’s data: a fresh one, or one this same export’s deployment was already
-          imported into — importing again just before the cutover is how the rows served in the meantime are caught up,
-          and anything that signed up here since is kept. Check the file first: the check shows what would happen and
-          writes nothing.
+          imported into — importing again just before the cutover is how the rows served in the meantime are caught up.
+          A row the file carries and this deployment already has is brought up to date; anything that signed up here
+          since is kept as it is. Check the file first: the check shows what would happen and writes nothing.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
@@ -353,6 +353,7 @@ function ImportReportView({ report }: { report: ImportReport }) {
             <TableHead className="text-right">In the file</TableHead>
             <TableHead className="text-right">{report.applied ? 'Created' : 'Will be created'}</TableHead>
             <TableHead className="text-right">Already here</TableHead>
+            <TableHead className="text-right">{report.applied ? 'Brought up to date' : 'Will be updated'}</TableHead>
             <TableHead className="text-right">Here only, kept</TableHead>
             <TableHead className="text-right">Collisions</TableHead>
           </TableRow>
@@ -364,6 +365,7 @@ function ImportReportView({ report }: { report: ImportReport }) {
               <TableCell className="text-right tabular-nums">{section.inBundle}</TableCell>
               <TableCell className="text-right tabular-nums">{section.toCreate}</TableCell>
               <TableCell className="text-right tabular-nums">{section.alreadyPresent}</TableCell>
+              <TableCell className="text-right tabular-nums">{section.toRefresh}</TableCell>
               <TableCell className="text-right tabular-nums text-muted-foreground">{section.localOnly}</TableCell>
               <TableCell
                 className={`text-right tabular-nums ${section.conflicts.length > 0 ? 'text-destructive' : ''}`}

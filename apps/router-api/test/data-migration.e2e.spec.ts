@@ -559,6 +559,11 @@ describe('deployment import', () => {
     // its own, and a metered generation against it.
     const qa = await signUp(b.harness, 'qa@example.test', codes[3]?.code);
     const qaKey = await mintKey(qa, 'QA walk');
+    // Part of the walk is a generation against a *carried* key, so the counter
+    // here is ahead of the file's by the time the catch-up import runs.
+    await dataSourceOf(b.harness)
+      .getRepository(ApiKey)
+      .update({ id: keys.live.id }, { spentTotalMicros: SPENT_MICROS * 2 });
     await b.harness.app.get(LedgerService).record({
       workspaceId: qa.workspaceId,
       kind: 'usage',
@@ -567,7 +572,9 @@ describe('deployment import', () => {
       reference: 'gen-qa-0001',
     });
 
-    // Meanwhile A serves on: one more invited account, and one more debit.
+    // Meanwhile A serves on: one more invited account, one more debit, and the
+    // state that moves on a row B already holds — the last seat of a code B
+    // imported unspent, and a key its owner revoked (SUP-481, CTO review).
     const late = await signUp(a.harness, 'late@example.test', codes[4]?.code);
     await a.harness.app.get(LedgerService).record({
       workspaceId: spender.workspaceId,
@@ -576,6 +583,7 @@ describe('deployment import', () => {
       idempotencyKey: 'usage:gen-0002',
       reference: 'gen-0002',
     });
+    await expectData(spender, REVOKE_KEY, { id: keys.live.id });
     const second = await exportFile(a.operator);
     const expected = await balancesByEmail(a.harness);
 
@@ -587,7 +595,9 @@ describe('deployment import', () => {
     // QA's own grant and its metered debit are the two rows kept here.
     expect(section(preview, 'creditLedger')).toMatchObject({ toCreate: 2, localOnly: 2, conflicts: [] });
     expect(section(preview, 'inviteRedemptions')).toMatchObject({ toCreate: 1, localOnly: 1, conflicts: [] });
-    expect(section(preview, 'apiKeys')).toMatchObject({ toCreate: 0, localOnly: 1, conflicts: [] });
+    // The key B holds is brought up to date rather than skipped; QA's own is not.
+    expect(section(preview, 'apiKeys')).toMatchObject({ toCreate: 0, toRefresh: 1, localOnly: 1, conflicts: [] });
+    expect(section(preview, 'inviteCodes')).toMatchObject({ toCreate: 0, toRefresh: 1, conflicts: [] });
     expect(preview.notes.join(' ')).toContain('1 account(s) here are not in the export');
 
     const audit: string[] = [];
@@ -607,7 +617,22 @@ describe('deployment import', () => {
     // …and QA's own account, balance and key are untouched by it.
     expect(balances.get(qa.email)).toBe(GRANT_MICROS - SPENT_MICROS);
     await callWithKey(b.harness, qaKey.secret).expect(200);
-    await callWithKey(b.harness, keys.live.secret).expect(200);
+
+    // The seat the old deployment spent is spent here: the code that `late@`
+    // used is at its limit, and a fifth account cannot mint a second grant off
+    // it. Before the refresh outcome existed this re-redeemed and granted again.
+    const usedCode = await target.getRepository(InviteCode).findOneByOrFail({ id: codes[4]?.id as string });
+    expect(usedCode).toMatchObject({ redemptionCount: 1, maxRedemptions: 1 });
+    const extra = await signUp(b.harness, 'extra@example.test', codes[4]?.code);
+    expect((await balancesByEmail(b.harness)).get(extra.email)).toBe(0);
+
+    // And the key its owner revoked on A inside the window is dead here too.
+    const carried = await target.getRepository(ApiKey).findOneByOrFail({ id: keys.live.id });
+    expect(carried.revokedAt).not.toBeNull();
+    const refused = await callWithKey(b.harness, keys.live.secret).expect(401);
+    expect(refused.body.error.code).toBe('api_key_revoked');
+    // The spend counted here is never rolled back to the file's number.
+    expect(carried.spentTotalMicros).toBe(SPENT_MICROS * 2);
 
     // Two imports, two records of where this deployment's data came from.
     expect(await target.getRepository(DataImport).count()).toBe(2);

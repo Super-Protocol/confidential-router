@@ -48,16 +48,80 @@ function report(overrides: Record<string, unknown> = {}) {
     totalBalanceMicros: '3187250000',
     refusals: [],
     sections: [
-      { section: 'users', inBundle: 42, toCreate: 41, alreadyPresent: 1, localOnly: 0, conflicts: [] },
-      { section: 'workspaces', inBundle: 42, toCreate: 41, alreadyPresent: 1, localOnly: 0, conflicts: [] },
-      { section: 'workspaceMembers', inBundle: 42, toCreate: 41, alreadyPresent: 1, localOnly: 0, conflicts: [] },
-      { section: 'creditLedger', inBundle: 118, toCreate: 118, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'inviteCodes', inBundle: 50, toCreate: 50, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'inviteRedemptions', inBundle: 19, toCreate: 19, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'externalEndpoints', inBundle: 2, toCreate: 2, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'externalModels', inBundle: 5, toCreate: 5, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'trustedMeasurements', inBundle: 3, toCreate: 3, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'users', inBundle: 42, toCreate: 41, alreadyPresent: 1, toRefresh: 0, localOnly: 0, conflicts: [] },
+      {
+        section: 'workspaces',
+        inBundle: 42,
+        toCreate: 41,
+        alreadyPresent: 1,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'workspaceMembers',
+        inBundle: 42,
+        toCreate: 41,
+        alreadyPresent: 1,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'creditLedger',
+        inBundle: 118,
+        toCreate: 118,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'inviteCodes',
+        inBundle: 50,
+        toCreate: 50,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'inviteRedemptions',
+        inBundle: 19,
+        toCreate: 19,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, toRefresh: 0, localOnly: 0, conflicts: [] },
+      {
+        section: 'externalEndpoints',
+        inBundle: 2,
+        toCreate: 2,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'externalModels',
+        inBundle: 5,
+        toCreate: 5,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'trustedMeasurements',
+        inBundle: 3,
+        toCreate: 3,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
     ],
     lastImport: null,
     notes: [
@@ -153,9 +217,9 @@ test.describe('the Export & import section', () => {
     await expect(page.getByTestId('import-sha')).toHaveText(SHA);
     await expect(page.getByTestId('import-total-balance')).toHaveText('$3,187.25');
     const accounts = page.getByTestId('import-section-users').getByRole('cell');
-    await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0', '0']);
+    await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0', '0', '0']);
     const keys = page.getByTestId('import-section-apiKeys').getByRole('cell');
-    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0', '0']);
+    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0', '0', '0']);
     await expect(page.getByTestId('import-notes')).toContainText('29 of them still live');
     await expect(page.getByTestId('import-notes')).toContainText('without an upstream API key');
     expect(api.urls).toHaveLength(1);
