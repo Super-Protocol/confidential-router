@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CONSOLE_EVENTS_PATH } from '../../lib/console-analytics';
 import { renderWithSession, TEST_WORKSPACES } from '../../test-utils';
 import { typedSessionMock } from '../typed-session';
 import { feedbackOfferMock } from './feedback-mocks';
@@ -33,7 +34,13 @@ function render(balanceMicros: string, eligible = true) {
 /** The analytics ingest is the only request this strip makes over `fetch`. */
 const fetchMock = vi.fn();
 
-const INGEST = '/v1/analytics/events';
+/**
+ * The path `captureConsoleEvent` really posts to, imported rather than spelled
+ * out: it moved once already, off a spelling the ad blocklists cancelled
+ * (SUP-463), and a copy here only records where the ingest used to be. The
+ * literal is asserted in one place, `lib/console-analytics.spec.ts`.
+ */
+const INGEST = CONSOLE_EVENTS_PATH;
 
 beforeEach(() => {
   pathname.current = '/';
