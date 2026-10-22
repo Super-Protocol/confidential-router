@@ -1,5 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { type GraphQLFixtures, signIn } from './fixtures';
 
 const CREATED_SECRET = 'sk-tee-v1-aabbccddeeff00112233445566778899aabbccdd';
@@ -40,18 +40,6 @@ const OPERATIONS: GraphQLFixtures = {
     };
   },
 };
-
-/**
- * The shell is audited in `accessibility.spec.ts`; these two screens add a
- * table, a multi-step form and a dialog, which is where contrast and labelling
- * regressions actually appear.
- */
-async function seriousViolations(page: import('@playwright/test').Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-  return results.violations
-    .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
-    .map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`);
-}
 
 test.describe('API keys', () => {
   test('lists the workspace keys with their scope, usage and limit', async ({ page, baseURL }) => {
@@ -105,20 +93,20 @@ test.describe('API keys', () => {
     await expect(page.getByText('No keys yet')).toBeVisible();
   });
 
+  /**
+   * The shell is audited in `accessibility.spec.ts`; this screen adds a table, a
+   * multi-step form and a dialog, which is where contrast and labelling
+   * regressions actually appear.
+   */
   test('has no serious axe violations, table and create dialog included', async ({ page, baseURL }) => {
     await signIn(page, baseURL as string, OPERATIONS);
 
     await page.goto('/keys');
     await expect(page.getByRole('row', { name: /production-agent/ })).toBeVisible();
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
 
     await page.getByRole('button', { name: 'New key' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
-    // The dialog fades and zooms in over 200ms and is "visible" from the first
-    // frame. Measured mid-fade, its submit button is the brand colour at partial
-    // opacity over the overlay, and axe reports a contrast the finished dialog
-    // does not have — a failure that depended on how busy the machine was.
-    await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
