@@ -662,7 +662,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 60,
-          "description": "Per-source-address budget on the console's POST /v1/analytics/events."
+          "description": "Per-source-address budget on the console's POST /v1/console-events."
         }
       }
     },
