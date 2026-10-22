@@ -259,6 +259,27 @@ describe('the trunk gate mirrors the pull-request gate', () => {
     expect(reporterScripts).toContain('gh issue close');
   });
 
+  it('raises the issue before it labels it, and never fails for want of a label', () => {
+    // The label is a nicety; the issue is the whole point. `gh issue create --label` fails outright
+    // on a label the repository does not have, and under `set -euo pipefail` so does creating one —
+    // so with either ahead of the issue, a label problem becomes "no issue at all", which is the
+    // failure this job exists to prevent rather than cause. Verified by simulation: with the two
+    // reordered, a failing `gh label create` left the step red and nothing raised.
+    const [, report] = reporter();
+    const script = scripts([report]).join('\n');
+
+    const raise = script.indexOf('gh issue create');
+    const label = script.indexOf('gh label create');
+    expect(raise, 'the reporter must create the issue').toBeGreaterThanOrEqual(0);
+    expect(label, 'the reporter must ensure its label').toBeGreaterThanOrEqual(0);
+    expect(raise, 'gh issue create has to come before gh label create').toBeLessThan(label);
+
+    // And every label call stays best-effort, or `set -e` undoes the ordering above.
+    for (const line of script.split('\n').filter((l) => /gh label create|--add-label/.test(l))) {
+      expect(line.trim(), 'label calls must tolerate failure').toMatch(/\|\|\s*true$/);
+    }
+  });
+
   it('reports on every checking job, because it can only see what it needs', () => {
     const [, report] = reporter();
     // A job absent from `needs` cannot fail the reporter's `contains(needs.*.result, 'failure')`,
