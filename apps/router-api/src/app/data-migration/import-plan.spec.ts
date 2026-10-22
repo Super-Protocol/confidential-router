@@ -141,6 +141,8 @@ function bundleOf(data: ExportData): ExportBundle {
   });
 }
 
+const SOURCE_URL = 'https://old.router.test';
+
 const EMPTY: LocalState = {
   users: [],
   workspaces: [],
@@ -152,6 +154,7 @@ const EMPTY: LocalState = {
   externalEndpoints: [],
   models: [],
   trustedMeasurements: [],
+  priorImports: [],
 };
 
 /** A deployment its operator has just claimed: a new id, a personal workspace, the sign-up grant. */
@@ -162,6 +165,58 @@ const CLAIMED: LocalState = {
   members: [{ workspaceId: 'ws-new', userId: 'op-new', role: 'owner' }],
   ledger: [{ id: 'tx-new', idempotencyKey: 'signup:op-new' }],
 };
+
+/**
+ * The deployment the bundle has already been imported into, operator mapped and
+ * all — the state the second import of a cutover actually meets (SUP-481).
+ */
+function importedInto(data: ExportData, extra: Partial<LocalState> = {}): LocalState {
+  return {
+    users: [{ id: 'op-new', email: OPERATOR }, ...data.users.filter((user) => user.email !== OPERATOR)],
+    workspaces: [{ id: 'ws-new', slug: 'admin' }, ...data.workspaces.filter((row) => row.id !== 'ws-op')],
+    members: [
+      { workspaceId: 'ws-new', userId: 'op-new', role: 'owner' },
+      ...data.workspaceMembers.filter((row) => row.userId !== 'op-old'),
+    ],
+    ledger: [
+      { id: 'tx-new', idempotencyKey: 'signup:op-new' },
+      ...data.creditLedger
+        .filter((row) => row.id !== 'tx-op')
+        .map(({ id, idempotencyKey }) => ({ id, idempotencyKey })),
+    ],
+    inviteCodes: data.inviteCodes.map(({ id, value }) => ({ id, code: value })),
+    redemptions: data.inviteRedemptions.map(({ id, userId }) => ({ id, userId })),
+    apiKeys: data.apiKeys.map(({ id, keyHash }) => ({ id, keyHash })),
+    externalEndpoints: [],
+    models: [],
+    trustedMeasurements: data.trustedMeasurements.map(({ id, measurement }) => ({ id, measurement })),
+    priorImports: [{ sourcePublicBaseUrl: SOURCE_URL, bundleExportedAt: AT, importedAt: '2026-10-01T01:00:00.000Z' }],
+    ...extra,
+  };
+}
+
+/** The account QA signs up on the new deployment to verify it before the cutover. */
+function verifiedBy(local: LocalState): LocalState {
+  return {
+    ...local,
+    users: [...local.users, { id: 'qa', email: 'qa@example.test' }],
+    workspaces: [...local.workspaces, { id: 'ws-qa', slug: 'qa' }],
+    members: [...local.members, { workspaceId: 'ws-qa', userId: 'qa', role: 'owner' }],
+    ledger: [...local.ledger, { id: 'tx-qa-spend', idempotencyKey: 'usage:gen-qa-1' }],
+    apiKeys: [...local.apiKeys, { id: 'key-qa', keyHash: 'd4'.repeat(32) }],
+    // A model of this deployment's own config, which is nobody's drift.
+    models: [...local.models, { id: 'cfg-model', externalEndpointId: null }],
+  };
+}
+
+/** One sign-up the old deployment took after the first export: the drift to catch up. */
+function withDrift(data: ExportData): ExportData {
+  data.users.push(user('bo', 'bo@example.test'));
+  data.workspaces.push(workspace('ws-bo', '7000000'));
+  data.workspaceMembers.push({ workspaceId: 'ws-bo', userId: 'bo', role: 'owner', createdAt: AT });
+  data.creditLedger.push(entry('tx-bo', 'ws-bo', ['7000000', 'signup:bo']));
+  return data;
+}
 
 const options = { operatorEmails: [OPERATOR] };
 
@@ -267,6 +322,7 @@ describe('planImport', () => {
       externalEndpoints: [],
       models: [],
       trustedMeasurements: data.trustedMeasurements.map(({ id, measurement }) => ({ id, measurement })),
+      priorImports: [],
     };
 
     const plan = planImport(bundleOf(data), imported, options);
@@ -353,6 +409,86 @@ describe('planImport', () => {
 
     expect(plan.notes.join(' ')).toContain('switched off and without an upstream API key');
     expect(plan.writes.externalEndpoints[0]?.createdByUserId).toBe('op-new');
+  });
+
+  it('takes a later export from the same source and keeps what signed up here since', () => {
+    // The cutover's last step (SUP-481): the new deployment has been imported
+    // into and then verified by a real sign-up, and the old one has served one
+    // more account in the meantime. Both have to survive the same import.
+    const plan = planImport(bundleOf(withDrift(exported())), verifiedBy(importedInto(exported())), options);
+    const sections = Object.fromEntries(plan.sections.map((section) => [section.section, section]));
+
+    expect(plan.refusals).toEqual([]);
+    expect(planIsClean(plan)).toBe(true);
+    // Only the drift is written.
+    expect(plan.writes.users.map((row) => row.id)).toEqual(['bo']);
+    expect(plan.writes.workspaces.map((row) => row.id)).toEqual(['ws-bo']);
+    expect(plan.writes.creditLedger.map((row) => row.id)).toEqual(['tx-bo']);
+    expect(plan.writes.apiKeys).toEqual([]);
+    expect(plan.touchedWorkspaceIds).toEqual(['ws-bo']);
+    // And QA's account, its workspace, its membership, its spend and its key are
+    // counted as kept rather than refused.
+    expect(sections.users).toMatchObject({ toCreate: 1, alreadyPresent: 2, localOnly: 1 });
+    expect(sections.workspaces).toMatchObject({ localOnly: 1 });
+    expect(sections.workspaceMembers).toMatchObject({ localOnly: 1 });
+    expect(sections.creditLedger).toMatchObject({ localOnly: 1 });
+    expect(sections.apiKeys).toMatchObject({ inBundle: 2, toCreate: 0, alreadyPresent: 2, localOnly: 1 });
+    // A config-born model is a projection of router.yaml, not drift.
+    expect(sections.externalModels).toMatchObject({ localOnly: 0 });
+    expect(plan.notes.join(' ')).toContain('1 account(s) here are not in the export');
+    expect(plan.lastImport?.sourcePublicBaseUrl).toBe(SOURCE_URL);
+  });
+
+  it('recognises the dataset it holds even with no record of having imported it', () => {
+    // Imported by a build older than `data_imports`, or from a deployment that
+    // was renamed between the two exports: the ids here are the evidence.
+    const local = verifiedBy(importedInto(exported(), { priorImports: [] }));
+
+    const plan = planImport(bundleOf(withDrift(exported())), local, options);
+
+    expect(plan.refusals).toEqual([]);
+    expect(plan.lastImport).toBeNull();
+    expect(plan.writes.users.map((row) => row.id)).toEqual(['bo']);
+  });
+
+  it('refuses a deployment whose own accounts came from somewhere else', () => {
+    const plan = planImport(
+      bundleOf(exported()),
+      {
+        ...CLAIMED,
+        users: [...CLAIMED.users, { id: 'qa', email: 'qa@example.test' }],
+        priorImports: [{ sourcePublicBaseUrl: 'https://other.router.test', bundleExportedAt: AT, importedAt: AT }],
+      },
+      options,
+    );
+
+    expect(planIsClean(plan)).toBe(false);
+    expect(plan.refusals[0]).toContain('nothing here came from this export’s deployment');
+  });
+
+  it('refuses to merge an exported address another account here holds', () => {
+    const local = verifiedBy(importedInto(exported()));
+
+    const plan = planImport(
+      bundleOf(withDrift(exported())),
+      { ...local, users: [...local.users, { id: 'bo-local', email: 'BO@example.test' }] },
+      options,
+    );
+
+    const conflicts = plan.sections.find((section) => section.section === 'users')?.conflicts ?? [];
+    expect(planIsClean(plan)).toBe(false);
+    expect(conflicts.join(' ')).toContain('held here by another account, bo-local');
+    // Named by id: an address is nobody's to echo.
+    expect(conflicts.join(' ')).not.toContain('bo@example.test');
+    expect(plan.writes.users).toEqual([]);
+  });
+
+  it('notes a file no newer than the export already imported here', () => {
+    const plan = planImport(bundleOf(exported()), importedInto(exported()), options);
+
+    expect(planIsClean(plan)).toBe(true);
+    expect(plan.writes.users).toEqual([]);
+    expect(plan.notes.join(' ')).toContain('no later than the export of the same deployment already imported here');
   });
 });
 

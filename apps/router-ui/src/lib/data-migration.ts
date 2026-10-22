@@ -26,7 +26,16 @@ export interface ImportSection {
   inBundle: number;
   toCreate: number;
   alreadyPresent: number;
+  /** Here and not in the file, and kept as it is — what grew since the last import (SUP-481). */
+  localOnly: number;
   conflicts: string[];
+}
+
+/** An export this deployment has already taken (SUP-481). */
+export interface PriorImport {
+  sourcePublicBaseUrl: string;
+  bundleExportedAt: string;
+  importedAt: string;
 }
 
 export interface ImportReport {
@@ -41,6 +50,8 @@ export interface ImportReport {
   refusals: string[];
   sections: ImportSection[];
   notes: string[];
+  /** What this deployment had already imported when the file was checked, if anything. */
+  lastImport: PriorImport | null;
 }
 
 export interface DownloadedExport {
