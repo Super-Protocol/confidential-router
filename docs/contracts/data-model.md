@@ -123,5 +123,13 @@ Invariants enforced in code and tests:
    same `source.publicBaseUrl`, or a row here under an exported row's own id). That second case is
    the rebuild's own shape: the cutover verifies the new deployment with a real sign-up and the old
    one serves until the handover, so the last step is a repeat import to catch up the rows written in
-   between. It creates only what is missing, never updates or deletes, and reports every local-only
-   row it keeps as `localOnly` per section (`import-plan.spec.ts`, `data-migration.e2e.spec.ts`).
+   between. A *later* export of the same deployment therefore has three outcomes per row, not two:
+   created when it is missing, **brought up to date** when it is here under its own id, and left
+   untouched when this deployment has it and the bundle does not (`localOnly`). The refresh is
+   bounded by three rules — never through an operator mapping, never a column another row could hold
+   (slug, endpoint name, listen port), and never backwards: `ApiKey.spentTotalMicros` and `lastUsedAt`
+   take the larger value, `revokedAt` and `InviteCode.disabledAt` the earlier, and
+   `InviteCode.redemptionCount` the seats spent on both deployments, because that counter *is* the
+   seat gate (`invites.service.ts`). `creditLedger`, `inviteRedemptions` and the Better Auth `user`
+   table are never rewritten; nothing is ever deleted. Both counts are in the plan per section
+   (`import-plan.spec.ts`, `data-migration.e2e.spec.ts`).

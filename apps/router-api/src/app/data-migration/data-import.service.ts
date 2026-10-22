@@ -32,6 +32,12 @@ import {
   type SectionPlan,
 } from './import-plan.js';
 
+/** A `Date` as the bundle carries instants, so the plan compares like with like. */
+const isoOrNull = (value: Date | null): string | null => (value === null ? null : value.toISOString());
+/** A micro-USD column as the bundle carries amounts. */
+const microsOf = (value: number): string => String(value);
+const microsOrNull = (value: number | null): string | null => (value === null ? null : String(value));
+
 /** What the console shows for a dry run, and again for the import that followed it. */
 export interface ImportReport {
   /** True when the rows were written; false for a dry run and for a refusal. */
@@ -124,7 +130,7 @@ export class DataImportService {
     await this.dataSource.transaction((manager) => this.write(manager, plan, this.recordOf(bundle, by)));
 
     const report = reportOf(bundle, plan, true);
-    if (plan.writes.externalEndpoints.length > 0 || plan.writes.trustedMeasurements.length > 0) {
+    if (touchesEgress(plan)) {
       // The trust list is rendered into the egress sidecar's config; the
       // endpoints themselves arrive switched off and are therefore absent from it.
       try {
@@ -181,27 +187,135 @@ export class DataImportService {
       priorImports,
     ] = await Promise.all([
       this.auth.listUsers(),
-      repository(Workspace).find({ select: { id: true, slug: true } }),
+      // Every column named: what a row is matched by, plus — for the sections a
+      // second import brings up to date — the columns it may move (SUP-481).
+      // Named rather than read whole on purpose, the way the export names its
+      // own: it keeps `external_endpoints.apiKeyCiphertext` out of this process
+      // entirely, and makes a new column a decision somebody takes here.
+      repository(Workspace).find({
+        select: {
+          id: true,
+          slug: true,
+          balanceMicros: true,
+          name: true,
+          stripeCustomerId: true,
+          autoTopUpEnabled: true,
+          autoTopUpThresholdMicros: true,
+          autoTopUpAmountMicros: true,
+          autoTopUpLastAt: true,
+          firstRequestAt: true,
+        },
+      }),
       repository(WorkspaceMember).find({ select: { workspaceId: true, userId: true, role: true } }),
       repository(CreditTransaction).find({ select: { id: true, idempotencyKey: true } }),
-      repository(InviteCode).find({ select: { id: true, code: true } }),
+      repository(InviteCode).find({
+        select: {
+          id: true,
+          code: true,
+          campaign: true,
+          grantMicros: true,
+          maxRedemptions: true,
+          redemptionCount: true,
+          expiresAt: true,
+          disabledAt: true,
+          note: true,
+        },
+      }),
       repository(InviteRedemption).find({ select: { id: true, userId: true } }),
-      repository(ApiKey).find({ select: { id: true, keyHash: true } }),
-      repository(ExternalEndpoint).find({ select: { id: true, name: true } }),
-      repository(Model).find({ select: { id: true, externalEndpointId: true } }),
+      repository(ApiKey).find({
+        select: {
+          id: true,
+          keyHash: true,
+          name: true,
+          modelScope: true,
+          spendLimitMicros: true,
+          spentTotalMicros: true,
+          requestsPerMinute: true,
+          tokensPerMinute: true,
+          expiresAt: true,
+          lastUsedAt: true,
+          revokedAt: true,
+        },
+      }),
+      repository(ExternalEndpoint).find({
+        select: { id: true, name: true, baseUrl: true, pinnedEvidenceDigest: true },
+      }),
+      repository(Model).find({
+        select: {
+          id: true,
+          externalEndpointId: true,
+          name: true,
+          litellmModel: true,
+          contextLength: true,
+          capabilities: true,
+          promptPer1mMicros: true,
+          completionPer1mMicros: true,
+          enabled: true,
+        },
+      }),
       repository(TrustedMeasurement).find({ select: { id: true, measurement: true } }),
       repository(DataImport).find({ order: { importedAt: 'DESC' } }),
     ]);
     return {
       users,
-      workspaces,
+      workspaces: workspaces.map((row) => ({
+        id: row.id,
+        slug: row.slug,
+        balanceMicros: microsOf(row.balanceMicros),
+        name: row.name,
+        stripeCustomerId: row.stripeCustomerId,
+        autoTopUpEnabled: row.autoTopUpEnabled,
+        autoTopUpThresholdMicros: microsOrNull(row.autoTopUpThresholdMicros),
+        autoTopUpAmountMicros: microsOrNull(row.autoTopUpAmountMicros),
+        autoTopUpLastAt: isoOrNull(row.autoTopUpLastAt),
+        firstRequestAt: isoOrNull(row.firstRequestAt),
+      })),
       members,
       ledger,
-      inviteCodes,
+      inviteCodes: inviteCodes.map((row) => ({
+        id: row.id,
+        code: row.code,
+        campaign: row.campaign,
+        grantMicros: microsOf(row.grantMicros),
+        maxRedemptions: row.maxRedemptions,
+        redemptionCount: row.redemptionCount,
+        expiresAt: isoOrNull(row.expiresAt),
+        // `disabledAt` on the row, `withdrawnAt` in the bundle: one state, two
+        // spellings, and the bundle's is the one the plan speaks.
+        withdrawnAt: isoOrNull(row.disabledAt),
+        note: row.note,
+      })),
       redemptions,
-      apiKeys,
-      externalEndpoints,
-      models,
+      apiKeys: apiKeys.map((row) => ({
+        id: row.id,
+        keyHash: row.keyHash,
+        name: row.name,
+        modelScope: row.modelScope,
+        spendLimitMicros: microsOrNull(row.spendLimitMicros),
+        spentTotalMicros: microsOf(row.spentTotalMicros),
+        requestsPerMinute: row.requestsPerMinute,
+        tokensPerMinute: row.tokensPerMinute,
+        expiresAt: isoOrNull(row.expiresAt),
+        lastUsedAt: isoOrNull(row.lastUsedAt),
+        revokedAt: isoOrNull(row.revokedAt),
+      })),
+      externalEndpoints: externalEndpoints.map((row) => ({
+        id: row.id,
+        name: row.name,
+        baseUrl: row.baseUrl,
+        pinnedEvidenceDigest: row.pinnedEvidenceDigest,
+      })),
+      models: models.map((row) => ({
+        id: row.id,
+        externalEndpointId: row.externalEndpointId,
+        name: row.name,
+        upstreamModel: row.litellmModel,
+        contextLength: row.contextLength,
+        capabilities: row.capabilities,
+        promptPer1mMicros: microsOf(row.promptPer1mMicros),
+        completionPer1mMicros: microsOf(row.completionPer1mMicros),
+        enabled: row.enabled,
+      })),
       trustedMeasurements: measurements,
       priorImports: priorImports.map((row) => ({
         sourcePublicBaseUrl: row.sourcePublicBaseUrl,
@@ -323,25 +437,26 @@ export class DataImportService {
       ExternalEndpoint,
       writes.externalEndpoints.map((endpoint) => endpointRow(endpoint, now)),
     );
+    // From `modelWrites`, not from the endpoints' own lists: that one list holds
+    // both a new endpoint's models and any model a later export added to an
+    // endpoint already here (SUP-481).
     await insert(
       manager,
       Model,
-      writes.externalEndpoints.flatMap((endpoint) =>
-        endpoint.models.map((model) => ({
-          id: model.id,
-          name: model.name,
-          litellmModel: model.upstreamModel,
-          origin: 'external' as const,
-          endpointId: null,
-          externalEndpointId: endpoint.id,
-          contextLength: model.contextLength,
-          capabilities: model.capabilities,
-          promptPer1mMicros: numberOf(model.promptPer1mMicros),
-          completionPer1mMicros: numberOf(model.completionPer1mMicros),
-          enabled: model.enabled,
-          updatedAt: now,
-        })),
-      ),
+      plan.modelWrites.map((model) => ({
+        id: model.id,
+        name: model.name,
+        litellmModel: model.upstreamModel,
+        origin: 'external' as const,
+        endpointId: null,
+        externalEndpointId: model.externalEndpointId,
+        contextLength: model.contextLength,
+        capabilities: model.capabilities,
+        promptPer1mMicros: numberOf(model.promptPer1mMicros),
+        completionPer1mMicros: numberOf(model.completionPer1mMicros),
+        enabled: model.enabled,
+        updatedAt: now,
+      })),
     );
     await insert(
       manager,
@@ -355,9 +470,106 @@ export class DataImportService {
       })),
     );
 
+    await this.refresh(manager, plan, now);
+
     // Last, and in this transaction: this deployment now remembers which dataset
     // it holds, which is what admits the next import of the same source (SUP-481).
     await insert(manager, DataImport, [record]);
+  }
+
+  /**
+   * Brings the rows that are already here up to the export's values (SUP-481).
+   *
+   * The third outcome beside create and skip, and the one that makes a *later*
+   * export of the same deployment mean anything: without it a code spent on the
+   * old deployment arrived with its seat unspent and a revoked key arrived live.
+   * `ImportRefreshes` is where the column list and the resolution rules live —
+   * this method only writes what the plan has already decided, row by row, so
+   * the dry run's count is the number of rows that change.
+   */
+  private async refresh(manager: EntityManager, plan: ImportPlan, now: Date): Promise<void> {
+    const { refreshes } = plan;
+
+    for (const { id, changes } of refreshes.workspaces) {
+      await manager.update(
+        Workspace,
+        { id },
+        {
+          name: changes.name,
+          stripeCustomerId: changes.stripeCustomerId,
+          autoTopUpEnabled: changes.autoTopUpEnabled,
+          autoTopUpThresholdMicros: numberOrNull(changes.autoTopUpThresholdMicros),
+          autoTopUpAmountMicros: numberOrNull(changes.autoTopUpAmountMicros),
+          autoTopUpLastAt: dateOrNull(changes.autoTopUpLastAt),
+          firstRequestAt: dateOrNull(changes.firstRequestAt),
+        },
+      );
+    }
+    for (const row of refreshes.workspaceMembers) {
+      await manager.update(WorkspaceMember, { workspaceId: row.workspaceId, userId: row.userId }, { role: row.role });
+    }
+    for (const { id, changes } of refreshes.inviteCodes) {
+      await manager.update(
+        InviteCode,
+        { id },
+        {
+          campaign: changes.campaign,
+          grantMicros: numberOf(changes.grantMicros),
+          maxRedemptions: changes.maxRedemptions,
+          redemptionCount: changes.redemptionCount,
+          expiresAt: dateOrNull(changes.expiresAt),
+          disabledAt: dateOrNull(changes.withdrawnAt),
+          note: changes.note,
+        },
+      );
+    }
+    for (const { id, changes } of refreshes.apiKeys) {
+      await manager.update(
+        ApiKey,
+        { id },
+        {
+          name: changes.name,
+          modelScope: changes.modelScope,
+          spendLimitMicros: numberOrNull(changes.spendLimitMicros),
+          spentTotalMicros: numberOf(changes.spentTotalMicros),
+          requestsPerMinute: changes.requestsPerMinute,
+          tokensPerMinute: changes.tokensPerMinute,
+          expiresAt: dateOrNull(changes.expiresAt),
+          lastUsedAt: dateOrNull(changes.lastUsedAt),
+          revokedAt: dateOrNull(changes.revokedAt),
+        },
+      );
+    }
+    for (const { id, changes } of refreshes.externalEndpoints) {
+      // `hostname` is derived from `baseUrl` wherever it is written — it is what
+      // the evidence bundle is fetched from and bound to.
+      await manager.update(
+        ExternalEndpoint,
+        { id },
+        {
+          baseUrl: changes.baseUrl,
+          hostname: new URL(changes.baseUrl).hostname,
+          pinnedEvidenceDigest: changes.pinnedEvidenceDigest,
+          updatedAt: now,
+        },
+      );
+    }
+    for (const { id, changes } of refreshes.externalModels) {
+      await manager.update(
+        Model,
+        { id },
+        {
+          name: changes.name,
+          litellmModel: changes.upstreamModel,
+          contextLength: changes.contextLength,
+          capabilities: changes.capabilities,
+          promptPer1mMicros: numberOf(changes.promptPer1mMicros),
+          completionPer1mMicros: numberOf(changes.completionPer1mMicros),
+          enabled: changes.enabled,
+          updatedAt: now,
+        },
+      );
+    }
   }
 
   /**
@@ -436,6 +648,24 @@ async function insert<T extends ObjectLiteral>(
     // read each one back first and cascade through relations nobody set.
     await manager.getRepository(entity).insert(rows.slice(start, start + INSERT_CHUNK) as never);
   }
+}
+
+/**
+ * Whether anything the egress sidecar's config is rendered from has moved.
+ *
+ * The trust list and the endpoints are rendered into it, so a refreshed
+ * `baseUrl` or pinned digest has to reach it exactly as a created endpoint does
+ * (SUP-481) — and a model only through the catalogue, which is refreshed from
+ * the database either way.
+ */
+function touchesEgress(plan: ImportPlan): boolean {
+  return (
+    plan.writes.externalEndpoints.length > 0 ||
+    plan.writes.trustedMeasurements.length > 0 ||
+    plan.modelWrites.length > 0 ||
+    plan.refreshes.externalEndpoints.length > 0 ||
+    plan.refreshes.externalModels.length > 0
+  );
 }
 
 function reportOf(bundle: ExportBundle, plan: ImportPlan, applied: boolean): ImportReport {

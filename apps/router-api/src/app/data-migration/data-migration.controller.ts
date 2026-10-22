@@ -121,14 +121,18 @@ function summaryOf(bundle: Pick<ExportBundle, 'counts'> & { integrity: { content
 function outcomeOf(report: ImportReport): string {
   const created = report.sections.map((section) => `${section.section} +${section.toCreate}`).join(', ');
   const conflicts = report.sections.reduce((sum, section) => sum + section.conflicts.length, 0);
-  // What a second import left alone, as one number: the audit line is where an
-  // operator later reads that the rows it found here were kept (SUP-481).
+  // What a second import brought up to date and what it left alone, as two
+  // numbers: the audit line is where an operator later reads that a code's seat
+  // or a key's revocation moved here, and that the rows it found were kept
+  // (SUP-481).
+  const refreshed = report.sections.reduce((sum, section) => sum + section.toRefresh, 0);
   const kept = report.sections.reduce((sum, section) => sum + section.localOnly, 0);
   const verdict = report.applied
     ? 'applied'
     : report.ok
       ? 'clean, nothing written'
       : `refused (${report.refusals.length} refusal(s), ${conflicts} conflict(s)), nothing written`;
+  const moved = refreshed > 0 ? `; ${refreshed} row(s) brought up to date` : '';
   const local = kept > 0 ? `; ${kept} local row(s) kept` : '';
-  return `${verdict}; from ${report.source.publicBaseUrl}, sha256 ${report.contentSha256}: ${created}${local}`;
+  return `${verdict}; from ${report.source.publicBaseUrl}, sha256 ${report.contentSha256}: ${created}${moved}${local}`;
 }

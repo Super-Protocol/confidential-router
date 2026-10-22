@@ -1025,15 +1025,43 @@ again. That second import is allowed on a deployment that has been signed up to
 in the meantime, because the deployment remembers where its data came from: a
 `data_imports` row from the same `source.publicBaseUrl`, or a row here under an
 exported row's own id (which is the evidence left on a deployment imported by an
-older build, or when the source was renamed between the two exports). What it
-does is add what the file holds and this deployment does not — it never updates
-or deletes a row — so the account that verified the deployment, its workspace,
-its balance and its keys stay exactly as they are. The report counts them, per
-section, under **here only, kept**, and names the export already taken; the dry
-run shows all of it before anything is written. Two things still refuse: an
-exported address that a *different* account here holds (merging two identities is
-not something an import may guess at), and a deployment whose own accounts came
-from some other source.
+older build, or when the source was renamed between the two exports).
+
+A later export says two kinds of new thing, and the import does both:
+
+- **Rows this deployment does not have** are created, as always.
+- **Rows it does have are brought up to date**, because a row of the bundle is
+  that row one export later. Without this a seat spent on the old deployment
+  arrived unspent — the gate is `invite_codes.redemptionCount`, so a single-use
+  launch code could be redeemed a second time here — and a key revoked there
+  arrived live. Three rules bound it: never through a mapping (the operator's own
+  account and workspace are folded into the ones they have here, and those keep
+  this deployment's name); never a column another row could already hold (a
+  workspace slug, an endpoint name, a sidecar port — a rename must not be able to
+  refuse the catch-up import); and never backwards, so a key's spend counter and
+  last use take the larger of the two values, a revocation or a withdrawal the
+  earlier, and a code's seat count the seats actually spent on *both*
+  deployments. The ledger and the redemptions are never rewritten — they are
+  records of things that happened — and neither are accounts: Better Auth owns
+  that table, and an address held here by a different account is a conflict, not
+  an update.
+
+Anything here that the file does not carry is left exactly as it is: the account
+that verified the deployment, its workspace, its balance and its keys. The report
+counts both halves per section — **will be updated** and **here only, kept** —
+and names the export already taken; the dry run shows all of it before anything
+is written. One thing an import never does is *remove*: a trust-list entry
+withdrawn on the source has to be withdrawn here by hand, and the report says so
+when there is a local-only entry to think about.
+
+Two things still refuse: an exported address that a *different* account here
+holds (merging two identities is not something an import may guess at), and a
+deployment whose own accounts came from some other source. And one thing it
+allows that is worth knowing: two deployments imported from one export share its
+ids, so a bundle from a *sibling* rebuild reads as "this dataset" too. Nothing
+can stumble into that — every id elsewhere is a fresh UUID — but merging two
+siblings that have diverged is guesswork of the kind the refusal above exists to
+prevent, so do it deliberately or not at all.
 
 Both actions leave an audit line (`warn`) naming the operator, the bundle's hash
 and its row counts, and never an address or a code:
@@ -1067,9 +1095,10 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    the import below.
 7. **Catch up the drift, immediately before the handover:** export the old
    deployment again, Check file, and import. The check reports what the first
-   import already brought as *already here*, whatever this deployment grew during
-   step 6 as *here only, kept*, and only the rows served in between as new. Then
-   hand the hostname over.
+   import already brought as *already here*, the rows whose state has moved since
+   (a seat spent, a key revoked) as *will be updated*, whatever this deployment
+   grew during step 6 as *here only, kept*, and only the rows served in between
+   as new. Then hand the hostname over.
 8. **Delete the export files.**
 
 **If you have to go back to an older build**, know what its import will say. A

@@ -27,9 +27,17 @@ function report(overrides: Partial<ImportReport> = {}): ImportReport {
     totalBalanceMicros: '73500000',
     refusals: [],
     sections: [
-      { section: 'users', inBundle: 4, toCreate: 3, alreadyPresent: 1, localOnly: 0, conflicts: [] },
-      { section: 'inviteCodes', inBundle: 5, toCreate: 5, alreadyPresent: 0, localOnly: 0, conflicts: [] },
-      { section: 'apiKeys', inBundle: 2, toCreate: 2, alreadyPresent: 0, localOnly: 0, conflicts: [] },
+      { section: 'users', inBundle: 4, toCreate: 3, alreadyPresent: 1, toRefresh: 0, localOnly: 0, conflicts: [] },
+      {
+        section: 'inviteCodes',
+        inBundle: 5,
+        toCreate: 5,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      { section: 'apiKeys', inBundle: 2, toCreate: 2, alreadyPresent: 0, toRefresh: 0, localOnly: 0, conflicts: [] },
     ],
     notes: [],
     lastImport: null,
@@ -130,8 +138,8 @@ describe('DataMigrationScreen', () => {
     expect(screen.getByTestId('import-total-balance')).toHaveTextContent('$73.50');
     const users = within(screen.getByTestId('import-section-users'));
     expect(users.getByText('Accounts')).toBeInTheDocument();
-    // In the file, will be created, already here, here only, collisions.
-    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts43100');
+    // In the file, will be created, already here, will be updated, here only, collisions.
+    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts431000');
     // Nothing has been imported here before, so there is no line about one.
     expect(screen.queryByTestId('import-last')).not.toBeInTheDocument();
     const [checkUrl, checkInit] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -175,8 +183,33 @@ describe('DataMigrationScreen', () => {
       json(
         report({
           sections: [
-            { section: 'users', inBundle: 5, toCreate: 1, alreadyPresent: 4, localOnly: 1, conflicts: [] },
-            { section: 'apiKeys', inBundle: 2, toCreate: 0, alreadyPresent: 2, localOnly: 1, conflicts: [] },
+            {
+              section: 'users',
+              inBundle: 5,
+              toCreate: 1,
+              alreadyPresent: 4,
+              toRefresh: 0,
+              localOnly: 1,
+              conflicts: [],
+            },
+            {
+              section: 'inviteCodes',
+              inBundle: 5,
+              toCreate: 0,
+              alreadyPresent: 5,
+              toRefresh: 1,
+              localOnly: 0,
+              conflicts: [],
+            },
+            {
+              section: 'apiKeys',
+              inBundle: 2,
+              toCreate: 0,
+              alreadyPresent: 2,
+              toRefresh: 1,
+              localOnly: 1,
+              conflicts: [],
+            },
           ],
           notes: ['1 account(s) here are not in the export: they signed up on this deployment after it was imported.'],
           lastImport: {
@@ -193,7 +226,11 @@ describe('DataMigrationScreen', () => {
     await userEvent.click(screen.getByTestId('import-check'));
 
     expect(await screen.findByTestId('import-verdict')).toHaveTextContent('Ready to import — nothing written yet');
-    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts51410');
+    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts514010');
+    // A code whose seat the old deployment spent, and a key it revoked: brought
+    // up to date rather than skipped (SUP-481).
+    expect(screen.getByTestId('import-section-inviteCodes')).toHaveTextContent('Invitation codes505100');
+    expect(screen.getByTestId('import-section-apiKeys')).toHaveTextContent('API keys202110');
     expect(screen.getByTestId('import-last')).toHaveTextContent('An export of https://old.router.example');
     expect(screen.getByTestId('import-notes')).toHaveTextContent('are not in the export');
     expect(screen.getByTestId('import-apply')).toBeEnabled();
@@ -213,6 +250,7 @@ describe('DataMigrationScreen', () => {
               inBundle: 5,
               toCreate: 4,
               alreadyPresent: 0,
+              toRefresh: 0,
               localOnly: 0,
               conflicts: ['The value of invitation code c-2 is already issued here under another id.'],
             },
