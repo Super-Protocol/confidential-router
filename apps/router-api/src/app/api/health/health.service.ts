@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { AnalyticsHealth } from '../../analytics/analytics-health.js';
 import { serviceVersion } from '../../config.js';
 import { MailService } from '../../mail/mail.service.js';
 import type { HealthResponseDto } from './health.dto.js';
@@ -12,6 +13,7 @@ export class HealthService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly mail: MailService,
+    private readonly analytics: AnalyticsHealth,
   ) {}
 
   /**
@@ -26,6 +28,11 @@ export class HealthService {
    * that would turn a lost welcome mail into an outage. It is here so that mail
    * which is not getting through is visible somewhere other than a log line
    * (SUP-269).
+   *
+   * Analytics is here for exactly that reason and under exactly that rule
+   * (SUP-464): a deployment whose `POSTHOG_PROJECT_KEY` a rebuild forgot still
+   * serves every model, so a missing chart must never take it out of rotation —
+   * but it must be answerable without reading the boot log.
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();
@@ -35,6 +42,7 @@ export class HealthService {
       uptimeSeconds: Math.round(process.uptime()),
       database,
       mail: this.mail.status(),
+      analytics: this.analytics.status(),
     };
   }
 

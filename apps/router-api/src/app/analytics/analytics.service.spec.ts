@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AnalyticsService } from './analytics.service.js';
+import { AnalyticsHealth } from './analytics-health.js';
 import type { AnalyticsEnvelope, AnalyticsSink } from './analytics-sink.js';
 
 class RecordingSink implements AnalyticsSink {
@@ -18,8 +19,11 @@ class RecordingSink implements AnalyticsSink {
   }
 }
 
-function service(sink: AnalyticsSink = new RecordingSink()): { analytics: AnalyticsService; sink: AnalyticsSink } {
-  return { analytics: new AnalyticsService(sink), sink };
+function service(
+  sink: AnalyticsSink = new RecordingSink(),
+  health = new AnalyticsHealth(),
+): { analytics: AnalyticsService; sink: AnalyticsSink; health: AnalyticsHealth } {
+  return { analytics: new AnalyticsService(sink, health), sink, health };
 }
 
 describe('AnalyticsService', () => {
@@ -106,12 +110,22 @@ describe('AnalyticsService', () => {
     const failing: AnalyticsSink = {
       send: vi.fn().mockRejectedValue(new Error('PostHog is unreachable')),
     };
-    const { analytics } = service(failing);
+    const { analytics, health } = service(failing);
 
     // Every caller sits after a committed database write. Losing an event is a
     // gap in a chart; failing the request that produced it would be a bug.
     await expect(
       analytics.capture({ event: 'signup_started', distinctId: null, uuid: 'e1', properties: { entry: 'direct' } }),
     ).resolves.toBeUndefined();
+    // Swallowed, not hidden: `/health` still counts it (SUP-464).
+    expect(health.status().dropped).toBe(1);
+  });
+
+  it('counts nothing when the sink takes the event', async () => {
+    const { analytics, health } = service();
+
+    await analytics.capture({ event: 'signup_started', distinctId: null, uuid: 'e1', properties: { entry: 'direct' } });
+
+    expect(health.status().dropped).toBe(0);
   });
 });
