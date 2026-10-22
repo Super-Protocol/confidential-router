@@ -327,6 +327,9 @@ should be capturing and reads `disabled` is missing the variable; `dropped` clim
 PostHog refusing or unreachable. Neither ever makes `/health` fail — see `docs/contracts/router-api.md`,
 `GET /health`.
 
+The chart does not publish `/health`, so on a deployment this is read through `GET /admin/health` — the
+same document behind the operator's session (SUP-479).
+
 ## Verification (SUP-148)
 
 The launch rehearsal proves the funnel with one scripted pass, on staging, with a campaign of its own
