@@ -356,7 +356,19 @@ function ImportReportView({ report }: { report: ImportReport }) {
        * finding on the button underneath rather than as a layout complaint
        * (SUP-481, CTO review).
        */}
-      <div className="overflow-x-auto rounded-lg border">
+      {/*
+       * Focusable, and named: a region that scrolls has to be reachable by
+       * keyboard, or the columns past the edge belong to mouse users only —
+       * axe's `scrollable-region-focusable`, which fires exactly when the
+       * wrapper is doing its job and therefore never on the width this machine
+       * renders.
+       */}
+      <section
+        className="overflow-x-auto rounded-lg border"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container must be keyboard-reachable (WCAG 2.1.1)
+        tabIndex={0}
+        aria-label="What the import would do, section by section"
+      >
         <Table>
           <TableHeader>
             <TableRow>
@@ -389,7 +401,7 @@ function ImportReportView({ report }: { report: ImportReport }) {
             ))}
           </TableBody>
         </Table>
-      </div>
+      </section>
 
       {conflicts.length > 0 ? (
         <ul className="list-disc space-y-1 pl-5 text-destructive" data-testid="import-conflicts">

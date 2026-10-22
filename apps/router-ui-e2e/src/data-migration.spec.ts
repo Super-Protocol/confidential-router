@@ -257,12 +257,10 @@ test.describe('the Export & import section', () => {
    * A seven-column report has to stay inside its card (SUP-481).
    *
    * A table cannot shrink below its min-content width and the shared `Table` has
-   * no wrapper of its own, so before the scroller this one pushed the page
-   * sideways on a laptop (1118px of scroll at a 1024px viewport) and, on a
-   * browser that measures the headers wider than this one does, painted over the
-   * card's footer — which is what an axe `color-contrast` finding on the button
-   * underneath actually was. Both invariants here are font-metric independent,
-   * which is the point: the local pass is what hid the CI failure last time.
+   * no wrapper of its own, so before this the report pushed the page sideways on
+   * a laptop and, on a browser that measures the headers wider than this one
+   * does, painted over the card's footer — which is what an axe `color-contrast`
+   * finding on the button underneath actually was.
    */
   for (const width of [1280, 1024] as const) {
     test(`keeps the report inside its card and the page unscrolled at ${width}px`, async ({ page, baseURL }) => {
@@ -279,7 +277,6 @@ test.describe('the Export & import section', () => {
         return {
           // The table's scroller is the thing that has to fit, not the table.
           overhang: Math.round(scroller.getBoundingClientRect().right - card.getBoundingClientRect().right),
-          // And nothing on the page may force it sideways.
           pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
         };
       });
@@ -290,6 +287,45 @@ test.describe('the Export & import section', () => {
       await capture(page, `import-dry-run-${width}`);
     });
   }
+
+  /**
+   * And the scroller carries the overflow when the table cannot fit at all.
+   *
+   * The shorter headers brought min-content to 633px while the card bottoms out
+   * around 652px however narrow the viewport gets — the console's shell stops
+   * shrinking first — so on this machine's font metrics nothing can make the
+   * table overflow, and the case above passes with or without the wrapper. The
+   * failure on CI was 19px of exactly that margin going the other way.
+   *
+   * So the precondition is injected rather than waited for: the card is narrowed
+   * until the table cannot fit, which is the state a wider-measuring browser
+   * reaches on its own. That is the one test here that holds the wrapper in
+   * place; without it the table escapes the card by ~200px and takes the page
+   * with it.
+   */
+  test('scrolls the report rather than the page when the table cannot fit its card', async ({ page, baseURL }) => {
+    await mockDataApi(page, [report()]);
+    await openAsAdmin(page, baseURL as string);
+    await page.addStyleTag({ content: '[data-testid="import-card"] { width: 420px; }' });
+    await chooseFile(page);
+    await page.getByTestId('import-check').click();
+    await expect(page.getByTestId('import-report')).toBeVisible();
+
+    const fits = await page.evaluate(() => {
+      const scroller = document.querySelector('[data-testid="import-report"] table')?.parentElement as HTMLElement;
+      const card = document.querySelector('[data-testid="import-card"]') as HTMLElement;
+      return {
+        overhang: Math.round(scroller.getBoundingClientRect().right - card.getBoundingClientRect().right),
+        scrolls: scroller.scrollWidth > scroller.clientWidth,
+        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+
+    expect(fits.scrolls).toBe(true);
+    expect(fits.overhang).toBeLessThanOrEqual(0);
+    expect(fits.pageOverflow).toBeLessThanOrEqual(0);
+    expect(await blockingViolations(page)).toEqual([]);
+  });
 
   for (const theme of ['dark', 'light'] as const) {
     test(`has no serious axe violations before, during or after an import, in ${theme} mode`, async ({
