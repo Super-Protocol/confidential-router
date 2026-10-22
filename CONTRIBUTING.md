@@ -60,6 +60,23 @@ CI runs `nx affected -t lint build test typecheck` plus the Go checks
 (`go vet`, `go test ./...`, `golangci-lint run`). A PR is mergeable when CI is
 green and a code owner has approved.
 
+**`affected` is relative to the base your PR was opened on, not to the tip it
+merges into.** Two PRs can each be green and merge into a tree neither of them
+checked — which is what happened in SUP-483, where one PR added a spec and
+another changed the constructor it calls, 23 seconds apart. So after the merge,
+`main.yml` re-runs the same targets as `nx run-many` over the whole workspace,
+and raises a `` `main` is red `` issue when they fail. If you see that issue,
+look at what else landed next to the commit before looking for a cause inside
+it.
+
+That makes a stale-base merge visible; it does not prevent one. Preventing it
+means turning on *Require branches to be up to date before merging* on `main`,
+which serialises merges — every queued PR then needs a rebase and a re-run when
+something lands ahead of it, and this repository has merged PRs a minute apart.
+It is deliberately **off**, with the trunk gate carrying the cost instead; a
+merge queue is the option that would get both. Revisit the trade the first time
+the trunk gate catches something a release had already shipped.
+
 ## Code standards
 
 - **English everywhere** — code, comments, commits, PR descriptions, docs.
