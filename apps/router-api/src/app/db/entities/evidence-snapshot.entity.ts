@@ -53,6 +53,22 @@ export interface EvidenceWorkloadSummary {
   ['externalEndpointId', 'evidenceDigest', 'certFingerprint', 'issuedAt'],
   { unique: true },
 )
+/*
+ * The order every read of one endpoint's publications asks for.
+ *
+ * `latestFor` takes the newest row of an endpoint and `snapshots` pages through
+ * them on the same key, both `ORDER BY issuedAt DESC, fetchedAt DESC`. Neither
+ * index above serves that: `IDX_evidence_snapshots_endpointId` covers one column,
+ * and the identity index leads `endpointId, evidenceDigest`, so the ordering
+ * column is behind a value the query does not constrain. Both engines were
+ * narrowing to the endpoint and then sorting its whole history to take one page
+ * of it — and this table only grows, a row per issuance, with
+ * `evidence.retentionDays` a stored preference nothing enforces.
+ *
+ * Ascending, and read backwards: both dialects scan an index in either
+ * direction, so a second descending copy would be dead weight.
+ */
+@Index('IDX_evidence_snapshots_endpointId_issuedAt', ['endpointId', 'issuedAt', 'fetchedAt'])
 export class EvidenceSnapshot {
   @PrimaryColumn(idPrimaryColumn())
   id!: string;

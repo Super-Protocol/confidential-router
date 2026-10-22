@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In, LessThan } from 'typeorm';
+import { DataSource, LessThan } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
@@ -162,23 +162,37 @@ export class EvidenceService {
       .findOne({ where: { endpointId }, order: { issuedAt: 'DESC', fetchedAt: 'DESC' } });
   }
 
-  /** Same, for a list of endpoints — the Overview table's one query. */
+  /**
+   * Same, for a list of endpoints — one indexed row each.
+   *
+   * `latestFor` per id rather than one `IN` query over all of them. The `IN`
+   * form read *every* publication of every endpoint named, `bundle` and `jws`
+   * included, and picked the newest in JS, because neither driver takes a
+   * window function portably. That is unbounded: a row is filed per issuance
+   * (`record`), `evidence.retentionDays` is a stored preference nothing
+   * enforces, so the table grows for the life of the deployment — and the
+   * console's Overview paid the whole of it on every load.
+   *
+   * Now it is N single-row lookups, each a `LIMIT 1` served by
+   * `IDX_evidence_snapshots_endpointId_issuedAt` — the composite this change
+   * added, because the ordering is `issuedAt DESC, fetchedAt DESC` and no index
+   * on `endpointId` alone can answer it without sorting the endpoint's whole
+   * history first. N is how many endpoints the router declares, a handful, so N
+   * bounded queries beat one query whose size nobody bounds.
+   *
+   * Sequential rather than `Promise.all`: N is small, so there is nothing to win
+   * from concurrency, and the e2e stand runs this on SQLite, which takes one
+   * writer. Fanning N reads out there would interleave them with the external
+   * endpoint status poller's writes for no gain.
+   */
   async latestForMany(endpointIds: string[]): Promise<Map<string, EvidenceSnapshot>> {
     const latest = new Map<string, EvidenceSnapshot>();
-    if (endpointIds.length === 0) {
-      return latest;
-    }
-    // Ordered ascending so that the last row written per endpoint is the newest;
-    // a window function would be tighter but is not portable to SQLite.
-    const rows = await this.dataSource.getRepository(EvidenceSnapshot).find({
-      where: { endpointId: In(endpointIds) },
-      order: { issuedAt: 'ASC', fetchedAt: 'ASC' },
-    });
-    for (const row of rows) {
-      // Narrowing, not filtering: the `where` above names the ids, so a null here
-      // would mean the query had picked up an upstream's publication.
-      if (row.endpointId) {
-        latest.set(row.endpointId, row);
+    // Deduplicated: several models share one endpoint, so a caller holding a
+    // model list routinely names the same id more than once.
+    for (const endpointId of new Set(endpointIds)) {
+      const snapshot = await this.latestFor(endpointId);
+      if (snapshot) {
+        latest.set(endpointId, snapshot);
       }
     }
     return latest;
