@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { AnalyticsSink } from '../src/app/analytics/index.js';
 import { LedgerService } from '../src/app/billing/index.js';
 import { generateInvites } from '../src/app/invites/index.js';
 import { createHarness, type Harness, pathOf, signUpWithCode } from './app-harness.js';
@@ -26,6 +27,16 @@ import { MockLiteLlm } from './mock-litellm.js';
  *  - a refused redemption is reported, because a campaign whose codes were all
  *    spent looks identical to one nobody opened unless refusals are counted.
  */
+
+/**
+ * The ingest, by the path the console actually posts to.
+ *
+ * Not `/v1/analytics/events`, which EasyPrivacy blocks by default — the rename
+ * and the reason are in `console-events-path.spec.ts`, and `the legacy ingest
+ * path` below covers the alias (SUP-463).
+ */
+const INGEST = '/v1/console-events';
+const LEGACY_INGEST = '/v1/analytics/events';
 
 const GRANT_MICROS = 100_000_000;
 const CAMPAIGN = 'launch-2026-10-devs';
@@ -90,10 +101,10 @@ async function signUp(email: string, inviteCode?: string): Promise<{ cookies: st
 }
 
 function post(body: Record<string, unknown>) {
-  return request(server()).post('/v1/analytics/events').send(body);
+  return request(server()).post(INGEST).send(body);
 }
 
-describe('POST /v1/analytics/events', () => {
+describe(`POST ${INGEST}`, () => {
   it('records signup_started anonymously, with the properties the taxonomy declares', async () => {
     await post({
       event: 'signup_started',
@@ -161,9 +172,83 @@ describe('POST /v1/analytics/events', () => {
 
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.text).toBe('');
-    const unknown = await request(server()).post('/v1/analytics/anything-else').send({}).expect(404);
+    const unknown = await request(server()).post('/v1/console-events/anything-else').send({}).expect(404);
     expect(unknown.body.error.code).toBe('not_found');
   });
+});
+
+describe(`POST ${LEGACY_INGEST}`, () => {
+  it('records the same event as the new path, so a split deploy drops nothing', async () => {
+    // The console and router-api deploy separately. Until every browser has the
+    // bundle that posts to `/v1/console-events`, the old path has to keep
+    // answering — whatever a blocker lets through is better than nothing.
+    const response = await request(server())
+      .post(LEGACY_INGEST)
+      .send({ event: 'signup_started', properties: { has_invite: false, entry: 'direct' } })
+      .expect(202);
+
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.text).toBe('');
+    expect(harness.events.one('signup_started')).toMatchObject({
+      anonymous: true,
+      properties: { has_invite: false, entry: 'direct' },
+    });
+  });
+
+  it('refuses exactly what the new path refuses', async () => {
+    // One handler on two paths, so there is no second validation to drift.
+    await request(server()).post(LEGACY_INGEST).send({ event: 'invite_redeemed' }).expect(400);
+    await request(server())
+      .post(LEGACY_INGEST)
+      .send({ event: 'feedback_form_opened', properties: { source: 'credits_page' } })
+      .expect(401);
+
+    expect(harness.events.sent).toEqual([]);
+  });
+});
+
+describe('the 202 and the sink', () => {
+  it('answers before the capture resolves, so a stalled PostHog costs nobody a sign-up screen', async () => {
+    // The defect this covers: `await analytics.capture()` in front of the
+    // response put PostHog's round trip — +162 ms on production, up to
+    // `analytics.posthog.requestTimeout` on a stall — on the sign-up screen,
+    // against ADR-006's "emission never blocks a request" (SUP-463).
+    let release = () => {};
+    const stalled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let captures = 0;
+    const neverResolves: AnalyticsSink = {
+      send: () => {
+        captures += 1;
+        return stalled;
+      },
+    };
+    const slow = await createHarness({ analyticsSink: neverResolves });
+    let timer: NodeJS.Timeout | undefined;
+
+    try {
+      const answered = await Promise.race([
+        request(slow.app.getHttpServer())
+          .post(INGEST)
+          .send({ event: 'signup_started', properties: { entry: 'direct', has_invite: false } })
+          .then((response) => response.status),
+        // A readable failure instead of the suite's timeout, which is what an
+        // awaited capture would turn this into.
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve('still waiting on the sink'), 2_000);
+        }),
+      ]);
+
+      expect(answered).toBe(202);
+      // Accepted means the capture was started, not skipped.
+      expect(captures).toBe(1);
+    } finally {
+      clearTimeout(timer);
+      release();
+      await slow.close();
+    }
+  }, 60_000);
 });
 
 describe('the ingest rate limit', () => {
@@ -173,7 +258,7 @@ describe('the ingest rate limit', () => {
     });
     try {
       const event = { event: 'signup_started', properties: { entry: 'direct', has_invite: false } };
-      const send = () => request(limited.app.getHttpServer()).post('/v1/analytics/events').send(event);
+      const send = () => request(limited.app.getHttpServer()).post(INGEST).send(event);
 
       await send().expect(202);
       await send().expect(202);

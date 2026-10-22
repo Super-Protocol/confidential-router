@@ -26,6 +26,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `GET /v1/evidence` | required | raw passthrough of **this deployment's** latest published bundle; no key |
 | `GET /v1/evidence/{endpoint}` | required | the same, for a named endpoint — or for a registered external upstream; no key |
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
+| `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
 
@@ -57,9 +58,9 @@ tenant's `/v1` traffic and the landing page's lookups do not spend each other's.
 Redemption is **not** on this surface, and there is no endpoint for it: a code is spent inside account
 creation (`docs/router.md`, "Invitation codes"), which is what makes a grant unreplayable.
 
-### `POST /v1/analytics/events`
+### `POST /v1/console-events`
 
-The console's first-party analytics ingest. Unauthenticated or session-authenticated, `Cache-Control:
+The console's first-party event ingest. Unauthenticated or session-authenticated, `Cache-Control:
 no-store`, answers `202` with an empty body.
 
 ```json
@@ -71,6 +72,15 @@ events and written a persistent identifier to the visitor's device, which is wha
 attaches consent to (ADR-006 §3). The other six console events are facts the database already holds and are
 captured server-side.
 
+**The path is part of the contract, and this one is spelled the way it is on purpose.** Being first-party
+escapes a blocker's *domain* rules, not its *path* rules. This ingest shipped as `POST /v1/analytics/events`
+and matched EasyPrivacy's unanchored `/analytics/event` — enabled by default in uBlock Origin, Brave Shields
+and AdGuard — so `signup_started` never left the browser for much of a developer audience (SUP-463).
+`analytics`, `/event`, `track`, `collect`, `telemetry`, `pixel`, `beacon` and `stats` must not appear in it;
+`console-events-path.spec.ts` fails the build if one does. `/v1/analytics/events` still answers identically
+for one release, so a console deploy and an API deploy that do not land together drop nothing; removing it
+is a follow-up.
+
 - `event` must be one of `CONSOLE_INGEST_EVENTS` — `signup_started`, `feedback_form_opened`. Anything else
   is `400`: an event the server can derive is one a client must not assert.
 - `properties` are dropped unless the taxonomy declares them for that event, and unless they are short
@@ -80,6 +90,9 @@ captured server-side.
   anonymously whatever session the request carries; `feedback_form_opened` needs one and answers `401`
   without it.
 - `429` with `Retry-After` past `analytics.ingestPerMinute` per source address, on a budget of its own.
+- The `202` does not wait on PostHog. Validation, the `401` and the rate limit all happen in front of the
+  response; the capture itself is started and not awaited, so a stalled analytics host costs a dropped
+  event and never a slow sign-up screen (ADR-006: emission never blocks a request).
 
 ### `POST /v1/webhooks/typeform`
 

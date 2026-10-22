@@ -812,7 +812,7 @@ analytics:
   posthog:
     host: https://eu.i.posthog.com   # POSTHOG_HOST
     requestTimeout: 3s
-  ingestPerMinute: 60                # per source address on POST /v1/analytics/events
+  ingestPerMinute: 60                # per source address on POST /v1/console-events
 ```
 
 `analytics.posthog.projectKey` is normally set from `POSTHOG_PROJECT_KEY` — a
@@ -829,9 +829,12 @@ the row it reports, so a retried hook cannot show as two conversions. Nothing is
 ever captured that the database does not already hold: no email, no name, no IP,
 no free text, and `$ip: null` on every event.
 
-**The other two are posted by the browser** to `POST /v1/analytics/events`, this
+**The other two are posted by the browser** to `POST /v1/console-events`, this
 service's own ingest, and validated against the taxonomy's allow-list before they
-leave. A browser SDK would have bought those two and written a persistent
+leave. The path avoids every word a blocklist's path rules are written with — the
+first spelling, `/v1/analytics/events`, matched EasyPrivacy's default rule and was
+cancelled in the browser (SUP-463), and it still answers for one release so a
+split deploy drops nothing. A browser SDK would have bought those two and written a persistent
 identifier to the visitor's device — which is what needs a consent banner, and a
 banner in front of the campaign we are measuring costs more than two events are
 worth. `signup_started` is captured anonymously and is a volume, never a funnel

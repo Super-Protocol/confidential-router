@@ -19,6 +19,20 @@ import { publicConfig } from './public-config';
  */
 export type ConsoleEvent = 'signup_started' | 'feedback_form_opened';
 
+/**
+ * The ingest path, and the one literal in this file that is a behaviour rather
+ * than a name.
+ *
+ * Being first-party is not enough to be unblocked: a blocklist's *path* rules
+ * apply to our own origin too, and the ingest's first spelling,
+ * `/v1/analytics/events`, matched EasyPrivacy's unanchored `/analytics/event`
+ * — enabled by default in uBlock Origin, Brave Shields and AdGuard, so
+ * `signup_started` never left the browser for much of a developer audience
+ * (SUP-463). router-api holds the same literal with a test on it
+ * (`console-events-path.spec.ts`); `console-analytics.spec.ts` holds this side.
+ */
+export const CONSOLE_EVENTS_PATH = '/v1/console-events';
+
 export type EventProperties = Record<string, string | number | boolean | undefined>;
 
 /**
@@ -31,7 +45,7 @@ export type EventProperties = Record<string, string | number | boolean | undefin
  */
 export async function captureConsoleEvent(event: ConsoleEvent, properties: EventProperties = {}): Promise<void> {
   try {
-    await fetch(`${publicConfig().apiOrigin}/v1/analytics/events`, {
+    await fetch(`${publicConfig().apiOrigin}${CONSOLE_EVENTS_PATH}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // The session cookie lives on the API origin. `feedback_form_opened` is
