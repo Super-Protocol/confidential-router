@@ -18,7 +18,7 @@ import { useFeedbackOffer } from './use-feedback-offer';
  * browsers block.
  */
 export function FeedbackOfferCard({ onGranted }: { onGranted?: () => void }) {
-  const { offer, waiting, opened } = useFeedbackOffer(onGranted);
+  const { offer, waiting, opened } = useFeedbackOffer('credits_page', onGranted);
 
   if (!offer?.formUrl) {
     return null;

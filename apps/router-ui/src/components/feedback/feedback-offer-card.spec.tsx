@@ -1,5 +1,5 @@
 import { screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithApollo } from '../../test-utils';
 import { feedbackOfferMock } from './feedback-mocks';
 import { FeedbackOfferCard } from './feedback-offer-card';
@@ -9,9 +9,26 @@ vi.mock('sonner', () => ({ toast: toasts }));
 
 const FORM_URL = 'https://form.example/to/aBcDeF?t=signed-token';
 
+/** The analytics ingest is the only request this card makes over `fetch`. */
+const fetchMock = vi.fn();
+
+const INGEST = '/v1/analytics/events';
+
 beforeEach(() => {
   toasts.success.mockReset();
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({}) } as unknown as Response);
+  vi.stubGlobal('fetch', fetchMock);
 });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function ingested(): Record<string, unknown> | undefined {
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes(INGEST)) as [string, RequestInit] | undefined;
+  return call ? JSON.parse(call[1].body as string) : undefined;
+}
 
 describe('FeedbackOfferCard', () => {
   it('renders nothing for an account the server is not offering the grant to', async () => {
@@ -45,6 +62,38 @@ describe('FeedbackOfferCard', () => {
     // Honest about the gap rather than showing a stale zero: the webhook has not
     // arrived yet, and the console says so.
     expect(await screen.findByText(/lands within a minute/)).toBeInTheDocument();
+  });
+
+  it('reports the click, named for the surface it came from', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup();
+    renderWithApollo(<FeedbackOfferCard />, {
+      mocks: [feedbackOfferMock({ eligible: true, formUrl: FORM_URL })],
+    });
+
+    await user.click(await screen.findByRole('link', { name: /Give feedback/ }));
+
+    // The click, not the form provider's own view event: the form is another
+    // origin and its analytics are not ours to join the funnel on.
+    await waitFor(() => expect(ingested()).toBeDefined());
+    expect(ingested()).toEqual({
+      event: 'feedback_form_opened',
+      properties: { source: 'credits_page', grant_eligible: true },
+    });
+  });
+
+  it('sends the event on the session, because it is recorded against the account', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup();
+    renderWithApollo(<FeedbackOfferCard />, {
+      mocks: [feedbackOfferMock({ eligible: true, formUrl: FORM_URL })],
+    });
+
+    await user.click(await screen.findByRole('link', { name: /Give feedback/ }));
+
+    await waitFor(() => expect(ingested()).toBeDefined());
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url).includes(INGEST)) as [string, RequestInit];
+    // The session cookie lives on the API origin; without it the ingest answers
+    // 401 and the step is lost.
+    expect(init.credentials).toBe('include');
   });
 
   it('announces the grant and refreshes the balance when it lands', async () => {
