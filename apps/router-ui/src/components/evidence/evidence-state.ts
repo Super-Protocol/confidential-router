@@ -14,7 +14,7 @@ export interface EvidencePresentation {
 /**
  * How the three publication states read.
  *
- * ADR-002: the router never learns whether anyone verified an endpoint, so
+ * ADR-002: no verdict about an endpoint is ever sent to the router, so
  * nothing here may say *verified*, *trusted* or *valid*. Every string states
  * what the platform published and leaves the verdict to the viewer's
  * gatekeeper. `STALE` is the prototype's "signing key rotating" screen: a
