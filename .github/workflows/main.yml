@@ -264,7 +264,8 @@ jobs:
       # The issue is opened by `github-actions[bot]` with no assignee, so it
       # otherwise reaches only people watching all repository activity. A label
       # is the cheap part of fixing that: it makes the nag filterable and
-      # subscribable without this job having to guess at a human owner.
+      # subscribable without this job having to guess at a human owner. It is
+      # applied after the issue exists, never as a precondition — see below.
       LABEL: ci
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -310,17 +311,21 @@ jobs:
           if [ -n "$existing" ]; then
             # Reopening an already-open issue is an error, and an expected one.
             gh issue reopen --repo "$GITHUB_REPOSITORY" "$existing" 2>/dev/null || true
+            # The label is not re-applied here: a human may have retriaged this
+            # issue, and this job's business is the body.
             url="$(gh issue edit --repo "$GITHUB_REPOSITORY" "$existing" --body-file red-body.md)"
           else
-            # `gh issue create --label` fails outright on a label the repository
-            # does not have, which would turn "the trunk is red" into "the job
-            # that says so is red". `--force` makes ensuring it idempotent, and
-            # keeps the workflow from depending on repository state nobody set up.
+            # The nag lands first and the label is a nicety afterwards, both
+            # best-effort. `gh issue create --label` fails outright on a label
+            # the repository does not have, and under `set -e` so does ensuring
+            # one — either as a precondition would turn "the trunk is red" into
+            # "the job that says so is red", which is the opposite of the point.
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --body-file red-body.md)"
             gh label create "$LABEL" --repo "$GITHUB_REPOSITORY" --force \
               --color ededed \
-              --description 'Raised by CI about the state of the repository itself'
-            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
-              --label "$LABEL" --body-file red-body.md)"
+              --description 'Raised by CI about the state of the repository itself' || true
+            gh issue edit "$url" --add-label "$LABEL" || true
           fi
 
           # An annotation as well as the issue, so the failure is legible from the
