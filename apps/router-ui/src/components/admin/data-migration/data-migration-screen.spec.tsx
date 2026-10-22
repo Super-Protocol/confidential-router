@@ -138,7 +138,7 @@ describe('DataMigrationScreen', () => {
     expect(screen.getByTestId('import-total-balance')).toHaveTextContent('$73.50');
     const users = within(screen.getByTestId('import-section-users'));
     expect(users.getByText('Accounts')).toBeInTheDocument();
-    // In the file, will be created, already here, will be updated, here only, collisions.
+    // In file, created, already here, updated, kept here, clashes.
     expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts431000');
     // Nothing has been imported here before, so there is no line about one.
     expect(screen.queryByTestId('import-last')).not.toBeInTheDocument();

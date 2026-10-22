@@ -346,36 +346,50 @@ function ImportReportView({ report }: { report: ImportReport }) {
         </ul>
       ) : null}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Section</TableHead>
-            <TableHead className="text-right">In the file</TableHead>
-            <TableHead className="text-right">{report.applied ? 'Created' : 'Will be created'}</TableHead>
-            <TableHead className="text-right">Already here</TableHead>
-            <TableHead className="text-right">{report.applied ? 'Brought up to date' : 'Will be updated'}</TableHead>
-            <TableHead className="text-right">Here only, kept</TableHead>
-            <TableHead className="text-right">Collisions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {report.sections.map((section) => (
-            <TableRow key={section.section} data-testid={`import-section-${section.section}`}>
-              <TableCell>{SECTION_LABELS[section.section] ?? section.section}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.inBundle}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.toCreate}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.alreadyPresent}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.toRefresh}</TableCell>
-              <TableCell className="text-right tabular-nums text-muted-foreground">{section.localOnly}</TableCell>
-              <TableCell
-                className={`text-right tabular-nums ${section.conflicts.length > 0 ? 'text-destructive' : ''}`}
-              >
-                {section.conflicts.length}
-              </TableCell>
+      {/*
+       * A scroller of its own, the way every other wide table in the console has
+       * one. The shared `Table` is `w-full` with no wrapper, and a table cannot
+       * shrink below its min-content width: at seven columns that is ~800px, so
+       * without this it pushes the page sideways on a laptop and — where a
+       * browser measures the headers a little wider than this one does — paints
+       * over the card's own footer, which arrives as an axe `color-contrast`
+       * finding on the button underneath rather than as a layout complaint
+       * (SUP-481, CTO review).
+       */}
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Section</TableHead>
+              {/* Short, because seven columns have to fit side by side; the badge
+                  above the table is what says whether any of this has happened yet. */}
+              <TableHead className="text-right">In file</TableHead>
+              <TableHead className="text-right">Created</TableHead>
+              <TableHead className="text-right">Already here</TableHead>
+              <TableHead className="text-right">Updated</TableHead>
+              <TableHead className="text-right">Kept here</TableHead>
+              <TableHead className="text-right">Clashes</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {report.sections.map((section) => (
+              <TableRow key={section.section} data-testid={`import-section-${section.section}`}>
+                <TableCell>{SECTION_LABELS[section.section] ?? section.section}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.inBundle}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.toCreate}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.alreadyPresent}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.toRefresh}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{section.localOnly}</TableCell>
+                <TableCell
+                  className={`text-right tabular-nums ${section.conflicts.length > 0 ? 'text-destructive' : ''}`}
+                >
+                  {section.conflicts.length}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
 
       {conflicts.length > 0 ? (
         <ul className="list-disc space-y-1 pl-5 text-destructive" data-testid="import-conflicts">

@@ -19,6 +19,7 @@ import { DataImport } from '../src/app/db/entities/data-import.entity.js';
 import { ExternalEndpoint } from '../src/app/db/entities/external-endpoint.entity.js';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../src/app/db/entities/invite-redemption.entity.js';
+import { Model } from '../src/app/db/entities/model.entity.js';
 import { TrustedMeasurement } from '../src/app/db/entities/trusted-measurement.entity.js';
 import { User } from '../src/app/db/entities/user.entity.js';
 import { Workspace } from '../src/app/db/entities/workspace.entity.js';
@@ -39,6 +40,8 @@ const OPERATOR = 'admin@confidential-router.local';
 const GRANT_MICROS = 25_000_000;
 const SPENT_MICROS = 1_500_000;
 const SEALED_UPSTREAM_KEY = 'v1.sealed-upstream-key-ciphertext';
+const UPSTREAM_MODEL_ID = 'partner/qwen-3-32b';
+const UPSTREAM_PROMPT_MICROS = 900_000;
 const KEY_LIMIT_MICROS = 5_000_000;
 
 const ISSUE = `
@@ -200,8 +203,9 @@ async function usedDeployment(): Promise<Used> {
   await dataSource.getRepository(ApiKey).update({ id: live.id }, { spentTotalMicros: SPENT_MICROS });
 
   // Things that must stay behind: an upstream's sealed key.
+  const upstreamId = randomUUID();
   await dataSource.getRepository(ExternalEndpoint).insert({
-    id: randomUUID(),
+    id: upstreamId,
     name: 'partner-cloud',
     baseUrl: 'https://llm.partner.example/v1',
     hostname: 'llm.partner.example',
@@ -214,6 +218,23 @@ async function usedDeployment(): Promise<Used> {
     apiKeyPrefix: 'sk-part',
     createdByUserId: null,
     createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  // A model under it, so the endpoint section makes a real export → import →
+  // re-import round trip: the one place a DB-to-bundle format mismatch would
+  // show up as a pointless refresh (SUP-481, CTO review).
+  await dataSource.getRepository(Model).insert({
+    id: UPSTREAM_MODEL_ID,
+    name: 'Qwen 3 32B (partner)',
+    litellmModel: 'qwen3-32b',
+    origin: 'external',
+    endpointId: null,
+    externalEndpointId: upstreamId,
+    contextLength: 32_768,
+    capabilities: ['chat'],
+    promptPer1mMicros: UPSTREAM_PROMPT_MICROS,
+    completionPer1mMicros: 1_800_000,
+    enabled: true,
     updatedAt: new Date(),
   });
   await dataSource.getRepository(TrustedMeasurement).insert({
@@ -584,6 +605,10 @@ describe('deployment import', () => {
       reference: 'gen-0002',
     });
     await expectData(spender, REVOKE_KEY, { id: keys.live.id });
+    // The upstream's price list moves inside the window too.
+    await dataSourceOf(a.harness)
+      .getRepository(Model)
+      .update({ id: UPSTREAM_MODEL_ID }, { promptPer1mMicros: UPSTREAM_PROMPT_MICROS * 2 });
     const second = await exportFile(a.operator);
     const expected = await balancesByEmail(a.harness);
 
@@ -598,6 +623,10 @@ describe('deployment import', () => {
     // The key B holds is brought up to date rather than skipped; QA's own is not.
     expect(section(preview, 'apiKeys')).toMatchObject({ toCreate: 0, toRefresh: 1, localOnly: 1, conflicts: [] });
     expect(section(preview, 'inviteCodes')).toMatchObject({ toCreate: 0, toRefresh: 1, conflicts: [] });
+    // The round trip the unit tests cannot make: the endpoint's own columns have
+    // not moved, so nothing about it is refreshed, while its model's price has.
+    expect(section(preview, 'externalEndpoints')).toMatchObject({ alreadyPresent: 1, toRefresh: 0, conflicts: [] });
+    expect(section(preview, 'externalModels')).toMatchObject({ alreadyPresent: 1, toRefresh: 1, conflicts: [] });
     expect(preview.notes.join(' ')).toContain('1 account(s) here are not in the export');
 
     const audit: string[] = [];
@@ -633,6 +662,17 @@ describe('deployment import', () => {
     expect(refused.body.error.code).toBe('api_key_revoked');
     // The spend counted here is never rolled back to the file's number.
     expect(carried.spentTotalMicros).toBe(SPENT_MICROS * 2);
+
+    // The price followed; the operator's own switch and sealed key did not move.
+    expect(await target.getRepository(Model).findOneByOrFail({ id: UPSTREAM_MODEL_ID })).toMatchObject({
+      promptPer1mMicros: UPSTREAM_PROMPT_MICROS * 2,
+      externalEndpointId: (await target.getRepository(ExternalEndpoint).findOneByOrFail({ name: 'partner-cloud' })).id,
+    });
+    expect(await target.getRepository(ExternalEndpoint).findOneByOrFail({ name: 'partner-cloud' })).toMatchObject({
+      enabled: false,
+      apiKeyCiphertext: '',
+      pinnedEvidenceDigest: 'sha256/approved-deployment',
+    });
 
     // Two imports, two records of where this deployment's data came from.
     expect(await target.getRepository(DataImport).count()).toBe(2);

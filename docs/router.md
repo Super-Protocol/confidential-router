@@ -1046,9 +1046,20 @@ A later export says two kinds of new thing, and the import does both:
   that table, and an address held here by a different account is a conflict, not
   an update.
 
+What the file is *not* the authority on, even for a row it carries, is anything
+this deployment's operator set by hand. An imported external endpoint arrives
+switched off and keyless, and runbook step 6 is where somebody enters the key,
+enables it and approves a deployment of that upstream — so `enabled`, the sealed
+key, a model's own switch and the **pinned evidence digest** stay as they are
+here. The pin travels in exactly one case: a `baseUrl` that has moved, because
+that is the shape SUP-435 requires of an edit which re-points an endpoint — one
+that states an approval of its own, or withdraws the pin by stating none. What
+does follow the file is what the source's catalogue says a model *is*: its name,
+its upstream name, its context length, its capabilities and its prices.
+
 Anything here that the file does not carry is left exactly as it is: the account
 that verified the deployment, its workspace, its balance and its keys. The report
-counts both halves per section — **will be updated** and **here only, kept** —
+counts both halves per section — **updated** and **kept here** —
 and names the export already taken; the dry run shows all of it before anything
 is written. One thing an import never does is *remove*: a trust-list entry
 withdrawn on the source has to be withdrawn here by hand, and the report says so
@@ -1096,9 +1107,8 @@ Deployment import by admin@example.com — applied; from https://api.old.example
 7. **Catch up the drift, immediately before the handover:** export the old
    deployment again, Check file, and import. The check reports what the first
    import already brought as *already here*, the rows whose state has moved since
-   (a seat spent, a key revoked) as *will be updated*, whatever this deployment
-   grew during step 6 as *here only, kept*, and only the rows served in between
-   as new. Then hand the hostname over.
+   (a seat spent, a key revoked) as *updated*, whatever this deployment grew
+   during step 6 as *kept here*, and only the rows served in between as new. Then hand the hostname over.
 8. **Delete the export files.**
 
 **If you have to go back to an older build**, know what its import will say. A

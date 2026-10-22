@@ -141,19 +141,31 @@ export interface ApiKeyRefresh {
 }
 
 /**
- * Where the upstream is and which deployment of it the operator approved.
+ * Where the upstream is, and — only when it has moved — which deployment of it
+ * the operator approved.
  *
  * Not `enabled`, `status`, a verdict column or the sealed key: an imported
- * endpoint arrives switched off and keyless, and if an operator has since
- * entered the key and enabled it here, that is this deployment's own state.
- * `pinnedEvidenceDigest` travels *with* `baseUrl`, which is exactly the shape
- * SUP-435 asks of an edit that re-points an endpoint: an approval of its own.
+ * endpoint arrives switched off and keyless, and once an operator has entered
+ * the key and enabled it here (runbook step 6) that is this deployment's own
+ * state. `pinnedEvidenceDigest` is held to the same standard, and it is the
+ * reason this type is shaped as it is: a pin is an operator's approval *on this
+ * deployment*, so an import may not re-grant one that was withdrawn here, and a
+ * digest approved here while the upstream redeployed inside the window must not
+ * be rolled back to the exported one. It travels in exactly one case — a
+ * `baseUrl` that has moved — because that is the shape SUP-435 requires of an
+ * edit which re-points an endpoint: one that states an approval of its own.
+ * `null` there is therefore "re-pointed, and the export approved nothing", which
+ * withdraws the pin exactly as an operator's own re-point would.
  */
 export interface ExternalEndpointRefresh {
   baseUrl: string;
   pinnedEvidenceDigest: string | null;
 }
 
+/**
+ * What the source's catalogue says a model is. Not `enabled`: that switch is the
+ * operator's, and theirs here, for the same reason the endpoint's own is.
+ */
 export interface ExternalModelRefresh {
   name: string;
   upstreamModel: string;
@@ -161,7 +173,6 @@ export interface ExternalModelRefresh {
   capabilities: ExportedModel['capabilities'];
   promptPer1mMicros: string;
   completionPer1mMicros: string;
-  enabled: boolean;
 }
 
 type ExportedModel = ExportData['externalEndpoints'][number]['models'][number];
@@ -197,6 +208,22 @@ export interface LocalModel extends ExternalModelRefresh {
   id: string;
   externalEndpointId: string | null;
 }
+
+/**
+ * Written as the plan computed it, which is a read outside the import's own
+ * transaction.
+ *
+ * Only one refreshed column is absolute rather than resolved — `redemptionCount`
+ * — so only that one could lose a concurrent write, and only a sign-up that
+ * claims a seat in the milliseconds between the plan and the write. It is
+ * acceptable here and nowhere else: the deployment being imported into is one
+ * nobody has been sent to yet (that is what the freshness rule is about), the
+ * operator is standing at the screen, and the dry run they just read is the
+ * thing the import is required to match — a counter re-read mid-write would
+ * import a number the plan never showed them. The seat gate itself stays
+ * relative and conditional (`invites.service.ts`), so the race it exists for is
+ * untouched by this.
+ */
 
 /** What is already in the database the import would write into. */
 export interface LocalState {
@@ -921,7 +948,6 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
         capabilities: model.capabilities,
         promptPer1mMicros: model.promptPer1mMicros,
         completionPer1mMicros: model.completionPer1mMicros,
-        enabled: model.enabled,
       } satisfies ExternalModelRefresh);
       if (changes) {
         models.toRefresh += 1;
@@ -936,9 +962,11 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     if (mine !== undefined) {
       endpoints.accountFor(endpoint.id);
       endpoints.alreadyPresent += 1;
+      // The pin travels only with a `baseUrl` that has moved — see the type.
+      const repointed = mine.baseUrl !== endpoint.baseUrl;
       const changes = movedOn(mine, {
         baseUrl: endpoint.baseUrl,
-        pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
+        pinnedEvidenceDigest: repointed ? endpoint.pinnedEvidenceDigest : mine.pinnedEvidenceDigest,
       } satisfies ExternalEndpointRefresh);
       if (changes) {
         endpoints.toRefresh += 1;

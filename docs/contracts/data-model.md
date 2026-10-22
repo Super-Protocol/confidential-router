@@ -131,5 +131,8 @@ Invariants enforced in code and tests:
    take the larger value, `revokedAt` and `InviteCode.disabledAt` the earlier, and
    `InviteCode.redemptionCount` the seats spent on both deployments, because that counter *is* the
    seat gate (`invites.service.ts`). `creditLedger`, `inviteRedemptions` and the Better Auth `user`
-   table are never rewritten; nothing is ever deleted. Both counts are in the plan per section
+   table are never rewritten; nothing is ever deleted; and nothing this deployment's own operator
+   set is overwritten — `ExternalEndpoint.enabled`/`apiKeyCiphertext`, `Model.enabled` and
+   `pinnedEvidenceDigest` stay as they are, the pin travelling only with a moved `baseUrl`, which is
+   what SUP-435 asks of an edit that re-points an endpoint. Both counts are in the plan per section
    (`import-plan.spec.ts`, `data-migration.e2e.spec.ts`).
