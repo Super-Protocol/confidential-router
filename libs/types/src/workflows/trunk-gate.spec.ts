@@ -1,18 +1,24 @@
 /**
- * Contract test: whatever the pull-request gate checks with `nx affected`, a push to `main` either
- * checks over the whole workspace or declares as a known gap, here, where it can be reviewed.
+ * Contract test: every check the pull-request gate runs is either run again on a push to `main`,
+ * or declared here as a gap, with its reason.
  *
  * `nx affected` on a pull request diffs against `pull_request.base.sha` — the tip `main` had when
  * the PR was opened, not the tip it merges into. Two PRs can each be green on their own base and
  * merge into a tree neither of them ever checked; in SUP-483 that tree's typecheck was red for
  * three hours, with every gate green, because the incompatibility existed only in the merge.
- * `main.yml` exists to run the same targets over the whole workspace once the merge is a fact.
+ * `main.yml` exists to check the merged tree once the merge is a fact.
  *
- * The hazard with two workflows is that they drift: someone adds a target to the PR gate, the
- * trunk gate keeps checking the old set, and the trunk is unguarded again for exactly the thing
- * that was worth adding. Nothing in Actions notices — both workflows stay green. So every
- * diff-relative command in the PR gate has to be accounted for below, which makes adding one a
- * decision about the trunk rather than an omission.
+ * The hazard with two workflows is that they drift. Someone adds a check to the PR gate, the
+ * trunk gate keeps running the old set, and the trunk is unguarded again for exactly the thing
+ * that was worth adding — and nothing in Actions notices, because both workflows stay green. That
+ * is the same invisible gap the workflow under test exists to close, so it is closed the same way:
+ * by making it fail something.
+ *
+ * The accounting is at job level, not at the level of Nx command lines. A job is what the PR gate
+ * is built out of, and not every job is an Nx command — `demo` is two plain `nx run` calls and
+ * `commitlint` is none at all, so a command-level check cannot see a job of either shape appear.
+ * `PR_GATE_JOBS` below therefore has to name every job in `pull-request.yml`, which makes adding
+ * one a decision about the trunk rather than a silent omission.
  *
  * The workflows are read from the repository root, like the other contract tests in this library:
  * nothing but a test holds a workflow to a rule, and the rule belongs to no single project.
@@ -26,20 +32,55 @@ import { parse as parseYaml } from 'yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(here, '..', '..', '..', '..', '.github', 'workflows');
 
-/** The composite action that owns the Go project every Nx command below excludes. */
+/** The composite action that owns the Go project the Nx commands exclude. */
 const GO_CHECKS = './.github/actions/go-checks';
 
 /**
- * Target sets the PR gate runs against its diff base and the trunk gate deliberately does not
- * re-run over the whole workspace.
+ * Every job in `pull-request.yml`, and what the trunk gate does about it: the name of the
+ * `main.yml` job that re-runs it, or the reason it is not re-run.
  *
- * `e2e` is here on cost: the console suite installs a browser and a Go toolchain and is budgeted
- * at twenty minutes, against roughly five for everything in `main.yml` today. The exposure that
- * buys is real and unclosed — two PRs whose merge breaks a Playwright flow, with nothing between
- * the merge and the next release that would notice. It is a standing decision, not an oversight;
- * revisit it the first time a merge-only e2e failure reaches a release.
+ * A gap is allowed. An *undeclared* gap is the bug, so this map is checked for completeness
+ * against the workflow itself — adding a job to the PR gate fails this spec until it is named.
  */
-const UNMIRRORED = [['e2e']];
+const PR_GATE_JOBS: Record<string, { mirroredAs: string } | { notMirrored: string }> = {
+  // The PR title is the squash subject, so this lints the commit that will land. On a push the
+  // commit has already landed and commitlint would be reporting on an unchangeable fact.
+  commitlint: { notMirrored: 'it lints a PR title, and a trunk push has no PR' },
+  nx: { mirroredAs: 'verify' },
+  'router-api-postgres': { mirroredAs: 'postgres' },
+  // The console suite installs a browser and a Go toolchain and is budgeted at twenty minutes,
+  // against roughly five for everything in `main.yml`. The exposure that buys is real and
+  // unclosed: two PRs whose merge breaks a Playwright flow, with nothing between the merge and the
+  // next release that would notice. A standing decision on cost, not an oversight — revisit it the
+  // first time a merge-only e2e failure reaches a release.
+  e2e: { notMirrored: 'cost: a browser, a Go toolchain and a twenty-minute budget' },
+  demo: { mirroredAs: 'demo' },
+  // `release-router.yml` triggers on `push: [main]` and builds and pushes all three images, then
+  // boots the compose stack from what it published. Mirroring this would build them twice.
+  images: { notMirrored: 'release-router.yml already builds all three images on every push to main' },
+  go: { mirroredAs: 'go' },
+};
+
+/** Jobs `main.yml` has that the PR gate does not, and why that is right. */
+const TRUNK_ONLY: Record<string, string> = {
+  // A pull request reports through its own checks UI, which someone is by definition looking at.
+  // A trunk push has no such reader, which is the other half of what SUP-483 was about.
+  report: 'a pull request reports through its checks UI; a trunk push has no reader',
+};
+
+/**
+ * `nx run` invocations a mirrored PR-gate job makes that its trunk counterpart deliberately does
+ * not. Declared rather than tolerated, so the difference stays a decision.
+ */
+const DROPPED_RUNS: Record<string, string[]> = {
+  // The PR gate's schema-drift step builds router-api first because its `nx affected` can
+  // legitimately run nothing and leave no `dist/` for those specs to resolve. `run-many` always
+  // builds, so the trunk gate has no use for the preamble.
+  nx: ['@confidential-router/router-api:build'],
+};
+
+/** `-t a b c` is greedy up to the next flag, which is how Nx itself reads it. */
+const TARGETS = String.raw`(?:-t|--targets)\s+(.*?)(?=\s+-|\s*$)`;
 
 interface Step {
   if?: string;
@@ -49,6 +90,7 @@ interface Step {
 
 interface Job {
   if?: string;
+  needs?: string[];
   permissions?: Record<string, string>;
   steps?: Step[];
 }
@@ -60,76 +102,127 @@ interface Workflow {
   jobs?: Record<string, Job>;
 }
 
-/**
- * `-t a b c` is greedy up to the next flag, which is how Nx itself reads it. The boundary is
- * whitespace followed by a dash, not a dash, so a hyphenated target name (`lint-fix`, `e2e-secure`)
- * stays whole — reading one as `lint` would be a quiet false pass here.
- */
-const TARGETS = String.raw`(?:-t|--targets)\s+(.*?)(?=\s+-|\s*$)`;
-
 function workflow(file: string): Workflow {
   return parseYaml(readFileSync(join(WORKFLOWS_DIR, file), 'utf8')) as Workflow;
 }
 
-function steps(wf: Workflow): Step[] {
-  return Object.values(wf.jobs ?? {}).flatMap((job) => job.steps ?? []);
+/** Step scripts with YAML line continuations folded, so a wrapped command reads as one line. */
+function scripts(jobs: Job[]): string[] {
+  return jobs
+    .flatMap((job) => job.steps ?? [])
+    .map((step) => step.run?.replace(/\\\s*\n/g, ' '))
+    .filter((script): script is string => Boolean(script));
 }
 
-interface NxCommand {
+function uses(jobs: Job[]): (string | undefined)[] {
+  return jobs.flatMap((job) => job.steps ?? []).map((step) => step.uses);
+}
+
+interface NxTargetRun {
   script: string;
   targets: string[];
   excluded: string[];
 }
 
-/** Every `nx <affected|run-many> -t …` in a workflow, broken into the pieces the gates must agree on. */
-function nxCommands(wf: Workflow, command: 'affected' | 'run-many'): NxCommand[] {
+/** Every `nx <affected|run-many> -t …` in the given jobs, broken into the pieces that must agree. */
+function nxTargetRuns(jobs: Job[], command: 'affected' | 'run-many'): NxTargetRun[] {
   const pattern = new RegExp(String.raw`\bnx\s+${command}\s+${TARGETS}`);
-  return steps(wf)
-    .map((step) => step.run?.replace(/\\\s*\n/g, ' '))
-    .flatMap((script) => {
-      const match = script?.match(pattern);
-      if (!script || !match) return [];
-      return [
-        {
-          script,
-          targets: match[1].trim().split(/\s+/).sort(),
-          excluded: [...script.matchAll(/--exclude[= ]([^\s\\]+)/g)].flatMap((exclude) => exclude[1].split(',')).sort(),
-        },
-      ];
-    });
+  return scripts(jobs).flatMap((script) => {
+    const match = script.match(pattern);
+    if (!match) return [];
+    return [
+      {
+        script,
+        targets: match[1].trim().split(/\s+/).sort(),
+        excluded: [...script.matchAll(/--exclude[= ]([^\s\\]+)/g)].flatMap((exclude) => exclude[1].split(',')).sort(),
+      },
+    ];
+  });
 }
 
-function only(commands: NxCommand[], what: string): NxCommand {
-  expect(commands, `expected exactly one ${what}`).toHaveLength(1);
-  return commands[0];
+/** Every `nx run <project>:<target>`. `run-many` cannot match: it has no space before `-many`. */
+function nxRuns(jobs: Job[]): string[] {
+  return scripts(jobs)
+    .flatMap((script) => [...script.matchAll(/\bnx\s+run\s+(\S+:\S+)/g)])
+    .map((match) => match[1])
+    .sort();
+}
+
+function only(runs: NxTargetRun[], what: string): NxTargetRun {
+  expect(runs, `expected exactly one ${what}`).toHaveLength(1);
+  return runs[0];
+}
+
+const pr = workflow('pull-request.yml');
+const trunk = workflow('main.yml');
+
+function job(wf: Workflow, key: string): Job {
+  const found = wf.jobs?.[key];
+  expect(found, `no job \`${key}\``).toBeDefined();
+  return found as Job;
+}
+
+const MIRRORED = Object.entries(PR_GATE_JOBS).flatMap(([key, how]) =>
+  'mirroredAs' in how ? [[key, how.mirroredAs] as const] : [],
+);
+
+/**
+ * The trunk gate's reporting job, found by the one permission nothing else here needs rather than
+ * by name, so renaming the job does not quietly turn these assertions off.
+ */
+function reporter(): [string, Job] {
+  const found = Object.entries(trunk.jobs ?? {}).filter(([, spec]) => spec.permissions?.issues === 'write');
+  expect(found, 'expected exactly one job allowed to write issues').toHaveLength(1);
+  return found[0];
 }
 
 describe('the trunk gate mirrors the pull-request gate', () => {
-  const pr = workflow('pull-request.yml');
-  const trunk = workflow('main.yml');
-
   it('runs on a push to main, which is the event nothing used to check', () => {
     const on = trunk.on;
     expect(typeof on === 'object' && !Array.isArray(on) ? on.push?.branches : undefined).toContain('main');
   });
 
-  it('accounts for every diff-relative command the pull-request gate runs', () => {
-    const trunkTargets = nxCommands(trunk, 'run-many').map((nx) => nx.targets);
-    // Set equality in both directions. A PR-gate command missing from the trunk is the SUP-483
-    // hole; a trunk command the PR gate does not run is the same hole pointing the other way,
-    // since every PR would then discover it only after merging.
-    expect(
-      nxCommands(pr, 'affected')
-        .map((nx) => nx.targets)
-        .sort(),
-    ).toEqual([...trunkTargets, ...UNMIRRORED].sort());
+  it('accounts for every job in the pull-request gate', () => {
+    // The completeness check, and the reason this map exists. A new PR-gate job lands here before
+    // it can land anywhere, so "mirrored or declared" stays true by construction rather than by
+    // someone having remembered.
+    expect(Object.keys(PR_GATE_JOBS).sort()).toEqual(Object.keys(pr.jobs ?? {}).sort());
   });
 
-  it('runs its targets over the whole workspace, because a merge has no base to diff against', () => {
-    const { script, targets } = only(nxCommands(trunk, 'run-many'), '`nx run-many` command in the trunk gate');
-    // Spelled out rather than compared, because the parity check above is relative: it would be
-    // satisfied by both gates dropping `typecheck`, which is the one thing SUP-483 asks for by
-    // name. Adding a target to the gates means adding it here too — deliberately.
+  it('contains exactly the jobs it claims to, and nothing unaccounted for', () => {
+    // The same completeness in the other direction: a job added to `main.yml` without being
+    // declared is a check nobody can see the PR gate does not have, and — more to the point — one
+    // the `report` job below is not required to report on.
+    expect(Object.keys(trunk.jobs ?? {}).sort()).toEqual(
+      [...MIRRORED.map(([, as]) => as), ...Object.keys(TRUNK_ONLY)].sort(),
+    );
+  });
+
+  it('runs the same Nx invocations as each job it mirrors', () => {
+    for (const [prKey, trunkKey] of MIRRORED) {
+      const dropped = DROPPED_RUNS[prKey] ?? [];
+      expect(nxRuns([job(trunk, trunkKey)]), `main.yml \`${trunkKey}\` vs ${prKey}`).toEqual(
+        nxRuns([job(pr, prKey)])
+          .filter((run) => !dropped.includes(run))
+          .sort(),
+      );
+    }
+    // Every declared drop has to be a drop. A stale entry here would silently widen what the next
+    // one is allowed to omit.
+    for (const [prKey, runs] of Object.entries(DROPPED_RUNS)) {
+      expect(nxRuns([job(pr, prKey)]), `${prKey} no longer runs ${runs}`).toEqual(expect.arrayContaining(runs));
+    }
+  });
+
+  it('runs the verify targets over the whole workspace, since a merge has no base to diff against', () => {
+    const { script, targets } = only(
+      nxTargetRuns([job(trunk, 'verify')], 'run-many'),
+      '`nx run-many` command in the trunk gate',
+    );
+    expect(targets).toEqual(only(nxTargetRuns([job(pr, 'nx')], 'affected'), 'PR `nx affected`').targets);
+    // Spelled out as well as compared, because the comparison is relative: it would be satisfied by
+    // both gates dropping `typecheck`, which is the one thing SUP-483 asks for by name. Adding a
+    // target to the gates means adding it here too — deliberately.
     expect(targets).toEqual(['build', 'lint', 'test', 'typecheck']);
     // `--base`/`--head` are what make a command relative to a diff. Neither has any meaning on a
     // trunk push, and `affected` against a guessed base is how SUP-483 happened.
@@ -137,41 +230,46 @@ describe('the trunk gate mirrors the pull-request gate', () => {
   });
 
   it('excludes the same projects, each covered by the Go job both workflows run', () => {
-    const trunkVerify = only(nxCommands(trunk, 'run-many'), '`nx run-many` command');
-    const prVerify = only(
-      nxCommands(pr, 'affected').filter((nx) => nx.targets.includes('typecheck')),
-      '`nx affected` command driving typecheck',
-    );
-    expect(trunkVerify.excluded).toEqual(prVerify.excluded);
-    // Exclusions are only safe while something else checks the excluded project. Today that is
-    // one composite action, shared so the PR gate, the trunk gate and the release workflow cannot
+    const trunkVerify = only(nxTargetRuns([job(trunk, 'verify')], 'run-many'), '`nx run-many`');
+    expect(trunkVerify.excluded).toEqual(only(nxTargetRuns([job(pr, 'nx')], 'affected'), 'PR `nx affected`').excluded);
+    // Exclusions are only safe while something else checks the excluded project. Today that is one
+    // composite action, shared so the PR gate, the trunk gate and the release workflow cannot
     // disagree about what a green gatekeeper is.
     expect(trunkVerify.excluded).toEqual(['gatekeeper']);
     for (const [name, wf] of [
       ['pull-request.yml', pr],
       ['main.yml', trunk],
     ] as const) {
-      expect(
-        steps(wf).map((step) => step.uses),
-        `${name} must run ${GO_CHECKS}`,
-      ).toContain(GO_CHECKS);
+      expect(uses([job(wf, 'go')]), `${name} must run ${GO_CHECKS}`).toContain(GO_CHECKS);
     }
   });
 
   it('reports a failure somewhere a person looks, not only as a red tick', () => {
-    // A failed run on the default branch mails whoever pressed Merge. This repo's PRs are merged
-    // by agents, so that notification reaches nobody — the failure has to become an issue. The
-    // job that writes one is identified by needing `issues: write`, which nothing else here does.
-    const reporter = Object.values(trunk.jobs ?? {}).filter((job) => job.permissions?.issues === 'write');
-    expect(reporter, 'expected exactly one job allowed to write issues').toHaveLength(1);
-    const [report] = reporter;
+    // A failed run on the default branch mails whoever pressed Merge. This repo's PRs are merged by
+    // agents, so that notification reaches nobody — the failure has to become an issue.
+    const [, report] = reporter();
 
     // It has to survive the failure it reports on. A job left on the default `success()` would be
     // skipped by the very thing it exists to announce.
     expect(report.if).toMatch(/cancelled\(\)|always\(\)|failure\(\)/);
-    expect(report.steps?.some((step) => step.run?.includes('gh issue create'))).toBe(true);
+    const reporterScripts = scripts([report]).join('\n');
+    expect(reporterScripts).toContain('gh issue create');
     // And clear the nag itself: a notice left up once it is stale is one people learn to scroll
     // past, which is how the next red main goes unseen.
-    expect(report.steps?.some((step) => step.run?.includes('gh issue close'))).toBe(true);
+    expect(reporterScripts).toContain('gh issue close');
+  });
+
+  it('reports on every checking job, because it can only see what it needs', () => {
+    const [, report] = reporter();
+    // A job absent from `needs` cannot fail the reporter's `contains(needs.*.result, 'failure')`,
+    // so it would run, go red, and raise nothing — a check that exists and reports nowhere, which
+    // is worse than no check because it looks like cover. This is also why `go` stays here even
+    // though `release-gatekeeper.yml` already runs it on every push to `main`.
+    const [reporterKey] = reporter();
+    expect(report.needs?.slice().sort()).toEqual(
+      Object.keys(trunk.jobs ?? {})
+        .filter((key) => key !== reporterKey)
+        .sort(),
+    );
   });
 });

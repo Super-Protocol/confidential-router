@@ -86,6 +86,11 @@ jobs:
       # produce, the second against the schema the running application serves.
       # Either failing means the committed SDL is stale — which two PRs each
       # adding a resolver can produce on merge without either being stale alone.
+      #
+      # The PR gate prefixes this with `nx run @confidential-router/router-api:build`
+      # because its `nx affected` can legitimately run nothing and leave no
+      # `dist/` for these specs to resolve. Dropping it here is deliberate:
+      # `run-many` above always builds.
       - name: Console schema drift
         run: pnpm exec vitest run --root apps/router-api src/app/api/graphql/schema.spec.ts test/schema.e2e.spec.ts
 
@@ -99,6 +104,12 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+  # Deliberately duplicated, not overlooked: `release-gatekeeper.yml`'s `checks`
+  # job already runs this composite action on every push to `main`. It is here
+  # anyway because `report` can only report on jobs it `needs`, and a gatekeeper
+  # failure that lands as a red tick on a release workflow is the silence this
+  # workflow exists to end. Do not delete it as redundant — delete it only
+  # together with the reporting it feeds.
   go:
     name: Go checks (gatekeeper)
     runs-on: ubuntu-latest
@@ -179,13 +190,62 @@ jobs:
           CR_API_AUTH__SECRET: ci-secret-not-used-for-anything-real-32
         run: node dist/cli/run-migrations.js
 
+  # The whole story in one process tree: gatekeeper -> mock evidence host ->
+  # router-api -> mock LiteLLM -> the egress sidecar -> an upstream in another
+  # cloud. The PR gate runs this unconditionally because it is the only check
+  # covering the seams *between* the apps, and a PR that breaks a seam rarely
+  # touches every project involved — which is this workflow's own argument on a
+  # different axis. A seam is exactly what breaks in the merge of two PRs that
+  # are each green on their own side of it, so unconditional-per-PR is not the
+  # same as checked-on-the-trunk, and the trunk gets its own run.
+  #
+  # Ten minutes, no browser, and the repository already pays it on every PR.
+  demo:
+    name: End-to-end demo (gatekeeper → router → model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: apps/gatekeeper/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The built router-api as a process, the OpenAI SDK over real HTTP, the
+      # router's own /v1, GraphQL and evidence surfaces — and the external
+      # endpoint loop against the real `gatekeeper-sidecar`, which is why this
+      # job has the Go toolchain. Both `e2e` targets build the binaries they
+      # drive, including the build-tagged stand gatekeeper.
+      - name: router-api e2e
+        run: pnpm nx run @confidential-router/router-api-e2e:e2e --outputStyle=static
+
+      - name: The demo
+        run: pnpm nx run gatekeeper:e2e --outputStyle=static
+
   # One issue, reopened and rewritten while the trunk is red rather than a new
   # one per push, and closed by the first green push — the same shape as the
   # release-drift nag in `release-gatekeeper.yml`. Without this the failure
   # exists only as a red tick on a commit list nobody is watching.
   report:
     name: Report the trunk's state
-    needs: [verify, go, postgres]
+    # Every checking job in this workflow, because `report` can only report on
+    # what it `needs`; `trunk-gate.spec.ts` holds this list complete.
+    needs: [verify, go, postgres, demo]
     # Not `success()`, because the whole point is to run when something above
     # failed. A superseded run is excluded: it reaches here with `cancelled`
     # results, and the push that superseded it reports on a tree containing it.
@@ -201,11 +261,17 @@ jobs:
       # GitHub's title search does not tokenise punctuation the way a literal
       # would need it to.
       SEARCH: 'in:title main is red'
+      # The issue is opened by `github-actions[bot]` with no assignee, so it
+      # otherwise reaches only people watching all repository activity. A label
+      # is the cheap part of fixing that: it makes the nag filterable and
+      # subscribable without this job having to guess at a human owner.
+      LABEL: ci
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       VERIFY: ${{ needs.verify.result }}
       GO: ${{ needs.go.result }}
       POSTGRES: ${{ needs.postgres.result }}
+      DEMO: ${{ needs.demo.result }}
     steps:
       - name: Raise or refresh the tracking issue
         if: contains(needs.*.result, 'failure')
@@ -220,6 +286,7 @@ jobs:
             printf '| Lint, typecheck, build & test (whole workspace) | %s |\n' "$VERIFY"
             printf '| Go checks (gatekeeper) | %s |\n' "$GO"
             printf '| router-api migrations (PostgreSQL) | %s |\n' "$POSTGRES"
+            printf '| End-to-end demo (gatekeeper → router → model) | %s |\n' "$DEMO"
             echo
             echo "The failing step is in [the run]($RUN_URL)."
             echo
@@ -245,7 +312,15 @@ jobs:
             gh issue reopen --repo "$GITHUB_REPOSITORY" "$existing" 2>/dev/null || true
             url="$(gh issue edit --repo "$GITHUB_REPOSITORY" "$existing" --body-file red-body.md)"
           else
-            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file red-body.md)"
+            # `gh issue create --label` fails outright on a label the repository
+            # does not have, which would turn "the trunk is red" into "the job
+            # that says so is red". `--force` makes ensuring it idempotent, and
+            # keeps the workflow from depending on repository state nobody set up.
+            gh label create "$LABEL" --repo "$GITHUB_REPOSITORY" --force \
+              --color ededed \
+              --description 'Raised by CI about the state of the repository itself'
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label "$LABEL" --body-file red-body.md)"
           fi
 
           # An annotation as well as the issue, so the failure is legible from the
