@@ -41,8 +41,9 @@ describe('GET /health', () => {
   it('reports analytics without naming the project or the host', async () => {
     const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
 
-    // `/health` is public: `configured`/`disabled` and a count, nothing that
-    // describes the key or where events go.
+    // `/health` is unauthenticated: `configured`/`disabled` and a count, nothing
+    // that describes the key or where events go. `admin-health.e2e.spec.ts` owns
+    // the operator's copy of the same document (SUP-479).
     expect(Object.keys(response.body.analytics).sort()).toEqual(['dropped', 'status']);
   });
 
