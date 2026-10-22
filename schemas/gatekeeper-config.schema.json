@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Super-Protocol/confidential-router/schemas/gatekeeper-config.schema.json",
   "title": "Confidential Gatekeeper configuration",
-  "description": "YAML config of the user-side attesting proxy (default path ~/.config/confidential-gatekeeper/config.yaml). See docs/adr/ADR-003-gatekeeper-trust-model.md.",
+  "description": "YAML config of the user-side attesting proxy. It lives in the OS user configuration directory (os.UserConfigDir(): $XDG_CONFIG_HOME or ~/.config on Linux, ~/Library/Application Support on macOS, %AppData% on Windows) under confidential-gatekeeper/config.yaml; `gatekeeper config path` prints the resolved one. See docs/adr/ADR-003-gatekeeper-trust-model.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "endpoints"],
@@ -150,7 +150,7 @@
     "listenAddr": {
       "type": "string",
       "pattern": "^([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\]):[0-9]{1,5}$",
-      "description": "host:port to bind locally, e.g. 127.0.0.1:8443."
+      "description": "host:port to bind locally, e.g. 127.0.0.1:8787."
     },
     "adminListenAddr": {
       "type": "string",
