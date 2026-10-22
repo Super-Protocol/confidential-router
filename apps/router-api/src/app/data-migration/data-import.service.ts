@@ -250,7 +250,6 @@ export class DataImportService {
           capabilities: true,
           promptPer1mMicros: true,
           completionPer1mMicros: true,
-          enabled: true,
         },
       }),
       repository(TrustedMeasurement).find({ select: { id: true, measurement: true } }),
@@ -314,7 +313,6 @@ export class DataImportService {
         capabilities: row.capabilities,
         promptPer1mMicros: microsOf(row.promptPer1mMicros),
         completionPer1mMicros: microsOf(row.completionPer1mMicros),
-        enabled: row.enabled,
       })),
       trustedMeasurements: measurements,
       priorImports: priorImports.map((row) => ({
@@ -555,6 +553,7 @@ export class DataImportService {
       );
     }
     for (const { id, changes } of refreshes.externalModels) {
+      // No `enabled`: that switch is the operator's, and theirs here.
       await manager.update(
         Model,
         { id },
@@ -565,7 +564,6 @@ export class DataImportService {
           capabilities: changes.capabilities,
           promptPer1mMicros: numberOf(changes.promptPer1mMicros),
           completionPer1mMicros: numberOf(changes.completionPer1mMicros),
-          enabled: changes.enabled,
           updatedAt: now,
         },
       );

@@ -271,7 +271,6 @@ function localModelOf(
     capabilities: row.capabilities,
     promptPer1mMicros: row.promptPer1mMicros,
     completionPer1mMicros: row.completionPer1mMicros,
-    enabled: row.enabled,
     ...extra,
   };
 }
@@ -799,6 +798,56 @@ describe('planImport', () => {
     ]);
     expect(plan.refreshes.externalEndpoints).toEqual([
       { id: 'ep-1', changes: { baseUrl: 'https://llm.partner.example/v2', pinnedEvidenceDigest: 'sha256/new' } },
+    ]);
+  });
+
+  it('leaves the operator’s own approval and model switch alone while the upstream stays put', () => {
+    // After runbook step 6 the operator has configured this endpoint by hand
+    // here: the digest they approved and the models they switched on are theirs,
+    // and an export that never moved the upstream says nothing about either.
+    const first = exported();
+    first.externalEndpoints.push(endpoint('ep-1', { models: [model('m-1')], pinnedEvidenceDigest: 'sha256/old' }));
+    const later = exported();
+    later.externalEndpoints.push(
+      endpoint('ep-1', { models: [model('m-1', { enabled: false })], pinnedEvidenceDigest: 'sha256/old' }),
+    );
+    const local = importedInto(first);
+    const here: LocalState = {
+      ...local,
+      externalEndpoints: local.externalEndpoints.map((row) =>
+        row.id === 'ep-1' ? { ...row, pinnedEvidenceDigest: 'sha256/approved-here' } : row,
+      ),
+    };
+
+    const plan = planImport(bundleOf(later), here, options);
+
+    expect(planIsClean(plan)).toBe(true);
+    // Neither the pin nor the switch is the file's to move.
+    expect(plan.refreshes.externalEndpoints).toEqual([]);
+    expect(plan.refreshes.externalModels).toEqual([]);
+  });
+
+  it('carries the approval of an upstream that moved, and withdraws one it moved without', () => {
+    const first = exported();
+    first.externalEndpoints.push(endpoint('ep-1', { pinnedEvidenceDigest: 'sha256/old' }));
+    const local = importedInto(first);
+
+    const approved = exported();
+    approved.externalEndpoints.push(
+      endpoint('ep-1', { baseUrl: 'https://llm.partner.example/v2', pinnedEvidenceDigest: 'sha256/new' }),
+    );
+    expect(planImport(bundleOf(approved), local, options).refreshes.externalEndpoints).toEqual([
+      { id: 'ep-1', changes: { baseUrl: 'https://llm.partner.example/v2', pinnedEvidenceDigest: 'sha256/new' } },
+    ]);
+
+    // Re-pointed with nothing approved for the new address: the pin goes, the
+    // same way an operator's own re-point withdraws it (SUP-435).
+    const unapproved = exported();
+    unapproved.externalEndpoints.push(
+      endpoint('ep-1', { baseUrl: 'https://llm.partner.example/v2', pinnedEvidenceDigest: null }),
+    );
+    expect(planImport(bundleOf(unapproved), local, options).refreshes.externalEndpoints).toEqual([
+      { id: 'ep-1', changes: { baseUrl: 'https://llm.partner.example/v2', pinnedEvidenceDigest: null } },
     ]);
   });
 
