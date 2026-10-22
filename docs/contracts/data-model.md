@@ -26,6 +26,7 @@ Auth tables (`user`, `session`, `account`, `verification`) are owned by Better A
 | `TrustedMeasurement` | `trusted_measurements` | the admin trust list — the **cloud** factor of two-factor admission (ADR-008 §3, SUP-252): `measurement` (normalised mrEnclave hex, **unique** — the list is a set), `note?`, `addedByUserId?`, `addedAt`. Rendered into the sidecar's `attestedRoots.trustedMeasurements`; a measurement admits a *cloud*, never a deployment — the endpoint's `pinnedEvidenceDigest` is the deployment factor — and a delete denies on the next forced re-check |
 | `ExternalEndpointEvent` | `external_endpoint_events` | append-only timeline: `externalEndpointId` (idx with `at`, FK CASCADE), `at`, `kind: registered\|verified\|denied\|digest_changed\|digest_pinned\|digest_unpinned\|measurement_changed\|disabled\|key_rotated`, `stage?`, `reason?`, `measurement?`, `evidenceDigest?`. A *transition* is an event and a repetition is not, so a ten-minute re-attestation does not write 144 rows a day; `digest_changed` and `measurement_changed` are reported on every change, and under two-factor trust a `digest_changed` is gating — on an admitted endpoint it arrives with the `denied` (`stage: digest-mismatch`) it caused. `digest_pinned` is an admin's approval and carries the digest approved, and `digest_unpinned` is one an edit withdrew — carrying the digest that is no longer approved and why (SUP-435). No `updatedAt` |
 | `UserPreferences` | `user_preferences` | 1:1 with user: `userId` (PK), `archiveEvidence` (default true), `evidenceRetentionDays` (default 90), `notifyOnMeasurementChange` (default true), `desktopNotifications`, `emailReceipts`, `updatedAt` |
+| `DataImport` | `data_imports` | one deployment export **this** deployment has taken (SUP-481): `id`, `sourcePublicBaseUrl`, `sourceRouterVersion`, `bundleExportedAt`, `contentSha256`, `importedByUserId?` (no FK — Better Auth owns `user`, ADR-004 §3), `importedAt` (idx). Append-only, written by `DataImportService.apply` in the same transaction as the rows. It answers one question — whether a *second* import of the same dataset may run here — which is what lets a cutover catch up the drift after the new deployment has been verified by a real sign-up. Not carried in the bundle: it is a record of what happened here |
 | `ActivityRollup` | `activity_rollups` | **derived**, hourly `(workspaceId, modelId, apiKeyId, bucket)` → `requests`, `promptTokens`, `completionTokens`, `costMicros`, `coveredRequests`; rebuildable. **Not written yet** (SUP-75): Activity aggregates in SQL over `generations`, which one indexed range scan answers, and a cache no screen needs is a second source of truth to keep correct. The table stays for the day a log outgrows the scan |
 
 Relations: `InviteCode 1—* InviteRedemption`, `Workspace 1—* FeedbackSubmission`, `Workspace 1—* ApiKey`, `Workspace 1—* Generation`, `Workspace 1—* CreditTransaction`,
@@ -116,3 +117,22 @@ Invariants enforced in code and tests:
    `Workspace.balanceMicros` absolutely — to the sum of the ledger it has just inserted, inside the
    same transaction — and the one path that creates a `user` row without `databaseHooks`, so an
    imported account is not gated, re-provisioned, re-granted or reported as a sign-up.
+10. An export is imported into a deployment holding **nobody else's data** — not only into an empty
+   one (SUP-481). A local account the bundle does not carry refuses the import, unless it is an
+   operator's own or this deployment has already taken this dataset (a `data_imports` row from the
+   same `source.publicBaseUrl`, or a row here under an exported row's own id). That second case is
+   the rebuild's own shape: the cutover verifies the new deployment with a real sign-up and the old
+   one serves until the handover, so the last step is a repeat import to catch up the rows written in
+   between. A *later* export of the same deployment therefore has three outcomes per row, not two:
+   created when it is missing, **brought up to date** when it is here under its own id, and left
+   untouched when this deployment has it and the bundle does not (`localOnly`). The refresh is
+   bounded by three rules — never through an operator mapping, never a column another row could hold
+   (slug, endpoint name, listen port), and never backwards: `ApiKey.spentTotalMicros` and `lastUsedAt`
+   take the larger value, `revokedAt` and `InviteCode.disabledAt` the earlier, and
+   `InviteCode.redemptionCount` the seats spent on both deployments, because that counter *is* the
+   seat gate (`invites.service.ts`). `creditLedger`, `inviteRedemptions` and the Better Auth `user`
+   table are never rewritten; nothing is ever deleted; and nothing this deployment's own operator
+   set is overwritten — `ExternalEndpoint.enabled`/`apiKeyCiphertext`, `Model.enabled` and
+   `pinnedEvidenceDigest` stay as they are, the pin travelling only with a moved `baseUrl`, which is
+   what SUP-435 asks of an edit that re-points an endpoint. Both counts are in the plan per section
+   (`import-plan.spec.ts`, `data-migration.e2e.spec.ts`).

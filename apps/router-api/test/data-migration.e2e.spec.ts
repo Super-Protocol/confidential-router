@@ -15,9 +15,11 @@ import {
 } from '../src/app/data-migration/index.js';
 import { ApiKey } from '../src/app/db/entities/api-key.entity.js';
 import { CreditTransaction } from '../src/app/db/entities/credit-transaction.entity.js';
+import { DataImport } from '../src/app/db/entities/data-import.entity.js';
 import { ExternalEndpoint } from '../src/app/db/entities/external-endpoint.entity.js';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../src/app/db/entities/invite-redemption.entity.js';
+import { Model } from '../src/app/db/entities/model.entity.js';
 import { TrustedMeasurement } from '../src/app/db/entities/trusted-measurement.entity.js';
 import { User } from '../src/app/db/entities/user.entity.js';
 import { Workspace } from '../src/app/db/entities/workspace.entity.js';
@@ -38,6 +40,8 @@ const OPERATOR = 'admin@confidential-router.local';
 const GRANT_MICROS = 25_000_000;
 const SPENT_MICROS = 1_500_000;
 const SEALED_UPSTREAM_KEY = 'v1.sealed-upstream-key-ciphertext';
+const UPSTREAM_MODEL_ID = 'partner/qwen-3-32b';
+const UPSTREAM_PROMPT_MICROS = 900_000;
 const KEY_LIMIT_MICROS = 5_000_000;
 
 const ISSUE = `
@@ -199,8 +203,9 @@ async function usedDeployment(): Promise<Used> {
   await dataSource.getRepository(ApiKey).update({ id: live.id }, { spentTotalMicros: SPENT_MICROS });
 
   // Things that must stay behind: an upstream's sealed key.
+  const upstreamId = randomUUID();
   await dataSource.getRepository(ExternalEndpoint).insert({
-    id: randomUUID(),
+    id: upstreamId,
     name: 'partner-cloud',
     baseUrl: 'https://llm.partner.example/v1',
     hostname: 'llm.partner.example',
@@ -213,6 +218,23 @@ async function usedDeployment(): Promise<Used> {
     apiKeyPrefix: 'sk-part',
     createdByUserId: null,
     createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  // A model under it, so the endpoint section makes a real export → import →
+  // re-import round trip: the one place a DB-to-bundle format mismatch would
+  // show up as a pointless refresh (SUP-481, CTO review).
+  await dataSource.getRepository(Model).insert({
+    id: UPSTREAM_MODEL_ID,
+    name: 'Qwen 3 32B (partner)',
+    litellmModel: 'qwen3-32b',
+    origin: 'external',
+    endpointId: null,
+    externalEndpointId: upstreamId,
+    contextLength: 32_768,
+    capabilities: ['chat'],
+    promptPer1mMicros: UPSTREAM_PROMPT_MICROS,
+    completionPer1mMicros: 1_800_000,
+    enabled: true,
     updatedAt: new Date(),
   });
   await dataSource.getRepository(TrustedMeasurement).insert({
@@ -538,10 +560,132 @@ describe('deployment import', () => {
     const again = await apply(b.operator, file, sha);
     expect(again).toMatchObject({ applied: true, ok: true });
     for (const entry of again.sections) {
-      expect(entry, entry.section).toMatchObject({ toCreate: 0, alreadyPresent: entry.inBundle, conflicts: [] });
+      // `toRefresh: 0` is the one that needs a real round trip to mean anything:
+      // the same file twice says nothing new about any row, so a refresh here
+      // would be a database-to-bundle format mismatch — an instant's precision,
+      // a micros column, `capabilities` ordering — showing up as a pointless
+      // UPDATE and a non-zero "Updated" mid-cutover (SUP-481).
+      expect(entry, entry.section).toMatchObject({
+        toCreate: 0,
+        alreadyPresent: entry.inBundle,
+        toRefresh: 0,
+        conflicts: [],
+      });
     }
     expect(await balancesByEmail(b.harness)).toEqual(balances);
     expect(await dataSourceOf(b.harness).getRepository(CreditTransaction).count()).toBe(ledger);
+  });
+
+  it('takes a second export to catch up the drift, and keeps the account that verified it', async () => {
+    // The cutover shape SUP-481 is about: A keeps serving while B is imported
+    // and verified, so the last step before the handover is a second import —
+    // which used to be refused because the verification had signed an account up.
+    const { a, codes, keys, spender } = await usedDeployment();
+    const first = await exportFile(a.operator);
+    const b = await deploy();
+    await apply(b.operator, first, decodeBundle(first).integrity.contentSha256);
+    const target = dataSourceOf(b.harness);
+
+    // B is verified the way the runbook asks: a real invited sign-up, a key of
+    // its own, and a metered generation against it.
+    const qa = await signUp(b.harness, 'qa@example.test', codes[3]?.code);
+    const qaKey = await mintKey(qa, 'QA walk');
+    // Part of the walk is a generation against a *carried* key, so the counter
+    // here is ahead of the file's by the time the catch-up import runs.
+    await dataSourceOf(b.harness)
+      .getRepository(ApiKey)
+      .update({ id: keys.live.id }, { spentTotalMicros: SPENT_MICROS * 2 });
+    await b.harness.app.get(LedgerService).record({
+      workspaceId: qa.workspaceId,
+      kind: 'usage',
+      amountMicros: -SPENT_MICROS,
+      idempotencyKey: 'usage:gen-qa-0001',
+      reference: 'gen-qa-0001',
+    });
+
+    // Meanwhile A serves on: one more invited account, one more debit, and the
+    // state that moves on a row B already holds — the last seat of a code B
+    // imported unspent, and a key its owner revoked (SUP-481, CTO review).
+    const late = await signUp(a.harness, 'late@example.test', codes[4]?.code);
+    await a.harness.app.get(LedgerService).record({
+      workspaceId: spender.workspaceId,
+      kind: 'usage',
+      amountMicros: -SPENT_MICROS,
+      idempotencyKey: 'usage:gen-0002',
+      reference: 'gen-0002',
+    });
+    await expectData(spender, REVOKE_KEY, { id: keys.live.id });
+    // The upstream's price list moves inside the window too.
+    await dataSourceOf(a.harness)
+      .getRepository(Model)
+      .update({ id: UPSTREAM_MODEL_ID }, { promptPer1mMicros: UPSTREAM_PROMPT_MICROS * 2 });
+    const second = await exportFile(a.operator);
+    const expected = await balancesByEmail(a.harness);
+
+    const preview = await dryRun(b.operator, second);
+    expect(preview).toMatchObject({ applied: false, ok: true, refusals: [] });
+    expect(preview.lastImport?.sourcePublicBaseUrl).toBe(decodeBundle(first).source.publicBaseUrl);
+    // What is new in the file is created; what QA made here is counted as kept.
+    expect(section(preview, 'users')).toMatchObject({ toCreate: 1, localOnly: 1, conflicts: [] });
+    // QA's own grant and its metered debit are the two rows kept here.
+    expect(section(preview, 'creditLedger')).toMatchObject({ toCreate: 2, localOnly: 2, conflicts: [] });
+    expect(section(preview, 'inviteRedemptions')).toMatchObject({ toCreate: 1, localOnly: 1, conflicts: [] });
+    // The key B holds is brought up to date rather than skipped; QA's own is not.
+    expect(section(preview, 'apiKeys')).toMatchObject({ toCreate: 0, toRefresh: 1, localOnly: 1, conflicts: [] });
+    expect(section(preview, 'inviteCodes')).toMatchObject({ toCreate: 0, toRefresh: 1, conflicts: [] });
+    // The round trip the unit tests cannot make: the endpoint's own columns have
+    // not moved, so nothing about it is refreshed, while its model's price has.
+    expect(section(preview, 'externalEndpoints')).toMatchObject({ alreadyPresent: 1, toRefresh: 0, conflicts: [] });
+    expect(section(preview, 'externalModels')).toMatchObject({ alreadyPresent: 1, toRefresh: 1, conflicts: [] });
+    expect(preview.notes.join(' ')).toContain('1 account(s) here are not in the export');
+
+    const audit: string[] = [];
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => {
+      audit.push(String(message));
+    });
+    const report = await apply(b.operator, second, preview.contentSha256);
+    expect(report).toMatchObject({ applied: true, ok: true });
+    // The audit line records that rows found here were kept, not dropped.
+    expect(audit.find((line) => line.startsWith('Deployment import by'))).toContain('local row(s) kept');
+
+    // The account A took late is here, with its grant…
+    const balances = await balancesByEmail(b.harness);
+    expect(balances.get(late.email)).toBe(GRANT_MICROS);
+    // …the debit A metered after the first export has caught up…
+    expect(balances.get(spender.email)).toBe(expected.get(spender.email));
+    // …and QA's own account, balance and key are untouched by it.
+    expect(balances.get(qa.email)).toBe(GRANT_MICROS - SPENT_MICROS);
+    await callWithKey(b.harness, qaKey.secret).expect(200);
+
+    // The seat the old deployment spent is spent here: the code that `late@`
+    // used is at its limit, and a fifth account cannot mint a second grant off
+    // it. Before the refresh outcome existed this re-redeemed and granted again.
+    const usedCode = await target.getRepository(InviteCode).findOneByOrFail({ id: codes[4]?.id as string });
+    expect(usedCode).toMatchObject({ redemptionCount: 1, maxRedemptions: 1 });
+    const extra = await signUp(b.harness, 'extra@example.test', codes[4]?.code);
+    expect((await balancesByEmail(b.harness)).get(extra.email)).toBe(0);
+
+    // And the key its owner revoked on A inside the window is dead here too.
+    const carried = await target.getRepository(ApiKey).findOneByOrFail({ id: keys.live.id });
+    expect(carried.revokedAt).not.toBeNull();
+    const refused = await callWithKey(b.harness, keys.live.secret).expect(401);
+    expect(refused.body.error.code).toBe('api_key_revoked');
+    // The spend counted here is never rolled back to the file's number.
+    expect(carried.spentTotalMicros).toBe(SPENT_MICROS * 2);
+
+    // The price followed; the operator's own switch and sealed key did not move.
+    expect(await target.getRepository(Model).findOneByOrFail({ id: UPSTREAM_MODEL_ID })).toMatchObject({
+      promptPer1mMicros: UPSTREAM_PROMPT_MICROS * 2,
+      externalEndpointId: (await target.getRepository(ExternalEndpoint).findOneByOrFail({ name: 'partner-cloud' })).id,
+    });
+    expect(await target.getRepository(ExternalEndpoint).findOneByOrFail({ name: 'partner-cloud' })).toMatchObject({
+      enabled: false,
+      apiKeyCiphertext: '',
+      pinnedEvidenceDigest: 'sha256/approved-deployment',
+    });
+
+    // Two imports, two records of where this deployment's data came from.
+    expect(await target.getRepository(DataImport).count()).toBe(2);
   });
 
   it('refuses a deployment somebody has already signed up to, and writes nothing', async () => {
@@ -557,7 +701,7 @@ describe('deployment import', () => {
     const usersBefore = await target.getRepository(User).count();
 
     const preview = await dryRun(b.operator, file);
-    expect(preview).toMatchObject({ applied: false, ok: false });
+    expect(preview).toMatchObject({ applied: false, ok: false, lastImport: null });
     expect(preview.refusals.join(' ')).toContain('This deployment is not fresh: 1 account(s)');
 
     const report = await apply(b.operator, file, sha);

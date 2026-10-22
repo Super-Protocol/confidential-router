@@ -236,8 +236,10 @@ function ImportCard() {
       <CardHeader>
         <CardTitle>Import into this deployment</CardTitle>
         <CardDescription>
-          Only into a fresh deployment — one where nobody but its administrators has signed in yet. Check the file
-          first: the check shows what would be created and writes nothing.
+          Into a deployment holding nobody else’s data: a fresh one, or one this same export’s deployment was already
+          imported into — importing again just before the cutover is how the rows served in the meantime are caught up.
+          A row the file carries and this deployment already has is brought up to date; anything that signed up here
+          since is kept as it is. Check the file first: the check shows what would happen and writes nothing.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
@@ -321,6 +323,16 @@ function ImportReportView({ report }: { report: ImportReport }) {
         <dd data-testid="import-total-balance">{formatUsd(report.totalBalanceMicros)}</dd>
         <dt className="text-muted-foreground">Unredeemed invitation codes</dt>
         <dd>{report.counts.inviteCodesUnredeemed ?? 0}</dd>
+        {report.lastImport ? (
+          <>
+            <dt className="text-muted-foreground">Already imported here</dt>
+            <dd data-testid="import-last">
+              An export of {report.lastImport.sourcePublicBaseUrl} taken at{' '}
+              {formatTimestamp(report.lastImport.bundleExportedAt)}, imported{' '}
+              {formatTimestamp(report.lastImport.importedAt)}
+            </dd>
+          </>
+        ) : null}
       </dl>
 
       {report.refusals.length > 0 ? (
@@ -334,32 +346,62 @@ function ImportReportView({ report }: { report: ImportReport }) {
         </ul>
       ) : null}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Section</TableHead>
-            <TableHead className="text-right">In the file</TableHead>
-            <TableHead className="text-right">{report.applied ? 'Created' : 'Will be created'}</TableHead>
-            <TableHead className="text-right">Already here</TableHead>
-            <TableHead className="text-right">Collisions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {report.sections.map((section) => (
-            <TableRow key={section.section} data-testid={`import-section-${section.section}`}>
-              <TableCell>{SECTION_LABELS[section.section] ?? section.section}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.inBundle}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.toCreate}</TableCell>
-              <TableCell className="text-right tabular-nums">{section.alreadyPresent}</TableCell>
-              <TableCell
-                className={`text-right tabular-nums ${section.conflicts.length > 0 ? 'text-destructive' : ''}`}
-              >
-                {section.conflicts.length}
-              </TableCell>
+      {/*
+       * A scroller of its own, the way every other wide table in the console has
+       * one. The shared `Table` is `w-full` with no wrapper, and a table cannot
+       * shrink below its min-content width: at seven columns that is ~800px, so
+       * without this it pushes the page sideways on a laptop and — where a
+       * browser measures the headers a little wider than this one does — paints
+       * over the card's own footer, which arrives as an axe `color-contrast`
+       * finding on the button underneath rather than as a layout complaint
+       * (SUP-481, CTO review).
+       */}
+      {/*
+       * Focusable, and named: a region that scrolls has to be reachable by
+       * keyboard, or the columns past the edge belong to mouse users only —
+       * axe's `scrollable-region-focusable`, which fires exactly when the
+       * wrapper is doing its job and therefore never on the width this machine
+       * renders.
+       */}
+      <section
+        className="overflow-x-auto rounded-lg border"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container must be keyboard-reachable (WCAG 2.1.1)
+        tabIndex={0}
+        aria-label="What the import would do, section by section"
+      >
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Section</TableHead>
+              {/* Short, because seven columns have to fit side by side; the badge
+                  above the table is what says whether any of this has happened yet. */}
+              <TableHead className="text-right">In file</TableHead>
+              <TableHead className="text-right">Created</TableHead>
+              <TableHead className="text-right">Already here</TableHead>
+              <TableHead className="text-right">Updated</TableHead>
+              <TableHead className="text-right">Kept here</TableHead>
+              <TableHead className="text-right">Clashes</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {report.sections.map((section) => (
+              <TableRow key={section.section} data-testid={`import-section-${section.section}`}>
+                <TableCell>{SECTION_LABELS[section.section] ?? section.section}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.inBundle}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.toCreate}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.alreadyPresent}</TableCell>
+                <TableCell className="text-right tabular-nums">{section.toRefresh}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{section.localOnly}</TableCell>
+                <TableCell
+                  className={`text-right tabular-nums ${section.conflicts.length > 0 ? 'text-destructive' : ''}`}
+                >
+                  {section.conflicts.length}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </section>
 
       {conflicts.length > 0 ? (
         <ul className="list-disc space-y-1 pl-5 text-destructive" data-testid="import-conflicts">

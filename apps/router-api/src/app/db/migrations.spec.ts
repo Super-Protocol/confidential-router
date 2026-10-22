@@ -111,8 +111,14 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-481's record of the exports this deployment has taken is one additive
+      // table; the first undo drops only that.
+      expect(await queryRunner.hasTable('data_imports')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('data_imports')).toBe(false);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

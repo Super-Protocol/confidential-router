@@ -97,6 +97,13 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
       'Per-user console settings, written lazily on first change. Everyone starts on the defaults again on the new ' +
       'deployment: the loss is one click each, and the row holds nothing that cannot be re-chosen.',
   },
+  DataImport: {
+    notCarried:
+      'Which deployment exports *this* deployment has taken, and when (SUP-481). A record of what happened here, ' +
+      'not data of anyone\u2019s: carrying it would tell a new deployment it had already imported a file it has ' +
+      'never seen, and that record is exactly what decides whether a second import may keep local rows. It starts ' +
+      'empty on every deployment, and the first import writes its first row.',
+  },
   InviteCarriedRedemption: {
     notCarried:
       'A redemption that happened on another deployment, recorded here by a codes CSV import (SUP-272). Not carried ' +
