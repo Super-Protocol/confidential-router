@@ -75,6 +75,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Harmless when no test faked them, and the one that does must not leak a
+  // frozen clock into the next file.
+  vi.useRealTimers();
   delete process.env[SECRETS_KEY_ENV];
   await dataSource?.destroy();
 });
@@ -301,13 +304,27 @@ describe('rotating the upstream key', () => {
     expect(events.map((event) => event.kind)).toEqual(['registered', 'key_rotated']);
   });
 
-  it('does not re-render: the rendered config holds no secrets', async () => {
+  it('republishes, so the catalogue the egress leg reads carries the new key (SUP-527)', async () => {
     const { endpoint } = await register();
+    await verify(endpoint.id);
     render.mockClear();
 
     await service.rotateKey(endpoint.id, 'sk-rotated-value');
 
-    expect(render).not.toHaveBeenCalled();
+    // The egress leg does not re-read the row per request: it reads the
+    // catalogue's cached ciphertext. Without the refresh the router keeps
+    // presenting the old credential on every completion until an unrelated
+    // mutation or a pod roll rebuilds the map — the production 502 SUP-527 is
+    // about, on an endpoint still reporting `verified`.
+    const routed = catalog.find('partner/llama-3.3-70b:snp');
+    expect(routed).toBeDefined();
+    expect(new SecretEnvelopeService().open(routed?.endpoint.apiKeyCiphertext ?? '', endpoint.id)).toBe(
+      'sk-rotated-value',
+    );
+    // The render goes with it only because `publish` is one call. The config
+    // holds no secrets, so the writer finds the same bytes and the sidecar does
+    // not reload.
+    expect(render).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a blank replacement', async () => {
@@ -357,18 +374,22 @@ describe('pinning a deployment’s evidence digest (SUP-252)', () => {
     expect(pins).toHaveLength(2);
   });
 
-  it('is a no-op for the digest already pinned: no event, no reload', async () => {
+  it('approves nothing new for the digest already pinned, but still republishes (SUP-527)', async () => {
     const { endpoint } = await register();
     await service.pinDigest(endpoint.id, DIGEST);
     render.mockClear();
 
     await service.pinDigest(endpoint.id, DIGEST_HEX);
 
-    expect(render).not.toHaveBeenCalled();
+    // No second approval — the pin's value did not move, so there is nothing to
+    // record. But this is the lever an operator reaches for to make the router
+    // look again, and returning the row unchanged having done nothing at all is
+    // what made SUP-527's workaround a no-op edit found by reading the source.
     const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
       (event) => event.kind === 'digest_pinned',
     );
     expect(pins).toHaveLength(1);
+    expect(render).toHaveBeenCalledTimes(1);
   });
 
   it('refuses something that is not a digest, and says what it wants', async () => {
@@ -595,15 +616,31 @@ describe('reads', () => {
   });
 
   it('returns every endpoint’s timeline newest first, bounded per endpoint', async () => {
+    // One mutation per millisecond, stated rather than hoped for. `eventsFor`
+    // orders `at DESC, id DESC`, `at` is epoch-millisecond and the id is a
+    // `randomUUID()` — so within one millisecond there is no tie-break, and
+    // three events written as fast as the test can write them routinely share
+    // one. That made both halves of this assertion luck: the order of a tied
+    // pair is the UUID's, and `take: 2` over a three-way tie drops an arbitrary
+    // event rather than the oldest. CI lost the coin flip on SUP-527 with
+    // `['key_rotated', 'disabled']`. Only `Date` is faked — the sqlite driver
+    // and typeorm keep their real timers. The production ordering is a separate
+    // defect (SUP-534); this test must not be what reports it.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:00.000Z'));
     const first = await register();
     const second = await register({ name: 'second', models: [model({ id: 'partner/second:snp' })] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:01.000Z'));
     await service.rotateKey(first.endpoint.id, 'sk-two');
+    vi.setSystemTime(new Date('2026-10-24T12:00:02.000Z'));
     await service.setEnabled(first.endpoint.id, false);
 
     const timelines = await service.eventsFor([first.endpoint.id, second.endpoint.id], 2);
 
     // One read for the page: the timeline is a field of `ExternalEndpoint`, so
-    // the list screen asks for every endpoint's at once.
+    // the list screen asks for every endpoint's at once. `registered` is older
+    // than both and falls outside the bound, which is the other half of the
+    // claim.
     expect(timelines.get(first.endpoint.id)?.map((event) => event.kind)).toEqual(['disabled', 'key_rotated']);
     expect(timelines.get(second.endpoint.id)?.map((event) => event.kind)).toEqual(['registered']);
   });
