@@ -1,18 +1,24 @@
 /**
- * The two control-plane helpers SUP-528 added, against a stubbed console session.
+ * The stand's trust-list helpers, against a stubbed console session.
  *
- * Both exist so that one flaky assertion in
+ * All three exist so that one flaky assertion in
  * `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` reports as one
- * failure instead of three, and both are easy to get subtly wrong in a way no
+ * failure instead of three, and each is easy to get subtly wrong in a way no
  * e2e run would name: a withdrawal that throws when there is nothing to
- * withdraw is useless in an `afterEach`, and a `since` that is not actually
- * consulted leaves the race it was added for exactly where it was.
+ * withdraw is useless in an `afterEach`, an add that dies on a leftover row
+ * takes its sibling cases with it, and a `since` that is not actually consulted
+ * leaves the race it was added for exactly where it was. A `ConsoleSession` is
+ * an object with a `graphql` function on it, which is all any of them touches —
+ * so the lag and the conflict can both be scripted here, deterministically,
+ * instead of waited for (SUP-329, SUP-528).
  */
 import { describe, expect, it } from 'vitest';
 import type { ConsoleSession } from './console-client.js';
 import {
+  addTrustedMeasurement,
   type RegisteredExternalEndpoint,
   STAND_MEASUREMENT,
+  trustedMeasurements,
   waitForExternal,
   withdrawTrustedMeasurement,
 } from './external-stand.js';
@@ -74,10 +80,10 @@ const ENDPOINT: RegisteredExternalEndpoint = {
 describe('withdrawTrustedMeasurement', () => {
   it('finds the row by its value and withdraws that one', async () => {
     const { session, calls } = stubSession({
-      TrustList: () => ({
+      Trusted: () => ({
         trustedMeasurements: [
-          { id: 'tm-1', measurement: OTHER_MEASUREMENT, note: 'another cloud, not this one' },
-          { id: 'tm-2', measurement: STAND_MEASUREMENT, note: 'the stand upstream cloud' },
+          { id: 'tm-1', measurement: OTHER_MEASUREMENT },
+          { id: 'tm-2', measurement: STAND_MEASUREMENT },
         ],
       }),
       Withdraw: () => ({ removeTrustedMeasurement: true }),
@@ -93,22 +99,98 @@ describe('withdrawTrustedMeasurement', () => {
    * not found", which is what the id-taking mutation answers.
    */
   it('reports false and mutates nothing when the measurement is not listed', async () => {
-    const { session, calls } = stubSession({ TrustList: () => ({ trustedMeasurements: [] }) });
+    const { session, calls } = stubSession({ Trusted: () => ({ trustedMeasurements: [] }) });
 
     expect(await withdrawTrustedMeasurement(session, STAND_MEASUREMENT)).toBe(false);
-    expect(calls.map((call) => call.operation)).toEqual(['TrustList']);
+    expect(calls.map((call) => call.operation)).toEqual(['Trusted']);
   });
 
-  // The admin API normalises a measurement on input, so the list holds the
-  // normalised form and a lookup of what the operator typed has to match it.
+  // The admin API normalises a measurement on input — `0x`, case and stray
+  // space — so the list holds the normalised form and a lookup of what the
+  // operator typed has to fold the same way.
   it('matches the normalised value, whatever form it was given in', async () => {
     const { session, calls } = stubSession({
-      TrustList: () => ({ trustedMeasurements: [{ id: 'tm-2', measurement: STAND_MEASUREMENT, note: null }] }),
+      Trusted: () => ({ trustedMeasurements: [{ id: 'tm-2', measurement: STAND_MEASUREMENT }] }),
       Withdraw: () => ({ removeTrustedMeasurement: true }),
     });
 
-    expect(await withdrawTrustedMeasurement(session, `0x${STAND_MEASUREMENT.toUpperCase()}`)).toBe(true);
+    expect(await withdrawTrustedMeasurement(session, `  0x${STAND_MEASUREMENT.toUpperCase()}  `)).toBe(true);
     expect(calls.at(-1)?.variables).toEqual({ id: 'tm-2' });
+  });
+});
+
+describe('addTrustedMeasurement', () => {
+  it('adds the row and returns it', async () => {
+    const { session, calls } = stubSession({
+      Trust: () => ({ addTrustedMeasurement: { id: 'tm-1', measurement: STAND_MEASUREMENT } }),
+    });
+
+    expect(await addTrustedMeasurement(session, STAND_MEASUREMENT)).toEqual({
+      id: 'tm-1',
+      measurement: STAND_MEASUREMENT,
+    });
+    // One operation on the happy path: the list is read only when the product
+    // says the row is already there.
+    expect(calls).toHaveLength(1);
+  });
+
+  /**
+   * What a case that failed before the hook could run leaves behind: the product
+   * refuses the repeat, and the stand resolves it rather than dying in setup and
+   * taking its sibling cases with it. This is the second line of defence behind
+   * the `afterEach` — the one that holds when the hook itself fails.
+   */
+  it('answers a repeat with the row already on the list, folding 0x and case', async () => {
+    const { session } = stubSession({
+      Trust: () => {
+        throw new Error(`GraphQL: The measurement ${STAND_MEASUREMENT} is already on the trust list.`);
+      },
+      Trusted: () => ({
+        trustedMeasurements: [
+          { id: 'other', measurement: OTHER_MEASUREMENT },
+          { id: 'tm-1', measurement: STAND_MEASUREMENT },
+        ],
+      }),
+    });
+
+    expect(await addTrustedMeasurement(session, `0X${STAND_MEASUREMENT.toUpperCase()}`)).toEqual({
+      id: 'tm-1',
+      measurement: STAND_MEASUREMENT,
+    });
+  });
+
+  it('rethrows the conflict when the measurement is not on the list after all', async () => {
+    const { session } = stubSession({
+      Trust: () => {
+        throw new Error(`GraphQL: The measurement ${STAND_MEASUREMENT} is already on the trust list.`);
+      },
+      Trusted: () => ({ trustedMeasurements: [] }),
+    });
+
+    await expect(addTrustedMeasurement(session, STAND_MEASUREMENT)).rejects.toThrow('already on the trust list');
+  });
+
+  // Narrow on the product's own words: a stand that swallowed an authorisation
+  // error and reported a row never added would hide the defect it exists to find.
+  it('rethrows anything that is not that conflict', async () => {
+    const { session } = stubSession({
+      Trust: () => {
+        throw new Error('GraphQL: Forbidden resource');
+      },
+    });
+
+    await expect(addTrustedMeasurement(session, STAND_MEASUREMENT)).rejects.toThrow('Forbidden resource');
+  });
+});
+
+describe('trustedMeasurements', () => {
+  it('reads the list the console reads', async () => {
+    const { session, calls } = stubSession({
+      Trusted: () => ({ trustedMeasurements: [{ id: 'tm-1', measurement: STAND_MEASUREMENT }] }),
+    });
+
+    expect(await trustedMeasurements(session)).toEqual([{ id: 'tm-1', measurement: STAND_MEASUREMENT }]);
+    expect(calls.map((call) => call.operation)).toEqual(['Trusted']);
   });
 });
 

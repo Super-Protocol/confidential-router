@@ -25,6 +25,7 @@ export {
   startExternalStand,
   startExternalUpstream,
   TESTSTAND_BIN,
+  type TrustedMeasurementRow,
   trustedMeasurements,
   waitForExternal,
   waitForExternalStatus,

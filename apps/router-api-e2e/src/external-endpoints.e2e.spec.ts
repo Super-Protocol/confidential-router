@@ -332,6 +332,12 @@ describe('fail-closed', () => {
    * end is unaffected.
    */
   afterEach(async () => {
+    // `stand?.`, as `afterAll` does: a `beforeAll` that failed leaves it
+    // undefined, and a `TypeError` from this hook on every case would bury the
+    // setup failure that is the thing worth reading.
+    if (!stand) {
+      return;
+    }
     stand.sidecar.restore();
     await withdrawTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
   });

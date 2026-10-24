@@ -409,6 +409,12 @@ export interface ExternalModelRegistration {
   completionPer1mMicros?: number;
 }
 
+/** One row of the admin trust list. */
+export interface TrustedMeasurementRow {
+  id: string;
+  measurement: string;
+}
+
 export interface RegisteredExternalEndpoint {
   id: string;
   name: string;
@@ -512,20 +518,50 @@ export async function externalEndpointEvents(
   return externalEndpoint?.events ?? [];
 }
 
+/**
+ * Admits one more cloud — and is idempotent about it, which the product is not.
+ *
+ * `addTrustedMeasurement` answers a repeat with a CONFLICT, and should: a second
+ * row for one measurement is nothing an operator can want. A stand needs the
+ * other shape. The `afterEach` below withdraws the row after every case, which
+ * makes a leftover unlikely — but the hook is itself a GraphQL read plus a
+ * mutation, so a stand whose router-api has just died fails it, the row survives
+ * and every later case dies in setup on "already on the trust list". That is the
+ * cascade this is all about, so the conflict is resolved here the way an
+ * operator resolves it with the console in front of them: find the row that is
+ * already there and carry on (SUP-329, SUP-528).
+ */
 export async function addTrustedMeasurement(
   session: ConsoleSession,
   measurement: string,
   note = 'the stand upstream cloud',
-): Promise<{ id: string; measurement: string }> {
-  const { addTrustedMeasurement: added } = await session.graphql<{
-    addTrustedMeasurement: { id: string; measurement: string };
-  }>(
-    `mutation Trust($input: AddTrustedMeasurementInput!) {
-       addTrustedMeasurement(input: $input) { id measurement note }
-     }`,
-    { input: { measurement, note } },
-  );
-  return added;
+): Promise<TrustedMeasurementRow> {
+  try {
+    const { addTrustedMeasurement: added } = await session.graphql<{
+      addTrustedMeasurement: TrustedMeasurementRow;
+    }>(
+      `mutation Trust($input: AddTrustedMeasurementInput!) {
+         addTrustedMeasurement(input: $input) { id measurement note }
+       }`,
+      { input: { measurement, note } },
+    );
+    return added;
+  } catch (error) {
+    // Narrow on the product's own words rather than on any failure: a stand that
+    // swallowed, say, an authorisation error and reported a row that was never
+    // added would be hiding the defect it exists to find. The string is pinned
+    // on the product side too — see `ExternalEndpointAdminService.addMeasurement`.
+    if (!(error instanceof Error) || !error.message.includes('is already on the trust list')) {
+      throw error;
+    }
+    const listed = (await trustedMeasurements(session)).find(
+      (row) => normaliseMeasurement(row.measurement) === normaliseMeasurement(measurement),
+    );
+    if (!listed) {
+      throw error;
+    }
+    return listed;
+  }
 }
 
 /**
@@ -567,13 +603,11 @@ export async function removeTrustedMeasurement(session: ConsoleSession, id: stri
   return removed;
 }
 
-/** `trustedMeasurements` — the trust list as the console reads it. */
-export async function trustedMeasurements(
-  session: ConsoleSession,
-): Promise<{ id: string; measurement: string; note: string | null }[]> {
-  const { trustedMeasurements: rows } = await session.graphql<{
-    trustedMeasurements: { id: string; measurement: string; note: string | null }[];
-  }>('query TrustList { trustedMeasurements { id measurement note } }');
+/** The trust list as the console reads it: every row, with the id a withdrawal needs. */
+export async function trustedMeasurements(session: ConsoleSession): Promise<TrustedMeasurementRow[]> {
+  const { trustedMeasurements: rows } = await session.graphql<{ trustedMeasurements: TrustedMeasurementRow[] }>(
+    'query Trusted { trustedMeasurements { id measurement } }',
+  );
   return rows;
 }
 
@@ -589,9 +623,14 @@ export async function trustedMeasurements(
  * run unconditionally after every case (SUP-528).
  */
 export async function withdrawTrustedMeasurement(session: ConsoleSession, measurement: string): Promise<boolean> {
-  const wanted = measurement.replace(/^0x/i, '').toLowerCase();
-  const row = (await trustedMeasurements(session)).find((entry) => entry.measurement.toLowerCase() === wanted);
+  const wanted = normaliseMeasurement(measurement);
+  const row = (await trustedMeasurements(session)).find((entry) => normaliseMeasurement(entry.measurement) === wanted);
   return row ? removeTrustedMeasurement(session, row.id) : false;
+}
+
+/** As the admin API folds it on input — it accepts `0x…`, either case and stray space. */
+function normaliseMeasurement(measurement: string): string {
+  return measurement.trim().replace(/^0x/i, '').toLowerCase();
 }
 
 /**
