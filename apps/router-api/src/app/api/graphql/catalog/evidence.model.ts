@@ -108,8 +108,8 @@ export class EvidenceSnapshotModel {
     nullable: true,
     description:
       'The compact JWS as published — "Copy evidence JWS". Null once the retention sweep has removed the ' +
-      'document: the `snapshots` connection reaches an endpoint’s whole history, and a publication past the ' +
-      'retention window of every account that held it keeps its digests and nothing else.',
+      'document: the `evidenceSnapshots` connection reaches an endpoint’s whole history, and a publication ' +
+      'past the retention window of every account that held it keeps its digests and nothing else.',
   })
   jws!: string | null;
 

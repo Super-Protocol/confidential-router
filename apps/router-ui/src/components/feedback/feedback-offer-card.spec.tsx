@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CONSOLE_EVENTS_PATH } from '../../lib/console-analytics';
 import { renderWithApollo } from '../../test-utils';
 import { feedbackOfferMock } from './feedback-mocks';
 import { FeedbackOfferCard } from './feedback-offer-card';
@@ -12,7 +13,10 @@ const FORM_URL = 'https://form.example/to/aBcDeF?t=signed-token';
 /** The analytics ingest is the only request this card makes over `fetch`. */
 const fetchMock = vi.fn();
 
-const INGEST = '/v1/analytics/events';
+// The path the console actually posts to, imported rather than re-spelled: a
+// third copy of the literal is how these two specs came to hold the first
+// spelling for a release after SUP-463 renamed it off a blocked path.
+const INGEST = CONSOLE_EVENTS_PATH;
 
 beforeEach(() => {
   toasts.success.mockReset();
