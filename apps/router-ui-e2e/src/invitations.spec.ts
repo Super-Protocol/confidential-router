@@ -154,6 +154,7 @@ const INVITATION_OPERATIONS = {
           inviteCode: CODE,
           campaign: 'launch-2026-10',
           redeemedAt: '2026-10-09T09:00:00.000Z',
+          apiKeys: { __typename: 'AccountApiKeys', total: 3, live: 2, lastUsedAt: '2026-10-18T09:00:00.000Z' },
         },
         {
           __typename: 'AdminSignUp',
@@ -165,8 +166,18 @@ const INVITATION_OPERATIONS = {
           inviteCode: null,
           campaign: null,
           redeemedAt: null,
+          apiKeys: { __typename: 'AccountApiKeys', total: 0, live: 0, lastUsedAt: null },
         },
       ],
+    },
+  },
+  AdminApiKeyPopulation: {
+    adminApiKeyPopulation: {
+      __typename: 'ApiKeyPopulation',
+      keys: 9,
+      liveKeys: 7,
+      accountsHoldingLiveKey: 5,
+      liveKeysWithoutAccount: 1,
     },
   },
 };
@@ -203,6 +214,30 @@ test.describe('the Invitations section', () => {
     await expect(table).not.toContainText(CODE);
     await table.getByRole('button', { name: 'Reveal code ABCD-••••-••••' }).click();
     await expect(table).toContainText(CODE);
+  });
+
+  /**
+   * SUP-454: before this, no supported surface told an operator which accounts
+   * hold a key, so a rebuild's blast radius could only be inferred from the
+   * credit ledger. What the screen must show is counts — and nothing a
+   * screenshot of it could be used to authenticate with.
+   */
+  test('says which accounts hold a live key, and how many the deployment has', async ({ page, baseURL }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+    await page.getByRole('tab', { name: 'Sign-ups' }).click();
+
+    await expect(page.getByTestId('api-key-population')).toContainText(
+      '5 accounts hold a live API key — 7 live of 9 ever issued.',
+    );
+    await expect(page.getByTestId('api-key-population')).toContainText(
+      '1 live key is held by no account this deployment can name',
+    );
+
+    const table = page.getByRole('table', { name: 'Sign-ups' });
+    await expect(table.getByRole('row').filter({ hasText: 'dev@example.com' })).toContainText('2 live of 3');
+    await expect(table.getByRole('row').filter({ hasText: 'admin@example.com' })).not.toContainText('live');
+    await expect(table).not.toContainText('sk-tee');
+    await shot(page, testInfo, 'sign-ups-credentials');
   });
 
   test('exports what the Codes tab shows, and imports a CSV only after its dry run is confirmed', async ({
@@ -296,6 +331,7 @@ test.describe('the Invitations section', () => {
 
       await page.getByRole('tab', { name: 'Sign-ups' }).click();
       await expect(page.getByRole('table', { name: 'Sign-ups' })).toBeVisible();
+      await expect(page.getByTestId('api-key-population')).toBeVisible();
       expect(await blockingViolations(page)).toEqual([]);
 
       await page.getByRole('button', { name: 'Issue codes' }).click();

@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDataSource, seedCatalog, testConfig } from '../../../test/seed.js';
+import { ApiKeyCensusService } from '../api-keys/api-key-census.service.js';
 import { LedgerService } from '../billing/ledger.service.js';
+import { ApiKey } from '../db/entities/api-key.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
+import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAdminService, type InviteCodeStatus, inviteCodeStatus, signUpOrigin } from './invite-admin.service.js';
 import { InviteAttributionService } from './invite-attribution.service.js';
 import { generateInvites } from './invite-generator.js';
@@ -32,7 +35,7 @@ beforeEach(async () => {
   dataSource = await createTestDataSource();
   const config = testConfig();
   attribution = new InviteAttributionService(dataSource);
-  admin = new InviteAdminService(dataSource, attribution);
+  admin = new InviteAdminService(dataSource, attribution, new ApiKeyCensusService(dataSource));
   stats = new InviteStatsService(dataSource);
   invites = new InvitesService(dataSource, config, new LedgerService(dataSource, config));
   // Better Auth owns `user` and creates it with its own migration, which a unit
@@ -231,6 +234,81 @@ describe('the account list', () => {
     expect(signUpOrigin('u', true, 'u')).toBe('invite');
     expect(signUpOrigin('u', false, 'u')).toBe('bootstrap');
     expect(signUpOrigin('u', false, null)).toBe('open');
+  });
+});
+
+/**
+ * The credential census the list carries (SUP-454). This is the deployment's
+ * only list of accounts, so it is the only place that can answer which of them
+ * hold a key an operator is about to void.
+ */
+describe('the credentials on the account list', () => {
+  /** A workspace the account owns, with one key in whatever state. */
+  async function keyFor(userId: string, state: { revokedAt?: Date; lastUsedAt?: Date } = {}): Promise<void> {
+    const { workspaceId, apiKeyId } = await seedCatalog(dataSource);
+    await dataSource
+      .getRepository(WorkspaceMember)
+      .insert({ workspaceId, userId, role: 'owner', createdAt: new Date('2026-10-01T00:00:00Z') });
+    // `seedCatalog`'s key is already live; only a non-default state needs writing,
+    // and TypeORM refuses an update with nothing in it.
+    if (Object.keys(state).length > 0) {
+      await dataSource.getRepository(ApiKey).update({ id: apiKeyId }, state);
+    }
+  }
+
+  it('counts each account’s keys, and reads an account with none as zero', async () => {
+    const holder = await account('holder@example.com', new Date('2026-10-02T00:00:00Z'));
+    await keyFor(holder, { lastUsedAt: new Date('2026-10-18T00:00:00Z') });
+    await keyFor(holder, { revokedAt: new Date('2026-10-05T00:00:00Z') });
+    await account('keyless@example.com', new Date('2026-10-03T00:00:00Z'));
+
+    const page = await admin.signUps({ offset: 0, limit: 10 }, BOOTSTRAP_EMAIL, NOW);
+
+    expect(page.nodes.map((row) => [row.email, row.apiKeys])).toEqual([
+      ['keyless@example.com', { total: 0, live: 0, lastUsedAt: null }],
+      ['holder@example.com', { total: 2, live: 1, lastUsedAt: new Date('2026-10-18T00:00:00Z') }],
+    ]);
+  });
+
+  it('pages and totals by the filter, so totalCount is what a rebuild would cut off', async () => {
+    const holder = await account('holder@example.com', new Date('2026-10-02T00:00:00Z'));
+    await keyFor(holder);
+    const revoked = await account('revoked@example.com', new Date('2026-10-03T00:00:00Z'));
+    await keyFor(revoked, { revokedAt: new Date('2026-10-05T00:00:00Z') });
+    await account('keyless@example.com', new Date('2026-10-04T00:00:00Z'));
+
+    const holding = await admin.signUps({ holdsLiveApiKey: true, offset: 0, limit: 10 }, BOOTSTRAP_EMAIL, NOW);
+    const not = await admin.signUps({ holdsLiveApiKey: false, offset: 0, limit: 10 }, BOOTSTRAP_EMAIL, NOW);
+
+    expect(holding.totalCount).toBe(1);
+    expect(holding.nodes.map((row) => row.email)).toEqual(['holder@example.com']);
+    expect(not.totalCount).toBe(2);
+    expect(not.nodes.map((row) => row.email)).toEqual(['keyless@example.com', 'revoked@example.com']);
+  });
+
+  it('combines the credential filter with the origin one', async () => {
+    const bootstrap = await account(BOOTSTRAP_EMAIL, new Date('2026-10-01T00:00:00Z'));
+    await keyFor(bootstrap);
+    const open = await account('open@example.com', new Date('2026-10-02T00:00:00Z'));
+    await keyFor(open);
+
+    const page = await admin.signUps(
+      { origin: 'open', holdsLiveApiKey: true, offset: 0, limit: 10 },
+      BOOTSTRAP_EMAIL,
+      NOW,
+    );
+
+    expect(page.nodes.map((row) => row.email)).toEqual(['open@example.com']);
+  });
+
+  it('leaves the list unfiltered when the caller asks for either kind', async () => {
+    const holder = await account('holder@example.com', new Date('2026-10-02T00:00:00Z'));
+    await keyFor(holder);
+    await account('keyless@example.com', new Date('2026-10-03T00:00:00Z'));
+
+    const page = await admin.signUps({ holdsLiveApiKey: null, offset: 0, limit: 10 }, BOOTSTRAP_EMAIL, NOW);
+
+    expect(page.totalCount).toBe(2);
   });
 });
 
