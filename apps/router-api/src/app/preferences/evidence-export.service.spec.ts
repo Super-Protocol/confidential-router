@@ -11,6 +11,7 @@ import {
   seedGeneration,
   testConfig,
 } from '../../../test/seed.js';
+import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { Generation } from '../db/entities/generation.entity.js';
 import { ExternalEvidenceService } from '../external-endpoints/external-evidence.service.js';
 import { EvidenceExportService } from './evidence-export.service.js';
@@ -51,6 +52,14 @@ async function manifest(): Promise<{
   origins: Record<string, string>;
   generations: { served: number; covered: number };
   snapshots: { id: string; endpoint: string; origin: string; evidenceDigest: string; generations: number }[];
+  expired: {
+    id: string;
+    endpoint: string;
+    origin: string;
+    evidenceDigest: string;
+    payloadStrippedAt: string | null;
+    generations: number;
+  }[];
   unretrieved: { endpoint: string; origin: string; evidenceDigest: string; generations: number }[];
 }> {
   const archive = await JSZip.loadAsync(await exports.build(catalog.workspaceId, FROM, TO));
@@ -93,6 +102,36 @@ describe('the archive', () => {
       `snapshots/${catalog.snapshotId}/bundle.json`,
       `snapshots/${catalog.snapshotId}/evidence.jws`,
     ]);
+  });
+
+  it('names a publication past its retention window instead of dropping it', async () => {
+    // The retention sweep empties `jws`/`bundle` and keeps the digests
+    // (SUP-498), so the archive has a third state beside "held" and "never
+    // retrieved": the document is gone and the digest an auditor would take to
+    // the publisher is not.
+    const strippedAt = new Date('2026-09-15T00:00:00Z');
+    await dataSource
+      .getRepository(EvidenceSnapshot)
+      .update({ id: catalog.snapshotId }, { jws: null, bundle: null, payloadStrippedAt: strippedAt });
+    await seedGeneration(dataSource, catalog, { createdAt: new Date('2026-08-29T09:00:00Z'), covered: true });
+
+    const report = await manifest();
+
+    // No `files` entry, because there are no files — and the zip has none either.
+    expect(report.snapshots).toEqual([]);
+    expect(await entries()).toEqual(['manifest.json']);
+    expect(report.expired).toHaveLength(1);
+    expect(report.expired[0]).toMatchObject({
+      id: catalog.snapshotId,
+      evidenceDigest: catalog.evidenceDigest,
+      payloadStrippedAt: strippedAt.toISOString(),
+      generations: 1,
+    });
+    // Still covered: the period *was* served under a publication this router can
+    // name, which is what the `served`/`covered` comparison is for.
+    expect(report.generations).toEqual({ served: 1, covered: 1 });
+    // Not the same thing as a digest whose bundle was never retrieved.
+    expect(report.unretrieved).toEqual([]);
   });
 
   it('lists each snapshot once, with how many generations referenced it', async () => {

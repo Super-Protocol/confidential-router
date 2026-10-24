@@ -110,6 +110,7 @@ function snapshot(id: string, evidenceDigest: string): EvidenceSnapshot {
     measurements: { MRTD: 'abc123' },
     jws: 'a.b.c',
     bundle: {},
+    payloadStrippedAt: null,
   } as EvidenceSnapshot;
 }
 

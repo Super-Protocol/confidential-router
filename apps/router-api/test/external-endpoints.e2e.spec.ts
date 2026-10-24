@@ -676,6 +676,7 @@ describe('the evidence summary (SUP-221 ruling 1)', () => {
       measurements: { MRTD: 'abc123' },
       jws: 'a.b.c',
       bundle: {},
+      payloadStrippedAt: null,
     } as EvidenceSnapshot;
   }
 
