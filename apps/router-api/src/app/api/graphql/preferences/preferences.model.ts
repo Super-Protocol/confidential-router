@@ -4,10 +4,20 @@ import type { UserPreferences } from '../../../db/entities/user-preferences.enti
 
 @ObjectType('UserPreferences', { description: 'Console settings, including the Evidence group.' })
 export class UserPreferencesModel {
-  @Field(() => Boolean, { description: 'Keep the published bundle and JWS, not just the digests.' })
+  @Field(() => Boolean, {
+    description:
+      'Whether this account holds the published bundle and JWS, not just the digests. Off, it holds nothing and ' +
+      'contributes nothing to a publication\u2019s retention window, so a publication only such accounts hold is ' +
+      'stripped on the next retention pass; one an opted-in account also holds stays until that window closes. It ' +
+      'does not stop the poller fetching bundles, which the live-evidence endpoints serve from.',
+  })
   archiveEvidence!: boolean;
 
-  @Field(() => Int, { description: 'How long archived bundles are kept, in days. Digests are kept forever.' })
+  @Field(() => Int, {
+    description:
+      'How long archived bundles are kept, in days. Digests are kept forever. Ignored while archiveEvidence is ' +
+      'off, and still settable, so the window is already right when it goes back on.',
+  })
   evidenceRetentionDays!: number;
 
   @Field(() => Boolean, { description: 'Notify when an endpoint publishes different measurements.' })

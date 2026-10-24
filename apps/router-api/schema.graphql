@@ -1862,12 +1862,16 @@ type User {
 
 """Console settings, including the Evidence group."""
 type UserPreferences {
-  """Keep the published bundle and JWS, not just the digests."""
+  """
+  Whether this account holds the published bundle and JWS, not just the digests. Off, it holds nothing and contributes nothing to a publication’s retention window, so a publication only such accounts hold is stripped on the next retention pass; one an opted-in account also holds stays until that window closes. It does not stop the poller fetching bundles, which the live-evidence endpoints serve from.
+  """
   archiveEvidence: Boolean!
   desktopNotifications: Boolean!
   emailReceipts: Boolean!
 
-  """How long archived bundles are kept, in days. Digests are kept forever."""
+  """
+  How long archived bundles are kept, in days. Digests are kept forever. Ignored while archiveEvidence is off, and still settable, so the window is already right when it goes back on.
+  """
   evidenceRetentionDays: Int!
 
   """Notify when an endpoint publishes different measurements."""
