@@ -415,6 +415,14 @@ export interface RegisteredExternalEndpoint {
   status: string;
   hostname: string;
   apiKeyPrefix: string | null;
+  /**
+   * The sidecar's own timestamp for the check this row is projecting (ISO 8601).
+   *
+   * Read by {@link waitForExternal}'s `since`, which is the only honest way to
+   * ask "a verdict about the change I just made": a status alone cannot say
+   * whether it is about this change or the previous one (SUP-528).
+   */
+  lastCheckedAt: string | null;
   measurementSeen: string | null;
   measurementSource: string | null;
   /** The deployment digest the last check saw — what an admin pins (SUP-252). */
@@ -436,6 +444,7 @@ const ENDPOINT_FIELDS = `
   hostname
   status
   apiKeyPrefix
+  lastCheckedAt
   measurementSeen
   measurementSource
   evidenceDigestSeen
@@ -558,6 +567,33 @@ export async function removeTrustedMeasurement(session: ConsoleSession, id: stri
   return removed;
 }
 
+/** `trustedMeasurements` — the trust list as the console reads it. */
+export async function trustedMeasurements(
+  session: ConsoleSession,
+): Promise<{ id: string; measurement: string; note: string | null }[]> {
+  const { trustedMeasurements: rows } = await session.graphql<{
+    trustedMeasurements: { id: string; measurement: string; note: string | null }[];
+  }>('query TrustList { trustedMeasurements { id measurement note } }');
+  return rows;
+}
+
+/**
+ * Takes a measurement off the trust list by its value, and reports whether it
+ * was on it.
+ *
+ * The id-taking {@link removeTrustedMeasurement} is the mutation the console
+ * calls, and it is the wrong shape for cleanup: it needs the row id from the
+ * `addTrustedMeasurement` that created it, so a suite can only undo an edit from
+ * inside the case that made it — which is exactly the test that has just failed.
+ * This one looks the row up instead and tolerates its absence, so it is safe to
+ * run unconditionally after every case (SUP-528).
+ */
+export async function withdrawTrustedMeasurement(session: ConsoleSession, measurement: string): Promise<boolean> {
+  const wanted = measurement.replace(/^0x/i, '').toLowerCase();
+  const row = (await trustedMeasurements(session)).find((entry) => entry.measurement.toLowerCase() === wanted);
+  return row ? removeTrustedMeasurement(session, row.id) : false;
+}
+
 /**
  * Polls the raw-bundle relay until it hands back an upstream's publication.
  *
@@ -621,24 +657,54 @@ export async function waitForExternalStatus(
 export async function waitForExternal(
   session: ConsoleSession,
   id: string,
-  { until, wanted }: { until: (endpoint: RegisteredExternalEndpoint) => boolean; wanted: string },
+  {
+    until,
+    wanted,
+    since,
+  }: {
+    until: (endpoint: RegisteredExternalEndpoint) => boolean;
+    wanted: string;
+    /**
+     * Discard any verdict the sidecar computed before this instant — pass
+     * `Date.now()` taken *after* the change being waited on.
+     *
+     * Without it a wait reads the row as it stands, and the row carries the
+     * previous check. Withdraw a measurement and the endpoint is still
+     * `VERIFIED_BY_THIS_ROUTER` until the poller projects the denial; make the
+     * next change in that window and the wait for *its* verdict is satisfied by
+     * the one before it. `lastCheckedAt` is the sidecar's own timestamp for the
+     * check the row is projecting, so this is the one field that can tell the
+     * two apart (SUP-528).
+     */
+    since?: number;
+  },
 ): Promise<RegisteredExternalEndpoint> {
   const timeoutMs = STATUS_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   let last: RegisteredExternalEndpoint | null = null;
   for (;;) {
     last = await readExternalEndpoint(session, id);
-    if (last && until(last)) {
+    if (last && checkedSince(last, since) && until(last)) {
       return last;
     }
     if (Date.now() > deadline) {
       throw new Error(
         `external endpoint ${id} was ${last?.status ?? 'absent'} after ${timeoutMs}ms, wanted ${wanted}` +
+          `${since === undefined ? '' : ` from a check after ${new Date(since).toISOString()} (last checked ${last?.lastCheckedAt ?? 'never'})`}` +
           `${last?.lastReason ? ` (last reason: ${last.lastStage}: ${last.lastReason})` : ''}`,
       );
     }
     await delay(200);
   }
+}
+
+/** Whether the check this row is projecting is at least as new as `since`. */
+function checkedSince(endpoint: RegisteredExternalEndpoint, since: number | undefined): boolean {
+  if (since === undefined) {
+    return true;
+  }
+  const checkedAt = endpoint.lastCheckedAt === null ? Number.NaN : Date.parse(endpoint.lastCheckedAt);
+  return Number.isFinite(checkedAt) && checkedAt >= since;
 }
 
 /* ------------------------------------------------------------------ *
