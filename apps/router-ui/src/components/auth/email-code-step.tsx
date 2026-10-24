@@ -12,12 +12,17 @@ import { messageOf } from './messages';
 /**
  * What the router can say about the two email-code requests that is not about
  * what was typed: 429 is its per-source budget on asking for a code and on
- * trying one, and 404 is a deployment with no mailer, which does not register
- * the routes at all.
+ * trying one, 404 is a deployment with no mailer, which does not register the
+ * routes at all, and 503 is a mailer that is there and could not send
+ * (SUP-460). The 503 is spelled out here rather than left to the router's own
+ * sentence because a gateway in front of it answers the same status with no
+ * body at all, and "Sign-in failed" would be the wrong thing to say about an
+ * outage the viewer can only wait out.
  */
 const EMAIL_CODE_MESSAGES = {
   404: 'Sign-in by emailed code is not available on this deployment.',
   429: 'Too many attempts. Wait a minute and try again.',
+  503: 'The code could not be sent just now. Try again in a minute.',
 };
 
 /**

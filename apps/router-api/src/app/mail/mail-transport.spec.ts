@@ -154,6 +154,30 @@ describe('ResendMailTransport', () => {
       /403 domain not verified/,
     );
   });
+
+  /**
+   * A rejected key is the one thing the status says unambiguously, and the one
+   * signal a Resend deployment has for it — `verify` sends nothing, so there
+   * is no boot check. Everything else is the mailer: Resend does not say whose
+   * address it objected to, and reading a 4xx as "that recipient" would leave
+   * `/health` reporting `ok` through an unverified sender domain.
+   */
+  it.each([
+    [401, 'auth_failed'],
+    [403, 'auth_failed'],
+    [400, 'error'],
+    [422, 'error'],
+    [429, 'error'],
+    [500, 'error'],
+    [503, 'error'],
+  ])('classifies a %i from Resend as %s', async (status, failure) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('no', { status })));
+
+    await expect(new ResendMailTransport('k', 'a@example.com').send(MESSAGE)).rejects.toMatchObject({
+      name: 'MailProviderError',
+      failure,
+    });
+  });
 });
 
 describe('SmtpMailTransport', () => {

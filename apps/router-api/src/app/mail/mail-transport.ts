@@ -51,6 +51,38 @@ export interface MailTransport {
 export const MAIL_TRANSPORT = Symbol('MAIL_TRANSPORT');
 
 /**
+ * What a provider refusal was about, when the provider can say.
+ *
+ * No `recipient_refused` here, and that is the point: only a refusal that
+ * names the recipient may stay out of the deployment's mail state, and an
+ * HTTP provider's status code does not name one. A 422 is as likely to be
+ * about our sender as about the address the message carried, and reading it
+ * as the latter would leave `/health` reporting `ok` through a
+ * misconfiguration that can send nothing for anybody. So a provider refusal
+ * is `auth_failed` or the mailer, and nothing in between — see
+ * `MailFailureReason` in `mail.service.ts`.
+ */
+export type ProviderFailure = 'auth_failed' | 'error';
+
+/**
+ * A refusal a provider named, for `failureReasonOf` to read.
+ *
+ * nodemailer puts an SMTP classification in `code` and the SMTP transport
+ * needs nothing more. An HTTP provider has a status instead, and inventing an
+ * SMTP code for it would be a lie in the one place the distinction is load
+ * bearing — so it carries the classification outright.
+ */
+export class MailProviderError extends Error {
+  constructor(
+    message: string,
+    readonly failure: ProviderFailure,
+  ) {
+    super(message);
+    this.name = 'MailProviderError';
+  }
+}
+
+/**
  * Refuses to send anything: `provider: none` means the deployment has no mail.
  *
  * Every flow that would reach this is switched off on such a deployment —
@@ -128,7 +160,10 @@ export class ResendMailTransport implements MailTransport {
       }),
     });
     if (!response.ok) {
-      throw new Error(`Resend rejected the "${message.kind}" email: ${response.status} ${await response.text()}`);
+      throw new MailProviderError(
+        `Resend rejected the "${message.kind}" email: ${response.status} ${await response.text()}`,
+        resendFailure(response.status),
+      );
     }
   }
 
@@ -228,4 +263,20 @@ export function createMailTransport(settings: MailSettings, nodeEnv = process.en
     default:
       throw new Error(`Unknown mail provider: ${String(settings.provider)}`);
   }
+}
+
+/**
+ * Resend's HTTP status, as the two things it can tell us apart.
+ *
+ * A rejected key is `401`/`403`, which is how a deployment that never gets a
+ * boot-time check (`verify` sends nothing here, so there is none) finds out at
+ * all. Everything else is the mailer: `429` and `5xx` plainly, and the rest of
+ * the 4xx range because Resend does not say whose address it objected to —
+ * `422` covers an unverified sender domain as readily as an address it will
+ * not deliver to, and guessing the generous reading would hide a deployment
+ * that can send nothing. A deployment whose recipient really was the problem
+ * pays one uniform refusal that the next good send clears.
+ */
+function resendFailure(status: number): ProviderFailure {
+  return status === 401 || status === 403 ? 'auth_failed' : 'error';
 }
