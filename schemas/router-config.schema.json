@@ -324,6 +324,25 @@
           "default": "5s",
           "description": "How often router-api reads the sidecar's /status and /verdicts back. 0 disables the poll."
         },
+        "outage": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "When a run of failed checks against a registered upstream stops being noise and becomes an outage worth waking somebody for (SUP-517). Crossing either threshold writes one ERROR log line, one `outage` row on the endpoint's timeline, and `status: outage` in GET /health's externalEndpoints block. Both halves exist because they miss different failures: a count is the honest unit while checks happen on schedule and sees nothing when the checking itself has stopped, which only elapsed time notices. An endpoint an operator disabled, or one whose deployment has never been approved, is never an outage.",
+          "properties": {
+            "afterFailures": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000,
+              "default": 3,
+              "description": "Distinct failed checks in a row, counted per re-attestation rather than per poll. Three against a 10-minute reattestInterval is roughly half an hour of a model refusing every request. 0 disables this threshold."
+            },
+            "afterNoSuccess": {
+              "$ref": "#/$defs/duration",
+              "default": "15m",
+              "description": "How long since the endpoint was last known to serve, however little has been checked in between \u2014 the threshold that notices a sidecar which never answers at all. 0 disables it."
+            }
+          }
+        },
         "connectTimeout": {
           "$ref": "#/$defs/duration",
           "default": "5s",

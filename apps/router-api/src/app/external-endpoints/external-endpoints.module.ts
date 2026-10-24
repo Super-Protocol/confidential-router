@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ExternalCatalogService } from './external-catalog.service.js';
 import { ExternalEndpointAdminService } from './external-endpoint-admin.service.js';
+import { ExternalEndpointHealth } from './external-endpoint-health.js';
 import { ExternalEndpointStatusService } from './external-endpoint-status.service.js';
 import { ExternalEndpointStatusPollerService } from './external-endpoint-status-poller.service.js';
 import { ExternalEvidenceService } from './external-evidence.service.js';
@@ -21,6 +22,7 @@ import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
   providers: [
     SidecarConfigWriterService,
     ExternalCatalogService,
+    ExternalEndpointHealth,
     ExternalEndpointStatusService,
     ExternalEndpointStatusPollerService,
     ExternalEvidenceService,
@@ -31,6 +33,7 @@ import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
   exports: [
     SidecarConfigWriterService,
     ExternalCatalogService,
+    ExternalEndpointHealth,
     ExternalEndpointStatusService,
     ExternalEndpointStatusPollerService,
     ExternalEvidenceService,

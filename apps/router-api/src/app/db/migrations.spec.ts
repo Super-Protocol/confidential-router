@@ -111,8 +111,23 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-517's failure-run columns are five additive columns on one table; the
+      // first undo drops only those.
+      expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
+      await dataSource.undoLastMigration();
+      for (const column of [
+        'lastSuccessAt',
+        'lastFailureAt',
+        'notServingSince',
+        'consecutiveFailures',
+        'upstreamUnreachable',
+      ]) {
+        expect(await queryRunner.hasColumn('external_endpoints', column)).toBe(false);
+      }
+      expect(await queryRunner.hasColumn('external_endpoints', 'lastCheckedAt')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

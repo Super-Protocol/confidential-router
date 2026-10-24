@@ -71,6 +71,13 @@ export interface EventPresentation {
  * `DIGEST_UNPINNED` is a warning for the same reason as a digest change: the
  * endpoint has no approved deployment left, so it serves nothing until it has
  * one again (SUP-435).
+ *
+ * `OUTAGE` is the one `destructive` entry that is not a verdict: a
+ * `DENIED_BY_THIS_ROUTER` is one check that refused, an `OUTAGE` is this router
+ * declaring that the run of them has passed the configured threshold and
+ * alerting on it (SUP-517). It reads as more severe than the denial beside it
+ * because it is — the denial is a fact about a check, the outage is a statement
+ * that nobody has been served for a while.
  */
 const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> = {
   REGISTERED: { label: 'Registered', variant: 'secondary' },
@@ -82,6 +89,8 @@ const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> =
   MEASUREMENT_CHANGED: { label: 'Measurement changed', variant: 'warning' },
   DISABLED: { label: 'Disabled', variant: 'outline' },
   KEY_ROTATED: { label: 'Key rotated', variant: 'secondary' },
+  OUTAGE: { label: 'Outage declared', variant: 'destructive' },
+  RECOVERED: { label: 'Serving again', variant: 'success' },
 };
 
 export function eventPresentation(kind: ExternalEndpointEventKind): EventPresentation {

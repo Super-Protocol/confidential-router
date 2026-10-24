@@ -83,6 +83,75 @@ export class ExternalEndpoint {
   @Column({ type: 'varchar', length: 255, nullable: true })
   lastReason!: string | null;
 
+  /**
+   * When a verdict last *admitted* this endpoint — the column that answers "is it
+   * serving", as opposed to `lastCheckedAt`'s "when did we last look" (SUP-517).
+   *
+   * Null after a boot reset and until the first admitting verdict of this
+   * process, which is why {@link notServingSince} exists beside it: an outage has
+   * to be measurable without a success to measure it from.
+   */
+  @Column(timestampColumn({ nullable: true }))
+  lastSuccessAt!: Date | null;
+
+  /**
+   * When a verdict last *denied* it, kept across a recovery — the one liveness
+   * column a success does not clear, so "has this upstream been flapping" is
+   * answerable from the row and not only from the timeline.
+   */
+  @Column(timestampColumn({ nullable: true }))
+  lastFailureAt!: Date | null;
+
+  /**
+   * Since when this endpoint has not been known to serve: set by a denial, by an
+   * operator switching it back on, and by the boot reset — and cleared by an
+   * admitting verdict. What `outage.afterNoSuccess` is measured from.
+   *
+   * Deliberately wider than "failing": `pending` serves nothing either, and an
+   * upstream whose first check never arrives is as dark to a caller as one that
+   * was refused. What keeps that from paging over a fresh registration is the
+   * *expected to serve* gate in `external-endpoint-liveness.ts`, not a narrower
+   * reading of this column.
+   *
+   * A restart resets it, like every other verdict projection (ADR-008 §8), so a
+   * router restarted during an outage reports the outage as starting at the
+   * restart. That loses the true start — the timeline's `outage` event keeps it —
+   * and it is the right trade: the alternative is a persisted verdict.
+   */
+  @Column(timestampColumn({ nullable: true }))
+  notServingSince!: Date | null;
+
+  /**
+   * Denials in the current run, counted per *distinct* check rather than per poll.
+   *
+   * The status poll reads the sidecar every 5 s and the sidecar re-attests every
+   * 10 minutes, so the same denial is read back some 120 times; counting those
+   * would make `outage.afterFailures` a number of seconds wearing a different
+   * name. A check is new when the verdict's own `checkedAt` moved.
+   *
+   * Zero while the last verdict admitted, and zero while nothing has been checked
+   * — "we have not looked yet" is not a failure (ADR-008 §8).
+   */
+  @Column({ type: 'int', default: 0 })
+  consecutiveFailures!: number;
+
+  /**
+   * Whether the last check could not reach the upstream at all, as the *sidecar*
+   * answered it (`SidecarReport.unreachable`, SUP-422).
+   *
+   * Read, never inferred. The `fetch` stage is wider than this: a non-2xx answer
+   * to the bundle fetch, an over-sized bundle and a hostname the gatekeeper
+   * refuses all stop at `fetch` while the upstream demonstrably answered. Calling
+   * those unreachable would send an operator to look at a cloud that is up —
+   * the same mis-direction SUP-517 exists to remove, pointing the other way.
+   *
+   * Null when nothing has been checked. A row that holds null and a stage of
+   * `fetch` is a verdict projected before this column existed; the reader falls
+   * back to the stage there, and the boot reset retires the question.
+   */
+  @Column({ type: 'boolean', nullable: true })
+  upstreamUnreachable!: boolean | null;
+
   /** Normalised mrEnclave hex of the upstream cloud's root, as the verdict observed it. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   measurementSeen!: string | null;

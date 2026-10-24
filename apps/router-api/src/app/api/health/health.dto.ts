@@ -45,6 +45,46 @@ export class AnalyticsHealthDto {
   dropped!: number;
 }
 
+export class ExternalEndpointsHealthDto {
+  @ApiProperty({
+    enum: ['none', 'unknown', 'ok', 'degraded', 'outage'],
+    description:
+      'Registered external upstreams, in one word. `none`: nothing registered. `unknown`: no status pass has ' +
+      'completed, so this router cannot say. `ok`: all serving. `degraded`: one or more is not, below the outage ' +
+      'thresholds. `outage`: a run has passed `externalEndpoints.outage.*` — the value to alert on.',
+  })
+  status!: 'none' | 'unknown' | 'ok' | 'degraded' | 'outage';
+
+  @ApiProperty({ description: 'Enabled upstreams. One an operator disabled is out of service and counted nowhere.' })
+  registered!: number;
+
+  @ApiProperty({ description: 'Holding an admitting verdict right now — what the catalogue will route to.' })
+  serving!: number;
+
+  @ApiProperty({ description: 'Denied by the last check: this router looked and refused.' })
+  failing!: number;
+
+  @ApiProperty({ description: 'Of `failing`, those whose last check never got a document back at all.' })
+  unreachable!: number;
+
+  @ApiProperty({ description: 'Checked, neither admitted nor denied: awaiting a first check or an admin’s approval.' })
+  pending!: number;
+
+  @ApiProperty({
+    required: false,
+    description: 'When the longest-running outstanding “not serving” began. Absent when every upstream is serving.',
+  })
+  since?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'When the sidecar’s verdicts were last read back. A timestamp that has stopped moving says the counts are ' +
+      'stale — the one failure the counts cannot show by themselves. Absent until the first pass.',
+  })
+  verdictsReadAt?: string;
+}
+
 export class HealthResponseDto {
   @ApiProperty({ enum: ['ok', 'error'] })
   status!: 'ok' | 'error';
@@ -63,4 +103,10 @@ export class HealthResponseDto {
 
   @ApiProperty({ type: () => AnalyticsHealthDto, description: 'Reported only; never makes the status `error`.' })
   analytics!: AnalyticsHealthDto;
+
+  @ApiProperty({
+    type: () => ExternalEndpointsHealthDto,
+    description: 'Reported only; never makes the status `error`. Counts, never endpoint identity.',
+  })
+  externalEndpoints!: ExternalEndpointsHealthDto;
 }
