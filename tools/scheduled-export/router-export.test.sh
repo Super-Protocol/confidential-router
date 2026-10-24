@@ -602,6 +602,36 @@ done
 kept="$(ls -1d "$HOME_DIR"/prod-exports/*T*Z | wc -l)"
 expect_eq 'it keeps only LOCAL_KEEP run directories' "$kept" '2'
 
+# Retention by age (SUP-495): the period the privacy policy states, enforced on
+# every run — a refused one included, because a refusal never reaches the
+# LOCAL_KEEP rotation and would otherwise keep its copies indefinitely.
+write_config
+reset_state
+mkdir -p "$HOME_DIR/prod-exports"
+old_stamp="$(date -u -d '-29 days' '+%Y%m%dT%H%M%SZ')"
+recent_stamp="$(date -u -d '-27 days' '+%Y%m%dT%H%M%SZ')"
+mkdir -p "$HOME_DIR/prod-exports/$old_stamp" "$HOME_DIR/prod-exports/$recent_stamp"
+set_scenario '{"users":2,"codes":3}'
+run --local-only --quiet > /dev/null
+expect_eq 'a run directory older than LOCAL_MAX_AGE_DAYS is pruned' \
+  "$([ -e "$HOME_DIR/prod-exports/$old_stamp" ] && echo kept || echo gone)" 'gone'
+expect_eq 'one inside it is kept' \
+  "$([ -e "$HOME_DIR/prod-exports/$recent_stamp" ] && echo kept || echo gone)" 'kept'
+
+mkdir -p "$HOME_DIR/prod-exports/$old_stamp"
+set_scenario '{"users":1,"codes":3}'
+run --local-only --quiet > /dev/null
+expect_eq 'the age limit holds on a run the shrink guard refuses' \
+  "$([ -e "$HOME_DIR/prod-exports/$old_stamp" ] && echo kept || echo gone)" 'gone'
+
+for bad in 0 abc; do
+  printf 'LOCAL_MAX_AGE_DAYS=%s\n' "$bad" >> "$HOME_DIR/.config/router-export/env"
+  out="$(run --local-only --quiet)"
+  expect_eq "LOCAL_MAX_AGE_DAYS=$bad is refused" "$?" '1'
+  expect_contains "and the refusal names the setting" "$out" 'LOCAL_MAX_AGE_DAYS must be'
+  write_config
+done
+
 write_config
 reset_state
 set_scenario '{"users":2,"codes":3}'

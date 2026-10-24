@@ -50,7 +50,8 @@ router-export.sh [--local-only] [--quiet] [--accept-shrink '<reason>']
    holds**, comparing names and byte counts against the local files, because the
    upload is the one step whose failure would otherwise look like success;
 7. prunes local copies to the newest `LOCAL_KEEP`, and appends one line to
-   `router-export.log`.
+   `router-export.log`. Copies older than `LOCAL_MAX_AGE_DAYS` are pruned
+   before anything else, on every run — see *Retention*.
 
 Any refusal exits non-zero, says why on stderr whatever `--quiet` asked for, and
 posts a comment on the multica issue named by `ALERT_ISSUE_ID`. A silent backup
@@ -88,7 +89,8 @@ need. A run that overruled the shrink guard carries a fourth file,
 | `ROUTER_BOOTSTRAP_TOKEN` | the deployment's `auth.bootstrapToken`. The fallback when the marketplace cannot be reached, and the whole credential when none is configured |
 | `EXPORT_CONTAINER` | the container these go in — a container of their own, e.g. `prod-exports` |
 | `BLOB_PREFIX` | optional prefix inside it; leave empty in a dedicated container |
-| `LOCAL_KEEP` | run directories kept on this host; `0` keeps all |
+| `LOCAL_KEEP` | run directories kept on this host; `0` lifts the count, not the age limit |
+| `LOCAL_MAX_AGE_DAYS` | `28` by default — no run directory on this host outlives it, refused runs included. Must match the container's lifecycle rule; `0` and non-numbers are refused. See *Retention* |
 | `ALERT_ISSUE_ID` | issue a failed run comments on; empty disables the alert |
 | `EXPORT_DIR` | optional; defaults to `~/prod-exports` |
 
@@ -270,26 +272,148 @@ zcat ~/prod-exports/<stamp>/router-export-<stamp>.json.gz \
 — and worth answering first. Blessing a shrink is how a real loss gets rotated
 out of the backups a week later.
 
-### The lifecycle rule is a human's job
+## Retention
 
-`qa-artifacts` auto-deletes objects 30 days after they are written. A new
-container starts with **no lifecycle rule at all**, and the account key this tool
-uses cannot add one — lifecycle management is a management-plane operation, which
-means the Azure Portal or an `az` session with rights over the storage account,
-neither of which an agent has or should have.
+**28 days, everywhere a copy lives** (SUP-495). The bundle exists to survive the
+loss of a cloud, which is a days-to-weeks need; past four weeks a copy answers
+no question that the newer copies do not, and it still holds an address for
+every account and every live invitation code. Twenty-eight days also keeps a
+deleted account's last copy inside the one month an erasure request has to be
+answered in — see *An erasure request*, below.
 
-So until somebody with that access adds a rule to `prod-exports`, the exports
-accumulate: about 20 KB a day at today's size, which is roughly 7 MB a year.
-Not urgent, and not free either — and worth deciding deliberately rather than
-inheriting, because the right retention for a backup is a different question from
-the right retention for a test video.
+| Where | How it is enforced |
+|---|---|
+| `prod-exports` container | lifecycle rule `prod-exports-expire-28d` deletes each blob 28 days after it was written. Azure runs lifecycle rules once a day, so a blob can outlive its 28 days by up to a day |
+| this host, `EXPORT_DIR` | `LOCAL_MAX_AGE_DAYS=28`, checked at the start of every run, refused runs included; `LOCAL_KEEP=7` bounds the count below that |
+
+Two consequences worth knowing before they surprise anyone:
+
+- **The rule deletes by age and nothing else.** If the shrink guard refuses for
+  28 days in a row, the last good copy expires with everything else. It cannot
+  happen quietly — every refused run comments on `ALERT_ISSUE_ID` — but a
+  refusal that is still open after a week is a backup that is running out.
+- **Deleted is deleted.** Blob versioning and soft delete are both off on the
+  account, so neither the rule nor an operator's `delete-batch` leaves a
+  recoverable copy behind.
+
+### The lifecycle rule
+
+The rule is in `prod-exports-lifecycle-rule.json`, beside this file. A storage
+account has exactly **one** lifecycle policy holding every rule — `qa-artifacts`
+has its own 30-day rule in the same policy — and `management-policy create`
+replaces the whole policy. So read it, swap in this rule by name, and write the
+result back, rather than writing this rule alone over the account's:
+
+```sh
+SA=spqaartifactsf04115 RG=rg-multica-sp
+az storage account management-policy show --account-name $SA -g $RG --query policy -o json \
+  | jq --slurpfile rule tools/scheduled-export/prod-exports-lifecycle-rule.json \
+      '.rules = ([.rules[] | select(.name != $rule[0].name)] + $rule) | del(..|nulls)' \
+  > policy.json
+jq -c '.rules[] | {name, prefix: .definition.filters.prefixMatch}' policy.json   # both rules, nothing else
+az storage account management-policy create --account-name $SA -g $RG --policy @policy.json
+```
+
+That is a **management-plane** change: it needs an `az login` with rights over
+the storage account, which the account key this tool uses does not give and an
+agent should not hold. The account and its policy are not in Terraform — it was
+created by hand for `qa-publish` — so this command and this file are the record
+of the rule. Check it is in place:
+
+```sh
+az storage account management-policy show --account-name $SA -g $RG \
+  --query "policy.rules[?name=='prod-exports-expire-28d']" -o json
+```
+
+Changing the period means changing it in three places in one commit: the rule
+file, the `LOCAL_MAX_AGE_DAYS` default in `router-export.sh`, and the retention
+row in the privacy policy that quotes it.
+
+## Access posture
+
+Checked on the live account on 2026-10-24 (SUP-495). Re-check after anyone
+touches the account — these are settings, and settings drift.
+
+| | |
+|---|---|
+| storage account | `spqaartifactsf04115`, resource group `rg-multica-sp`, **Azure Poland Central** (EU), `Standard_LRS` — the copies do not leave the region |
+| this host | `sp-agent-house`, an Azure VM in the same resource group and region |
+| anonymous access | off for the whole account (`allowBlobPublicAccess: false`); `prod-exports` itself has no public access level. An anonymous container listing answers `409 PublicAccessNotPermitted` |
+| shared access | no stored access policies on `prod-exports`. Nothing this tool does mints a SAS, and `qa-publish` mints them only off `qa-artifacts` |
+| `qa-artifacts` | refused by name in `router-export.sh`, and covered by the test suite |
+| transport | HTTPS only, TLS 1.2 minimum |
+| who can read it | the holder of the account key — this host, in `~/.config/qa-publish/env` — and anyone with management rights on the subscription. The account's network rule is `Allow`, so the key works from any network |
+| versioning, soft delete | both off — see *Retention* |
+
+```sh
+az storage account show -n $SA -g $RG \
+  --query '{location:location, allowBlobPublicAccess:allowBlobPublicAccess, minTls:minimumTlsVersion}'
+az storage container show -n prod-exports --account-name $SA --account-key "$AZ_STORAGE_KEY" \
+  --query properties.publicAccess        # null = private
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://$SA.blob.core.windows.net/prod-exports?restype=container&comp=list"   # 409
+```
+
+## An erasure request
+
+The privacy policy promises that on request "we delete the account, its personal
+workspace, its keys and its preferences". The live database is where that
+happens. What this section settles is the copies the export has already taken,
+so that the promise is not quietly broken by a backup.
+
+**The rule: copies taken before the deletion are not edited — they expire.**
+Every copy is gone at most 28 days after it was written (a day more in the
+container, see *Retention*), so 29 days after the account is deleted no copy
+holding it exists anywhere. That is inside the one month an erasure request has
+to be answered in. Rewriting a bundle is not an option anyway: its integrity hash
+is what the importer checks, and a hand-edited bundle is one nobody can trust
+for a restore.
+
+When a request arrives:
+
+1. **Delete the account in production.** That is the request; everything below
+   follows from it.
+2. **Accept the shrink the next run reports.** One account fewer is exactly what
+   the shrink guard refuses, and it will. Accept it with a reason that names the
+   request and the account **id**, never the address or the name:
+
+   ```sh
+   router-export --accept-shrink 'erasure request SUP-NNN, account <user id>'
+   ```
+
+   That line in `shrink-acceptances.log` is the erasure register — it is
+   append-only, it travels with the bundles, and it is the list step 4 reads.
+3. **Answer the requester with a date**: the account is deleted now, and the
+   last backup holding it is deleted automatically by *(deletion date + 29
+   days)*.
+4. **If a copy older than the deletion is ever restored**, the erased account
+   comes back with it. Before the restored deployment is used, delete again every
+   account named in an `erasure request` line of `shrink-acceptances.log` whose
+   date is after the bundle's run stamp.
+
+**If waiting is not acceptable** — the requester objects to the backup copies, or
+counsel says so — remove the older copies instead of waiting. Do it after step 2,
+once the first run without the account has succeeded, so one good copy always
+remains:
+
+```sh
+KEEP_FROM=20261101T031900Z   # the first run taken after the deletion
+for d in ~/prod-exports/*T*Z; do [[ "${d##*/}" < "$KEEP_FROM" ]] && rm -rf "$d"; done
+az storage blob list -c prod-exports --account-name $SA --account-key "$AZ_STORAGE_KEY" \
+    --num-results '*' --query '[].name' -o tsv | awk -F/ -v k="$KEEP_FROM" '$2 < k' \
+  | xargs -r -n1 az storage blob delete -c prod-exports --account-name $SA --account-key "$AZ_STORAGE_KEY" -n
+```
+
+That costs the backup history, not the backup: the run after the deletion is
+kept, and the next one taken the following night.
 
 ## What the file holds, and what that costs
 
 | In it | Not in it |
 |---|---|
 | accounts: address, name, sign-up date, which invitation each came from | chats, prompts, completions, generation logs |
-| workspaces, balances, the whole credit ledger | API keys (hashed, they cannot move) |
+| workspaces, balances, the whole credit ledger | — |
+| API keys: name, prefix, limits **and the hash**, so a key keeps working after a rebuild (SUP-445) | the API keys themselves |
 | **every invitation code, including unredeemed ones** | upstream keys of external endpoints |
 | external endpoints and the trust list | sessions, sign-in credentials |
 
@@ -332,9 +456,8 @@ and says so.
 - **Where the copies live is where the credentials live.** The host that holds
   the storage key is the host that writes the backups, so losing it badly enough
   loses the ability to take new ones. The copies already written survive it.
-- **Retention is undecided until a human decides it** — see *The lifecycle rule
-  is a human's job*. Whatever rule lands there, a month of dailies is a rotation
-  and not an archive: nothing here is the copy to reach for in a year.
+- **Retention is four weeks** — see *Retention*. It is a rotation and not an
+  archive: nothing here is the copy to reach for in a year.
 - **The bundle is stored as it comes off the router** — not encrypted at rest
   beyond what the storage account does. Encrypting it would mean a key that has
   to outlive this host, which is a question with an owner, not a default.
@@ -350,7 +473,7 @@ bash tools/scheduled-export/router-export.test.sh   # or: pnpm nx run scheduled-
 
 A fake router on loopback, built by the same canonical form the real one hashes
 with, so "the hash matches" means something, and a stand-in `az` in place of the
-real CLI. **120 assertions**, covering:
+real CLI. **127 assertions**, covering:
 
 | | |
 |---|---|
@@ -364,6 +487,7 @@ real CLI. **120 assertions**, covering:
 | the file that arrived | a failing export, a truncated bundle, a hash the header disagrees with, a missing hash header, a foreign `format`, a newer `schemaVersion` |
 | what it carries | an empty export, a codes CSV shorter than the bundle's count, a codes CSV with the wrong header |
 | between runs | a shrinking export naming what shrank, a growing one accepted, local rotation to `LOCAL_KEEP` |
+| retention | a run directory past `LOCAL_MAX_AGE_DAYS` pruned and one inside it kept, the age limit holding on a run the shrink guard refuses, `0` and a non-number refused |
 | overruling the shrink guard | a bare re-run refusing identically, the refusal naming the flag in text a Markdown renderer cannot eat, `--accept-shrink` getting through and becoming the new baseline, the acceptance said even under `--quiet`, the acceptance log surviving the next successful run, appending rather than replacing, keeping one acceptance to one line through a reason with a newline in it, travelling with the upload and passing the read-back, the flag as a no-op when nothing shrank, a missing reason, a blank one and a flag-shaped one refused, a single-dash one accepted |
 | the container | `qa-artifacts` named outright, `qa-artifacts` reached by falling through, `EXPORT_CONTAINER` winning over the credentials env |
 | the read-back | an upload that fails, a container holding different bytes, a container missing an object, objects that cannot be listed back |
