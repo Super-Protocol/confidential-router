@@ -192,6 +192,18 @@ const EvidenceSchema = z
   .strictObject({
     pollInterval: durationMs('5m'),
     freshnessWindow: durationMs('24h'),
+    /**
+     * How often the retention sweep removes the bundle and JWS of publications
+     * past their holders' `evidenceRetentionDays` (SUP-498).
+     *
+     * Six hours rather than daily: the window is measured in days, so the pass
+     * only has to be frequent enough that a deployment restarted at an awkward
+     * hour still runs one, and often enough that a first-ever pass drains its
+     * backlog in a day rather than a week. `0ms` switches the sweep off, which
+     * makes the deployment publish a period it does not keep — the service says
+     * so at `warn` on every boot.
+     */
+    retentionSweepInterval: durationMs('6h'),
   })
   .prefault({});
 

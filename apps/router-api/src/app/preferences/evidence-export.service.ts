@@ -6,7 +6,11 @@ import { DataSource, In } from 'typeorm';
 import { type SignedLinkClaims, signLink, verifyLink } from '../common/signed-link.js';
 import { routerConfig } from '../config.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
-import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
+import {
+  EvidenceSnapshot,
+  evidenceSnapshotHasPayload,
+  type PublishedEvidenceSnapshot,
+} from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { Generation } from '../db/entities/generation.entity.js';
 // The leaf module rather than `../external-endpoints/index.js`: that barrel
@@ -168,6 +172,15 @@ export class EvidenceExportService {
     const found = references.filter(
       (reference): reference is SnapshotReference & { snapshot: EvidenceSnapshot } => reference.snapshot !== null,
     );
+    // Three states, not two, since the retention sweep exists (SUP-498): a
+    // publication whose documents we hold, one we never retrieved
+    // (`unretrieved`), and one whose retention window has closed (`expired`) —
+    // the row is still here and still names the digests, which is what an
+    // auditor takes to the publisher to ask for the document itself.
+    const held = found.filter((reference): reference is SnapshotReference & { snapshot: PublishedEvidenceSnapshot } =>
+      evidenceSnapshotHasPayload(reference.snapshot),
+    );
+    const expired = found.filter((reference) => !evidenceSnapshotHasPayload(reference.snapshot));
 
     const zip = new JSZip();
     const manifest = {
@@ -191,7 +204,7 @@ export class EvidenceExportService {
         served,
         covered: found.reduce((total, reference) => total + reference.generations, 0),
       },
-      snapshots: found.map((reference) => ({
+      snapshots: held.map((reference) => ({
         id: reference.snapshot.id,
         endpoint: reference.endpoint,
         // Which table the endpoint lives in, and with it what the digest means:
@@ -212,6 +225,22 @@ export class EvidenceExportService {
           jws: `snapshots/${reference.snapshot.id}/evidence.jws`,
         },
       })),
+      // Publications whose retention window has closed: the documents were
+      // removed under the account preference `/privacy` publishes, and the
+      // digests were kept. They still count toward `generations.covered` —
+      // the period *was* covered by a publication this router can name — and
+      // they carry no `files`, because there are none.
+      expired: expired.map((reference) => ({
+        id: reference.snapshot.id,
+        endpoint: reference.endpoint,
+        origin: reference.origin,
+        evidenceDigest: reference.snapshot.evidenceDigest,
+        evidenceDigestHex: reference.snapshot.evidenceDigestHex,
+        certFingerprint: reference.snapshot.certFingerprint,
+        issuedAt: reference.snapshot.issuedAt.toISOString(),
+        payloadStrippedAt: reference.snapshot.payloadStrippedAt?.toISOString() ?? null,
+        generations: reference.generations,
+      })),
       // Generations whose digest this router holds no bundle for: an upstream
       // that had already republished by the time the evidence poller asked, or
       // one it never reached. Named rather than dropped, because the digest is
@@ -227,14 +256,15 @@ export class EvidenceExportService {
     };
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
 
-    for (const { snapshot } of found) {
+    for (const { snapshot } of held) {
       zip.file(`snapshots/${snapshot.id}/bundle.json`, JSON.stringify(snapshot.bundle, null, 2));
       zip.file(`snapshots/${snapshot.id}/evidence.jws`, snapshot.jws);
     }
 
     this.logger.log(
-      `Exported ${found.length} evidence snapshots covering ${manifest.generations.covered} of ${served} ` +
-        `generation(s) for workspace ${workspaceId}.`,
+      `Exported ${held.length} evidence snapshots covering ${manifest.generations.covered} of ${served} ` +
+        `generation(s) for workspace ${workspaceId}` +
+        (expired.length > 0 ? `; ${expired.length} past the retention window, digests only.` : '.'),
     );
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   }
@@ -280,9 +310,12 @@ export class EvidenceExportService {
     const names = await this.ownEndpointNames(snapshots);
 
     return rows.flatMap((row) => {
-      // A snapshot deleted by the retention sweep leaves the stamp behind
-      // (`onDelete: 'SET NULL'` only fires on the relation this query bypasses),
-      // and there is no digest on the row to name it by.
+      // A generation can name a snapshot row that is no longer there: the stamp
+      // survives a deleted snapshot (`onDelete: 'SET NULL'` only fires on the
+      // relation this query bypasses), and there is no digest on the generation
+      // to name it by. The retention sweep is not that case — it empties the
+      // documents and keeps the row, so those arrive here and are reported as
+      // `expired`.
       const snapshot = byId.get(row.snapshotId);
       if (!snapshot) {
         return [];

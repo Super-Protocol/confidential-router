@@ -8,6 +8,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Endpoint } from '../db/entities/endpoint.entity.js';
+import type { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import type { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { ExternalEvidenceService } from '../external-endpoints/external-evidence.service.js';
 import { EvidenceService } from './evidence.service.js';
@@ -87,7 +88,10 @@ export class EvidenceController {
   })
   @ApiOkResponse({ description: 'The published bundle.', schema: { type: 'object', additionalProperties: true } })
   @ApiNotFoundResponse({ description: 'This router cannot tell which of its endpoints is its own.' })
-  @ApiServiceUnavailableResponse({ description: 'No bundle has been retrieved for it yet.' })
+  @ApiServiceUnavailableResponse({
+    description:
+      '`evidence_not_fetched`: no bundle retrieved for it yet. `evidence_expired`: past its retention window.',
+  })
   async own(): Promise<Record<string, unknown>> {
     const endpoint = await this.evidence.ownEndpoint();
     if (!endpoint) {
@@ -120,7 +124,11 @@ export class EvidenceController {
   @ApiParam({ name: 'endpoint', description: 'Router endpoint name or hostname, or external endpoint name.' })
   @ApiOkResponse({ description: 'The published bundle.', schema: { type: 'object', additionalProperties: true } })
   @ApiNotFoundResponse({ description: 'No such endpoint.' })
-  @ApiServiceUnavailableResponse({ description: 'Nothing has been retrieved for this endpoint yet.' })
+  @ApiServiceUnavailableResponse({
+    description:
+      '`evidence_not_fetched`: nothing retrieved for this endpoint yet. `evidence_expired`: the document is past ' +
+      'its retention window and has been removed; its digests are kept.',
+  })
   async latest(@Param('endpoint') endpointRef: string): Promise<Record<string, unknown>> {
     const endpoint = await this.evidence.endpointByNameOrHostname(endpointRef);
     if (endpoint) {
@@ -159,7 +167,7 @@ export class EvidenceController {
           `The platform publishes it at https://${endpoint.hostname}/.well-known/swarm-evidence.`,
       });
     }
-    return snapshot.bundle;
+    return bundleOrUnavailable(snapshot, endpoint.name, endpoint.hostname);
   }
 
   /**
@@ -185,6 +193,36 @@ export class EvidenceController {
           `Its platform publishes it at https://${endpoint.hostname}/.well-known/swarm-evidence.`,
       });
     }
-    return snapshot.bundle;
+    return bundleOrUnavailable(snapshot, endpoint.name, endpoint.hostname);
   }
+}
+
+/**
+ * The stored document, or the same typed 503 under a reason of its own when the
+ * retention sweep has removed it (SUP-498).
+ *
+ * Unreachable in a healthy deployment — the sweep exempts the publication every
+ * live surface relays, which is the one this method resolves — and it is still a
+ * branch rather than a non-null assertion, because the alternative to a named
+ * reason here is a 500 on the surface the whole product rests on. `evidence_expired`
+ * rather than `evidence_not_fetched`: "this router no longer holds the document,
+ * and the digests it kept are in the console" is a different instruction to a
+ * caller than "wait a few seconds".
+ *
+ * Never an empty 200, for the reason {@link EvidenceController} states above: a
+ * caller that verifies what it is handed must not have to tell a bundle from the
+ * absence of one.
+ */
+function bundleOrUnavailable(snapshot: EvidenceSnapshot, name: string, hostname: string): Record<string, unknown> {
+  if (!snapshot.bundle) {
+    throw new ServiceUnavailableException({
+      statusCode: 503,
+      reason: 'evidence_expired',
+      message:
+        `The evidence this router held for "${name}" is past its retention window and the document has been ` +
+        `removed; its digests are kept. The platform publishes the current bundle at ` +
+        `https://${hostname}/.well-known/swarm-evidence.`,
+    });
+  }
+  return snapshot.bundle;
 }

@@ -169,8 +169,9 @@ rateLimits:
 
 ```yaml
 evidence:
-  pollInterval: 5m        # how often each endpoint is retrieved
-  freshnessWindow: 24h    # past this, a publication reads as stale
+  pollInterval: 5m             # how often each endpoint is retrieved
+  freshnessWindow: 24h         # past this, a publication reads as stale
+  retentionSweepInterval: 6h   # how often archived bundles past their window are removed
 ```
 
 The poller fetches each endpoint's bundle, stores the publication and moves on.
@@ -198,6 +199,53 @@ What the console gets out of it:
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
+
+### The retention sweep
+
+`/privacy` publishes a period for archived evidence — *the raw bundle for as long
+as your Preferences say (90 days by default); the digests are kept* — and
+`Preferences → Evidence` offers the number
+(`UserPreferences.evidenceRetentionDays`, 1–3650 days). `retentionSweepInterval`
+is what keeps it: every pass removes the `bundle` and the `jws` of publications
+past their window, stamps `payloadStrippedAt`, and leaves the row — digests,
+certificate fingerprint, container images, measurements — exactly where it was.
+Nothing is ever deleted, so an endpoint's digest history is never shortened
+(SUP-498).
+
+Two rules decide a row, and both are there to avoid doing harm:
+
+- **Whose window.** The published period is per account; the table is per
+  publication, and on a one-model deployment the same publication is the archived
+  evidence of everyone it served. A bundle is removed only once it is past the
+  *longest* window of every account that holds it — a generation of that
+  account's workspace having been served under it — so no account's setting is
+  quietly shortened by somebody else's. A publication no account holds is swept on
+  the 90-day default.
+- **What is never removed.** The publication a live surface still hands out:
+  the newest one per own endpoint (`GET /v1/evidence`, `GET /v1/models`, the
+  console's badge) and, for an external upstream, the one carrying the digest an
+  admin pinned and a verdict saw — which can be *older* than one that superseded
+  it. Those readers answer "what is running now", not "what was archived".
+
+**Check that it is running rather than that it is configured.** `/health` carries
+`evidenceRetention: { status, lastSweepAt, stripped, failed }`, and every pass
+logs its counts including the quiet ones — `evidenceRetentionDays` was published
+as a period and offered as a setting for a whole preview while nothing read it,
+and nothing in the running system could have said so. Setting
+`retentionSweepInterval: 0ms` switches the sweep off, which makes the deployment
+publish a period it does not keep; the service says so at `warn` on every boot
+and `/health` reports `disabled`.
+
+**A deploy train resets the record, not the promise.** `EvidenceSnapshot` is
+`notCarried` in the migration bundle (`data-migration/bundle-coverage.ts`) — a
+snapshot from the old deployment describes containers that no longer run — so
+`payloadStrippedAt` does not cross a rebuild, and neither does anything a
+previous deployment swept. The new one re-fetches its own evidence within a poll
+of boot and starts its own windows from those publications, which is the right
+outcome for a privacy period and a silent one for an auditor: after a rebuild the
+only evidence that a sweep has ever run is `/health` and the log line, both
+process-lifetime. Read them on the new deployment rather than looking for
+stripped rows.
 
 ## Auth
 
