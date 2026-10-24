@@ -1,0 +1,345 @@
+# The gate over the trunk itself, which until SUP-483 nothing ran.
+#
+# Every check in this repository was a `pull_request` check, and `nx affected`
+# diffs against `pull_request.base.sha` — the tip main had when the PR was
+# opened, not the tip it is merging into. Two PRs that are individually green
+# can therefore merge into a tree neither of them typechecked: SUP-465 (#149)
+# added a spec constructing `AnalyticsService`, SUP-464 (#151) gave it a second
+# constructor argument, they merged 23 seconds apart, and `main`'s typecheck was
+# red for three hours until a human branched off and ran it locally.
+#
+# So this workflow is deliberately the opposite of the PR gate on both axes:
+#
+#   * `nx run-many`, not `nx affected` — on a trunk push there is no meaningful
+#     base to diff against, and "affected by the merge" is exactly the set that
+#     was already wrong.
+#   * it reports to a place a person looks. A failed Actions run on the default
+#     branch mails whoever pressed Merge and nobody else, which for a repo whose
+#     PRs are merged by agents is the same silence the issue is about. The
+#     `report` job below raises one tracking issue and keeps it current, the same
+#     mechanism `release-gatekeeper.yml`'s drift check uses.
+#
+# This does not close the window — a stale base can still merge — it makes the
+# window visible within a build instead of at the next contributor's desk.
+# Closing it needs "Require branches to be up to date before merging" on main,
+# which is a branch-protection setting and a human decision (SUP-483).
+name: main
+
+on:
+  push:
+    branches: [main]
+  # So the gate can be re-run against the current tip without an empty commit,
+  # which is what anyone chasing a red main wants first.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A later push supersedes an earlier one: its tree contains both merges, so its
+# verdict is the one that matters, and the 23-seconds-apart case this workflow
+# exists for is precisely when two runs are in flight at once. A superseded run
+# is `cancelled`, which the `report` job treats as neither pass nor fail.
+concurrency:
+  group: main-gate
+  cancel-in-progress: true
+
+jobs:
+  # The whole workspace, every target the PR gate runs through `nx affected`.
+  # `libs/types/src/workflows/trunk-gate.spec.ts` holds the two lists equal, so a
+  # target added to the PR gate cannot quietly skip the trunk.
+  verify:
+    name: Lint, typecheck, build & test (whole workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `gatekeeper` is excluded here and owned by the `go` job below, which has
+      # the Go toolchain and golangci-lint installed.
+      #
+      # The Nx cache is left on and costs nothing in correctness: its keys are
+      # content hashes of a target's inputs, so the merged tree — which is a
+      # tree no PR run ever hashed — cannot hit an entry either PR wrote. There
+      # is no remote cache configured, so in practice every run here is cold.
+      - name: Lint, typecheck, build & test
+        run: |
+          pnpm nx run-many -t lint typecheck build test \
+            --exclude=gatekeeper \
+            --parallel=3 \
+            --outputStyle=static
+
+      # `apps/router-api/schema.graphql` is what the console's client is
+      # generated from: the first spec checks it against the schema the resolvers
+      # produce, the second against the schema the running application serves.
+      # Either failing means the committed SDL is stale — which two PRs each
+      # adding a resolver can produce on merge without either being stale alone.
+      #
+      # The PR gate prefixes this with `nx run @confidential-router/router-api:build`
+      # because its `nx affected` can legitimately run nothing and leave no
+      # `dist/` for these specs to resolve. Dropping it here is deliberate:
+      # `run-many` above always builds.
+      - name: Console schema drift
+        run: pnpm exec vitest run --root apps/router-api src/app/api/graphql/schema.spec.ts test/schema.e2e.spec.ts
+
+      # `apps/router-ui/src/generated` is never edited by hand. Regenerating it
+      # from the committed schema has to be a no-op.
+      - name: Generated GraphQL client is up to date
+        run: |
+          pnpm nx run @confidential-router/router-ui:codegen
+          git diff --exit-code -- apps/router-ui/src/generated
+
+      - name: Check formatting
+        run: pnpm format:check
+
+  # Deliberately duplicated, not overlooked: `release-gatekeeper.yml`'s `checks`
+  # job already runs this composite action on every push to `main`. It is here
+  # anyway because `report` can only report on jobs it `needs`, and a gatekeeper
+  # failure that lands as a red tick on a release workflow is the silence this
+  # workflow exists to end. Do not delete it as redundant — delete it only
+  # together with the reporting it feeds.
+  go:
+    name: Go checks (gatekeeper)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The same composite action the PR gate and the release workflow run, so
+      # all three agree on what a green gatekeeper is.
+      - name: vet, test, static build and lint
+        uses: ./.github/actions/go-checks
+
+  # `nx run-many` above runs the unit and e2e suites on SQLite. This is the job
+  # that proves the same migrations apply to the database production uses — and
+  # the trunk is where that matters most, because two PRs can each add a
+  # migration that applies cleanly alone and collides in the merge.
+  postgres:
+    name: router-api migrations (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: router
+          POSTGRES_PASSWORD: router
+          POSTGRES_DB: router
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U router -d router"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CR_TEST_POSTGRES_URL: postgres://router:router@127.0.0.1:5432/router
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Asserts both that every migration applies and that the resulting schema
+      # is exactly the one the entities describe.
+      - name: Migration and schema-drift tests
+        run: pnpm exec vitest run --root apps/router-api src/app/db/migrations.spec.ts
+
+      - name: Build router-api
+        run: pnpm nx run @confidential-router/router-api:build
+
+      # The command a deployment actually runs, against a real database.
+      - name: Run the migration CLI
+        working-directory: apps/router-api
+        env:
+          CR_API_CONFIG_FILE: /nonexistent.yaml
+          CR_API_DATABASE__TYPE: postgres
+          CR_API_DATABASE__URL: postgres://router:router@127.0.0.1:5432/router
+          CR_API_AUTH__SECRET: ci-secret-not-used-for-anything-real-32
+        run: node dist/cli/run-migrations.js
+
+      - name: Re-run it, to prove it is idempotent
+        working-directory: apps/router-api
+        env:
+          CR_API_CONFIG_FILE: /nonexistent.yaml
+          CR_API_DATABASE__TYPE: postgres
+          CR_API_DATABASE__URL: postgres://router:router@127.0.0.1:5432/router
+          CR_API_AUTH__SECRET: ci-secret-not-used-for-anything-real-32
+        run: node dist/cli/run-migrations.js
+
+  # The whole story in one process tree: gatekeeper -> mock evidence host ->
+  # router-api -> mock LiteLLM -> the egress sidecar -> an upstream in another
+  # cloud. The PR gate runs this unconditionally because it is the only check
+  # covering the seams *between* the apps, and a PR that breaks a seam rarely
+  # touches every project involved — which is this workflow's own argument on a
+  # different axis. A seam is exactly what breaks in the merge of two PRs that
+  # are each green on their own side of it, so unconditional-per-PR is not the
+  # same as checked-on-the-trunk, and the trunk gets its own run.
+  #
+  # Ten minutes, no browser, and the repository already pays it on every PR.
+  demo:
+    name: End-to-end demo (gatekeeper → router → model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: apps/gatekeeper/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The built router-api as a process, the OpenAI SDK over real HTTP, the
+      # router's own /v1, GraphQL and evidence surfaces — and the external
+      # endpoint loop against the real `gatekeeper-sidecar`, which is why this
+      # job has the Go toolchain. Both `e2e` targets build the binaries they
+      # drive, including the build-tagged stand gatekeeper.
+      - name: router-api e2e
+        run: pnpm nx run @confidential-router/router-api-e2e:e2e --outputStyle=static
+
+      - name: The demo
+        run: pnpm nx run gatekeeper:e2e --outputStyle=static
+
+  # One issue, reopened and rewritten while the trunk is red rather than a new
+  # one per push, and closed by the first green push — the same shape as the
+  # release-drift nag in `release-gatekeeper.yml`. Without this the failure
+  # exists only as a red tick on a commit list nobody is watching.
+  report:
+    name: Report the trunk's state
+    # Every checking job in this workflow, because `report` can only report on
+    # what it `needs`; `trunk-gate.spec.ts` holds this list complete.
+    needs: [verify, go, postgres, demo]
+    # Not `success()`, because the whole point is to run when something above
+    # failed. A superseded run is excluded: it reaches here with `cancelled`
+    # results, and the push that superseded it reports on a tree containing it.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TITLE: '`main` is red'
+      # Backtick-free, because the exact title is matched in jq afterwards and
+      # GitHub's title search does not tokenise punctuation the way a literal
+      # would need it to.
+      SEARCH: 'in:title main is red'
+      # The issue is opened by `github-actions[bot]` with no assignee, so it
+      # otherwise reaches only people watching all repository activity. A label
+      # is the cheap part of fixing that: it makes the nag filterable and
+      # subscribable without this job having to guess at a human owner. It is
+      # applied after the issue exists, never as a precondition — see below.
+      LABEL: ci
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      VERIFY: ${{ needs.verify.result }}
+      GO: ${{ needs.go.result }}
+      POSTGRES: ${{ needs.postgres.result }}
+      DEMO: ${{ needs.demo.result }}
+    steps:
+      - name: Raise or refresh the tracking issue
+        if: contains(needs.*.result, 'failure')
+        run: |
+          set -euo pipefail
+
+          {
+            echo 'The trunk gate failed on [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}).'
+            echo
+            echo '| Job | Result |'
+            echo '| --- | --- |'
+            printf '| Lint, typecheck, build & test (whole workspace) | %s |\n' "$VERIFY"
+            printf '| Go checks (gatekeeper) | %s |\n' "$GO"
+            printf '| router-api migrations (PostgreSQL) | %s |\n' "$POSTGRES"
+            printf '| End-to-end demo (gatekeeper → router → model) | %s |\n' "$DEMO"
+            echo
+            echo "The failing step is in [the run]($RUN_URL)."
+            echo
+            echo 'Every PR gate can be green and this still fail: `nx affected` on a'
+            echo 'pull request diffs against the base the PR was opened on, so an'
+            echo 'incompatibility that exists only in the merge of two PRs is in no'
+            echo "PR's affected set (SUP-483). Check what else landed close to this"
+            echo 'commit before looking for a cause inside it.'
+            echo
+            echo 'This issue is rewritten by each red push and closes itself on the'
+            echo 'first green one.'
+            echo
+            echo "<sub>Raised by [the trunk gate]($RUN_URL).</sub>"
+          } > red-body.md
+
+          # The exact title, not the search's own ranking: `in:title` tokenises,
+          # so it is a candidate list rather than a match.
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 \
+            --search "$SEARCH" --json number,title \
+            --jq '[.[] | select(.title == env.TITLE)] | first | .number // empty')"
+          if [ -n "$existing" ]; then
+            # Reopening an already-open issue is an error, and an expected one.
+            gh issue reopen --repo "$GITHUB_REPOSITORY" "$existing" 2>/dev/null || true
+            # The label is not re-applied here: a human may have retriaged this
+            # issue, and this job's business is the body.
+            url="$(gh issue edit --repo "$GITHUB_REPOSITORY" "$existing" --body-file red-body.md)"
+          else
+            # The nag lands first and the label is a nicety afterwards, both
+            # best-effort. `gh issue create --label` fails outright on a label
+            # the repository does not have, and under `set -e` so does ensuring
+            # one — either as a precondition would turn "the trunk is red" into
+            # "the job that says so is red", which is the opposite of the point.
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --body-file red-body.md)"
+            gh label create "$LABEL" --repo "$GITHUB_REPOSITORY" --force \
+              --color ededed \
+              --description 'Raised by CI about the state of the repository itself' || true
+            gh issue edit "$url" --add-label "$LABEL" || true
+          fi
+
+          # An annotation as well as the issue, so the failure is legible from the
+          # run itself without opening anything.
+          echo "::error::$TITLE — $url"
+
+      - name: Close it once the trunk is green
+        if: ${{ !contains(needs.*.result, 'failure') }}
+        run: |
+          set -euo pipefail
+          open="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --search "$SEARCH" --json number,title \
+            --jq '[.[] | select(.title == env.TITLE)] | first | .number // empty')"
+          if [ -n "$open" ]; then
+            gh issue close --repo "$GITHUB_REPOSITORY" "$open" --comment \
+              "Green on [\`${{ github.sha }}\`]($RUN_URL)."
+          fi
