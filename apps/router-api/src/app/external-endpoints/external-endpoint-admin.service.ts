@@ -404,6 +404,12 @@ export class ExternalEndpointAdminService {
    * endpoint refused the credential the router sent (401)" — on an endpoint
    * still reporting `verified`, which for a leaked key is the opposite of what
    * the operator just asked for.
+   *
+   * An in-process refresh is sufficient *because* the chart ships
+   * `replicaCount: 1` (ADR-008 §8, the same assumption the status poller is
+   * built on). A second replica would hold its own catalogue, and the rotation
+   * would reach only the pod that served the mutation — so whatever makes
+   * router-api replica-safe has to make this fan out too.
    */
   async rotateKey(id: string, apiKey: string): Promise<ExternalEndpointView> {
     this.requireSecretsKey();
