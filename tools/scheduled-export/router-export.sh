@@ -55,6 +55,8 @@
 #   BLOB_PREFIX             optional prefix inside that container; empty is fine
 #                           and is the point of a dedicated container
 #   LOCAL_KEEP              7              (run directories kept on this host)
+#   LOCAL_MAX_AGE_DAYS      28             (and none older than this, refused runs
+#                           included; must match the container's lifecycle rule)
 #   ALERT_ISSUE_ID          multica issue a failed run comments on; empty = no alert
 #   EXPORT_DIR              ~/prod-exports (optional)
 #
@@ -171,7 +173,18 @@ EXPORT_DIR="${EXPORT_DIR:-$HOME/prod-exports}"
 # all, so an explicitly empty value has to survive rather than be defaulted away.
 BLOB_PREFIX="${BLOB_PREFIX-}"
 LOCAL_KEEP="${LOCAL_KEEP:-7}"
+# The retention period the privacy policy states for these copies (SUP-495). Not
+# optional and not 0: a count alone bounds nothing once the timer stops or the
+# shrink guard starts refusing, because pruning by count happens only on a
+# successful run.
+LOCAL_MAX_AGE_DAYS="${LOCAL_MAX_AGE_DAYS:-28}"
 ALERT_ISSUE_ID="${ALERT_ISSUE_ID:-}"
+case "$LOCAL_MAX_AGE_DAYS" in
+  '' | *[!0-9]* | 0)
+    echo "router-export: LOCAL_MAX_AGE_DAYS must be a whole number of days above 0, got '$LOCAL_MAX_AGE_DAYS' in $CONFIG" >&2
+    exit 1
+    ;;
+esac
 
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 DAY="${STAMP%T*}"
@@ -192,6 +205,22 @@ chmod 700 "$EXPORT_DIR"
 work="$(mktemp -d "${TMPDIR:-/tmp}/router-export.XXXXXXXX")"
 chmod 700 "$work"
 cookies="$work/cookies.txt"
+
+# Retention by age, first thing and on every run (SUP-495). Here and not beside
+# the LOCAL_KEEP rotation at the end, which only a successful run reaches: a run
+# the shrink guard refuses keeps its bundle locally, and a week of refusals
+# would otherwise leave copies that outlive the period the privacy policy
+# states. Run directories are named for their UTC start, so the cutoff is a
+# string comparison against a stamp of the same shape — no mtime to be reset by
+# a copy or a restore.
+cutoff="$(date -u -d "-$LOCAL_MAX_AGE_DAYS days" '+%Y%m%dT%H%M%SZ')"
+for old in "$EXPORT_DIR"/*T*Z; do
+  [ -d "$old" ] || continue
+  if [[ "${old##*/}" < "$cutoff" ]]; then
+    log "pruning $old — older than $LOCAL_MAX_AGE_DAYS days"
+    rm -rf "$old"
+  fi
+done
 
 # --- failing loudly -----------------------------------------------------------
 
