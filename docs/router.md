@@ -236,6 +236,17 @@ and nothing in the running system could have said so. Setting
 publish a period it does not keep; the service says so at `warn` on every boot
 and `/health` reports `disabled`.
 
+**A deploy train resets the record, not the promise.** `EvidenceSnapshot` is
+`notCarried` in the migration bundle (`data-migration/bundle-coverage.ts`) — a
+snapshot from the old deployment describes containers that no longer run — so
+`payloadStrippedAt` does not cross a rebuild, and neither does anything a
+previous deployment swept. The new one re-fetches its own evidence within a poll
+of boot and starts its own windows from those publications, which is the right
+outcome for a privacy period and a silent one for an auditor: after a rebuild the
+only evidence that a sweep has ever run is `/health` and the log line, both
+process-lifetime. Read them on the new deployment rather than looking for
+stripped rows.
+
 ## Auth
 
 A one-time code mailed to the address, OAuth, and the deployment's own bootstrap

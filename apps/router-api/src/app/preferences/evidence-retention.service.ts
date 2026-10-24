@@ -242,7 +242,12 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
           report.inUse += 1;
           continue;
         }
-        const days = windows.get(candidate.id) ?? DEFAULT_RETENTION_DAYS;
+        // `Number.isFinite` and not just `??`: a `NaN` window would make the
+        // comparison below `false` and strip the row, and an arithmetic
+        // accident must not fail in the direction that deletes. Unreachable
+        // through a `NOT NULL` integer bounded 1–3650, and the guard is free.
+        const stored = windows.get(candidate.id);
+        const days = stored !== undefined && Number.isFinite(stored) ? stored : DEFAULT_RETENTION_DAYS;
         if (candidate.issuedAt.getTime() + days * DAY_MS > now.getTime()) {
           report.held += 1;
           continue;
@@ -423,6 +428,14 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
    *
    * Erring wide costs a few rows of storage; erring narrow empties the bundle
    * `GET /v1/evidence` is serving.
+   *
+   * **One query per endpoint, deliberately.** The single-query form is
+   * `latestForMany`'s — read every snapshot of every endpoint in ascending order
+   * and let the last write win — and it loads the whole history to find one row
+   * per endpoint, which is the table this sweep exists because it grows. A
+   * `LIMIT 1` per endpoint reads one row per endpoint instead. The bound is the
+   * endpoint count: two on production, and a deployment with twenty would do
+   * twenty indexed single-row lookups once every six hours.
    */
   private async liveSnapshotIds(): Promise<Set<string>> {
     const snapshots = this.dataSource.getRepository(EvidenceSnapshot);
