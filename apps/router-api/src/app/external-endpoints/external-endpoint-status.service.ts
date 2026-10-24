@@ -23,6 +23,12 @@ import {
 import { fetchSidecarVerdicts, type SidecarVerdict } from './sidecar-admin.client.js';
 import { clip, type ProjectedVerdict, projectVerdict } from './status-projection.js';
 
+/** What one alerting pass said out loud, by direction. */
+interface OutageAlerts {
+  declared: number;
+  recovered: number;
+}
+
 export interface SyncReport {
   /** Rows the sidecar reported on. */
   seen: number;
@@ -30,7 +36,7 @@ export interface SyncReport {
   flipped: number;
   /** Timeline rows appended. */
   events: number;
-  /** Runs that crossed an outage threshold in this pass and were alerted on. */
+  /** Runs that crossed an outage threshold in this pass. Declarations only — a recovery is not one. */
   outages: number;
 }
 
@@ -114,6 +120,7 @@ export class ExternalEndpointStatusService {
       lastFailureAt: null,
       notServingSince: now,
       consecutiveFailures: 0,
+      upstreamUnreachable: null,
     } as const satisfies Partial<ExternalEndpoint>;
 
     if (enabled.length > 0) {
@@ -179,24 +186,33 @@ export class ExternalEndpointStatusService {
       // the same pass that saw the flip rather than on the next request.
       await this.catalog.refresh();
     }
-    report.outages = await this.alertOnOutages(projectedRows, now);
-    report.events += report.outages;
+    const alerts = await this.alertOnOutages(projectedRows, now);
+    report.outages = alerts.declared;
+    report.events += alerts.declared + alerts.recovered;
     this.publish(projectedRows, now, now);
     return report;
   }
 
   /**
-   * Publishes what `/health` reports, from rows alone — for a pass whose sidecar
-   * read failed.
+   * The same pass from the rows alone, for when the sidecar could not be read.
    *
-   * The counts are then the last projection plus whatever an admin has changed
-   * since, and `verdictsReadAt` stops moving, which is exactly the shape of "this
-   * router is no longer being told anything". Without it a sidecar that stopped
-   * answering would leave `/health` frozen on the last successful pass with
-   * nothing to say it was frozen.
+   * It both publishes and **alerts**, and the alerting is the point. One pod, one
+   * sidecar, both in the same container group: a sidecar that wedges or dies
+   * takes every external model down with it, and nothing arrives to project — so
+   * the path that reaches `alertOnOutages` through a successful `/verdicts` read
+   * never runs. Before this, `/health` would flip to `outage` after
+   * `outage.afterNoSuccess` while the log said nothing but one deduped warning,
+   * which is both the failure most likely to look like silence and the exact
+   * disagreement between readers `external-endpoint-liveness.ts` refuses.
+   *
+   * `verdictsReadAt` stops moving, which is the honest shape of "this router is
+   * no longer being told anything": the counts are the last projection plus
+   * whatever an admin has changed since, and the timestamp beside them says when
+   * they stopped being news.
    */
-  async refreshHealth(now: Date = new Date()): Promise<void> {
+  async refreshFromRows(now: Date = new Date()): Promise<void> {
     const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true } });
+    await this.alertOnOutages(endpoints, now);
     this.publish(endpoints, null, now);
   }
 
@@ -258,10 +274,16 @@ export class ExternalEndpointStatusService {
    * same verdict for whoever arrives later.
    *
    * Exactly once per run, in each direction. See {@link alerted}.
+   *
+   * Called from both passes — the one that read `/verdicts` and
+   * {@link refreshFromRows}, which is all there is when the sidecar itself cannot
+   * be read. The {@link alerted} latch is what makes that safe: whichever pass
+   * gets there first declares the run, and the other one finds it already
+   * declared.
    */
-  private async alertOnOutages(rows: readonly ExternalEndpoint[], now: Date): Promise<number> {
+  private async alertOnOutages(rows: readonly ExternalEndpoint[], now: Date): Promise<OutageAlerts> {
     const thresholds = this.thresholds();
-    let alerts = 0;
+    const alerts: OutageAlerts = { declared: 0, recovered: 0 };
     for (const row of rows) {
       const liveness = livenessOf(row, thresholds, now);
       const run = row.notServingSince?.getTime() ?? null;
@@ -269,7 +291,7 @@ export class ExternalEndpointStatusService {
 
       if (liveness.outage && run !== null && alerted !== run) {
         this.alerted.set(row.id, run);
-        alerts += 1;
+        alerts.declared += 1;
         this.logger.error(outageLine(liveness, now));
         await this.recordEvent(row.id, 'outage', {
           now,
@@ -285,7 +307,7 @@ export class ExternalEndpointStatusService {
       // approval. Those end the alert; they do not mean the upstream came back.
       if (alerted !== undefined && row.notServingSince === null) {
         this.alerted.delete(row.id);
-        alerts += 1;
+        alerts.recovered += 1;
         this.logger.log(recoveryLine(liveness, new Date(alerted), now));
         await this.recordEvent(row.id, 'recovered', {
           now,

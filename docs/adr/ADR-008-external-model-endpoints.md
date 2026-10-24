@@ -99,14 +99,24 @@ hours; a human found it, not the platform.
 What the amendment adds, in one sentence: **the run is projected beside the verdict, and crossing a
 configured threshold is an event.**
 
-- **Schema** (§6). Four columns on `external_endpoints`: `lastSuccessAt`, `lastFailureAt`,
-  `notServingSince`, `consecutiveFailures`. They are verdict projections under §8's rule, not an
-  exception to it — the boot reset clears them, the export bundle carries none, an import lands them
-  empty. The accepted cost is named: a router restarted during an outage reports the outage as starting
-  at the restart, because the alternative is a persisted verdict. The timeline keeps the true start.
+- **Schema** (§6). Five columns on `external_endpoints`: `lastSuccessAt`, `lastFailureAt`,
+  `notServingSince`, `consecutiveFailures` and `upstreamUnreachable`. They are verdict projections under
+  §8's rule, not an exception to it — the boot reset clears them, the export bundle carries none, an
+  import lands them empty. The accepted cost is named: a router restarted during an outage reports the
+  outage as starting at the restart, because the alternative is a persisted verdict. The timeline keeps
+  the true start.
 - **Counting.** A failure is counted per *distinct check* — the verdict's own `checkedAt` moved — not per
   status poll. The poll runs every 5 s against a 10-minute re-attestation, so counting readings would
-  make the threshold a number of seconds wearing a different name.
+  make the threshold a number of seconds wearing a different name. A report carrying no `checkedAt`
+  cannot be told from the previous one and so does not advance the counter either; the core emits the
+  field unconditionally, which makes that a guard on the seam rather than a live case.
+- **Where the alert is evaluated.** On the status pass, in both of its forms: the one that read
+  `/verdicts`, and the one that runs from the rows alone when the sidecar could not be read at all. The
+  second is not a fallback for tidiness — one pod, one sidecar, same container group, so a sidecar that
+  wedges takes every external model down and is the single failure that yields *no verdict to notice it
+  by*. Evaluating only on the first form would have left `/health` reading `outage` while the log said
+  nothing, which is precisely the disagreement between readers this amendment forbids. One latch covers
+  both, so whichever pass gets there first declares the run.
 - **Thresholds** (`externalEndpoints.outage.afterFailures`, `.afterNoSuccess`; 3 and 15 minutes).
   Configuration rather than constants: what counts as an outage is a property of the deployment. Both,
   because they miss different failures — a count sees nothing when the checking itself has stopped, and
@@ -128,9 +138,18 @@ configured threshold is an event.**
   decides the overall status (a dark upstream must not take a healthy process out of the
   load-balancer rotation) and it names no endpoint, hostname, stage or reason, because `/health` is
   unauthenticated and ruling 3 keeps upstream identity behind a session.
-- **Reachability.** `fetch` — the bundle never arrived — is reported apart from every other refusal.
-  That distinction is the lesson of the outage: "the upstream is down" and "a deployment nobody approved"
+- **Reachability.** "Could not reach it at all" is reported apart from every other refusal. That
+  distinction is the lesson of the outage: "the upstream is down" and "a deployment nobody approved"
   rendered identically, and they call for opposite actions.
+
+  It is **read from the core, not re-derived here**: `Report.Unreachable` (SUP-422) is the authoritative
+  answer and is narrower than the `fetch` stage, which also covers a non-2xx answer to the bundle fetch,
+  an over-sized bundle and a hostname the gatekeeper refuses — all of them an upstream answering badly.
+  Inferring the flag from the stage would report an ingress that serves completions while its evidence
+  route 502s as "the upstream did not answer", sending an operator to a cloud that is fine; that is this
+  amendment's own mis-direction pointing the other way, and it is a plausible presentation of the gateway
+  misconfiguration behind SUP-491. The stage remains the fallback for a row that recorded no flag, which
+  a restart retires within one poll.
 
 What is *not* changed: no new verdict, no persisted trust, no second clock. The pure rules live in one
 module (`external-endpoint-liveness.ts`) read by all three surfaces — the alert, the timeline and

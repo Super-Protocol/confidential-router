@@ -29,6 +29,7 @@ function row(overrides: Partial<LivenessRow> = {}): LivenessRow {
     lastSuccessAt: NOW,
     notServingSince: null,
     consecutiveFailures: 0,
+    upstreamUnreachable: false,
     pinnedEvidenceDigest: DIGEST,
     ...overrides,
   } as ExternalEndpoint;
@@ -40,6 +41,7 @@ function dark(overrides: Partial<LivenessRow> = {}): LivenessRow {
     status: 'denied',
     lastStage: 'fetch',
     lastReason: 'fetch: EOF',
+    upstreamUnreachable: true,
     notServingSince: new Date(NOW.getTime() - 31 * 60_000),
     lastSuccessAt: new Date(NOW.getTime() - 31 * 60_000),
     consecutiveFailures: 3,
@@ -48,8 +50,27 @@ function dark(overrides: Partial<LivenessRow> = {}): LivenessRow {
 }
 
 describe('reachabilityOf', () => {
-  it('calls a fetch failure unreachable — the upstream never spoke', () => {
+  it('reports unreachable when the sidecar said the dial, handshake or read failed', () => {
     expect(reachabilityOf(dark())).toBe('unreachable');
+  });
+
+  it('believes the sidecar over the stage: a fetch the upstream answered badly is reachable', () => {
+    // `Report.Unreachable` is narrower than the `fetch` stage (SUP-422): a
+    // non-2xx answer to the bundle fetch, an over-sized bundle and a hostname
+    // the gatekeeper refuses all stop at `fetch` while the upstream demonstrably
+    // answered. An ingress serving completions while
+    // `/.well-known/swarm-evidence` 502s is a plausible presentation of the
+    // gateway misconfiguration behind SUP-491 — calling it "did not answer"
+    // would send the operator to look at a cloud that is fine, which is this
+    // module's own mis-direction pointing the other way.
+    const answeredBadly = row({
+      status: 'denied',
+      lastStage: 'fetch',
+      lastReason: 'unexpected status 502 from https://partner.example/.well-known/swarm-evidence',
+      upstreamUnreachable: false,
+    });
+
+    expect(reachabilityOf(answeredBadly)).toBe('reachable');
   });
 
   it('calls every other refusal reachable, because something answered to be refused', () => {
@@ -60,12 +81,24 @@ describe('reachabilityOf', () => {
     }
   });
 
+  it('falls back to the stage only for a row that recorded no flag at all', () => {
+    // A verdict projected before the column existed. The boot reset retires the
+    // question within one poll of a restart, so this is a transitional answer and
+    // not a second opinion.
+    expect(reachabilityOf(row({ status: 'denied', lastStage: 'fetch', upstreamUnreachable: null }))).toBe(
+      'unreachable',
+    );
+    expect(reachabilityOf(row({ status: 'denied', lastStage: 'policy', upstreamUnreachable: null }))).toBe('reachable');
+  });
+
   it('is unknown before the first check, not reachable and not down', () => {
     expect(reachabilityOf(row({ status: 'pending', lastCheckedAt: null }))).toBe('unknown');
   });
 
   it('is reachable on an admission whatever the stale stage says', () => {
-    expect(reachabilityOf(row({ status: 'verified', lastStage: 'fetch' }))).toBe('reachable');
+    expect(reachabilityOf(row({ status: 'verified', lastStage: 'fetch', upstreamUnreachable: true }))).toBe(
+      'reachable',
+    );
   });
 });
 
@@ -113,6 +146,7 @@ describe('isOutage', () => {
       lastCheckedAt: null,
       lastSuccessAt: null,
       consecutiveFailures: 0,
+      upstreamUnreachable: null,
       notServingSince: new Date(NOW.getTime() - 16 * 60_000),
     });
 
@@ -180,6 +214,7 @@ describe('summarise', () => {
       status: 'pending',
       lastCheckedAt: null,
       lastSuccessAt: null,
+      upstreamUnreachable: null,
       notServingSince: new Date(NOW.getTime() - 16 * 60_000),
     });
 

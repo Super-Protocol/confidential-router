@@ -405,8 +405,11 @@ reads `configured` with `dropped: 0` forever. `configured` rules out the failure
   `externalEndpoints.outage.afterFailures` or `.afterNoSuccess`). **`outage` is the value to alert on**, and
   the same crossing writes one `error` log line and one `outage` row on the endpoint's timeline.
   `registered` counts enabled rows; `serving` / `failing` / `pending` are their verdicts; `unreachable` is
-  the subset of `failing` whose last check never got a document back at all — the upstream did not answer,
-  as distinct from answering with something this router refused. `since` is when the longest-running
+  the subset of `failing` the *sidecar* reported as unreachable — the dial, the handshake or the read
+  failed, so nothing arrived. It is read from `Report.unreachable` and never inferred from the `fetch`
+  stage, which is wider: an upstream that answers the bundle fetch with a 502 is `failing` and **not**
+  `unreachable`, because it answered — badly — and that sends an operator to the evidence route rather
+  than to a cloud that is up. `since` is when the longest-running
   outstanding "not serving" began, and `verdictsReadAt` is when the sidecar's verdicts were last read: a
   timestamp that has stopped moving says the counts are stale, which is the one failure the counts cannot
   show by themselves.
@@ -415,7 +418,10 @@ reads `configured` with `dropped: 0` forever. `configured` rules out the failure
 2026-10-23 06:11 UTC and this router answered `503 gatekeeper_error` / `attestation_failed` to every caller
 for 30 hours. Every individual behaviour was correct — the verdict flipped to `denied`, the model left
 `/v1/models`, each refusal named its stage — and none of it was anywhere an operator looks. `/health` is the
-one unauthenticated call that answers "what is deployed", so it is where "and is it serving" belongs.
+one unauthenticated call that answers "what is deployed", so it is where "and is it serving" belongs. The
+same crossing writes an `ERROR` log line, and it is produced by the status pass — including the pass that
+runs from the rows alone when the sidecar itself cannot be read, which is the one failure mode that
+produces no verdict to notice it by. `docs/router.md` carries the matcher a log sink needs.
 
 `/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
 else: no project key, no key prefix, no `POSTHOG_HOST`. `externalEndpoints` is bounded the same way and for

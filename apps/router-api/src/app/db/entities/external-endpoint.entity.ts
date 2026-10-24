@@ -135,6 +135,23 @@ export class ExternalEndpoint {
   @Column({ type: 'int', default: 0 })
   consecutiveFailures!: number;
 
+  /**
+   * Whether the last check could not reach the upstream at all, as the *sidecar*
+   * answered it (`SidecarReport.unreachable`, SUP-422).
+   *
+   * Read, never inferred. The `fetch` stage is wider than this: a non-2xx answer
+   * to the bundle fetch, an over-sized bundle and a hostname the gatekeeper
+   * refuses all stop at `fetch` while the upstream demonstrably answered. Calling
+   * those unreachable would send an operator to look at a cloud that is up —
+   * the same mis-direction SUP-517 exists to remove, pointing the other way.
+   *
+   * Null when nothing has been checked. A row that holds null and a stage of
+   * `fetch` is a verdict projected before this column existed; the reader falls
+   * back to the stage there, and the boot reset retires the question.
+   */
+  @Column({ type: 'boolean', nullable: true })
+  upstreamUnreachable!: boolean | null;
+
   /** Normalised mrEnclave hex of the upstream cloud's root, as the verdict observed it. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   measurementSeen!: string | null;

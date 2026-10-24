@@ -90,6 +90,7 @@ const PENDING_VERDICT = {
   lastSuccessAt: null,
   lastFailureAt: null,
   consecutiveFailures: 0,
+  upstreamUnreachable: null,
 } as const satisfies Partial<ExternalEndpoint>;
 
 /**
@@ -263,6 +264,7 @@ export class ExternalEndpointAdminService {
         // registration is exempt from the outage thresholds (`expectedToServe`).
         notServingSince: now,
         consecutiveFailures: 0,
+        upstreamUnreachable: null,
         apiKeyCiphertext: sealed.ciphertext,
         apiKeyPrefix: sealed.prefix,
         createdByUserId: spec.createdByUserId,

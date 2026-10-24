@@ -222,7 +222,10 @@ verdict would make `afterFailures` a number of seconds wearing a different name.
 Both thresholds are there because they miss different failures: the count is the
 honest unit while checks are happening, and sees nothing at all when the checking
 itself has stopped. A sidecar that never answers leaves every endpoint at
-`pending`, serving nothing, with no counter moving; only `afterNoSuccess` notices.
+`pending`, serving nothing, with no counter moving; only `afterNoSuccess` notices
+that, and it notices out loud — the check runs on the status poll's error path
+too, from the rows alone, precisely because a wedged sidecar is the failure that
+produces no verdict to notice it by.
 
 Crossing either threshold does three things, once per run:
 
@@ -241,6 +244,31 @@ Crossing either threshold does three things, once per run:
   every built-in model and the whole console, and dropping it from the
   load-balancer rotation would turn one dark upstream into a dark deployment.
 
+### Configuring the sink that listens
+
+**Until something matches that line, the behaviour change is zero.** "This is the
+alert" is only true once something is listening, so the matcher is part of
+deploying this, not an afterthought. Two stable handles, either of which is
+enough:
+
+| Match on | Value |
+| --- | --- |
+| Logger name (pino `context`) | `ExternalEndpointStatusService` |
+| Level | `error` (pino `level: 50`) |
+| Message prefix | `External endpoint "` … `" has not served for ` |
+
+The recovery line is the same logger at `log` level (pino `info`) and contains
+`is serving again after`. A rule on *name + level* is the one to prefer: the
+message wording is for a human and may be improved, while the logger name is
+structural. Polling `GET /health` for `externalEndpoints.status == "outage"` is
+the equivalent black-box rule for a sink that cannot read logs — it crosses at
+the same instant, by construction, because both come out of the same pass.
+
+A real outbound notification path — mail to `auth.adminEmails`, or an ops event —
+is deliberately **not** in this version; it is tracked as SUP-535 so that it is a
+decision rather than a side effect. Until it exists, the matcher above is the
+whole of the alert, which is why configuring it is part of deploying this.
+
 Two endpoints are deliberately exempt, and both exemptions are about keeping the
 alert worth believing rather than keeping it quiet: one an operator **disabled**
 (nothing is expected of a row taken out of service) and one whose deployment has
@@ -248,6 +276,14 @@ alert worth believing rather than keeping it quiet: one an operator **disabled**
 `digest-not-pinned` by design (SUP-252). That is a registration half-finished, not
 an upstream that went dark. An endpoint whose pin stopped matching after an
 unapproved redeploy is *not* exempt: the router was serving it a moment ago.
+
+Reachability — "did the upstream answer at all" — is read from the sidecar's own
+`unreachable` flag, never inferred from the stage. The `fetch` stage is wider than
+the flag: a non-2xx answer to the bundle fetch, an over-sized bundle and a
+hostname the gatekeeper refuses all stop there while the upstream demonstrably
+answered. An ingress that serves completions while `/.well-known/swarm-evidence`
+502s reads as `REACHABLE`, denied at `fetch` — which sends the operator to the
+evidence route rather than to a cloud that is fine.
 
 Per endpoint, the full answer is `ExternalEndpoint.liveness` in the console schema
 — reachability, since when, how many checks, whether an outage was declared. All
