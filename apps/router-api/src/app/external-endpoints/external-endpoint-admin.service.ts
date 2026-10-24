@@ -491,6 +491,11 @@ export class ExternalEndpointAdminService {
     const normalised = this.requireMeasurement(measurement);
     await this.refuseKnownDigest(normalised);
     if (await this.measurements().findOne({ where: { measurement: normalised }, select: { id: true } })) {
+      // Refusing a repeat is right — a second row for one measurement is nothing
+      // an operator can want. Mind the wording, though: `tools/demo`'s stand
+      // matches on "is already on the trust list" to make its own setup
+      // idempotent, and nothing but this comment ties the two together. A
+      // reword with no change there restores the e2e cascade SUP-528 closed.
       throw new ConflictException(`The measurement ${normalised} is already on the trust list.`);
     }
     const row: TrustedMeasurement = {
