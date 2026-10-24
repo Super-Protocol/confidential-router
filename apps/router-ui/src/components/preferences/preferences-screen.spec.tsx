@@ -74,7 +74,7 @@ describe('PreferencesScreen', () => {
     expect(await screen.findByText(TEST_VIEWER.email)).toBeInTheDocument();
     // The workspace row comes from the session, which resolves independently.
     expect(await screen.findByText(/Default Workspace/)).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Archive quotes' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Keep archived quotes' })).toBeChecked();
     expect(screen.getByRole('switch', { name: 'Desktop notifications' })).not.toBeChecked();
   });
 
@@ -116,12 +116,40 @@ describe('PreferencesScreen', () => {
     expect(screen.getByRole('switch', { name: 'Email receipts' })).toBeChecked();
   });
 
-  it('cannot change the retention window while nothing is being archived', async () => {
+  /*
+   * SUP-525. The select used to be greyed out whenever `archiveEvidence` was
+   * off, which made opting out of holding lock the one control that works: the
+   * stored window could not be changed back, and it still counted toward the
+   * sweep's maximum over holders.
+   */
+  it('leaves the retention window reachable while the account is not holding anything', async () => {
     renderWithSession(<PreferencesScreen />, {
       mocks: [typedSessionMock(), server({ archiveEvidence: false }).query],
     });
 
-    expect(await screen.findByRole('combobox', { name: 'Retention window' })).toBeDisabled();
+    expect(await screen.findByRole('combobox', { name: 'Retention window' })).toBeEnabled();
+  });
+
+  it('says what the switch does to a bundle another account also holds', async () => {
+    renderWithSession(<PreferencesScreen />, { mocks: [typedSessionMock(), server().query] });
+
+    expect(
+      await screen.findByText(/another account served under the same publication still holds it/),
+    ).toBeInTheDocument();
+  });
+
+  it('writes the opt-out and says the account no longer holds anything', async () => {
+    const api = server();
+    renderWithSession(<PreferencesScreen />, {
+      mocks: [typedSessionMock(), api.query, api.update({ archiveEvidence: false })],
+    });
+
+    await userEvent.click(await screen.findByRole('switch', { name: 'Keep archived quotes' }));
+
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith('This account no longer holds archived quotes.'));
+    // Not "no longer archiving quotes": the poller still files every bundle it
+    // fetches, because the live publication's is what `GET /v1/evidence` relays.
+    expect(toasts.success).not.toHaveBeenCalledWith(expect.stringContaining('No longer archiving'));
   });
 
   it('offers the stored retention window even when it is not one of the presets', async () => {

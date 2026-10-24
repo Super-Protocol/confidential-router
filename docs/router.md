@@ -212,7 +212,7 @@ certificate fingerprint, container images, measurements — exactly where it was
 Nothing is ever deleted, so an endpoint's digest history is never shortened
 (SUP-498).
 
-Two rules decide a row, and both are there to avoid doing harm:
+Three rules decide a row, and all three are there to avoid doing harm:
 
 - **Whose window.** The published period is per account; the table is per
   publication, and on a one-model deployment the same publication is the archived
@@ -221,6 +221,19 @@ Two rules decide a row, and both are there to avoid doing harm:
   account's workspace having been served under it — so no account's setting is
   quietly shortened by somebody else's. A publication no account holds is swept on
   the 90-day default.
+- **Who is holding at all.** `Preferences → Evidence` also offers *Keep archived
+  quotes* (`UserPreferences.archiveEvidence`), and an account with it off is not
+  one of the holders: it contributes nothing to that maximum rather than its
+  window, so a publication only such accounts hold is past its window the moment
+  it is published and goes on the next pass (SUP-525). One an opted-in account
+  also holds stays until *that* window closes — a row is the archived evidence of
+  everyone served under it, and one account's switch cannot remove a document
+  others are still promised, which is why the switch is an opt-out of holding
+  rather than a delete button. It does not reach the poller either: every bundle
+  is still fetched and filed, because the live publication's bundle is what
+  `GET /v1/evidence` relays. One opt-out anywhere widens the candidate range to
+  the whole unstripped table, since no row is too young to be past nobody's
+  window; the write stays capped per pass.
 - **What is never removed.** The publication a live surface still hands out:
   the newest one per own endpoint (`GET /v1/evidence`, `GET /v1/models`, the
   console's badge) and, for an external upstream, the one carrying the digest an

@@ -52,12 +52,52 @@ export interface SweepOptions {
 }
 
 /**
- * The longest window any holder of a group has set.
+ * The longest window any holder of a group has set, over the holders that are
+ * still holding anything.
  *
- * `COALESCE` to the schema default, because a user who has never opened
- * Preferences has no row and is still promised the published period.
+ * Three cases, in the order the `CASE` reads them (SUP-525):
+ *
+ * - `preferences.userId IS NULL` — the `LEFT JOIN` missed, so this holder has
+ *   never opened Preferences and is still promised the published period.
+ * - `NOT preferences.archiveEvidence` — the holder has opted out of keeping
+ *   archived bundles, so it contributes `NULL`, which `MAX` ignores. An account
+ *   that is not holding the publication must not be what keeps it, and its
+ *   stored window — which it cannot even reach while the switch is off — must
+ *   not count toward the maximum.
+ * - otherwise — the window it stored.
+ *
+ * `MAX` over holders that all opted out is therefore `NULL`, and
+ * {@link holderWindowDays} reads that as "nobody holds this". That is a
+ * different answer from a snapshot no holder query returned at all, which keeps
+ * the published default.
+ *
+ * Written without a boolean literal on purpose: `TRUE`/`FALSE` are `1`/`0` on
+ * SQLite and the same expression has to run on both drivers. `NOT <column>`
+ * does, and `IS NULL` carries the join miss.
  */
-const HOLDER_WINDOW_DAYS = `MAX(COALESCE(preferences.evidenceRetentionDays, ${DEFAULT_RETENTION_DAYS}))`;
+const HOLDER_WINDOW_DAYS =
+  'MAX(CASE WHEN preferences.userId IS NOT NULL AND NOT preferences.archiveEvidence THEN NULL ' +
+  `ELSE COALESCE(preferences.evidenceRetentionDays, ${DEFAULT_RETENTION_DAYS}) END)`;
+
+/**
+ * One holder-window row's answer, in days.
+ *
+ * `NULL` is the opt-out answer — every account that holds the publication has
+ * `archiveEvidence` off, so nobody is holding it and its window closed when it
+ * was published. Recorded as `0` rather than left out of the map, because left
+ * out means something else: held by nobody at all, which keeps the published
+ * default.
+ */
+function holderWindowDays(days: number | string | null | undefined): number {
+  // `undefined` as well as `null`: an aggregate over no non-NULL input is NULL,
+  // and which of the two a driver hands back for it is not worth depending on.
+  if (days === null || days === undefined) return 0;
+  const parsed = Number(days);
+  // Not finite: an arithmetic accident must not fail in the direction that
+  // deletes, so it falls back to the published period — the same direction
+  // `sweep` errs in for a row no holder query spoke for.
+  return Number.isFinite(parsed) ? parsed : DEFAULT_RETENTION_DAYS;
+}
 
 export interface SweepReport {
   /** Rows past the earliest window anyone could have set, so worth a decision. */
@@ -110,6 +150,25 @@ interface Candidate {
  * under it: `Generation.evidenceSnapshotId` for this deployment's own endpoints,
  * and `(externalEndpointId, evidenceDigest)` for an upstream's, which is the same
  * two paths `EvidenceExportService` resolves an audit archive through.
+ *
+ * ## Opting out of holding
+ *
+ * `UserPreferences.archiveEvidence` is that rule's one modifier (SUP-525). The
+ * console offers it as a switch, so it has to mean something, and the only thing
+ * it can honestly mean on a per-publication table is **this account is not one of
+ * the holders**: it contributes nothing to the maximum instead of its window.
+ *
+ * A publication only opted-out accounts hold is then past its window immediately
+ * and goes on the next pass; one an opted-in account also holds stays until that
+ * account's window closes, which is the only correct answer — a row is the
+ * archived evidence of every account served under it, and one account's switch
+ * cannot remove a document other accounts are still promised.
+ *
+ * So the switch is an opt-out of *holding*, not a delete button and not a filter
+ * on the poller: `EvidencePollerService` keeps filing every bundle it fetches,
+ * because the bundle of the publication serving right now is what
+ * `GET /v1/evidence/{endpoint}` relays and what `/v1/models` reads the TEE out
+ * of, and no user preference can switch those off.
  *
  * ## What is never stripped
  *
@@ -246,6 +305,10 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
         // comparison below `false` and strip the row, and an arithmetic
         // accident must not fail in the direction that deletes. Unreachable
         // through a `NOT NULL` integer bounded 1–3650, and the guard is free.
+        //
+        // `0` *is* reachable, and is meant to strip: it is what `windowDaysOf`
+        // answers for a publication every one of whose holders has opted out of
+        // holding it (SUP-525).
         const stored = windows.get(candidate.id);
         const days = stored !== undefined && Number.isFinite(stored) ? stored : DEFAULT_RETENTION_DAYS;
         if (candidate.issuedAt.getTime() + days * DAY_MS > now.getTime()) {
@@ -323,11 +386,26 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
     return query.getMany();
   }
 
+  /**
+   * The shortest window anybody could be holding a publication for, which is
+   * where the candidate range starts.
+   *
+   * An account with `archiveEvidence` off counts as `0` (SUP-525): a publication
+   * only such accounts hold is past its window the moment it is published, and a
+   * prefilter that started 90 days back would never offer it to the pass. So one
+   * opt-out anywhere on the deployment widens the candidate range to the whole
+   * unstripped table — an indexed, keyset-paged, oldest-first read whose write is
+   * still capped by {@link MAX_STRIPPED_PER_PASS}, and the only range in which
+   * the opt-out can mean what the console says it means.
+   */
   private async shortestWindowDays(): Promise<number> {
     const row = await this.dataSource
       .getRepository(UserPreferences)
       .createQueryBuilder('preferences')
-      .select('MIN(preferences.evidenceRetentionDays)', 'days')
+      .select(
+        'MIN(CASE WHEN NOT preferences.archiveEvidence THEN 0 ELSE preferences.evidenceRetentionDays END)',
+        'days',
+      )
       .getRawOne<{ days: number | string | null }>();
     const stored = Number(row?.days ?? Number.NaN);
     // The default is always in play: an account that has never opened Preferences
@@ -336,12 +414,15 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
   }
 
   /**
-   * The longest window held by any account, per candidate snapshot.
+   * The longest window held by any account, per candidate snapshot — `0` for a
+   * publication whose holders have all opted out of holding anything.
    *
    * Two queries because there are two ways a generation names its publication,
    * and they are the two `EvidenceExportService` reads an audit archive through.
    * A snapshot missing from the result is held by nobody — the caller falls back
-   * to the default rather than treating it as "retain forever".
+   * to the default rather than treating it as "retain forever". A snapshot
+   * *present* with `0` is held by nobody either, but for the other reason: every
+   * holder has `archiveEvidence` off. See {@link HOLDER_WINDOW_DAYS}.
    *
    * `LEFT JOIN user_preferences` with a default for the miss, because a user who
    * has never changed the setting has no row and is still promised the published
@@ -360,9 +441,9 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
           .addSelect(HOLDER_WINDOW_DAYS, 'days')
           .where('generation.evidenceSnapshotId IN (:...ids)', { ids: batch })
           .groupBy('generation.evidenceSnapshotId')
-          .getRawMany<{ key: string; days: number | string }>();
+          .getRawMany<{ key: string; days: number | string | null }>();
         for (const row of rows) {
-          windows.set(row.key, Number(row.days));
+          windows.set(row.key, holderWindowDays(row.days));
         }
       }
     }
@@ -382,13 +463,13 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
           })
           .groupBy('generation.externalEndpointId')
           .addGroupBy('generation.evidenceDigest')
-          .getRawMany<{ endpointId: string; digest: string; days: number | string }>();
+          .getRawMany<{ endpointId: string; digest: string; days: number | string | null }>();
         for (const row of rows) {
           // The two `IN` lists above are a cross product, so a pair that no
           // candidate names can come back; matching on the pair is what discards it.
           const id = byPair.get(`${row.endpointId}\u0000${row.digest}`);
           if (id) {
-            windows.set(id, Number(row.days));
+            windows.set(id, holderWindowDays(row.days));
           }
         }
       }

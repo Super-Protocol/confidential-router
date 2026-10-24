@@ -170,15 +170,18 @@ export function PreferencesScreen() {
 
           <SettingRow
             htmlFor="pref-archive-evidence"
-            title="Archive quotes"
-            description="Keep the published bundle and its JWS, not just the digest, so a response can be re-checked offline later."
+            title="Keep archived quotes"
+            description="Hold the published bundle and its JWS for this account, not just the digest, so a response can be re-checked offline later. Off, this account holds nothing: a bundle is kept only while another account served under the same publication still holds it."
             control={
               <Switch
                 id="pref-archive-evidence"
                 checked={preferences.archiveEvidence}
                 disabled={saving}
                 onCheckedChange={(checked) =>
-                  void save({ archiveEvidence: checked }, checked ? 'Archiving quotes.' : 'No longer archiving quotes.')
+                  void save(
+                    { archiveEvidence: checked },
+                    checked ? 'Keeping archived quotes.' : 'This account no longer holds archived quotes.',
+                  )
                 }
               />
             }
@@ -186,11 +189,15 @@ export function PreferencesScreen() {
           <SettingRow
             htmlFor="pref-retention"
             title="Retention window"
-            description="How long archived bundles stay downloadable. Digests are kept for as long as the generation is."
+            description="How long archived bundles stay downloadable. Digests are kept for as long as the generation is. Applies while the switch above is on; settable either way, so it is already right when you turn it back on."
             control={
               <Select
                 value={String(preferences.evidenceRetentionDays)}
-                disabled={saving || !preferences.archiveEvidence}
+                // Reachable whatever the switch says (SUP-525). Greying it out
+                // made the opt-out gesture lock the one control that works: the
+                // stored window became unchangeable, and before the retention
+                // sweep read `archiveEvidence` at all it still counted.
+                disabled={saving}
                 onValueChange={(value) =>
                   void save({ evidenceRetentionDays: Number(value) }, `Archived bundles kept for ${value} days.`)
                 }
