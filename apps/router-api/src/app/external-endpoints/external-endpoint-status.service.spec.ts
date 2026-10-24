@@ -334,7 +334,15 @@ describe('the sustained-failure alert', () => {
       health: 'broken',
       admitted: false,
       reason: 'fetch: EOF',
-      report: { checkedAt, verified: false, admitted: false, stage: 'fetch', reason: 'fetch: EOF' },
+      report: {
+        checkedAt,
+        verified: false,
+        admitted: false,
+        stage: 'fetch',
+        reason: 'fetch: EOF',
+        // The sidecar's own answer: the read failed, so nothing arrived (SUP-422).
+        unreachable: true,
+      },
     };
   }
 
@@ -465,10 +473,11 @@ describe('the sustained-failure alert', () => {
     expect(health.status()).toMatchObject({ status: 'none', registered: 0 });
   });
 
-  it('pages on elapsed time when the sidecar never answers at all', async () => {
-    // No verdict, no counter, and every model refused: the failure a count cannot
-    // see. `resetToPending` starts the clock, and only the duration threshold
-    // notices.
+  it('pages on elapsed time when the sidecar reports no verdict for a registered endpoint', async () => {
+    // The sidecar answers, with nothing to say about this endpoint — a render it
+    // has not picked up, or an endpoint it has not started. No verdict, no
+    // counter, and every model refused: the failure a count cannot see.
+    // `resetToPending` starts the clock and only the duration threshold notices.
     const endpoint = await pinnedEndpoint();
     const boot = new Date('2026-10-23T06:11:00.000Z');
     await service.resetToPending(boot);
@@ -481,5 +490,68 @@ describe('the sustained-failure alert', () => {
     expect(errors[0]).toContain('16m');
     expect(health.status()).toMatchObject({ status: 'outage', pending: 1, failing: 0 });
     expect((await eventsOf(endpoint.id)).map((event) => event.kind)).toEqual(['outage']);
+  });
+
+  it('pages when the sidecar itself cannot be read — the case with no verdict to notice it by', async () => {
+    // One pod, one sidecar, both in the same container group: a sidecar that
+    // wedges or dies takes every external model down and nothing arrives to
+    // project. `sync` throws before it ever reaches the alert, so the alert has
+    // to live on the rows-only pass too — otherwise `/health` reads `outage`
+    // while the log says nothing, which is the disagreement between readers this
+    // module refuses.
+    const endpoint = await pinnedEndpoint();
+    const boot = new Date('2026-10-23T06:11:00.000Z');
+    await service.resetToPending(boot);
+    const errors = capture('error');
+
+    vi.spyOn(adminClient, 'fetchSidecarVerdicts').mockRejectedValue(
+      new adminClient.SidecarUnavailableError('/verdicts', 'ECONNREFUSED'),
+    );
+    const later = new Date(boot.getTime() + 16 * 60_000);
+    await expect(service.sync(later)).rejects.toThrow(adminClient.SidecarUnavailableError);
+    await service.refreshFromRows(later);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('16m');
+    expect((await eventsOf(endpoint.id)).map((event) => event.kind)).toEqual(['outage']);
+    const summary = health.status();
+    expect(summary).toMatchObject({ status: 'outage', registered: 1, serving: 0 });
+    // Never read, so never claimed: the absent timestamp is what says the counts
+    // beside it are not news.
+    expect(summary.verdictsReadAt).toBeUndefined();
+  });
+
+  it('declares a run once however the pass that noticed it got there', async () => {
+    // Both call sites share the latch, so a sidecar that flaps between answering
+    // and not must not page twice for one run.
+    const endpoint = await pinnedEndpoint();
+    const boot = new Date('2026-10-23T06:11:00.000Z');
+    await service.resetToPending(boot);
+    const errors = capture('error');
+    const later = new Date(boot.getTime() + 16 * 60_000);
+
+    await service.refreshFromRows(later);
+    sidecarReports();
+    await service.sync(new Date(later.getTime() + 2_000));
+    await service.refreshFromRows(new Date(later.getTime() + 4_000));
+
+    expect(errors).toHaveLength(1);
+    expect((await eventsOf(endpoint.id)).filter((event) => event.kind === 'outage')).toHaveLength(1);
+  });
+
+  it('counts only declarations as outages, not the recoveries that close them', async () => {
+    const endpoint = await pinnedEndpoint();
+    capture('error');
+    capture('log');
+    await failFor(endpoint.name, 3);
+
+    const recoveredAt = new Date('2026-10-23T07:11:00.000Z');
+    sidecarReports(verified(endpoint.name, { checkedAt: recoveredAt.toISOString() }));
+    const report = await service.sync(recoveredAt);
+
+    // `outages` is what the poller renders as "outage alert(s)"; a recovery is an
+    // event, and it is counted as one.
+    expect(report.outages).toBe(0);
+    expect(report.events).toBeGreaterThanOrEqual(2);
   });
 });

@@ -502,6 +502,31 @@ describe('sustained failure', () => {
     await removeTrustedMeasurement(stand.admin, trusted.id);
   });
 
+  it('does not call an upstream unreachable when it answered the bundle fetch badly', async () => {
+    // The mis-direction the other way, and the one the sidecar's own flag exists
+    // to prevent (SUP-422): the ingress is up and serving completions while
+    // `/.well-known/swarm-evidence` answers 503. That is stage `fetch` with
+    // `unreachable` unset — an upstream answering badly — and a plausible
+    // presentation of the gateway misconfiguration behind SUP-491. Reporting it
+    // as "the upstream did not answer" would send the operator to a cloud that
+    // is fine.
+    const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
+    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+
+    stand.upstream.evidenceHost.stopPublishing();
+
+    const degraded = await waitForHealth((block) => block.status === 'outage');
+    expect(degraded).toMatchObject({ failing: 1, serving: 0, unreachable: 0 });
+
+    const dossier = await readExternalEndpoint(stand.admin, endpointId);
+    expect(dossier?.lastStage).toBe('fetch');
+    expect(dossier?.liveness).toMatchObject({ reachability: 'REACHABLE', outage: true });
+
+    stand.upstream.evidenceHost.resumePublishing();
+    await waitForHealth((block) => block.status === 'ok');
+    await removeTrustedMeasurement(stand.admin, trusted.id);
+  });
+
   it('reports a host that stops answering as unreachable, not merely denied', async () => {
     // The production incident, reproduced: the hostname stops terminating TLS, so
     // the sidecar's bundle fetch gets nothing back. Before this the console and

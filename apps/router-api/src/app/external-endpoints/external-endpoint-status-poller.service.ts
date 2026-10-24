@@ -82,12 +82,21 @@ export class ExternalEndpointStatusPollerService implements OnApplicationBootstr
         this.logger.warn(`External endpoint status poll failed: ${message}`);
         this.lastFailure = message;
       }
-      // The sidecar could not be read, so `/health` is refreshed from the rows
-      // alone: the counts stay true to the last projection while `verdictsReadAt`
-      // stops moving, which is what tells an operator the numbers are stale
-      // rather than reassuring (SUP-517). A failure here is swallowed — this is
-      // the error path already, and a second throw would only hide the first.
-      await this.status.refreshHealth(now).catch(() => undefined);
+      // The sidecar could not be read, so the pass runs from the rows alone: it
+      // still alerts, and it still publishes `/health` with `verdictsReadAt` left
+      // where it was, which is what tells an operator the numbers are stale
+      // rather than reassuring (SUP-517). Alerting here is not a nicety — a
+      // wedged sidecar is the failure that takes every external model down, and
+      // it is the one case where no verdict ever arrives to notice it by.
+      //
+      // Logged rather than thrown: this is already the error path, and a second
+      // throw would hide the first. Logged rather than swallowed, because this
+      // branch is now load-bearing for the alert.
+      await this.status.refreshFromRows(now).catch((error: unknown) => {
+        this.logger.warn(
+          `External endpoint outage check from rows failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     } finally {
       this.running = false;
     }

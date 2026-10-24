@@ -1127,10 +1127,13 @@ approval rendered identically, and nobody was told about either.
   because a console row reads them together: `reachability`, `notServingSince`, `lastSuccessAt`,
   `lastFailureAt`, `consecutiveFailures`, `outage`. Readable by any signed-in user, like the rest of the
   verdict (ruling 3). Every field is a projection of live verification and is reset on boot (ADR-008 §8).
-- **`ExternalEndpointReachability`** — `UNREACHABLE` when the last check never got a document back at
-  all (ADR-003 §1 stage `fetch`), `REACHABLE` when something answered and verification or policy refused
-  it, `UNKNOWN` before the first check. The distinction the outage turned on: `UNREACHABLE` is "go look
-  at the cloud", `REACHABLE`-and-denied is "open this drawer and approve a deployment".
+- **`ExternalEndpointReachability`** — `UNREACHABLE` when the sidecar reported that the dial, the
+  handshake or the read failed (`Report.unreachable`, SUP-422), `REACHABLE` when something answered and
+  verification or policy refused it, `UNKNOWN` before the first check. The distinction the outage turned
+  on: `UNREACHABLE` is "go look at the cloud", `REACHABLE`-and-denied is "open this drawer and approve a
+  deployment". **Read from the sidecar, not inferred from the stage** — `fetch` is wider than the flag,
+  and an upstream whose ingress is up while `/.well-known/swarm-evidence` 502s stops at `fetch` having
+  answered. Calling that one `UNREACHABLE` would be this field's own mis-direction pointing the other way.
 - **`liveness.consecutiveFailures`** counts *distinct checks*, not polls. The status poll re-reads the
   sidecar every 5 s against a re-attestation every 10 minutes, so counting readings would make the
   threshold a number of seconds wearing a different name.

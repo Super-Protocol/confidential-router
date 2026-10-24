@@ -24,26 +24,38 @@ import type { ExternalEndpoint, ExternalEndpointStatus } from '../db/entities/ex
  * approving. The two call for opposite actions: "the upstream is down, go fix the
  * cloud" and "open the console and approve a deployment".
  *
- * - `unreachable` — the last check never got a document back (ADR-003 §1 stage
- *   `fetch`). Nothing is being asserted about the upstream's trustworthiness; it
- *   did not speak.
+ * - `unreachable` — the dial, the handshake or the read failed, so nothing
+ *   arrived and nothing was judged. Nothing is being asserted about the
+ *   upstream's trustworthiness; it did not speak.
  * - `reachable` — it answered. Either the verdict admitted, or verification or
  *   policy refused what it answered with, which is a judgement about a live
  *   upstream.
  * - `unknown` — nothing has been checked since this process started. Honest, and
  *   the state every row boots in (ADR-008 §8).
+ *
+ * **Read from the sidecar, not inferred here.** `Report.Unreachable` (SUP-422)
+ * is the authoritative answer and is narrower than the `fetch` stage: an
+ * over-sized bundle, a hostname the gatekeeper refuses, and a non-2xx answer to
+ * the bundle fetch all stop at `fetch` with the flag unset, because the upstream
+ * answered — badly. An ingress that serves completions while
+ * `/.well-known/swarm-evidence` 404s is a plausible presentation of the very
+ * gateway misconfiguration behind SUP-491, and reporting it as "the upstream did
+ * not answer" would send an operator to look at a cloud that is fine.
  */
 export type EndpointReachability = 'reachable' | 'unreachable' | 'unknown';
 
 /**
- * The ADR-003 §1 pipeline stage that means the bundle never arrived.
+ * The fallback, for a row whose `upstreamUnreachable` was never recorded.
  *
- * One stage, not a list: every later stage — `cert-chain`, `untrusted-root`,
- * `jws`, `tls-fingerprint`, `policy` — and every two-factor refusal is reached
- * only by having something to inspect, so each of them is itself evidence that
- * the upstream is up.
+ * Wider than the flag and deliberately only a fallback: a verdict projected
+ * before that column existed has the stage and nothing else, and `fetch` is the
+ * best available guess there. Every later stage — `cert-chain`,
+ * `untrusted-root`, `jws`, `tls-fingerprint`, `policy` — and every two-factor
+ * refusal is reached only by having something to inspect, so each of them is
+ * itself evidence that the upstream is up. The boot reset retires the question
+ * within one poll of a restart.
  */
-const UNREACHABLE_STAGE = 'fetch';
+const UNREACHABLE_STAGE_FALLBACK = 'fetch';
 
 /** The columns this module reads. A subset, so a test can build one by hand. */
 export type LivenessRow = Pick<
@@ -54,20 +66,27 @@ export type LivenessRow = Pick<
   | 'lastStage'
   | 'lastReason'
   | 'lastCheckedAt'
+  | 'upstreamUnreachable'
   | 'lastSuccessAt'
   | 'notServingSince'
   | 'consecutiveFailures'
   | 'pinnedEvidenceDigest'
 >;
 
-export function reachabilityOf(row: Pick<LivenessRow, 'status' | 'lastStage' | 'lastCheckedAt'>): EndpointReachability {
+export function reachabilityOf(
+  row: Pick<LivenessRow, 'status' | 'lastStage' | 'lastCheckedAt' | 'upstreamUnreachable'>,
+): EndpointReachability {
   if (!row.lastCheckedAt) {
     return 'unknown';
   }
   if (row.status === 'verified') {
     return 'reachable';
   }
-  return row.lastStage === UNREACHABLE_STAGE ? 'unreachable' : 'reachable';
+  const reported = row.upstreamUnreachable ?? null;
+  if (reported !== null) {
+    return reported ? 'unreachable' : 'reachable';
+  }
+  return row.lastStage === UNREACHABLE_STAGE_FALLBACK ? 'unreachable' : 'reachable';
 }
 
 /**
