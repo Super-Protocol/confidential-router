@@ -63,8 +63,13 @@ handshakes with `InsecureSkipVerify` and relies on channel binding to the publis
   written to the database, logs, metrics or error reports. This property is part of the canonical
   snapshot the user pins (router image digest + config), i.e. it is verifiable, not promised. Enforced in
   code by: streaming passthrough without buffering beyond token counting; a log sanitiser that drops
-  `messages`, `prompt`, `input`, `choices`, `delta`; and a unit test that fails if a `Generation` column
-  can hold content.
+  `messages`, `prompt`, `input`, `content`, `choices`, `delta`, `text`, `completion` and `embedding`
+  (`DEFAULT_CONTENT_KEYS` in `libs/server-common/src/lib/logging/redact.ts`, a second list beside the
+  credential redactor and matched on the whole key so that `contextLength` and `contentType` survive); a
+  log line about an upstream's error body that carries the error class, the field path and the body's
+  size but never its text (`describeUpstreamError` in `apps/router-api/src/app/api/v1/upstream-failure.ts`
+  — a model server refusing a request is the one party on this path that quotes it back); and a unit test
+  that fails if a `Generation` column can hold content.
 - Its own published evidence (fetched bundle) — a fact about the platform, stored as `EvidenceSnapshot`.
 
 ## What the router cannot see (by construction)
@@ -104,7 +109,7 @@ handshakes with `InsecureSkipVerify` and relies on channel binding to the publis
 | T7 | Gatekeeper misconfiguration (empty pins, wrong root) | Schema validation (`minItems`), fail-closed default, `policy test` offline, TUI shows stage of failure | fail-open is a documented foot-gun |
 | T8 | Gatekeeper fed a poisoned policy that always allows | Default pin policy is built in and ANDed; user policies can only narrow | none |
 | T9 | API key theft | Keys stored hashed (SHA-256) with a displayable prefix; per-key model scope, spend limit, expiry; revoke | client-side secret hygiene |
-| T10 | Prompt leakage via logs/metrics/errors | Log sanitiser; content-free `Generation`; error bodies never echo input | LiteLLM/model server logging is the operator's config and is inside the pinned snapshot |
+| T10 | Prompt leakage via logs/metrics/errors | Log sanitiser (a content key list beside the credential one, SUP-497); content-free `Generation`; an upstream's error body is summarised into a log line, never written to one — its wording still reaches the caller, which is where SUP-448 needed it | LiteLLM/model server logging is the operator's config and is inside the pinned snapshot |
 | T11 | Billing manipulation | Ledger append-only with idempotency keys; Stripe webhook signature; prices frozen per generation | — |
 | T12 | Evidence poller as SSRF vector | `evidenceUrl` override is config-only (operator), never user input | — |
 
@@ -137,7 +142,7 @@ withdraw its hardware report; the suites hold each of them to the stage that mus
 | T3 stale bundle | `issuedAtSkewMs` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: jws`) |
 | T4 wrong root | `useOtherCloud()` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: untrusted-root`) |
 | T7 empty pins | a fresh `gatekeeper init` | `apps/gatekeeper/pkg/cli` (`config validate`, "never admits") |
-| T10 prompt leakage | — | `apps/router-api` (`Generation` column test, log sanitiser) |
+| T10 prompt leakage | an upstream 400 quoting the rejected field | `libs/server-common/src/lib/logging/redact.spec.ts` (one test per content field name), `apps/router-api/src/app/api/v1/upstream-failure.spec.ts` (`describeUpstreamError`), `apps/router-api/test/v1-limits.e2e.spec.ts` (the wording reaches the client and not the log), `apps/router-api` (`Generation` column test) |
 | T13 a cloud, not a deployment | a listed cloud with no deployment approved | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`PENDING` at `digest-not-pinned` with the cloud trusted), `apps/gatekeeper/pkg/verifier` and `pkg/policy` (`twofactor_test.go`) |
 | T13 the deployment redeploys on a trusted cloud | `evidenceHost.rotateDeployment()` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`stage: digest-mismatch`, models dropped, approve-new-digest readmits) |
 | the cloud redeploys on an unlisted image | `sidecar.rotateMeasurement()` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`stage: measurement-not-trusted`), `tools/demo/src/story.ts` (step 12 — the model leaves `/v1/models`) |
