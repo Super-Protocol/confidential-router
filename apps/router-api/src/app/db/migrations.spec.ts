@@ -111,7 +111,16 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-466's client dimension is one additive column; the first undo drops
+      // SUP-517's failure-run columns are four additive columns on one table; the
+      // first undo drops only those.
+      expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
+      await dataSource.undoLastMigration();
+      for (const column of ['lastSuccessAt', 'lastFailureAt', 'notServingSince', 'consecutiveFailures']) {
+        expect(await queryRunner.hasColumn('external_endpoints', column)).toBe(false);
+      }
+      expect(await queryRunner.hasColumn('external_endpoints', 'lastCheckedAt')).toBe(true);
+
+      // SUP-466's client dimension is one additive column; the next undo drops
       // only that and leaves the rest of the metering row alone.
       expect(await queryRunner.hasColumn('generations', 'client')).toBe(true);
       await dataSource.undoLastMigration();

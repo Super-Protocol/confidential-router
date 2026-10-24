@@ -86,6 +86,56 @@ pinned digest. What changes, by layer:
   digest into the measurements list" confusion is resolved structurally: the digest has its own home on
   the endpoint, and the measurements form still validates shape and says what it wants.
 
+## Amendment (SUP-517) — a run of failed checks is an event in its own right
+
+The design as built detects a dead upstream on every single check and tells nobody. Each piece is
+correct in isolation: the verdict flips to `DENIED_BY_THIS_ROUTER`, §6's fail-closed drop takes the
+models out of `/v1/models`, decision 5's 503 names the stage, §8 holds the row at `pending` across a
+restart. None of it is an alert, and the row only ever held the *latest* verdict — so the question an
+operator asks first, "how long has this been failing?", had no answer anywhere. A published upstream
+lost the gateway route for its hostname at 2026-10-23 06:11 UTC and this router answered 503 for 30
+hours; a human found it, not the platform.
+
+What the amendment adds, in one sentence: **the run is projected beside the verdict, and crossing a
+configured threshold is an event.**
+
+- **Schema** (§6). Four columns on `external_endpoints`: `lastSuccessAt`, `lastFailureAt`,
+  `notServingSince`, `consecutiveFailures`. They are verdict projections under §8's rule, not an
+  exception to it — the boot reset clears them, the export bundle carries none, an import lands them
+  empty. The accepted cost is named: a router restarted during an outage reports the outage as starting
+  at the restart, because the alternative is a persisted verdict. The timeline keeps the true start.
+- **Counting.** A failure is counted per *distinct check* — the verdict's own `checkedAt` moved — not per
+  status poll. The poll runs every 5 s against a 10-minute re-attestation, so counting readings would
+  make the threshold a number of seconds wearing a different name.
+- **Thresholds** (`externalEndpoints.outage.afterFailures`, `.afterNoSuccess`; 3 and 15 minutes).
+  Configuration rather than constants: what counts as an outage is a property of the deployment. Both,
+  because they miss different failures — a count sees nothing when the checking itself has stopped, and
+  a sidecar that never answers leaves every row at `pending` with no counter moving.
+- **Expected to serve.** The thresholds apply only to an endpoint that is enabled *and* has a pinned
+  digest. `pinnedEvidenceDigest: null` is a registration awaiting its first approval (the SUP-252
+  amendment above made that the normal first state of every endpoint), which is this router waiting for
+  an admin rather than an upstream that went dark. Paging for it would have meant paging once for every
+  endpoint that upgrade touched. A stale pin — `digest-mismatch` after an unapproved redeploy — is *not*
+  exempt: the router was serving that upstream a moment ago.
+- **The alert.** One `ERROR` log line per run, with the endpoint, the duration, the count, whether the
+  upstream answered at all and the sidecar's reason; one `recovered` line when an admitting verdict
+  closes it. `error` because a log sink can match on it and this deployment has no pager to call;
+  once per run because a line repeated every five seconds is a line an alert is tuned to ignore.
+- **The timeline** (§7) gains `outage` and `recovered`, which are deliberately not `denied` / `verified`
+  renamed: a denial is one check that refused, an outage is this router declaring the run of them
+  actionable.
+- **`GET /health`** gains an `externalEndpoints` block — counts, two timestamps and one word. It never
+  decides the overall status (a dark upstream must not take a healthy process out of the
+  load-balancer rotation) and it names no endpoint, hostname, stage or reason, because `/health` is
+  unauthenticated and ruling 3 keeps upstream identity behind a session.
+- **Reachability.** `fetch` — the bundle never arrived — is reported apart from every other refusal.
+  That distinction is the lesson of the outage: "the upstream is down" and "a deployment nobody approved"
+  rendered identically, and they call for opposite actions.
+
+What is *not* changed: no new verdict, no persisted trust, no second clock. The pure rules live in one
+module (`external-endpoint-liveness.ts`) read by all three surfaces — the alert, the timeline and
+`/health` — so an operator cannot catch them disagreeing.
+
 ## 1. What this does to ADR-002's one rule — and what it does not
 
 ADR-002's rule is that the router never learns a verdict **about itself**. That rule is untouched: the

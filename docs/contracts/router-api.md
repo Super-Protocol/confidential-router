@@ -29,8 +29,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
-| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key. In-cluster only — the chart does not publish it |
-| `GET /admin/health` | operational | the same document from outside the cluster, behind the operator's session and `auth.adminEmails` (SUP-479) |
+| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
 
@@ -353,7 +352,7 @@ generation owned by the key's workspace. Never any content.
 
 ### `GET /health`
 
-Liveness, a real database round-trip, and the state of the two subsystems that can fail without anyone
+Liveness, a real database round-trip, and the state of the three subsystems that can fail without anyone
 noticing. `200` when `status` is `ok`, `503` when it is `error` — the body says which dependency is down,
 the status code is what a probe reads.
 
@@ -364,14 +363,25 @@ the status code is what a probe reads.
   "uptimeSeconds": 4821,
   "database": { "status": "up" },
   "mail": { "provider": "smtp", "state": "ok", "since": "2026-10-21T09:12:04.000Z" },
-  "analytics": { "status": "disabled", "dropped": 412 }
+  "analytics": { "status": "disabled", "dropped": 412 },
+  "externalEndpoints": {
+    "status": "outage",
+    "registered": 1,
+    "serving": 0,
+    "failing": 1,
+    "unreachable": 1,
+    "pending": 0,
+    "since": "2026-10-23T06:11:12.000Z",
+    "verdictsReadAt": "2026-10-24T12:41:03.000Z"
+  }
 }
 ```
 
 **Only `database` decides `status`.** A process that cannot reach PostgreSQL cannot meter a single
-generation and must leave the rotation. `mail` (SUP-269) and `analytics` (SUP-464) are reported and never
-promoted: a deployment whose mail server is down or whose analytics key went missing still serves every
-model, and taking it out of rotation over a lost welcome mail or a missing chart would be the worse bug.
+generation and must leave the rotation. `mail` (SUP-269), `analytics` (SUP-464) and `externalEndpoints`
+(SUP-517) are reported and never promoted: a deployment whose mail server is down, whose analytics key went
+missing or whose external upstream is dark still serves every built-in model and the whole console, and
+taking it out of rotation over any of those would be the worse bug.
 
 - `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
   `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
@@ -388,8 +398,32 @@ a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to 
 reads `configured` with `dropped: 0` forever. `configured` rules out the failure that has no other symptom
 (the variable never arrived); a key that is present and wrong is still found by looking for the events.
 
-`/health` is unauthenticated, so `analytics` carries a two-value enum and a count and nothing
-else: no project key, no key prefix, no `POSTHOG_HOST`.
+- `externalEndpoints`: registered external upstreams, aggregated (ADR-008). `status` is `none` (nothing
+  registered), `unknown` (registered, and no status pass has completed — a boot, polling switched off, or a
+  sidecar that has never answered), `ok` (every enabled upstream holds an admitting verdict), `degraded`
+  (one or more does not, below the thresholds) or `outage` (a run has passed
+  `externalEndpoints.outage.afterFailures` or `.afterNoSuccess`). **`outage` is the value to alert on**, and
+  the same crossing writes one `error` log line and one `outage` row on the endpoint's timeline.
+  `registered` counts enabled rows; `serving` / `failing` / `pending` are their verdicts; `unreachable` is
+  the subset of `failing` whose last check never got a document back at all — the upstream did not answer,
+  as distinct from answering with something this router refused. `since` is when the longest-running
+  outstanding "not serving" began, and `verdictsReadAt` is when the sidecar's verdicts were last read: a
+  timestamp that has stopped moving says the counts are stale, which is the one failure the counts cannot
+  show by themselves.
+
+**Why `externalEndpoints` is here at all.** A published upstream lost the gateway route for its hostname at
+2026-10-23 06:11 UTC and this router answered `503 gatekeeper_error` / `attestation_failed` to every caller
+for 30 hours. Every individual behaviour was correct — the verdict flipped to `denied`, the model left
+`/v1/models`, each refusal named its stage — and none of it was anywhere an operator looks. `/health` is the
+one unauthenticated call that answers "what is deployed", so it is where "and is it serving" belongs.
+
+`/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
+else: no project key, no key prefix, no `POSTHOG_HOST`. `externalEndpoints` is bounded the same way and for
+the stronger reason — ruling 3 on SUP-221 keeps upstream identity and verdict detail behind a session — so
+it is counts, two timestamps and a word: **no endpoint name, hostname, stage or reason**. Nothing in it is
+new to an anonymous caller either, since the public `models` query already reports `available` per model;
+what the block adds is the aggregate, the clock and the word `outage`. The per-endpoint answer is
+`ExternalEndpoint.liveness` in the console schema.
 
 One thing it does leak, knowingly: while `status` is `disabled` the counter rises once per captured event,
 so polling `/health` measures the deployment's event rate — and `signup_started` comes from the public
@@ -397,26 +431,6 @@ ingest, which makes part of that rate a sign-up volume. Accepted rather than ove
 deployment is collecting nothing to correlate it against, the resolution is whatever the poller's interval
 is, and `/health` already publishes the version, the uptime and the mail provider. Should that trade ever
 stop being worth it, the fix is to stop serving `dropped` without a session, not to stop counting.
-
-### `GET /admin/health`
-
-The same document, for a caller outside the cluster. Session cookie **and** `auth.adminEmails`, exactly as
-the other two `/admin` routes (`/admin/data`, `/admin/invite-codes`) are.
-
-`/health` is the kubelet's, and the chart deliberately leaves it off `ingress.paths` — so on a published
-deployment nginx answers `404` for `/health`, and a published cluster space has no exec and no
-port-forward to reach it another way. That made `mail` and `analytics`, the two reports `/health` exists to
-carry, readable only from inside the pod (SUP-479). Publishing `/health` itself was the other option and
-is the wrong one: the document carries the database's error text and the mail provider, which is why it
-has never been on a public hostname. `/admin` is already routed, so this needs no chart change.
-
-**Always `200`**, even when `status` is `error` — unlike `/health`, where `503` is what a probe reads.
-This is not a probe, and a monitor that found this route must not be able to use it as one; the body is
-what an operator reads. A deployment that genuinely cannot reach PostgreSQL will not authenticate the
-session either, so `/health` on the kubelet stays the answer for that case.
-
-`401` without a session, `403` for a session that is not an operator — including on a deployment that has
-named no operators, since `auth.adminEmails` is empty by default and `AdminGuard` refuses an empty list.
 
 ## Errors
 
@@ -492,7 +506,12 @@ runtime — the router *is* a gatekeeper, and says so in the same vocabulary a c
   retry this until an admin acts.
 
 A model whose endpoint holds no verdict is also **absent** from `GET /v1/models` and answers 404 on
-`GET /v1/models/{id}` — it is not listed-but-broken (ADR-008, decision 5). Everything else about an
+`GET /v1/models/{id}` — it is not listed-but-broken (ADR-008, decision 5). The console schema makes the
+opposite choice deliberately: `models` keeps listing it with `available: false`, because a Models page that
+dropped a row could not render "denied by this router" and an operator's switch would look identical to a
+failed attestation. Since SUP-517 the row also says *since when* — `Model.externalUpstream.notServingSince`
+— so `available: false` on a fresh registration and `available: false` on an upstream that has been dark
+for a day are finally different answers. Everything else about an
 external model's request is identical to a built-in's: the same rate-limit buckets, the same metering
 row, the same SSE relay, the same response shape. `usage.endpoint` names the external endpoint and
 `usage.evidence_digest` carries the upstream digest the admitting verdict observed.

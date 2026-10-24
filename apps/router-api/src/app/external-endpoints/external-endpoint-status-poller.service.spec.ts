@@ -7,7 +7,7 @@ import type { ExternalEndpointStatusService, SyncReport } from './external-endpo
 import { ExternalEndpointStatusPollerService } from './external-endpoint-status-poller.service.js';
 import { SidecarUnavailableError } from './sidecar-admin.client.js';
 
-const QUIET: SyncReport = { seen: 0, flipped: 0, events: 0 };
+const QUIET: SyncReport = { seen: 0, flipped: 0, events: 0, outages: 0 };
 
 /**
  * The services keep their `Logger` private, and what reaches a log line is part
@@ -41,6 +41,7 @@ function statusStub(overrides: Partial<ExternalEndpointStatusService> = {}): Ext
   return {
     resetToPending: async () => 0,
     sync: async () => QUIET,
+    refreshHealth: async () => undefined,
     recordEvent: async () => undefined,
     ...overrides,
   } as ExternalEndpointStatusService;

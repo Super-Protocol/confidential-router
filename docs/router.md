@@ -199,6 +199,64 @@ What the console gets out of it:
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
 
+## When an external upstream goes dark
+
+An external model endpoint lives in somebody else's deployment and is reached
+through the egress sidecar, which attests it before any prompt is proxied
+(ADR-008). It is the one dependency whose failure stops completions working while
+every other part of the router keeps answering — so it is also the one that can
+fail for a long time without anyone finding out. Once: a published upstream lost
+the gateway route for its hostname at 2026-10-23 06:11 UTC and the router answered
+`503 attestation_failed` for 30 hours before a human noticed.
+
+```yaml
+externalEndpoints:
+  outage:
+    afterFailures: 3      # distinct failed checks in a row; 0 disables
+    afterNoSuccess: 15m   # since last known to serve; 0 disables
+```
+
+Each check is a re-attestation (`reattestInterval`, 10 minutes), not a status poll
+(`statusPollInterval`, 5 seconds) — counting the poll's re-readings of the same
+verdict would make `afterFailures` a number of seconds wearing a different name.
+Both thresholds are there because they miss different failures: the count is the
+honest unit while checks are happening, and sees nothing at all when the checking
+itself has stopped. A sidecar that never answers leaves every endpoint at
+`pending`, serving nothing, with no counter moving; only `afterNoSuccess` notices.
+
+Crossing either threshold does three things, once per run:
+
+- **writes one `ERROR` log line** naming the endpoint, how long it has been dark,
+  how many checks have failed, whether the upstream answered at all and the
+  sidecar's own reason. This is the alert — the deployment has no pager to call,
+  so `error` is the severity a log sink matches on, and the line carries
+  everything needed to act without opening a console. A recovery logs its
+  counterpart at `log` level.
+- **appends an `outage` row** to that endpoint's timeline, which the admin
+  section renders; `recovered` closes it.
+- **flips `GET /health`'s `externalEndpoints.status` to `outage`.** That block is
+  counts, two timestamps and one word — never an endpoint name, hostname, stage or
+  reason, because `/health` is unauthenticated. It never changes the overall
+  `status`, for the same reason mail and analytics do not: the process still serves
+  every built-in model and the whole console, and dropping it from the
+  load-balancer rotation would turn one dark upstream into a dark deployment.
+
+Two endpoints are deliberately exempt, and both exemptions are about keeping the
+alert worth believing rather than keeping it quiet: one an operator **disabled**
+(nothing is expected of a row taken out of service) and one whose deployment has
+**never been approved** — `pinnedEvidenceDigest` null, so it is `pending` with
+`digest-not-pinned` by design (SUP-252). That is a registration half-finished, not
+an upstream that went dark. An endpoint whose pin stopped matching after an
+unapproved redeploy is *not* exempt: the router was serving it a moment ago.
+
+Per endpoint, the full answer is `ExternalEndpoint.liveness` in the console schema
+— reachability, since when, how many checks, whether an outage was declared. All
+of it is a projection of live verification and is cleared on boot, so a router
+restarted mid-outage reports the outage as starting at the restart; the timeline's
+`outage` row keeps the true start. A dead upstream's models are absent from
+`/v1/models` either way (fail-closed, ADR-008 decision 5) and carry
+`available: false` plus `notServingSince` on the console catalogue.
+
 ## Auth
 
 A one-time code mailed to the address, OAuth, and the deployment's own bootstrap
