@@ -32,6 +32,7 @@ function endpoint(overrides: Partial<ExternalEndpoint> = {}): ExternalEndpoint {
     lastFailureAt: null,
     notServingSince: null,
     consecutiveFailures: 0,
+    upstreamUnreachable: null,
     ...overrides,
   } as ExternalEndpoint;
 }
@@ -172,6 +173,8 @@ describe('projectVerdict', () => {
       lastFailureAt: null,
       notServingSince: null,
       consecutiveFailures: 0,
+      // Read from the report, which omits the flag when the upstream answered.
+      upstreamUnreachable: false,
     });
   });
 
@@ -271,6 +274,7 @@ describe('projectVerdict', () => {
       lastSuccessAt: new Date('2026-10-06T11:59:58.000Z'),
       notServingSince: null,
       consecutiveFailures: 0,
+      upstreamUnreachable: false,
     });
 
     expect(projectVerdict(unchanged, admitted(), NOW).patchChanged).toBe(false);
@@ -448,5 +452,60 @@ describe('projectVerdict and the failure run (SUP-517)', () => {
       consecutiveFailures: 2,
       lastFailureAt: null,
     });
+  });
+});
+
+describe('projectVerdict and the sidecar’s unreachable flag (SUP-517)', () => {
+  it('records what the sidecar said, not what the stage implies', () => {
+    // A 502 from the bundle route is stage `fetch` with the flag unset: the
+    // upstream answered, badly. Inferring unreachability from the stage would
+    // report a live ingress as silent (SUP-422 narrows this deliberately).
+    const answeredBadly = denied();
+    const verdict = {
+      ...answeredBadly,
+      report: {
+        ...answeredBadly.report,
+        verified: false,
+        stage: 'fetch',
+        reason: 'unexpected status 502 from https://partner.example/.well-known/swarm-evidence',
+      },
+    };
+
+    expect(projectVerdict(endpoint(), verdict, NOW).patch.upstreamUnreachable).toBe(false);
+  });
+
+  it('records a transport failure as unreachable', () => {
+    const failed = denied();
+    const verdict = {
+      ...failed,
+      report: { ...failed.report, verified: false, stage: 'fetch', reason: 'fetch: EOF', unreachable: true },
+    };
+
+    expect(projectVerdict(endpoint(), verdict, NOW).patch.upstreamUnreachable).toBe(true);
+  });
+
+  it('leaves the column alone when the verdict carried no report', () => {
+    // Nothing was checked, so "reachable" would be a claim about nothing.
+    const row = endpoint({ upstreamUnreachable: true });
+    const unchecked = { endpoint: 'upstream-a', health: 'attesting' as const, admitted: false };
+
+    expect(projectVerdict(row, unchecked, NOW).patch.upstreamUnreachable).toBe(true);
+  });
+
+  it('does not advance the failure counter for a report with no timestamp of its own', () => {
+    // `checkedAt` is what tells one check from a re-reading of it. Without it
+    // every 5-second poll would look like a fresh failure and `afterFailures: 3`
+    // would trip in fifteen seconds — the thing counting distinct checks is for.
+    // The Go side emits it unconditionally, so this guards the seam, not a bug.
+    const failing = endpoint({
+      status: 'denied',
+      lastStage: 'policy',
+      notServingSince: new Date('2026-10-06T11:49:58.000Z'),
+      consecutiveFailures: 1,
+    });
+    const unstamped = denied();
+    const verdict = { ...unstamped, report: { ...unstamped.report, checkedAt: undefined } };
+
+    expect(projectVerdict(failing, verdict, NOW).patch.consecutiveFailures).toBe(1);
   });
 });

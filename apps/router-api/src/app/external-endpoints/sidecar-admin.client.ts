@@ -46,6 +46,23 @@ export interface SidecarReport {
    * answer about either factor.
    */
   refusal?: SidecarRefusal;
+  /**
+   * "We could not reach the upstream to run the check", as against "the check
+   * failed" — the sidecar's own answer, and the only authoritative one
+   * (`pkg/status/status.go`, SUP-422).
+   *
+   * Narrower than the `fetch` stage on purpose, and that is exactly why it must
+   * be read rather than inferred: a dial, handshake or read failure sets it,
+   * while a non-2xx answer to the bundle fetch, an over-sized bundle and a
+   * hostname the gatekeeper refuses are all stage `fetch` with this unset
+   * (`pkg/attestation/verify.go`). Those are an upstream answering badly, and
+   * calling them unreachable would send an operator to look at a cloud that is
+   * up.
+   *
+   * `omitempty` on the Go side, so absent means false on any report that carries
+   * a stage at all.
+   */
+  unreachable?: boolean;
   attestedRoot?: SidecarAttestedRoot;
   /** The leaf the sidecar observed on its own handshake, and pinned on success. */
   observedTlsFingerprint?: string;

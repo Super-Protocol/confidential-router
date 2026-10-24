@@ -111,11 +111,17 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-517's failure-run columns are four additive columns on one table; the
+      // SUP-517's failure-run columns are five additive columns on one table; the
       // first undo drops only those.
       expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
       await dataSource.undoLastMigration();
-      for (const column of ['lastSuccessAt', 'lastFailureAt', 'notServingSince', 'consecutiveFailures']) {
+      for (const column of [
+        'lastSuccessAt',
+        'lastFailureAt',
+        'notServingSince',
+        'consecutiveFailures',
+        'upstreamUnreachable',
+      ]) {
         expect(await queryRunner.hasColumn('external_endpoints', column)).toBe(false);
       }
       expect(await queryRunner.hasColumn('external_endpoints', 'lastCheckedAt')).toBe(true);

@@ -378,6 +378,7 @@ function endpointRow(endpoint: ExportData['externalEndpoints'][number], now: Dat
     lastFailureAt: null,
     notServingSince: null,
     consecutiveFailures: 0,
+    upstreamUnreachable: null,
     apiKeyCiphertext: '',
     apiKeyPrefix: '',
     createdByUserId: endpoint.createdByUserId,

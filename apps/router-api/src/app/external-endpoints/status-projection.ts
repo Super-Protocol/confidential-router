@@ -1,6 +1,6 @@
 import type { ExternalEndpoint, ExternalEndpointStatus } from '../db/entities/external-endpoint.entity.js';
 import type { ExternalEndpointEventKind } from '../db/entities/external-endpoint-event.entity.js';
-import type { SidecarVerdict } from './sidecar-admin.client.js';
+import type { SidecarReport, SidecarVerdict } from './sidecar-admin.client.js';
 
 /**
  * Turning one sidecar verdict into one row update and the events it caused
@@ -43,6 +43,7 @@ export type ExternalEndpointStatusPatch = Pick<
   | 'lastFailureAt'
   | 'notServingSince'
   | 'consecutiveFailures'
+  | 'upstreamUnreachable'
 >;
 
 /** One row to append to the timeline. */
@@ -114,6 +115,7 @@ export function projectVerdict(
 ): ProjectedVerdict {
   const report = verdict.report;
   const status = statusOf(verdict);
+  const check = checkOf(report, now);
   const measurement = report?.attestedRoot?.measurement ?? null;
   const evidenceDigest = report?.evidenceDigest ?? null;
 
@@ -124,7 +126,7 @@ export function projectVerdict(
     // nothing has been checked, so the row keeps whatever it had: writing `now`
     // there would both claim a check that never ran and make every five-second
     // poll of an `attesting` endpoint look like a change worth an `UPDATE`.
-    lastCheckedAt: report ? (report.checkedAt ? new Date(report.checkedAt) : now) : endpoint.lastCheckedAt,
+    lastCheckedAt: check?.at ?? endpoint.lastCheckedAt,
     // The refused factor when the two-factor clause names one — it is the more
     // specific answer, and the one an operator acts on (`digest-mismatch` means
     // "approve the new digest", `policy` would mean nothing in particular).
@@ -147,7 +149,14 @@ export function projectVerdict(
     // what lets the console file and show the deployment a two-factor refusal is
     // asking an admin to approve (SUP-252). A pipeline failure binds nothing.
     observedCertFingerprint: report?.verified ? (report.certFingerprint ?? null) : null,
-    ...runOf(endpoint, status, report ? (report.checkedAt ? new Date(report.checkedAt) : now) : null),
+    // The sidecar's own answer, not an inference from the stage (SUP-517, and the
+    // narrowing in SUP-422): `fetch` also covers a non-2xx answer to the bundle
+    // fetch and an over-sized bundle, which are an upstream answering badly. The
+    // flag is `omitempty` on the wire, so a report that carries one and omits
+    // this is a reachable upstream; no report at all leaves the column null,
+    // which is the third answer — nothing has been checked.
+    upstreamUnreachable: report ? (report.unreachable ?? false) : endpoint.upstreamUnreachable,
+    ...runOf(endpoint, status, check),
   };
 
   const events: ProjectedEvent[] = [];
@@ -176,6 +185,30 @@ export function projectVerdict(
   return { patch, events, statusChanged, patchChanged: differs(endpoint, patch) };
 }
 
+/**
+ * What a verdict reports having done, as the run projection needs it.
+ *
+ * Two facts that have to travel together. `at` is the instant the row records,
+ * falling back to `now` when the report omitted its own timestamp — a check did
+ * happen, and refusing to date it would be worse. `stamped` is whether that
+ * instant came from the sidecar, and it is what the failure counter keys on: an
+ * unstamped report cannot be told apart from the previous one, so counting it
+ * would make `outage.afterFailures: 3` trip in fifteen seconds of polling —
+ * exactly what counting distinct checks exists to prevent. The core emits
+ * `checkedAt` unconditionally, so this guards the seam rather than a live case.
+ */
+interface ReportedCheck {
+  at: Date;
+  stamped: boolean;
+}
+
+function checkOf(report: SidecarReport | undefined, now: Date): ReportedCheck | null {
+  if (!report) {
+    return null;
+  }
+  return report.checkedAt ? { at: new Date(report.checkedAt), stamped: true } : { at: now, stamped: false };
+}
+
 /** The four columns of {@link ExternalEndpointStatusPatch} that describe the *run* rather than the check. */
 type RunPatch = Pick<
   ExternalEndpointStatusPatch,
@@ -202,19 +235,20 @@ type RunPatch = Pick<
  *   `notServingSince` is still started, because a pending endpoint serves nothing
  *   and a caller cannot tell why (`expectedToServe` is what keeps that quiet).
  *
- * @param checkedAt the check's own timestamp, or null when the verdict carried no
+ * @param check what the verdict reports having done, or null when it carried no
  *   report at all — then nothing happened and every column keeps what it had.
  */
-function runOf(endpoint: ExternalEndpoint, status: ExternalEndpointStatus, checkedAt: Date | null): RunPatch {
+function runOf(endpoint: ExternalEndpoint, status: ExternalEndpointStatus, check: ReportedCheck | null): RunPatch {
   const unchanged: RunPatch = {
     lastSuccessAt: endpoint.lastSuccessAt,
     lastFailureAt: endpoint.lastFailureAt,
     notServingSince: endpoint.notServingSince,
     consecutiveFailures: endpoint.consecutiveFailures,
   };
-  if (checkedAt === null) {
+  if (check === null) {
     return unchanged;
   }
+  const { at: checkedAt } = check;
   if (status === 'verified') {
     return { ...unchanged, lastSuccessAt: checkedAt, notServingSince: null, consecutiveFailures: 0 };
   }
@@ -224,8 +258,9 @@ function runOf(endpoint: ExternalEndpoint, status: ExternalEndpointStatus, check
   // A re-read of the verdict already on the row is not a second failure: the
   // status poll runs every 5 s against a re-attestation every 10 minutes, so
   // counting readings would make `outage.afterFailures` a number of seconds
-  // wearing a different name.
-  const isNewCheck = endpoint.lastCheckedAt?.getTime() !== checkedAt.getTime();
+  // wearing a different name. An unstamped report counts as a re-read for the
+  // same reason — see {@link ReportedCheck.stamped}.
+  const isNewCheck = check.stamped && endpoint.lastCheckedAt?.getTime() !== checkedAt.getTime();
   return {
     ...unchanged,
     lastFailureAt: checkedAt,
