@@ -444,11 +444,14 @@ func (s *Supervisor) reconcile(ctx context.Context) int {
 		if current, err := s.endpoint(ep.name); err != nil || current != ep {
 			continue
 		}
-		// retry() leaves the bind failure on the endpoint — and so in the
-		// snapshot the console reads as `lastReason` — without writing a log
-		// line per attempt. A silent `stopped` is the one outcome this loop
-		// exists to make impossible.
-		if err := ep.retry(ctx); err != nil {
+		// retry() re-checks the intent under the endpoint's own lock, so the
+		// desired() call above is a cheap filter rather than the guard. It
+		// leaves a bind failure on the endpoint — and so in the snapshot the
+		// console reads as `lastReason` — without writing a log line per
+		// attempt. A silent `stopped` is the one outcome this loop exists to
+		// make impossible.
+		started, err := ep.retry(ctx)
+		if err != nil || !started {
 			continue
 		}
 		s.log("info", ep.name, "listener was not running and has been started")

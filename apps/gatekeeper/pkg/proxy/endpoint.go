@@ -200,37 +200,69 @@ func (e *endpoint) sameSpec(spec config.Endpoint, tuning config.Tuning) bool {
 	return e.listen == spec.Listen && e.upstream == spec.Upstream && e.tuning == tuning
 }
 
+// startRequest is how the two ways into [endpoint.startListener] differ.
+type startRequest struct {
+	// onlyIfWanted abandons the start when the endpoint is not wanted. It is
+	// checked under the same lock the bind takes, which is the whole point:
+	// a Stop that lands on a not-running endpoint does nothing but clear the
+	// flag, so a check made before the lock would be lost to a pass already in
+	// flight and the listener would come back under an operator who stopped it.
+	onlyIfWanted bool
+	// reportRepeatedBindError logs a bind failure even when the endpoint is
+	// already carrying the same one.
+	reportRepeatedBindError bool
+}
+
 // start binds the listener and begins attesting. It is a no-op when the
 // endpoint is already running. Every failure is logged: a caller that asked for
 // this endpoint by name — `run` at boot, a reload, the dashboard's start key —
 // is owed an answer even when it is the same answer as last time.
-func (e *endpoint) start(ctx context.Context) error { return e.startListener(ctx, true) }
+//
+// It does not make the endpoint wanted. Both callers establish that themselves
+// — [Supervisor.Start] before the attempt, [newEndpoint] for a rebuilt one —
+// so a successful bind never invents an intent nobody expressed.
+func (e *endpoint) start(ctx context.Context) error {
+	_, err := e.startListener(ctx, startRequest{reportRepeatedBindError: true})
+	return err
+}
 
-// retry is start on the reconcile loop's behalf: identical work, except that a
-// bind failure the endpoint is already carrying is not logged again. The loop
-// asks a few times a minute for as long as the configuration declares the
-// endpoint, and an address someone else holds would otherwise write the same
-// line into the log for ever. The reason still reaches an operator — it is on
-// the endpoint, and so in the snapshot the console reads.
-func (e *endpoint) retry(ctx context.Context) error { return e.startListener(ctx, false) }
+// retry is start on the reconcile loop's behalf: identical work, except that it
+// acts only on intent it did not create, and that a bind failure the endpoint is
+// already carrying is not logged again. The loop asks a few times a minute for
+// as long as the configuration declares the endpoint, and an address someone
+// else holds would otherwise write the same line into the log for ever. The
+// reason still reaches an operator — it is on the endpoint, and so in the
+// snapshot the console reads.
+//
+// It reports whether this call is what brought the listener up, so the loop
+// counts and logs a recovery rather than a tick.
+func (e *endpoint) retry(ctx context.Context) (bool, error) {
+	return e.startListener(ctx, startRequest{onlyIfWanted: true})
+}
 
-func (e *endpoint) startListener(ctx context.Context, logRepeatedBindError bool) error {
+func (e *endpoint) startListener(ctx context.Context, req startRequest) (bool, error) {
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
-		return nil
+		return false, nil
+	}
+	if req.onlyIfWanted && !e.wanted {
+		// An operator's Stop reached this lock first. Nothing to report: not
+		// starting an endpoint nobody wants is the loop working.
+		e.mu.Unlock()
+		return false, nil
 	}
 
 	listener, err := net.Listen("tcp", e.listen)
 	if err != nil {
-		report := logRepeatedBindError || e.bindErr != err.Error()
+		report := req.reportRepeatedBindError || e.bindErr != err.Error()
 		e.bindErr = err.Error()
 		e.mu.Unlock()
 		e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
 		if report {
 			e.sup.log("error", e.name, "cannot bind "+e.listen+": "+err.Error())
 		}
-		return fmt.Errorf("endpoint %q: %w", e.name, err)
+		return false, fmt.Errorf("endpoint %q: %w", e.name, err)
 	}
 
 	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -244,7 +276,7 @@ func (e *endpoint) startListener(ctx context.Context, logRepeatedBindError bool)
 		BaseContext:       func(net.Listener) context.Context { return loopCtx },
 	}
 
-	e.running, e.wanted = true, true
+	e.running = true
 	e.bindErr, e.serveErr = "", ""
 	e.generation++
 	e.listener, e.server, e.cancel = listener, server, cancel
@@ -262,7 +294,7 @@ func (e *endpoint) startListener(ctx context.Context, logRepeatedBindError bool)
 		}
 	}()
 	go e.attestLoop(loopCtx, loopDone)
-	return nil
+	return true, nil
 }
 
 // serveFailed records a listener that died on its own — Serve returned

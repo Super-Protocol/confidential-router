@@ -1071,19 +1071,40 @@ endpoints names the reason; `lastCheckedAt` empty means no verification has been
 attempted at all, which is a listener that is not up rather than an upstream
 that is refusing.
 
-**If the endpoint is not serving**, note that a sidecar carrying SUP-537 — the
-first gatekeeper release after it — brings its own listeners back within seconds
-and reports a bind it cannot make as `broken` with the reason, so on those builds
-this is a state to read rather than to repair. `gatekeeper --version` in the
-sidecar, or the image digest the deployment pulled, says which you have. On an
-older sidecar the recovery that needs no cluster access is to make
-the endpoint's *spec* change, which is what has the sidecar rebuild it:
-`updateExternalEndpoint` with a different `baseUrl` — and `evidenceDigest` set to
-the digest the endpoint already holds, so the approval survives the re-point —
-then a second update putting `baseUrl` back, again stating the digest. Toggling
-`enabled`, re-pinning the digest and editing a price all leave the listener as it
-was; only the upstream, the listen address or the tuning do. Do this to a parked
-deployment, never to the one serving traffic.
+**If the endpoint is not serving**, first establish which sidecar you have, from
+the **gatekeeper image digest the deployment pulled** — that is readable from the
+marketplace without reaching the cluster, which is the situation this section is
+written for. (`gatekeeper version` inside the container answers too, but it needs
+an exec you most likely do not have. There is no `--version` flag.) A sidecar
+carrying SUP-537 — the first gatekeeper release after it — brings its own
+listeners back within seconds and reports a bind it cannot make as `broken` with
+the reason, so on those builds this is a state to read rather than to repair.
+
+On an older sidecar, the recovery that needs no cluster access is to make the
+endpoint's *spec* change, because that is the only thing that has the sidecar
+rebuild it — and the spec is the **rendered `upstream`, which is scheme and
+authority only**:
+
+1. `updateExternalEndpoint` with a `baseUrl` whose **host or port differs**, and
+   `evidenceDigest` set to the digest the endpoint already holds, so the approval
+   survives the re-point (SUP-252).
+2. A second `updateExternalEndpoint` putting the original `baseUrl` back, again
+   stating the digest.
+
+**A path or query edit does nothing at all** — not "less", nothing. `baseUrl` is
+canonicalised to scheme-and-authority on the way into the row, so appending `/v1`
+is not even recorded as a change: no re-render, no reload, no rebuild, and the
+mutation returns success. It is the first thing most people try, because changing
+the host of a production-adjacent endpoint feels like the risky option. It is
+also the one edit that cannot work.
+
+Toggling `enabled`, re-pinning the digest and editing a price are no-ops for this
+purpose too, for a different reason: they do re-render, but they do not touch the
+upstream, the listen address or the tuning, which are the only fields the sidecar
+compares when deciding whether to rebuild an endpoint.
+
+Do this to a parked deployment, never to the one serving traffic — and verify the
+recipe on a test stand before using it on the only fallback you have.
 
 **If you have to go back to an older build**, know what its import will say. A
 file written by a build that carries the `apiKeys` section is refused by any

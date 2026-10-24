@@ -218,8 +218,17 @@ func TestAnOperatorStartIsReportedEvenWhenItRepeats(t *testing.T) {
 	s, ep, listen := listeningSupervisor(t)
 	lines := bindFailureLines(t, s)
 
-	if err := s.Stop(t.Context(), "router"); err != nil {
-		t.Fatalf("stopping: %v", err)
+	// Down but still wanted — the state the loop keeps asking about — with
+	// something else holding the address so every attempt fails the same way.
+	ep.mu.Lock()
+	listener := ep.listener
+	ep.mu.Unlock()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for ep.isRunning() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
 	}
 	squatter, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -230,7 +239,7 @@ func TestAnOperatorStartIsReportedEvenWhenItRepeats(t *testing.T) {
 	// The loop asks a few times a minute for as long as the endpoint is
 	// declared, and says so once.
 	for range 3 {
-		if err := ep.retry(t.Context()); err == nil {
+		if started, err := ep.retry(t.Context()); started || err == nil {
 			t.Fatal("binding a taken address should fail")
 		}
 	}
@@ -275,5 +284,50 @@ func bindFailureLines(t *testing.T, s *Supervisor) func() int {
 		mu.Lock()
 		defer mu.Unlock()
 		return seen
+	}
+}
+
+func TestABindOnTheLoopsBehalfDoesNotOverrideAStop(t *testing.T) {
+	s, ep, listen := listeningSupervisor(t)
+
+	// The listener dies, so the endpoint is not running. A Stop arriving now
+	// early-returns — there is nothing to drain — and all it does is clear the
+	// intent. That is the window a reconcile pass which had already read
+	// desired() as true used to be lost in: it would bind, and a successful
+	// bind used to assert intent, so the endpoint stayed up from then on under
+	// an operator who had stopped it.
+	ep.mu.Lock()
+	listener := ep.listener
+	ep.mu.Unlock()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for ep.isRunning() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if ep.isRunning() {
+		t.Fatal("the endpoint still reports a running listener after Serve returned")
+	}
+	if err := s.Stop(t.Context(), "router"); err != nil {
+		t.Fatalf("stopping: %v", err)
+	}
+
+	// retry() is the pass that was already in flight. It re-reads the intent
+	// under the same lock the bind takes, so the Stop wins however they
+	// interleave.
+	started, err := ep.retry(t.Context())
+	if started || err != nil {
+		t.Errorf("retry reported started=%v err=%v, want it to decline a stopped endpoint", started, err)
+	}
+	if ep.isRunning() {
+		t.Error("the listener came back under an operator who stopped it")
+	}
+	if ep.desired() {
+		t.Error("a bind asserted an intent nobody expressed")
+	}
+	if conn, err := net.DialTimeout("tcp", listen, 300*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Error("the address is bound after a Stop")
 	}
 }
