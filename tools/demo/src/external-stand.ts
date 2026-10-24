@@ -409,6 +409,12 @@ export interface ExternalModelRegistration {
   completionPer1mMicros?: number;
 }
 
+/** One row of the admin trust list. */
+export interface TrustedMeasurementRow {
+  id: string;
+  measurement: string;
+}
+
 export interface RegisteredExternalEndpoint {
   id: string;
   name: string;
@@ -503,20 +509,60 @@ export async function externalEndpointEvents(
   return externalEndpoint?.events ?? [];
 }
 
+/** The trust list as the console reads it: every row, with the id a withdrawal needs. */
+export async function trustedMeasurements(session: ConsoleSession): Promise<TrustedMeasurementRow[]> {
+  const { trustedMeasurements: rows } = await session.graphql<{ trustedMeasurements: TrustedMeasurementRow[] }>(
+    'query Trusted { trustedMeasurements { id measurement } }',
+  );
+  return rows;
+}
+
+/**
+ * Admits one more cloud — and is idempotent about it, which the product is not.
+ *
+ * `addTrustedMeasurement` answers a repeat with a CONFLICT, and should: a second
+ * row for the same measurement is nothing an operator can want. A stand needs
+ * the other shape. A case that fails before its own withdrawal runs leaves the
+ * row behind, and the next case's setup would then die on "already on the trust
+ * list" — turning one flake into three, which is the cascade SUP-329 is about.
+ * So the conflict is resolved the way an operator resolves it with the console
+ * in front of them: find the row that is already there and carry on.
+ */
 export async function addTrustedMeasurement(
   session: ConsoleSession,
   measurement: string,
   note = 'the stand upstream cloud',
-): Promise<{ id: string; measurement: string }> {
-  const { addTrustedMeasurement: added } = await session.graphql<{
-    addTrustedMeasurement: { id: string; measurement: string };
-  }>(
-    `mutation Trust($input: AddTrustedMeasurementInput!) {
-       addTrustedMeasurement(input: $input) { id measurement note }
-     }`,
-    { input: { measurement, note } },
-  );
-  return added;
+): Promise<TrustedMeasurementRow> {
+  try {
+    const { addTrustedMeasurement: added } = await session.graphql<{
+      addTrustedMeasurement: TrustedMeasurementRow;
+    }>(
+      `mutation Trust($input: AddTrustedMeasurementInput!) {
+         addTrustedMeasurement(input: $input) { id measurement note }
+       }`,
+      { input: { measurement, note } },
+    );
+    return added;
+  } catch (error) {
+    // Narrow on the product's own words rather than on any failure: a stand that
+    // swallowed, say, an authorisation error and reported a row that was never
+    // added would be hiding the defect it exists to find.
+    if (!(error instanceof Error) || !error.message.includes('is already on the trust list')) {
+      throw error;
+    }
+    const listed = (await trustedMeasurements(session)).find(
+      (row) => normaliseMeasurement(row.measurement) === normaliseMeasurement(measurement),
+    );
+    if (!listed) {
+      throw error;
+    }
+    return listed;
+  }
+}
+
+/** As the unique index folds it — the admin API accepts `0x…` and either case. */
+function normaliseMeasurement(measurement: string): string {
+  return measurement.trim().replace(/^0x/i, '').toLowerCase();
 }
 
 /**
@@ -595,7 +641,36 @@ export async function waitForRelayedBundle(apiBaseUrl: string, endpointName: str
 }
 
 /**
- * Polls `externalEndpoint(id)` until its status is one of `wanted`.
+ * What the verdict behind a status has to *say*, beyond producing that status.
+ *
+ * Why a status alone is not enough to wait for (SUP-329). The status an admin
+ * reads is the projection of whatever verdict the sidecar held at the last poll,
+ * and both legs lag: the gatekeeper re-attests on its own interval, router-api
+ * projects on its own. So after making the upstream change — a rotated image, a
+ * redeployment, a withdrawn hardware report — "wait until DENIED" can be
+ * satisfied by the denial the *previous* beat caused, and the case then asserts
+ * against evidence from before the thing it just did. Naming the evidence the
+ * new verdict must carry turns the wait into a wait for *this* beat's verdict,
+ * and the timeout still reports the last status and reason seen.
+ */
+export interface ExternalVerdictExpectation {
+  /** The statuses that end the wait. */
+  status: readonly string[];
+  /** The pipeline stage, or the trust factor refused: `measurement-not-trusted`, `digest-mismatch`, … */
+  stage?: string;
+  /** The launch measurement the check must have observed. */
+  measurementSeen?: string;
+  /** The deployment digest the check must have observed. */
+  evidenceDigestSeen?: string;
+  /** Something the verdict's own one-line reason must name. */
+  reasonContains?: string;
+}
+
+/**
+ * Polls `externalEndpoint(id)` until its status is one of the wanted ones — and,
+ * where the expectation names evidence, until the verdict behind that status
+ * carries it too. A bare array of statuses is the shorthand for "any verdict
+ * that got there", which is all a wait with nothing in flight behind it needs.
  *
  * Polling, not a subscription or a log grep: the status an admin sees is the
  * projection of the sidecar's `/verdicts` into the database, and that projection
@@ -605,12 +680,37 @@ export async function waitForRelayedBundle(apiBaseUrl: string, endpointName: str
 export async function waitForExternalStatus(
   session: ConsoleSession,
   id: string,
-  wanted: readonly string[],
+  expected: readonly string[] | ExternalVerdictExpectation,
 ): Promise<RegisteredExternalEndpoint> {
+  const expectation: ExternalVerdictExpectation = 'status' in expected ? expected : { status: expected };
+  const demanded = [
+    `one of ${expectation.status.join(' / ')}`,
+    ...(expectation.stage ? [`stopped at ${expectation.stage}`] : []),
+    ...(expectation.measurementSeen ? [`having seen measurement ${expectation.measurementSeen}`] : []),
+    ...(expectation.evidenceDigestSeen ? [`having seen digest ${expectation.evidenceDigestSeen}`] : []),
+    ...(expectation.reasonContains ? [`reasoning about "${expectation.reasonContains}"`] : []),
+  ];
   return waitForExternal(session, id, {
-    until: (endpoint) => wanted.includes(endpoint.status),
-    wanted: `one of ${wanted.join(' / ')}`,
+    until: (endpoint) => expectation.status.includes(endpoint.status) && carriesEvidence(endpoint, expectation),
+    wanted: demanded.join(', '),
   });
+}
+
+/** Whether the row's verdict columns say everything the expectation asked them to. */
+function carriesEvidence(endpoint: RegisteredExternalEndpoint, expected: ExternalVerdictExpectation): boolean {
+  if (expected.stage !== undefined && endpoint.lastStage !== expected.stage) {
+    return false;
+  }
+  if (expected.measurementSeen !== undefined && endpoint.measurementSeen !== expected.measurementSeen) {
+    return false;
+  }
+  if (expected.evidenceDigestSeen !== undefined && endpoint.evidenceDigestSeen !== expected.evidenceDigestSeen) {
+    return false;
+  }
+  if (expected.reasonContains !== undefined && !(endpoint.lastReason ?? '').includes(expected.reasonContains)) {
+    return false;
+  }
+  return true;
 }
 
 /**
