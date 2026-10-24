@@ -111,8 +111,23 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-498 makes the evidence retention window enforceable: the two
+      // documents it governs come off NOT NULL and `payloadStrippedAt` records
+      // when the sweep took them. The first undo restores all three, which it
+      // can only do on a database the sweep has not run on yet — this one.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(false);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(false);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(false);
+      // The identity indices survive the SQLite column rebuild, which is the
+      // half of this migration that could have taken them with it.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'evidenceDigest')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

@@ -53,6 +53,16 @@ export interface EvidenceWorkloadSummary {
   ['externalEndpointId', 'evidenceDigest', 'certFingerprint', 'issuedAt'],
   { unique: true },
 )
+/**
+ * The retention sweep's index: "the oldest rows that still have a payload"
+ * (`preferences/evidence-retention.service.ts`). Leading on
+ * {@link EvidenceSnapshot.payloadStrippedAt} rather than on `issuedAt`, because
+ * what makes the sweep cheap over time is that a row it has already emptied
+ * leaves the range for good — on this order the scan shrinks as the backlog
+ * drains, and in a steady state it covers only the rows still inside somebody's
+ * window.
+ */
+@Index('IDX_evidence_snapshots_retention', ['payloadStrippedAt', 'issuedAt'])
 export class EvidenceSnapshot {
   @PrimaryColumn(idPrimaryColumn())
   id!: string;
@@ -120,13 +130,43 @@ export class EvidenceSnapshot {
   @Column(jsonColumn({ nullable: true }))
   measurements!: Record<string, unknown> | null;
 
-  /** Compact JWS as published. Subject to `UserPreferences.evidenceRetentionDays`. */
-  @Column({ type: 'text' })
-  jws!: string;
+  /**
+   * Compact JWS as published, or null once the retention sweep has taken it
+   * (`preferences/evidence-retention.service.ts`, SUP-498).
+   *
+   * Nullable since the sweep exists, not before it: every row written by a
+   * poller carries a JWS, and a reader that finds none is reading a row whose
+   * retention window has closed. {@link payloadStrippedAt} is how the two are
+   * told apart.
+   */
+  @Column({ type: 'text', nullable: true })
+  jws!: string | null;
 
-  /** Raw bundle as published. Subject to `UserPreferences.evidenceRetentionDays`. */
-  @Column(jsonColumn())
-  bundle!: Record<string, unknown>;
+  /**
+   * Raw bundle as published, or null once the retention sweep has taken it.
+   *
+   * This and {@link jws} are the two columns `UserPreferences.evidenceRetentionDays`
+   * governs, and they go together: a bundle without its signature is not
+   * verifiable, and a signature without its bundle has nothing to verify. The
+   * digests beside them are kept, which is the distinction `/privacy`'s
+   * attestation row publishes.
+   */
+  @Column(jsonColumn({ nullable: true }))
+  bundle!: Record<string, unknown> | null;
+
+  /**
+   * When the retention sweep removed {@link jws} and {@link bundle}, or null
+   * while the row still carries them.
+   *
+   * The column exists because "no payload" has two meanings and a reader has to
+   * tell them apart: a row the sweep has emptied, which is the published promise
+   * being kept, and a row that never had one, which would be a parser bug. It is
+   * also the only durable record that the sweep ran at all — `/health` reports
+   * what this process did, and a process that booted an hour ago has no memory of
+   * last week.
+   */
+  @Column(timestampColumn({ nullable: true }))
+  payloadStrippedAt!: Date | null;
 
   @ManyToOne(
     () => Endpoint,
@@ -158,4 +198,19 @@ export function evidenceSnapshotEndpointIsExclusive(row: {
   externalEndpointId: string | null;
 }): boolean {
   return (row.endpointId === null) !== (row.externalEndpointId === null);
+}
+
+/** A snapshot that still carries the two documents the retention sweep removes. */
+export type PublishedEvidenceSnapshot = EvidenceSnapshot & { jws: string; bundle: Record<string, unknown> };
+
+/**
+ * Whether this row still holds its published documents.
+ *
+ * A type guard rather than two null checks at each call site: every reader of
+ * `bundle` or `jws` has to handle a swept row since SUP-498, and the ones that
+ * hand the documents onward (the relay, the audit export) want the narrowed type
+ * rather than a non-null assertion.
+ */
+export function evidenceSnapshotHasPayload(row: EvidenceSnapshot): row is PublishedEvidenceSnapshot {
+  return row.jws !== null && row.bundle !== null;
 }

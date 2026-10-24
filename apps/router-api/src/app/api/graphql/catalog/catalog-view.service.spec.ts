@@ -119,6 +119,7 @@ function snapshotWithRoot(rootPem: string): EvidenceSnapshot {
     measurements: null,
     jws: 'a.b.c',
     bundle: { certChain: [rootPem] },
+    payloadStrippedAt: null,
   } as EvidenceSnapshot;
 }
 
