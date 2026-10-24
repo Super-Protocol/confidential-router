@@ -169,6 +169,34 @@ test.describe('Chat', () => {
     await expect(note.getByText('Your conversations may be lost during infrastructure maintenance.')).toBeVisible();
   });
 
+  test('states the Private Preview data restriction under the composer, in full behind the ⓘ', async ({
+    page,
+    baseURL,
+  }) => {
+    /*
+     * The highest-risk surface in the product: the one screen where a visitor
+     * types straight into a model with no SDK in between (SUP-501). Asserted in
+     * a real browser for the same reason the storage note is — the restriction
+     * has to survive into the markup a reader sees, inline as the condition and
+     * never as the full warning, and the link out to the clause has to be a real
+     * link rather than a described one.
+     */
+    await openChat(page, baseURL as string);
+
+    await expect(page.getByText('Private Preview: use synthetic or non-personal data')).toBeVisible();
+    await expect(page.getByText(/do not submit personal data/i)).toHaveCount(0);
+
+    await page.getByRole('button', { name: /what the private preview asks you not to submit/i }).click();
+
+    const notice = page.getByRole('dialog');
+    await expect(notice.getByText(/including sensitive personal data/i)).toBeVisible();
+    await expect(notice.getByText(/does not replace the Terms of Service/i)).toBeVisible();
+    await expect(notice.getByRole('link', { name: 'Acceptable use (Terms §6)' })).toHaveAttribute(
+      'href',
+      'https://router.superprotocol.com/terms#acceptable-use',
+    );
+  });
+
   test('hands the reader the delete control, and closes behind itself', async ({ page, baseURL }) => {
     /*
      * The half of the hand-off that only a real browser can answer. Two things
