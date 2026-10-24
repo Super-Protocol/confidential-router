@@ -22,12 +22,15 @@ import {
   ExternalEvidenceService,
   ExternalModelDiscoveryService,
   type ExternalModelSpec,
+  livenessOf,
+  type OutageThresholds,
 } from '../../../external-endpoints/index.js';
 import {
   AddTrustedMeasurementInputModel,
   DiscoveredExternalModelModel,
   ExternalEndpointEventModel,
   ExternalEndpointEvidenceModel,
+  type ExternalEndpointLivenessModel,
   ExternalEndpointModel,
   type ExternalModelInputModel,
   ExternalModelModel,
@@ -360,6 +363,10 @@ export class ExternalEndpointsResolver {
     );
     const summaries = await this.evidence.summariesFor(wantedDigests(views, timelines));
 
+    // One clock for the whole page: two rows of the same table saying "31h" and
+    // "31h01m" because the map took a millisecond would be a difference nobody
+    // meant to publish.
+    const now = new Date();
     return views.map(({ endpoint, models }) => {
       const forEndpoint = summaries.get(endpoint.id);
       const events = timelines.get(endpoint.id) ?? [];
@@ -373,6 +380,7 @@ export class ExternalEndpointsResolver {
         lastCheckedAt: endpoint.lastCheckedAt,
         lastStage: endpoint.lastStage,
         lastReason: endpoint.lastReason,
+        liveness: livenessModel(endpoint, this.config.externalEndpoints.outage, now),
         measurementSeen: endpoint.measurementSeen,
         measurementSource: measurementSourceOf(endpoint.measurementSource),
         measurementInRegistry: endpoint.measurementInRegistry,
@@ -503,6 +511,31 @@ function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {
     capabilities: input.capabilities ?? [...DEFAULT_CAPABILITIES],
     promptPer1mMicros: Number(input.promptPer1mMicros),
     completionPer1mMicros: Number(input.completionPer1mMicros),
+  };
+}
+
+/**
+ * The failure-run block, from the same pure rules the alert and `/health` use
+ * (SUP-517).
+ *
+ * Derived here rather than stored as a block, so a console row and a log line
+ * cannot drift: `livenessOf` is the one implementation of "is it serving, since
+ * when, and does that count as an outage", and the thresholds come from the same
+ * configuration the alerting reads.
+ */
+function livenessModel(
+  endpoint: ExternalEndpointView['endpoint'],
+  thresholds: OutageThresholds,
+  now: Date,
+): ExternalEndpointLivenessModel {
+  const liveness = livenessOf(endpoint, thresholds, now);
+  return {
+    reachability: liveness.reachability,
+    notServingSince: liveness.notServingSince,
+    lastSuccessAt: liveness.lastSuccessAt,
+    lastFailureAt: endpoint.lastFailureAt,
+    consecutiveFailures: liveness.consecutiveFailures,
+    outage: liveness.outage,
   };
 }
 

@@ -13,6 +13,11 @@ import { ExternalEndpointStatusService } from './external-endpoint-status.servic
  * logged warning — a sidecar that is not answering yet is a state, not a crash,
  * and every endpoint is already held at `pending` while it lasts.
  *
+ * It is also what drives the sustained-failure alert and the `/health` summary
+ * (SUP-517): both are produced by the pass itself, so the interval that decides
+ * how quickly a verdict is projected is the same one that decides how quickly an
+ * outage is declared. There is no second timer to fall out of step with.
+ *
  * Unlike the evidence poller this one is **not** replica-safe by construction,
  * and does not need to be: the chart ships `replicaCount: 1`, the sidecar is a
  * container in that pod, and each replica would be polling its own sidecar about
@@ -67,7 +72,8 @@ export class ExternalEndpointStatusPollerService implements OnApplicationBootstr
       this.lastFailure = null;
       if (report.flipped > 0 || report.events > 0) {
         this.logger.debug(
-          `External endpoint status: ${report.seen} reported, ${report.flipped} flipped, ${report.events} event(s).`,
+          `External endpoint status: ${report.seen} reported, ${report.flipped} flipped, ${report.events} event(s), ` +
+            `${report.outages} outage alert(s).`,
         );
       }
     } catch (error) {
@@ -76,6 +82,12 @@ export class ExternalEndpointStatusPollerService implements OnApplicationBootstr
         this.logger.warn(`External endpoint status poll failed: ${message}`);
         this.lastFailure = message;
       }
+      // The sidecar could not be read, so `/health` is refreshed from the rows
+      // alone: the counts stay true to the last projection while `verdictsReadAt`
+      // stops moving, which is what tells an operator the numbers are stale
+      // rather than reassuring (SUP-517). A failure here is swallowed — this is
+      // the error path already, and a second throw would only hide the first.
+      await this.status.refreshHealth(now).catch(() => undefined);
     } finally {
       this.running = false;
     }

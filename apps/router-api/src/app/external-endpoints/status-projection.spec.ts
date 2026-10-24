@@ -28,6 +28,10 @@ function endpoint(overrides: Partial<ExternalEndpoint> = {}): ExternalEndpoint {
     evidenceDigestSeen: null,
     pinnedCertFingerprint: null,
     observedCertFingerprint: null,
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    notServingSince: null,
+    consecutiveFailures: 0,
     ...overrides,
   } as ExternalEndpoint;
 }
@@ -162,6 +166,12 @@ describe('projectVerdict', () => {
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
       observedCertFingerprint: FINGERPRINT,
+      // The run closes: this check is the success, nothing is outstanding, and
+      // the counter goes back to zero (SUP-517).
+      lastSuccessAt: new Date('2026-10-06T11:59:58.000Z'),
+      lastFailureAt: null,
+      notServingSince: null,
+      consecutiveFailures: 0,
     });
   });
 
@@ -258,6 +268,9 @@ describe('projectVerdict', () => {
       evidenceDigestSeen: DIGEST,
       pinnedCertFingerprint: FINGERPRINT,
       observedCertFingerprint: FINGERPRINT,
+      lastSuccessAt: new Date('2026-10-06T11:59:58.000Z'),
+      notServingSince: null,
+      consecutiveFailures: 0,
     });
 
     expect(projectVerdict(unchanged, admitted(), NOW).patchChanged).toBe(false);
@@ -344,5 +357,96 @@ describe('projectVerdict', () => {
 
     expect(patch.status).toBe('pending');
     expect(events).toEqual([]);
+  });
+});
+
+describe('projectVerdict and the failure run (SUP-517)', () => {
+  const CHECKED = new Date('2026-10-06T11:59:58.000Z');
+  const LATER = new Date('2026-10-06T12:09:58.000Z');
+
+  it('opens a run on the first denial and dates it from the check, not the poll', () => {
+    const { patch } = projectVerdict(endpoint({ status: 'verified', lastSuccessAt: CHECKED }), denied(), NOW);
+
+    expect(patch).toMatchObject({
+      status: 'denied',
+      lastFailureAt: CHECKED,
+      notServingSince: CHECKED,
+      consecutiveFailures: 1,
+      // Kept: it is what "has not served for 31m" is measured against, and the
+      // only column a later recovery does not clear.
+      lastSuccessAt: CHECKED,
+    });
+  });
+
+  it('counts a re-attestation, not a poll', () => {
+    // The poll runs every 5 s against a re-attestation every 10 minutes. Counting
+    // readings would make `outage.afterFailures` a number of seconds wearing a
+    // different name — three would be reached fifteen seconds in.
+    const failing = endpoint({
+      status: 'denied',
+      lastCheckedAt: CHECKED,
+      lastStage: 'policy',
+      notServingSince: CHECKED,
+      lastFailureAt: CHECKED,
+      consecutiveFailures: 1,
+    });
+
+    const repeat = projectVerdict(failing, denied(), NOW);
+    expect(repeat.patch.consecutiveFailures).toBe(1);
+    // And the run keeps its start: it began at the first failure, not at the
+    // hundredth reading of it.
+    expect(repeat.patch.notServingSince).toEqual(CHECKED);
+
+    const next = { ...denied(), report: { ...denied().report, checkedAt: LATER.toISOString() } };
+    expect(projectVerdict(failing, next, NOW).patch.consecutiveFailures).toBe(2);
+  });
+
+  it('closes the run on an admission and keeps the last failure', () => {
+    const recovering = endpoint({
+      status: 'denied',
+      lastCheckedAt: new Date('2026-10-06T11:49:58.000Z'),
+      notServingSince: new Date('2026-10-06T11:29:58.000Z'),
+      lastFailureAt: new Date('2026-10-06T11:49:58.000Z'),
+      consecutiveFailures: 4,
+    });
+
+    expect(projectVerdict(recovering, admitted(), NOW).patch).toMatchObject({
+      status: 'verified',
+      lastSuccessAt: CHECKED,
+      notServingSince: null,
+      consecutiveFailures: 0,
+      lastFailureAt: new Date('2026-10-06T11:49:58.000Z'),
+    });
+  });
+
+  it('starts the clock on a pending verdict without counting it as a failure', () => {
+    // `digest-not-pinned` is this router waiting for an admin, not the upstream
+    // failing. It serves nothing, so the clock runs; it is nobody's fault, so the
+    // counter does not — and `expectedToServe` is what keeps it off the pager.
+    const awaiting = {
+      ...admitted(),
+      admitted: false,
+      report: { ...admitted().report, admitted: false, refusal: 'digest-not-pinned' as const },
+    };
+
+    expect(projectVerdict(endpoint(), awaiting, NOW).patch).toMatchObject({
+      status: 'pending',
+      notServingSince: CHECKED,
+      consecutiveFailures: 0,
+      lastFailureAt: null,
+    });
+  });
+
+  it('leaves the whole run alone when the verdict carries no report at all', () => {
+    // Nothing was checked, so nothing happened: writing a failure here would
+    // claim a check that never ran.
+    const row = endpoint({ status: 'pending', notServingSince: CHECKED, consecutiveFailures: 2 });
+    const unchecked = { endpoint: 'upstream-a', health: 'attesting' as const, admitted: false };
+
+    expect(projectVerdict(row, unchecked, NOW).patch).toMatchObject({
+      notServingSince: CHECKED,
+      consecutiveFailures: 2,
+      lastFailureAt: null,
+    });
   });
 });

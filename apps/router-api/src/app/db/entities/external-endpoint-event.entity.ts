@@ -13,6 +13,13 @@ import { ExternalEndpoint } from './external-endpoint.entity.js';
  * carrying the digest that is no longer approved and the reason it went (SUP-435)
  * — without it, an endpoint that stops serving after a re-point has nothing in
  * its own history that says why.
+ *
+ * `outage` and `recovered` are the sustained-failure pair (SUP-517), and they are
+ * deliberately not `denied`/`verified` under another name. A `denied` is one check
+ * that refused; an `outage` is this router declaring that the run of them has
+ * passed the configured threshold and is worth waking somebody for. The timeline
+ * needs both, because "it failed once at 06:11" and "it has been failing since
+ * 06:11" are the two different things an operator reads a history to tell apart.
  */
 export type ExternalEndpointEventKind =
   | 'registered'
@@ -23,7 +30,9 @@ export type ExternalEndpointEventKind =
   | 'digest_unpinned'
   | 'measurement_changed'
   | 'disabled'
-  | 'key_rotated';
+  | 'key_rotated'
+  | 'outage'
+  | 'recovered';
 
 /**
  * Append-only timeline of one external endpoint — the verdict history the admin

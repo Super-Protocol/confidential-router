@@ -117,6 +117,9 @@ externalEndpoints:
   listenPortRange: 256
   reattestInterval: 10m                         # bounded to [1m, 1h]
   statusPollInterval: 5s
+  outage:                                       # when a run of failed checks becomes a page
+    afterFailures: 3                            # distinct checks in a row; 0 disables
+    afterNoSuccess: 15m                         # since last known to serve; 0 disables
   connectTimeout: 5s                            # loopback: a refusal means the listener is not up yet
   readTimeout: 120s                             # patience for an upstream in another cloud
 

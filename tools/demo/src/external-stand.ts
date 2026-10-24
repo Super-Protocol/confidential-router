@@ -423,6 +423,15 @@ export interface RegisteredExternalEndpoint {
   pinnedEvidenceDigest: string | null;
   lastStage: string | null;
   lastReason: string | null;
+  /** The failure run behind the verdict (SUP-517) — how long dark, and whether that is an outage. */
+  liveness: {
+    reachability: string;
+    notServingSince: string | null;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    consecutiveFailures: number;
+    outage: boolean;
+  } | null;
   models: { id: string; name: string }[];
   /** The evidence summary behind the digest seen, once the router has filed it. */
   latestEvidence: { evidenceDigest: string; containerImages: string[] } | null;
@@ -442,6 +451,7 @@ const ENDPOINT_FIELDS = `
   pinnedEvidenceDigest
   lastStage
   lastReason
+  liveness { reachability notServingSince lastSuccessAt lastFailureAt consecutiveFailures outage }
   models { id name }
   latestEvidence { evidenceDigest containerImages }
   pinnedEvidence { evidenceDigest containerImages }

@@ -16,6 +16,7 @@ import {
   ExternalEndpointAdminService,
   type ExternalModelSpec,
 } from './external-endpoint-admin.service.js';
+import { ExternalEndpointHealth } from './external-endpoint-health.js';
 import { ExternalEndpointStatusService } from './external-endpoint-status.service.js';
 import type { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 
@@ -70,7 +71,7 @@ beforeEach(async () => {
     new SecretEnvelopeService(),
     { render } as unknown as SidecarConfigWriterService,
     catalog,
-    new ExternalEndpointStatusService(config(), dataSource, catalog),
+    new ExternalEndpointStatusService(config(), dataSource, catalog, new ExternalEndpointHealth()),
   );
 });
 
@@ -503,7 +504,12 @@ describe('pinning a deployment’s evidence digest (SUP-252)', () => {
     await service.pinDigest(endpoint.id, DIGEST);
     await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { status: 'verified' });
 
-    await new ExternalEndpointStatusService(config(), dataSource, catalog).resetToPending();
+    await new ExternalEndpointStatusService(
+      config(),
+      dataSource,
+      catalog,
+      new ExternalEndpointHealth(),
+    ).resetToPending();
 
     const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });
     expect(row.status).toBe('pending');

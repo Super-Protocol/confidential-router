@@ -710,6 +710,36 @@ const ExternalEndpointsSchema = z
     /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
     statusPollInterval: durationMs('5s'),
     /**
+     * When a run of failed checks against a registered upstream stops being noise
+     * and becomes an outage worth waking somebody for (SUP-517).
+     *
+     * A threshold rather than a constant because what counts as an outage is a
+     * property of the deployment, not of the code: a stand that re-points
+     * endpoints all afternoon wants a looser one than production, where a model
+     * that has not served for a quarter of an hour is the only thing anybody
+     * cares about.
+     *
+     * Both halves, because they miss different failures. `afterFailures` is the
+     * honest unit while checks are happening on schedule and says nothing at all
+     * when the checking itself has stopped — a sidecar that never answers leaves
+     * every row at `pending` and increments no counter. `afterNoSuccess` notices
+     * that, and is what the 30-hour outage this comes from would have tripped
+     * within fifteen minutes. `0` disables either.
+     */
+    outage: z
+      .strictObject({
+        /**
+         * Distinct failed checks in a row. Three, against a 10-minute
+         * re-attestation, is roughly half an hour of a model refusing every
+         * request — long enough that one bad fetch does not page, short enough
+         * that nobody finds out from a user.
+         */
+        afterFailures: integerish().pipe(z.number().int().min(0).max(1_000)).prefault(3),
+        /** Since the endpoint was last known to serve, however little has been checked in between. */
+        afterNoSuccess: durationMs('15m'),
+      })
+      .prefault({}),
+    /**
      * How often router-api fetches a verified upstream's published bundle, so the
      * admin section can render what a cloud-level admission let in (SUP-221
      * ruling 1, ADR-008 §7).
