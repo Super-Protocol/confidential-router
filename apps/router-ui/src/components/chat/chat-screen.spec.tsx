@@ -741,6 +741,41 @@ describe('what the screen says about storage', () => {
   });
 });
 
+describe('the Private Preview data notice', () => {
+  it('stands under the composer without a click, the full restriction one click away', async () => {
+    /*
+     * The composer is the highest-risk surface in the product — the one screen
+     * where a visitor types straight into a model with no SDK in between — so
+     * the restriction has to be here rather than only in a document accepted at
+     * sign-up (SUP-501). Inline it is the condition; counsel's sentence is
+     * behind the ⓘ, for the same reason the storage caveat is.
+     */
+    render();
+
+    expect(await screen.findByText('Private Preview: use synthetic or non-personal data')).toBeInTheDocument();
+    expect(screen.queryByText(/do not submit personal data/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /what the private preview asks you not to submit/i }));
+
+    expect(await screen.findByText(/including sensitive personal data/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /acceptable use/i })).toBeInTheDocument();
+  });
+
+  it('blocks nothing: the composer is as usable with the notice on screen as without', async () => {
+    // A notice, not a gate. Nothing to dismiss before the product works, which
+    // is the one bound counsel put on this text.
+    render();
+
+    expect(await screen.findByText('Private Preview: use synthetic or non-personal data')).toBeInTheDocument();
+
+    const message = screen.getByLabelText('Message');
+    expect(message).toBeEnabled();
+    await userEvent.type(message, 'synthetic question');
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /send/i })).toBeEnabled());
+  });
+});
+
 describe('a deployment without the chat', () => {
   it('says so, and points at the API instead of showing a dead composer', async () => {
     render([screenMock({ chatSettings: settings({ enabled: false }) })]);

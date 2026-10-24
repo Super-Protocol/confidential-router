@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@confidential-router/ui/components/dialog';
 import { TriangleAlert } from 'lucide-react';
+import { PreviewDataNotice } from '../preview-data-notice';
 import { WiringSnippet } from './wiring-snippet';
 
 export interface CreatedKeyDialogProps {
@@ -58,6 +59,16 @@ export function CreatedKeyDialog({ secret, name, model, contextLength, onClose }
             {secret ? <WiringSnippet apiKey={secret} model={model} contextLength={contextLength} /> : null}
           </div>
         </div>
+
+        {/*
+          Outside the scrolling column on purpose: the Private Preview's data
+          restriction has to be on screen when this dialog opens, and content
+          this dialog scrolls is content a reader can finish without ever seeing
+          (SUP-501). This is the moment a developer is about to point a real
+          integration at us, which is the other place the restriction is worth
+          saying — the chat composer is the first.
+        */}
+        <PreviewDataNotice className="border-border border-t pt-4" />
 
         <DialogFooter>
           <Button type="button" onClick={onClose}>

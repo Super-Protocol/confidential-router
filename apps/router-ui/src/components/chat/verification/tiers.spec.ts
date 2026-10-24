@@ -10,6 +10,7 @@ import {
   gatekeeperDivergenceNote,
   HISTORY_COPY,
   PAGE_TIER,
+  PREVIEW_DATA_COPY,
   pageTierState,
 } from './tiers';
 
@@ -215,5 +216,52 @@ describe('HISTORY_COPY', () => {
     // Local history must not be allowed to read as "nothing leaves the browser".
     expect(HISTORY_COPY.browser_local.transport).toMatch(/do travel to the model/i);
     expect(HISTORY_COPY.browser_local.transport).toMatch(/no content/i);
+  });
+});
+
+describe('the Private Preview data notice', () => {
+  it('quotes counsel’s restriction word for word', () => {
+    /*
+     * The wording that was reviewed, not a paraphrase of it. This is the one
+     * assertion in the file that is about provenance rather than accuracy: an
+     * edit here is a legal change, and it should have to break a test to happen.
+     */
+    expect(PREVIEW_DATA_COPY.restriction).toBe(
+      'Please do not submit personal data, including sensitive personal data, in prompts or other content. ' +
+        'Use synthetic or non-personal data for testing.',
+    );
+  });
+
+  it('keeps the inline line short, and reads as a condition rather than an alarm', () => {
+    // It sits permanently under the composer of the product's main demo surface,
+    // which is what the whole popover pattern exists to protect (SUP-189).
+    const { summary } = PREVIEW_DATA_COPY;
+
+    expect(summary).toMatch(/private preview/i);
+    expect(summary.length).toBeLessThanOrEqual(60);
+    expect(summary).not.toMatch(/warning|caution|prohibited|must not|violation|do not/i);
+  });
+
+  it('says what the notice is not, in counsel’s own bound on it', () => {
+    // "this text does not replace acceptance of the Terms" — so the popover has
+    // to say so, or the notice reads as the whole obligation.
+    expect(PREVIEW_DATA_COPY.standing).toMatch(/does not replace the Terms of Service/i);
+    expect(PREVIEW_DATA_COPY.standing).toMatch(/condition of the Private Preview/i);
+  });
+
+  it('points at the published clause the restriction belongs to', () => {
+    // §6 is /TOS_06, Acceptable use, and the landing renders it under this
+    // anchor. A link to the document without the clause makes the reader hunt.
+    expect(PREVIEW_DATA_COPY.termsUrl).toBe('https://router.superprotocol.com/terms#acceptable-use');
+    expect(PREVIEW_DATA_COPY.termsLabel).toMatch(/§6/);
+  });
+
+  it('promises nothing about what we do with content that is sent anyway', () => {
+    // A restriction on the user is not a statement about our processing, and the
+    // notice must not drift into one: /privacy is the only surface that may say
+    // what happens to content, and SUP-492 found it already saying too much.
+    const published = `${PREVIEW_DATA_COPY.summary} ${PREVIEW_DATA_COPY.restriction} ${PREVIEW_DATA_COPY.standing}`;
+
+    expect(published).not.toMatch(/deleted|retained|retention|anonymi|redact|we do not store|never stored/i);
   });
 });
