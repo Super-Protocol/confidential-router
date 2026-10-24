@@ -1,5 +1,7 @@
 export * from './external-catalog.service.js';
 export * from './external-endpoint-admin.service.js';
+export * from './external-endpoint-health.js';
+export * from './external-endpoint-liveness.js';
 export * from './external-endpoint-status.service.js';
 export * from './external-endpoint-status-poller.service.js';
 export * from './external-endpoints.module.js';

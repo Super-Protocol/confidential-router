@@ -207,6 +207,10 @@ export async function seedExternalEndpoint(
     enabled?: boolean;
     withModel?: boolean;
     pinnedEvidenceDigest?: string | null;
+    /** The failure run the row arrives with (SUP-517); by default it has none. */
+    liveness?: Partial<
+      Pick<ExternalEndpoint, 'lastSuccessAt' | 'lastFailureAt' | 'notServingSince' | 'consecutiveFailures'>
+    >;
   } = {},
 ): Promise<SeededExternalEndpoint> {
   externalEndpoints += 1;
@@ -235,6 +239,11 @@ export async function seedExternalEndpoint(
     pinnedEvidenceDigest: options.pinnedEvidenceDigest ?? null,
     pinnedCertFingerprint: null,
     observedCertFingerprint: null,
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    notServingSince: null,
+    consecutiveFailures: 0,
+    ...options.liveness,
     apiKeyCiphertext: 'v1.placeholder',
     apiKeyPrefix: 'sk-up',
     createdByUserId: null,

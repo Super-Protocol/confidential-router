@@ -18,6 +18,12 @@ import type { SidecarVerdict } from './sidecar-admin.client.js';
  * Under two-factor trust (SUP-252) a digest change is gating — the pin no longer
  * matches, so it arrives together with the `denied` it caused, and the timeline
  * shows both.
+ *
+ * Beside the verdict itself the projection also keeps the *run* it belongs to —
+ * last success, last failure, since when, how many in a row (SUP-517, see
+ * {@link runOf}). Same reasoning one level up: a single failed check is a
+ * repetition, a run of them is the event, and nothing could tell them apart from
+ * a row that only ever held the latest verdict.
  */
 
 /** The columns a verdict may write. `enabled` and the key columns are never among them. */
@@ -33,6 +39,10 @@ export type ExternalEndpointStatusPatch = Pick<
   | 'evidenceDigestSeen'
   | 'pinnedCertFingerprint'
   | 'observedCertFingerprint'
+  | 'lastSuccessAt'
+  | 'lastFailureAt'
+  | 'notServingSince'
+  | 'consecutiveFailures'
 >;
 
 /** One row to append to the timeline. */
@@ -137,6 +147,7 @@ export function projectVerdict(
     // what lets the console file and show the deployment a two-factor refusal is
     // asking an admin to approve (SUP-252). A pipeline failure binds nothing.
     observedCertFingerprint: report?.verified ? (report.certFingerprint ?? null) : null,
+    ...runOf(endpoint, status, report ? (report.checkedAt ? new Date(report.checkedAt) : now) : null),
   };
 
   const events: ProjectedEvent[] = [];
@@ -163,6 +174,64 @@ export function projectVerdict(
   }
 
   return { patch, events, statusChanged, patchChanged: differs(endpoint, patch) };
+}
+
+/** The four columns of {@link ExternalEndpointStatusPatch} that describe the *run* rather than the check. */
+type RunPatch = Pick<
+  ExternalEndpointStatusPatch,
+  'lastSuccessAt' | 'lastFailureAt' | 'notServingSince' | 'consecutiveFailures'
+>;
+
+/**
+ * Projects one verdict onto the failure-run columns (SUP-517).
+ *
+ * The rule in one line: a verdict that admits closes the run, a verdict that
+ * denies extends it, and a `pending` verdict starts one without counting against
+ * it. Spelled out:
+ *
+ * - **verified** — the run is over. `lastSuccessAt` moves to this check,
+ *   `notServingSince` clears and the counter goes to zero. `lastFailureAt` is
+ *   kept: it is the only column that survives a recovery, and "this upstream has
+ *   been flapping" is a thing an operator needs the row to be able to say.
+ * - **denied** — `lastFailureAt` moves, the counter advances **only on a new
+ *   check**, and `notServingSince` is left alone once set, because the run began
+ *   at the first failure and not at the hundredth reading of it.
+ * - **pending** — nothing is counted. A `pending` endpoint is one this router has
+ *   not checked or whose deployment an admin has not approved; neither is the
+ *   upstream's failure, so neither advances a counter whose threshold pages.
+ *   `notServingSince` is still started, because a pending endpoint serves nothing
+ *   and a caller cannot tell why (`expectedToServe` is what keeps that quiet).
+ *
+ * @param checkedAt the check's own timestamp, or null when the verdict carried no
+ *   report at all — then nothing happened and every column keeps what it had.
+ */
+function runOf(endpoint: ExternalEndpoint, status: ExternalEndpointStatus, checkedAt: Date | null): RunPatch {
+  const unchanged: RunPatch = {
+    lastSuccessAt: endpoint.lastSuccessAt,
+    lastFailureAt: endpoint.lastFailureAt,
+    notServingSince: endpoint.notServingSince,
+    consecutiveFailures: endpoint.consecutiveFailures,
+  };
+  if (checkedAt === null) {
+    return unchanged;
+  }
+  if (status === 'verified') {
+    return { ...unchanged, lastSuccessAt: checkedAt, notServingSince: null, consecutiveFailures: 0 };
+  }
+  if (status === 'pending') {
+    return { ...unchanged, notServingSince: endpoint.notServingSince ?? checkedAt };
+  }
+  // A re-read of the verdict already on the row is not a second failure: the
+  // status poll runs every 5 s against a re-attestation every 10 minutes, so
+  // counting readings would make `outage.afterFailures` a number of seconds
+  // wearing a different name.
+  const isNewCheck = endpoint.lastCheckedAt?.getTime() !== checkedAt.getTime();
+  return {
+    ...unchanged,
+    lastFailureAt: checkedAt,
+    notServingSince: endpoint.notServingSince ?? checkedAt,
+    consecutiveFailures: endpoint.consecutiveFailures + (isNewCheck ? 1 : 0),
+  };
 }
 
 /** Whether any column the patch names holds a different value on the row already. */

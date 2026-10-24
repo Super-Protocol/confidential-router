@@ -32,6 +32,7 @@ import {
   externalEndpointEvents,
   pinExternalEndpointDigest,
   ROTATED_MEASUREMENT,
+  readExternalEndpoint,
   registerExternalEndpoint,
   removeTrustedMeasurement,
   STAND_MEASUREMENT,
@@ -448,6 +449,113 @@ describe('fail-closed', () => {
     await removeTrustedMeasurement(stand.admin, trusted.id);
   });
 });
+
+/**
+ * The detection half (SUP-517), across the same real seam.
+ *
+ * Everything in the suite above shows the router refusing correctly. What it
+ * cannot show is anybody being *told* — and that was the actual production
+ * failure: a published upstream lost the gateway route for its hostname and this
+ * router answered 503 for 30 hours while every assertion above would have passed.
+ *
+ * **This describe runs last and takes the upstream down for good**, because the
+ * final beat is the incident itself: the host stops answering, which no toggle on
+ * the stand can simulate from the inside. Nothing may be added after it.
+ */
+describe('sustained failure', () => {
+  it('declares an outage after the configured run of failed checks, and clears it on recovery', async () => {
+    // No threshold override: the stand re-attests every 2 s, so the shipped
+    // default of three consecutive failed checks is reached in about six.
+    const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
+    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    expect((await health()).externalEndpoints).toMatchObject({ status: 'ok', registered: 1, serving: 1 });
+
+    stand.sidecar.denyAttestation('the stand withdrew the hardware report');
+
+    const outage = await waitForHealth((block) => block.status === 'outage');
+    expect(outage).toMatchObject({ registered: 1, serving: 0, failing: 1 });
+    // The upstream is answering — what failed is its hardware report. The
+    // reachability split is the distinction the real outage turned on, so a
+    // denial that is *not* an unreachable host must not be counted as one.
+    expect(outage.unreachable).toBe(0);
+    expect(outage.since).toEqual(expect.any(String));
+
+    const dossier = await waitForExternal(stand.admin, endpointId, {
+      until: (endpoint) => endpoint.liveness?.outage === true,
+      wanted: 'liveness.outage',
+    });
+    expect(dossier.liveness?.consecutiveFailures).toBeGreaterThanOrEqual(3);
+    expect(dossier.liveness?.reachability).toBe('REACHABLE');
+    const declared = (await externalEndpointEvents(stand.admin, endpointId)).filter((event) => event.kind === 'OUTAGE');
+    expect(declared).toHaveLength(1);
+    expect(declared[0].stage).toBe('untrusted-root');
+
+    stand.sidecar.restore();
+
+    const recovered = await waitForHealth((block) => block.status === 'ok');
+    expect(recovered).toMatchObject({ serving: 1, failing: 0 });
+    expect(recovered.since).toBeUndefined();
+    expect(
+      (await externalEndpointEvents(stand.admin, endpointId)).filter((event) => event.kind === 'RECOVERED'),
+    ).toHaveLength(1);
+
+    await removeTrustedMeasurement(stand.admin, trusted.id);
+  });
+
+  it('reports a host that stops answering as unreachable, not merely denied', async () => {
+    // The production incident, reproduced: the hostname stops terminating TLS, so
+    // the sidecar's bundle fetch gets nothing back. Before this the console and
+    // `/health` could not tell it from a deployment nobody had approved — and the
+    // two ask for opposite things.
+    const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
+    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+
+    await stand.upstream.stop();
+
+    const dark = await waitForHealth((block) => block.status === 'outage' && block.unreachable === 1);
+    expect(dark).toMatchObject({ registered: 1, serving: 0, failing: 1, unreachable: 1 });
+
+    const dossier = await readExternalEndpoint(stand.admin, endpointId);
+    expect(dossier?.lastStage).toBe('fetch');
+    expect(dossier?.liveness).toMatchObject({ reachability: 'UNREACHABLE', outage: true });
+    expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
+
+    await removeTrustedMeasurement(stand.admin, trusted.id);
+  });
+});
+
+/** `GET /health`'s external-endpoint block, which is what an operator polls. */
+interface ExternalEndpointsHealth {
+  status: string;
+  registered: number;
+  serving: number;
+  failing: number;
+  unreachable: number;
+  pending: number;
+  since?: string;
+  verdictsReadAt?: string;
+}
+
+async function health(): Promise<{ externalEndpoints: ExternalEndpointsHealth }> {
+  const response = await request(stand.stack.router.baseUrl).get('/health').expect(200);
+  return response.body;
+}
+
+/** Polls `/health` until the block satisfies `until` — the operator's own loop. */
+async function waitForHealth(until: (block: ExternalEndpointsHealth) => boolean): Promise<ExternalEndpointsHealth> {
+  const deadline = Date.now() + 30_000;
+  let last: ExternalEndpointsHealth | undefined;
+  for (;;) {
+    last = (await health()).externalEndpoints;
+    if (until(last)) {
+      return last;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`/health externalEndpoints never satisfied the condition: ${JSON.stringify(last)}`);
+    }
+    await sleep(250);
+  }
+}
 
 /** Generations for the external model, once there are at least `atLeast` of them. */
 async function waitForGenerations(
