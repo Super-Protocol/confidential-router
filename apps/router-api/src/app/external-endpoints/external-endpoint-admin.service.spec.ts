@@ -75,6 +75,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Harmless when no test faked them, and the one that does must not leak a
+  // frozen clock into the next file.
+  vi.useRealTimers();
   delete process.env[SECRETS_KEY_ENV];
   await dataSource?.destroy();
 });
@@ -613,15 +616,31 @@ describe('reads', () => {
   });
 
   it('returns every endpoint’s timeline newest first, bounded per endpoint', async () => {
+    // One mutation per millisecond, stated rather than hoped for. `eventsFor`
+    // orders `at DESC, id DESC`, `at` is epoch-millisecond and the id is a
+    // `randomUUID()` — so within one millisecond there is no tie-break, and
+    // three events written as fast as the test can write them routinely share
+    // one. That made both halves of this assertion luck: the order of a tied
+    // pair is the UUID's, and `take: 2` over a three-way tie drops an arbitrary
+    // event rather than the oldest. CI lost the coin flip on SUP-527 with
+    // `['key_rotated', 'disabled']`. Only `Date` is faked — the sqlite driver
+    // and typeorm keep their real timers. The production ordering is a separate
+    // defect (SUP-534); this test must not be what reports it.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:00.000Z'));
     const first = await register();
     const second = await register({ name: 'second', models: [model({ id: 'partner/second:snp' })] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:01.000Z'));
     await service.rotateKey(first.endpoint.id, 'sk-two');
+    vi.setSystemTime(new Date('2026-10-24T12:00:02.000Z'));
     await service.setEnabled(first.endpoint.id, false);
 
     const timelines = await service.eventsFor([first.endpoint.id, second.endpoint.id], 2);
 
     // One read for the page: the timeline is a field of `ExternalEndpoint`, so
-    // the list screen asks for every endpoint's at once.
+    // the list screen asks for every endpoint's at once. `registered` is older
+    // than both and falls outside the bound, which is the other half of the
+    // claim.
     expect(timelines.get(first.endpoint.id)?.map((event) => event.kind)).toEqual(['disabled', 'key_rotated']);
     expect(timelines.get(second.endpoint.id)?.map((event) => event.kind)).toEqual(['registered']);
   });
