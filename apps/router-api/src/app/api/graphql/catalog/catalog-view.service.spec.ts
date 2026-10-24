@@ -78,6 +78,12 @@ function externalEntry(overrides: Partial<ExternalCatalogueEntry> = {}): Externa
   };
 }
 
+/**
+ * The on-read ask of the last {@link build}, so a test can say which surfaces
+ * are allowed to make it.
+ */
+let refreshOwnIfUnknown: ReturnType<typeof vi.fn>;
+
 function build(
   options: {
     config?: CatalogModel[];
@@ -86,11 +92,13 @@ function build(
     latest?: EvidenceSnapshot[];
   } = {},
 ): CatalogViewService {
+  refreshOwnIfUnknown = vi.fn().mockResolvedValue(undefined);
   return new CatalogViewService(
     { list: () => options.config ?? [configModel()] } as unknown as CatalogService,
     { listCatalogue: () => options.external ?? [externalEntry()] } as unknown as ExternalCatalogService,
     {
       activeEndpoints: vi.fn().mockResolvedValue([OWN_ENDPOINT]),
+      refreshOwnIfUnknown,
       latestForMany: vi
         .fn()
         .mockResolvedValue(new Map((options.latest ?? []).map((snapshot) => [snapshot.endpointId, snapshot]))),
@@ -107,6 +115,7 @@ function snapshotWithRoot(rootPem: string): EvidenceSnapshot {
     id: 'snap-1',
     endpointId: OWN_ENDPOINT.id,
     externalEndpointId: null,
+    hostname: OWN_ENDPOINT.hostname,
     fetchedAt: new Date('2026-10-09T22:00:00.000Z'),
     issuedAt: new Date('2026-10-09T21:59:00.000Z'),
     evidenceDigest: `sha256/${'A'.repeat(43)}`,
@@ -139,6 +148,37 @@ describe('endpointViews', () => {
     }).endpointViews(null, new Date('2026-10-09T22:00:00.000Z'));
 
     expect(view?.latestEvidence?.tee).toBe('Intel TDX (Azure)');
+  });
+});
+
+/**
+ * Who is allowed to spend a read on the publisher.
+ *
+ * The ask belongs to the surfaces that answer for this deployment's own
+ * endpoint. The model catalogue is public and hit on every page load, and an
+ * unpublished deployment would make every one of them wait on a fetch nobody
+ * there is reading (SUP-437).
+ */
+describe('asking the publisher on a read', () => {
+  it('is what the endpoint table does', async () => {
+    const view = build();
+    await view.endpointTable(null);
+
+    expect(refreshOwnIfUnknown).toHaveBeenCalledOnce();
+  });
+
+  it('is what the own-endpoint view does', async () => {
+    const view = build();
+    await view.ownEndpointView(null);
+
+    expect(refreshOwnIfUnknown).toHaveBeenCalledOnce();
+  });
+
+  it('is not what the model catalogue does', async () => {
+    const view = build();
+    await view.modelViews({ workspaceId: null, signedIn: true });
+
+    expect(refreshOwnIfUnknown).not.toHaveBeenCalled();
   });
 });
 

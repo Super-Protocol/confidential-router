@@ -274,8 +274,9 @@ export class ExternalEvidenceService {
 
     const existing = await repository.findOne({ where: identity });
     if (existing) {
-      await repository.update({ id: existing.id }, { fetchedAt: now });
+      await repository.update({ id: existing.id }, { fetchedAt: now, hostname: parsed.hostname });
       existing.fetchedAt = now;
+      existing.hostname = parsed.hostname;
       return existing;
     }
 
@@ -287,6 +288,7 @@ export class ExternalEvidenceService {
       // (`evidenceSnapshotEndpointIsExclusive`).
       endpointId: null,
       fetchedAt: now,
+      hostname: parsed.hostname,
       evidenceDigestHex: parsed.digest.hex,
       quoteFormat: parsed.quoteFormat,
       containerImages: parsed.containerImages,
