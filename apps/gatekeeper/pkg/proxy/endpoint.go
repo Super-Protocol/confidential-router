@@ -109,15 +109,28 @@ type endpoint struct {
 
 	mu      sync.Mutex
 	running bool
+	// wanted is whether this endpoint is *supposed* to be serving, which is a
+	// different question from whether it is. A configuration that names an
+	// endpoint wants it served — binding is not a trust decision, the listener
+	// admits nothing until a verdict says so (ADR-003 §7) — so it starts true
+	// and only [Supervisor.Stop] clears it. The gap between wanted and running
+	// is what [Supervisor.reconcile] closes.
+	wanted bool
 	// generation counts the times this endpoint has been started. A
 	// verification that completes after its listener was stopped belongs to the
 	// previous generation and is discarded rather than installed.
 	generation int
 	bindErr    string
-	listener   net.Listener
-	server     *http.Server
-	cancel     context.CancelFunc
-	loopDone   chan struct{}
+	// serveErr is why the listener died on its own: Serve returned something
+	// other than the shutdown sentinel. Separate from bindErr because the two
+	// say different things to an operator — "the address was taken" against
+	// "the socket we held went away" — and because a bind that then succeeds
+	// has to clear both.
+	serveErr string
+	listener net.Listener
+	server   *http.Server
+	cancel   context.CancelFunc
+	loopDone chan struct{}
 
 	verdict *verdict
 	// firstVerdict is closed once the first verification has finished, whatever
@@ -148,6 +161,7 @@ func newEndpoint(sup *Supervisor, spec config.Endpoint, tuning config.Tuning) (*
 		admittedPool: newPool(hostname, port, sup.opts.Dial),
 		openPool:     newPool(hostname, port, sup.opts.Dial),
 		firstVerdict: make(chan struct{}),
+		wanted:       true,
 	}
 	ep.flow = &flow{
 		stats: &ep.stats,
@@ -187,8 +201,20 @@ func (e *endpoint) sameSpec(spec config.Endpoint, tuning config.Tuning) bool {
 }
 
 // start binds the listener and begins attesting. It is a no-op when the
-// endpoint is already running.
-func (e *endpoint) start(ctx context.Context) error {
+// endpoint is already running. Every failure is logged: a caller that asked for
+// this endpoint by name — `run` at boot, a reload, the dashboard's start key —
+// is owed an answer even when it is the same answer as last time.
+func (e *endpoint) start(ctx context.Context) error { return e.startListener(ctx, true) }
+
+// retry is start on the reconcile loop's behalf: identical work, except that a
+// bind failure the endpoint is already carrying is not logged again. The loop
+// asks a few times a minute for as long as the configuration declares the
+// endpoint, and an address someone else holds would otherwise write the same
+// line into the log for ever. The reason still reaches an operator — it is on
+// the endpoint, and so in the snapshot the console reads.
+func (e *endpoint) retry(ctx context.Context) error { return e.startListener(ctx, false) }
+
+func (e *endpoint) startListener(ctx context.Context, logRepeatedBindError bool) error {
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
@@ -197,10 +223,13 @@ func (e *endpoint) start(ctx context.Context) error {
 
 	listener, err := net.Listen("tcp", e.listen)
 	if err != nil {
+		report := logRepeatedBindError || e.bindErr != err.Error()
 		e.bindErr = err.Error()
 		e.mu.Unlock()
 		e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
-		e.sup.log("error", e.name, "cannot bind "+e.listen+": "+err.Error())
+		if report {
+			e.sup.log("error", e.name, "cannot bind "+e.listen+": "+err.Error())
+		}
 		return fmt.Errorf("endpoint %q: %w", e.name, err)
 	}
 
@@ -215,12 +244,13 @@ func (e *endpoint) start(ctx context.Context) error {
 		BaseContext:       func(net.Listener) context.Context { return loopCtx },
 	}
 
-	e.running, e.bindErr = true, ""
+	e.running, e.wanted = true, true
+	e.bindErr, e.serveErr = "", ""
 	e.generation++
 	e.listener, e.server, e.cancel = listener, server, cancel
 	e.loopDone = make(chan struct{})
 	e.stats.reset()
-	loopDone := e.loopDone
+	loopDone, generation := e.loopDone, e.generation
 	e.mu.Unlock()
 
 	e.sup.metrics.listening.WithLabelValues(e.name).Set(1)
@@ -228,11 +258,86 @@ func (e *endpoint) start(ctx context.Context) error {
 
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			e.sup.log("error", e.name, "listener stopped: "+err.Error())
+			e.serveFailed(generation, err)
 		}
 	}()
 	go e.attestLoop(loopCtx, loopDone)
 	return nil
+}
+
+// serveFailed records a listener that died on its own — Serve returned
+// something other than the shutdown sentinel — and releases what it held.
+//
+// Without it the endpoint went on reporting `confidential` with a socket that
+// no longer accepted anything: `running` stayed true because only [endpoint.stop]
+// ever cleared it, so the one state the dashboard and the console could not
+// show was the one where nothing was listening. Marking it stopped is also what
+// makes it eligible for [Supervisor.reconcile], which is what brings it back.
+//
+// The generation guard is the same one a late verdict passes: a Serve that
+// returns while a newer listener is already up belongs to a previous
+// generation and says nothing about this one.
+func (e *endpoint) serveFailed(generation int, err error) {
+	e.mu.Lock()
+	if !e.running || e.generation != generation {
+		e.mu.Unlock()
+		return
+	}
+	cancel, loopDone := e.cancel, e.loopDone
+	e.running = false
+	e.generation++
+	torn := e.generation
+	e.serveErr = err.Error()
+	e.listener, e.server, e.cancel, e.loopDone = nil, nil, nil, nil
+	// Same reasoning as stop(): an endpoint that is not being re-attested must
+	// not keep the verdict that admitted traffic.
+	e.verdict = nil
+	e.firstVerdict = make(chan struct{})
+	e.lastAttestAt, e.nextAttestAt = time.Time{}, time.Time{}
+	e.mu.Unlock()
+
+	cancel()
+	<-loopDone
+	e.release(torn)
+	e.sup.log("error", e.name, "listener stopped: "+err.Error())
+}
+
+// release drops the connections and clears the gauges of the generation that
+// has just ended — unless a newer one has already begun.
+//
+// The guard matters because the teardown above it is not instant: cancelling
+// the attestation loop waits for a check that may be inside a network call, and
+// an automatic restart can bind a new listener in that window (SUP-537). The
+// pools and the gauges belong to the endpoint, not to a generation, so closing
+// them for a generation that is already over would drop the *new* listener's
+// upstream connections and report it as not listening while it serves.
+func (e *endpoint) release(generation int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.generation != generation {
+		return
+	}
+	// Under the lock, so that a start cannot land between the check and the
+	// close. Neither pool reaches back into this endpoint.
+	e.admittedPool.closeAll()
+	e.openPool.closeAll()
+	e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
+	e.sup.metrics.admitted.WithLabelValues(e.name).Set(0)
+}
+
+// desired reports whether this endpoint is supposed to be serving.
+func (e *endpoint) desired() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.wanted
+}
+
+// setDesired records an operator's intent, which is the one thing
+// [Supervisor.reconcile] will not override.
+func (e *endpoint) setDesired(wanted bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.wanted = wanted
 }
 
 // stop drains the listener and closes every upstream connection.
@@ -245,6 +350,7 @@ func (e *endpoint) stop(ctx context.Context) error {
 	server, cancel, loopDone := e.server, e.cancel, e.loopDone
 	e.running = false
 	e.generation++
+	torn := e.generation
 	e.server, e.listener, e.cancel, e.loopDone = nil, nil, nil, nil
 	// A stopped endpoint has no verdict: it is not being re-attested, so the
 	// one it had would go stale unnoticed and the next start would admit
@@ -266,10 +372,7 @@ func (e *endpoint) stop(ctx context.Context) error {
 	cancel()
 	<-loopDone
 
-	e.admittedPool.closeAll()
-	e.openPool.closeAll()
-	e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
-	e.sup.metrics.admitted.WithLabelValues(e.name).Set(0)
+	e.release(torn)
 	e.sup.log("info", e.name, "listener stopped")
 	return err
 }
@@ -584,7 +687,7 @@ func (e *endpoint) await(ctx context.Context) *verdict {
 // API.
 func (e *endpoint) snapshot() status.Endpoint {
 	e.mu.Lock()
-	running, bindErr := e.running, e.bindErr
+	running, bindErr, serveErr := e.running, e.bindErr, e.serveErr
 	current := e.verdict
 	out := status.Endpoint{
 		Name: e.name, Listen: e.listen, Upstream: e.upstream, FailMode: e.tuning.FailMode,
@@ -598,12 +701,21 @@ func (e *endpoint) snapshot() status.Endpoint {
 		out.PublishedDigest = current.Report.EvidenceDigest
 	}
 
+	if !running {
+		// Nothing is crossing a listener that is not there, whatever the reason
+		// below turns out to be.
+		out.RequestsPerSecond, out.BytesIn, out.BytesOut = 0, 0, 0
+	}
+
 	switch {
 	case bindErr != "":
 		out.Health, out.Reason = status.Broken, "cannot bind "+e.listen+": "+bindErr
+	case serveErr != "":
+		// Broken rather than stopped: `stopped` is what an operator asked for,
+		// and a listener that went away on its own is the opposite of that.
+		out.Health, out.Reason = status.Broken, "listener stopped: "+serveErr
 	case !running:
 		out.Health, out.Reason = status.Stopped, "listener stopped"
-		out.RequestsPerSecond, out.BytesIn, out.BytesOut = 0, 0, 0
 	case current == nil:
 		out.Health, out.Reason = status.Attesting, "waiting for the first verdict"
 	case current.Admitted:

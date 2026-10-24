@@ -19,6 +19,17 @@ import (
 // to its subscribers, and how often the request-rate counters are recomputed.
 const PublishInterval = time.Second
 
+// ReconcileInterval is how often the supervisor re-checks that every endpoint
+// its configuration declares is actually holding a listener, and brings back
+// the ones that are not (SUP-537).
+//
+// An endpoint that should be serving and is not is a fail-closed outage: every
+// request to it is refused, and under `failMode: closed` that is the whole of
+// the endpoint. Ten seconds recovers one well inside a single re-attestation
+// window while leaving a genuinely unbindable address to be retried six times a
+// minute rather than continuously.
+const ReconcileInterval = 10 * time.Second
+
 // DialFunc opens a TCP connection. It is the seam an embedder — or a test that
 // has to reach a loopback listener under the hostname the evidence is published
 // for — plugs its own transport into.
@@ -47,6 +58,10 @@ type Options struct {
 	Registry *prometheus.Registry
 	// PublishInterval overrides [PublishInterval].
 	PublishInterval time.Duration
+	// ReconcileInterval overrides [ReconcileInterval]. A negative value turns
+	// reconciliation off, which nothing in production does — it exists for a
+	// test that asserts on the unreconciled state.
+	ReconcileInterval time.Duration
 	// DenyBackoff replaces the denied-endpoint retry schedule with one fixed
 	// delay. Zero means the built-in schedule: [onDemandRetry], doubling to
 	// [denyBackoffMax]. Nothing in production sets it; it exists so that a test
@@ -67,8 +82,9 @@ type Supervisor struct {
 	audit   *auditor
 	servers []*localServer
 
-	cancel   context.CancelFunc
-	loopDone chan struct{}
+	cancel        context.CancelFunc
+	loopDone      chan struct{}
+	reconcileDone chan struct{}
 
 	mu        sync.RWMutex
 	cfg       *config.Config
@@ -80,6 +96,13 @@ type Supervisor struct {
 // New builds a supervisor from a validated configuration. It binds the admin
 // and metrics listeners, if any, but no endpoint listener: [Supervisor.Start]
 // does that, so a caller decides what comes up and can report what did not.
+//
+// It does start the background loops, and one of them is [Supervisor.reconcile]
+// — so an endpoint the configuration declares comes up within a reconcile
+// interval whether or not the caller ever asks for it. Start is how a caller
+// gets it *now*, and how it learns why it did not; it is no longer the only way
+// an endpoint ends up served. A caller that wants nothing listening until it
+// says so sets a negative [Options.ReconcileInterval].
 func New(ctx context.Context, opts Options) (*Supervisor, error) {
 	if opts.Config == nil {
 		return nil, errors.New("proxy: a configuration is required")
@@ -95,6 +118,9 @@ func New(ctx context.Context, opts Options) (*Supervisor, error) {
 	}
 	if opts.PublishInterval <= 0 {
 		opts.PublishInterval = PublishInterval
+	}
+	if opts.ReconcileInterval == 0 {
+		opts.ReconcileInterval = ReconcileInterval
 	}
 
 	s := &Supervisor{opts: opts, bus: newBus(), metrics: newMetrics(opts.Registry)}
@@ -119,6 +145,10 @@ func New(ctx context.Context, opts Options) (*Supervisor, error) {
 	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.cancel, s.loopDone = cancel, make(chan struct{})
 	go s.publishLoop(loopCtx)
+	if opts.ReconcileInterval > 0 {
+		s.reconcileDone = make(chan struct{})
+		go s.reconcileLoop(loopCtx)
+	}
 	return s, nil
 }
 
@@ -198,6 +228,10 @@ func (s *Supervisor) Start(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	// Recorded before the attempt, so that an endpoint whose address is taken
+	// right now is still an endpoint this gatekeeper is trying to serve, and
+	// [Supervisor.reconcile] keeps trying.
+	ep.setDesired(true)
 	if err := ep.start(ctx); err != nil {
 		s.publishSnapshot()
 		return err
@@ -207,11 +241,17 @@ func (s *Supervisor) Start(ctx context.Context, name string) error {
 }
 
 // Stop implements [status.Supervisor].
+//
+// This is the operator's switch — the dashboard's `s` key, and the drain on the
+// way out — so it is also what tells [Supervisor.reconcile] to leave the
+// endpoint alone. A listener that went away for any other reason is one the
+// configuration still asks for, and gets brought back.
 func (s *Supervisor) Stop(ctx context.Context, name string) error {
 	ep, err := s.endpoint(name)
 	if err != nil {
 		return err
 	}
+	ep.setDesired(false)
 	err = ep.stop(ctx)
 	s.publishSnapshot()
 	return err
@@ -281,6 +321,12 @@ func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
 	// predecessor still holds.
 	for _, ep := range retired {
 		wasRunning := ep.isRunning()
+		// No longer named by the configuration, so no longer wanted. Without
+		// this a reconcile pass that began before the swap could bind the
+		// address its replacement needs, leaving the replacement permanently
+		// unable to bind and an invisible listener — absent from s.endpoints,
+		// so absent from every snapshot — forwarding to a retired upstream.
+		ep.setDesired(false)
 		_ = ep.stop(ctx)
 		s.metrics.forget(ep.name)
 		if wasRunning {
@@ -288,8 +334,12 @@ func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	for _, ep := range added {
-		// A new endpoint only comes up if its predecessor was up, or if this is
-		// the first time the name appears and the caller starts everything.
+		// An endpoint rebuilt under a name that was already running comes up
+		// here, at once, so a changed upstream or listen address does not cost
+		// its traffic a reconcile interval. A name appearing for the first time
+		// is left to [Supervisor.reconcile], which is what makes it arrive at
+		// all — nothing else in this process would ever have started it
+		// (SUP-338, SUP-537).
 		if replaced := findEndpoint(retired, ep.name); replaced == nil {
 			continue
 		}
@@ -342,6 +392,74 @@ func (s *Supervisor) publishSnapshot() {
 	s.bus.publish(status.Event{Kind: status.EventSnapshot, Snapshot: &snapshot})
 }
 
+// reconcileLoop closes the gap between the endpoints the configuration declares
+// and the ones that hold a listener (SUP-537).
+//
+// Why a loop rather than one more call site. Every route into this data plane
+// starts an endpoint at the moment it learns of it — `run` at boot, a reload for
+// what it added, the dashboard on demand — and each of those is one chance to
+// get it right, after which nothing looks again. A parked production rollback
+// spent an afternoon `PENDING` with `lastReason: "listener stopped"` and
+// `lastCheckedAt` null: reachable on every surface an operator checks, unable
+// to serve a single completion, with no retry and nothing that escalated. The
+// loop replaces "whoever noticed first starts it" with a standing answer to
+// "should this be serving, and is it".
+//
+// Binding is not a trust decision, so this cannot open anything: a fresh
+// listener admits nothing until its own verification completes (ADR-003 §7),
+// and the pins and policies it is held to are the ones in force now. The only
+// state it will not override is an operator's — see [Supervisor.Stop].
+func (s *Supervisor) reconcileLoop(ctx context.Context) {
+	defer close(s.reconcileDone)
+	ticker := time.NewTicker(s.opts.ReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.reconcile(ctx)
+		}
+	}
+}
+
+// reconcile starts every endpoint that should be serving and is not. It
+// reports how many it brought back, which is what the tests assert on.
+func (s *Supervisor) reconcile(ctx context.Context) int {
+	s.mu.RLock()
+	endpoints, closed := s.endpoints, s.closed
+	s.mu.RUnlock()
+	if closed {
+		return 0
+	}
+
+	restarted := 0
+	for _, ep := range endpoints {
+		if !ep.desired() || ep.isRunning() {
+			continue
+		}
+		// Still the endpoint the configuration in force declares? A reload may
+		// have retired this one since the pass began, and binding the address
+		// its replacement is about to take would be worse than doing nothing.
+		if current, err := s.endpoint(ep.name); err != nil || current != ep {
+			continue
+		}
+		// retry() leaves the bind failure on the endpoint — and so in the
+		// snapshot the console reads as `lastReason` — without writing a log
+		// line per attempt. A silent `stopped` is the one outcome this loop
+		// exists to make impossible.
+		if err := ep.retry(ctx); err != nil {
+			continue
+		}
+		s.log("info", ep.name, "listener was not running and has been started")
+		restarted++
+	}
+	if restarted > 0 {
+		s.publishSnapshot()
+	}
+	return restarted
+}
+
 // publishLoop recomputes the request rates and publishes a snapshot on every
 // tick, which is what keeps the dashboard's counters moving.
 func (s *Supervisor) publishLoop(ctx context.Context) {
@@ -377,6 +495,18 @@ func (s *Supervisor) Close() error {
 	s.servers = nil
 	s.mu.Unlock()
 
+	// The background loops go first, and are waited for. The reconcile loop's
+	// whole purpose is to start a listener that is not running, so a pass still
+	// in flight would otherwise race the stops below and leave a bound socket
+	// behind a closed supervisor.
+	if s.cancel != nil {
+		s.cancel()
+		<-s.loopDone
+		if s.reconcileDone != nil {
+			<-s.reconcileDone
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, ep := range endpoints {
@@ -384,10 +514,6 @@ func (s *Supervisor) Close() error {
 	}
 	for _, server := range servers {
 		_ = server.Close()
-	}
-	if s.cancel != nil {
-		s.cancel()
-		<-s.loopDone
 	}
 	s.bus.close()
 	return s.audit.Close()

@@ -1046,6 +1046,45 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    it.
 7. **Delete the export file.**
 
+### A parked rollback is not finished until it serves a completion
+
+A deploy train ends by parking the previous deployment on its own hostnames so
+there is something to fall back to. Parking is `unpublish → reconfigure →
+publish`, which is a full pod bring-up, so the parked deployment comes up from
+its stored configuration rather than from the sequence that built it — and that
+is a path worth checking rather than assuming.
+
+**The acceptance check is a generation, not a health page.** Published, evidence
+200, console 200 and a working sign-in are all things a deployment that cannot
+serve anything will report. After the hostnames move, take a key on the parked
+deployment and complete once through it:
+
+```bash
+curl -s -X POST https://<parked-api-host>/v1/chat/completions \
+  -H "Authorization: Bearer sk-tee-v1-…" -H 'content-type: application/json' \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"ping"}],"max_tokens":8}'
+```
+
+A 503 with `"type":"gatekeeper_error"` means the external endpoint is not
+serving, whatever the rest of the deployment says. Administration → External
+endpoints names the reason; `lastCheckedAt` empty means no verification has been
+attempted at all, which is a listener that is not up rather than an upstream
+that is refusing.
+
+**If the endpoint is not serving**, note that a sidecar carrying SUP-537 — the
+first gatekeeper release after it — brings its own listeners back within seconds
+and reports a bind it cannot make as `broken` with the reason, so on those builds
+this is a state to read rather than to repair. `gatekeeper --version` in the
+sidecar, or the image digest the deployment pulled, says which you have. On an
+older sidecar the recovery that needs no cluster access is to make
+the endpoint's *spec* change, which is what has the sidecar rebuild it:
+`updateExternalEndpoint` with a different `baseUrl` — and `evidenceDigest` set to
+the digest the endpoint already holds, so the approval survives the re-point —
+then a second update putting `baseUrl` back, again stating the digest. Toggling
+`enabled`, re-pinning the digest and editing a price all leave the listener as it
+was; only the upstream, the listen address or the tuning do. Do this to a parked
+deployment, never to the one serving traffic.
+
 **If you have to go back to an older build**, know what its import will say. A
 file written by a build that carries the `apiKeys` section is refused by any
 build that predates it, with:
