@@ -13,7 +13,9 @@ name: Release gatekeeper
 # A tag and a push to main additionally publish the container image (ADR-008 §2:
 # the gatekeeper also ships as an attested egress inside a pod). The image is
 # the *other* packaging, not a replacement: what a person installs is still a
-# binary from a Release.
+# binary from a Release. Only a *push* publishes it: `main-<sha>` names the
+# image built from that commit, and nothing but a re-run of that run can
+# replace it (SUP-316 — see the `image` job).
 #
 # The nightly schedule also runs a drift check: it raises an issue when
 # `releases/latest` — the install path the docs publish — has carried a merged
@@ -27,7 +29,8 @@ name: Release gatekeeper
 on:
   push:
     # A branch push publishes only the container image; the `release` job is
-    # tag-gated and `nightly` is schedule/dispatch-gated.
+    # tag-gated, `nightly` is schedule/dispatch-gated, and `image` is
+    # push-gated — a schedule or a dispatch never reaches it.
     branches: [main]
     tags:
       - 'gatekeeper-v*'
@@ -71,9 +74,23 @@ jobs:
   image:
     name: Container image
     needs: checks
+    # `github.event_name == 'push'` is the whole point of this condition, not
+    # the ref test beside it: on a schedule or a dispatch `github.ref` is
+    # `refs/heads/main` too, so the ref alone let every nightly rebuild `main`
+    # and re-push `:main-<sha>` over the digest the push-triggered run had
+    # published (SUP-316). The build is not reproducible byte-for-byte — base
+    # layers, the SBOM and the provenance differ per run — so that produced a
+    # *new* digest each night for a commit whose source never changed, and
+    # "the tag still resolves to the declared digest", which is the provenance
+    # check a catalog reviewer re-runs against a chart's pins, stopped holding.
+    # The nightly's deliverable is the `gatekeeper-nightly` pre-release below;
+    # it has no image to publish. release-router.yml states the same rule on the
+    # tag itself, and libs/types holds both workflows to it.
     if: >-
-      startsWith(github.ref, 'refs/tags/gatekeeper-v') ||
-      github.ref == 'refs/heads/main'
+      github.event_name == 'push' && (
+        startsWith(github.ref, 'refs/tags/gatekeeper-v') ||
+        github.ref == 'refs/heads/main'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
