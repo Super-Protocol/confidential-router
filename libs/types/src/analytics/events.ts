@@ -77,7 +77,7 @@ export const ANALYTICS_EVENT_PROPERTIES = {
   signup_completed: ['campaign', 'has_invite', 'method'],
   invite_redeemed: ['campaign', 'grant_micros', 'outcome', 'reason'],
   api_key_created: ['campaign', 'has_spend_limit', 'keys_after'],
-  first_request_sent: ['campaign', 'had_invite_grant', 'hours_since_signup', 'model_slug'],
+  first_request_sent: ['campaign', 'client', 'had_invite_grant', 'hours_since_signup', 'model_slug'],
   model_requested: ['has_details', 'source'],
   feedback_form_opened: ['grant_eligible', 'source'],
   feedback_grant_applied: ['grant_micros', 'outcome', 'reason'],
