@@ -171,7 +171,7 @@ export function PreferencesScreen() {
           <SettingRow
             htmlFor="pref-archive-evidence"
             title="Keep archived quotes"
-            description="Hold the published bundle and its JWS for this account, not just the digest, so a response can be re-checked offline later. Off, this account holds nothing: a bundle is kept only while another account served under the same publication still holds it."
+            description="Hold the published bundle and its JWS for this account, not just the digest, so a response can be re-checked offline later. Turning it off removes them: within a few hours, every bundle no other account served under the same publication still holds is emptied for good, and turning it back on does not bring one back — only the digests remain."
             control={
               <Switch
                 id="pref-archive-evidence"
@@ -180,7 +180,9 @@ export function PreferencesScreen() {
                 onCheckedChange={(checked) =>
                   void save(
                     { archiveEvidence: checked },
-                    checked ? 'Keeping archived quotes.' : 'This account no longer holds archived quotes.',
+                    checked
+                      ? 'Keeping archived quotes.'
+                      : 'No longer holding archived quotes. Bundles no one else holds will be removed.',
                   )
                 }
               />

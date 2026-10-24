@@ -30,8 +30,17 @@ const MAX_STRIPPED_PER_PASS = 2_000;
  * a stall waiting to happen — a contiguous run of rows held by one long-window
  * account would have filled every pass's candidate set forever and the rows
  * behind them would never have been reached. So the pass pages through the whole
- * eligible range with a keyset cursor and stops on the strip budget instead. The
- * range shrinks as the sweep catches up: a stripped row leaves it permanently.
+ * eligible range with a keyset cursor and stops on the strip budget instead.
+ *
+ * A stripped row leaves that range permanently, so on a deployment where nobody
+ * has opted out the range shrinks as the sweep catches up. With an
+ * `archiveEvidence` opt-out anywhere it does **not** settle (SUP-525): the
+ * cutoff is `now`, and every row inside an opted-in holder's open window stays a
+ * candidate on every pass. The steady state there is a full ordered read of the
+ * unstripped table — indexed and paged, with the write still capped, but not a
+ * shrinking one. `MIN_RETENTION_DAYS` is 1, so a single account picking a
+ * one-day window already put the cutoff within a day of `now`; the opt-out
+ * widens an edge that was always one setting away.
  */
 const CANDIDATE_PAGE = 2_000;
 
@@ -100,7 +109,15 @@ function holderWindowDays(days: number | string | null | undefined): number {
 }
 
 export interface SweepReport {
-  /** Rows past the earliest window anyone could have set, so worth a decision. */
+  /**
+   * Rows this pass classified — those at or before the cutoff, which is the
+   * earliest window anyone could have set.
+   *
+   * Not "rows past their window": with an `archiveEvidence` opt-out the cutoff
+   * is `now` and this counts every unstripped row in the table, most of them
+   * still well inside their holders' windows. {@link held} is the honest
+   * denominator for "left alone on purpose".
+   */
   examined: number;
   /** Rows whose payload this pass removed. */
   stripped: number;
@@ -252,9 +269,13 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
       // Logged on every pass, including the quiet ones. "Stripped 0 of 0" is the
       // line that answers "is the sweep running at all", and a sweep nobody can
       // observe is how the setting came to do nothing for a whole preview.
+      // "examined", not "past the window": once any account has opted out of
+      // holding, the candidate range is the whole unstripped table and the
+      // denominator is mostly rows nothing was ever going to strip (SUP-525).
+      // Saying otherwise would read as a 48000-row backlog on a healthy sweep.
       this.logger.log(
-        `Evidence retention: stripped ${report.stripped} of ${report.examined} snapshot(s) past the window ` +
-          `(${report.held} still held by an account's preference, ${report.inUse} serving a live endpoint).`,
+        `Evidence retention: stripped ${report.stripped} of ${report.examined} snapshot(s) examined ` +
+          `(${report.held} still inside a holder's window, ${report.inUse} serving a live endpoint).`,
       );
     } catch (error) {
       this.health.passFailed();

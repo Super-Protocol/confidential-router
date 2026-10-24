@@ -130,12 +130,19 @@ describe('PreferencesScreen', () => {
     expect(await screen.findByRole('combobox', { name: 'Retention window' })).toBeEnabled();
   });
 
-  it('says what the switch does to a bundle another account also holds', async () => {
+  /*
+   * SUP-525 pre-review. The switch is destructive and irreversible: within a
+   * sweep interval it empties the bundle and JWS of every publication no other
+   * account holds, and turning it back on restores nothing. This issue exists
+   * because the console claimed an effect it did not have; claiming less than it
+   * now does is the same failure pointed the other way.
+   */
+  it('says the opt-out removes bundles and cannot be undone', async () => {
     renderWithSession(<PreferencesScreen />, { mocks: [typedSessionMock(), server().query] });
 
-    expect(
-      await screen.findByText(/another account served under the same publication still holds it/),
-    ).toBeInTheDocument();
+    const description = await screen.findByText(/Turning it off removes them/);
+    expect(description).toHaveTextContent(/no other account served under the same publication still holds/);
+    expect(description).toHaveTextContent(/turning it back on does not bring one back/);
   });
 
   it('writes the opt-out and says the account no longer holds anything', async () => {
@@ -146,7 +153,11 @@ describe('PreferencesScreen', () => {
 
     await userEvent.click(await screen.findByRole('switch', { name: 'Keep archived quotes' }));
 
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith('This account no longer holds archived quotes.'));
+    await waitFor(() =>
+      expect(toasts.success).toHaveBeenCalledWith(
+        'No longer holding archived quotes. Bundles no one else holds will be removed.',
+      ),
+    );
     // Not "no longer archiving quotes": the poller still files every bundle it
     // fetches, because the live publication's is what `GET /v1/evidence` relays.
     expect(toasts.success).not.toHaveBeenCalledWith(expect.stringContaining('No longer archiving'));

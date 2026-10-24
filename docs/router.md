@@ -229,11 +229,19 @@ Three rules decide a row, and all three are there to avoid doing harm:
   also holds stays until *that* window closes — a row is the archived evidence of
   everyone served under it, and one account's switch cannot remove a document
   others are still promised, which is why the switch is an opt-out of holding
-  rather than a delete button. It does not reach the poller either: every bundle
-  is still fetched and filed, because the live publication's bundle is what
-  `GET /v1/evidence` relays. One opt-out anywhere widens the candidate range to
-  the whole unstripped table, since no row is too young to be past nobody's
-  window; the write stays capped per pass.
+  rather than a delete button — though it *is* destructive, and the console says
+  so: within one sweep interval it empties every bundle no other account holds,
+  for good. It does not reach the poller either: every bundle is still fetched
+  and filed, because the live publication's bundle is what `GET /v1/evidence`
+  relays. One opt-out anywhere widens the candidate range to the whole unstripped
+  table, since no row is too young to be past nobody's window, and that does not
+  settle: every row inside an opted-in holder's open window stays a candidate on
+  every pass, so the steady state is a full ordered read rather than a shrinking
+  one. The write stays capped per pass, and `IDX_generations_evidenceSnapshotId`
+  / `IDX_generations_externalEndpointId_evidenceDigest` are what keep the holder
+  lookup in between off a sequential scan of `generations`. `MIN_RETENTION_DAYS`
+  is 1, so one account picking a one-day window already put the cutoff within a
+  day of `now`; this widens an edge that was always one setting away.
 - **What is never removed.** The publication a live surface still hands out:
   the newest one per own endpoint (`GET /v1/evidence`, `GET /v1/models`, the
   console's badge) and, for an external upstream, the one carrying the digest an
