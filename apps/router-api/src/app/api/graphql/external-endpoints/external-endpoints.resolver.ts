@@ -241,7 +241,8 @@ export class ExternalEndpointsResolver {
 
   @Mutation(() => ExternalEndpointModel, {
     description:
-      'Replaces the stored upstream API key. There is no read path for the old one. Restricted to auth.adminEmails.',
+      'Replaces the stored upstream API key. There is no read path for the old one. Takes effect on the next ' +
+      'request this router proxies to the endpoint. Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
   async rotateExternalEndpointKey(

@@ -301,13 +301,27 @@ describe('rotating the upstream key', () => {
     expect(events.map((event) => event.kind)).toEqual(['registered', 'key_rotated']);
   });
 
-  it('does not re-render: the rendered config holds no secrets', async () => {
+  it('republishes, so the catalogue the egress leg reads carries the new key (SUP-527)', async () => {
     const { endpoint } = await register();
+    await verify(endpoint.id);
     render.mockClear();
 
     await service.rotateKey(endpoint.id, 'sk-rotated-value');
 
-    expect(render).not.toHaveBeenCalled();
+    // The egress leg does not re-read the row per request: it reads the
+    // catalogue's cached ciphertext. Without the refresh the router keeps
+    // presenting the old credential on every completion until an unrelated
+    // mutation or a pod roll rebuilds the map — the production 502 SUP-527 is
+    // about, on an endpoint still reporting `verified`.
+    const routed = catalog.find('partner/llama-3.3-70b:snp');
+    expect(routed).toBeDefined();
+    expect(new SecretEnvelopeService().open(routed?.endpoint.apiKeyCiphertext ?? '', endpoint.id)).toBe(
+      'sk-rotated-value',
+    );
+    // The render goes with it only because `publish` is one call. The config
+    // holds no secrets, so the writer finds the same bytes and the sidecar does
+    // not reload.
+    expect(render).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a blank replacement', async () => {
@@ -357,18 +371,22 @@ describe('pinning a deployment’s evidence digest (SUP-252)', () => {
     expect(pins).toHaveLength(2);
   });
 
-  it('is a no-op for the digest already pinned: no event, no reload', async () => {
+  it('approves nothing new for the digest already pinned, but still republishes (SUP-527)', async () => {
     const { endpoint } = await register();
     await service.pinDigest(endpoint.id, DIGEST);
     render.mockClear();
 
     await service.pinDigest(endpoint.id, DIGEST_HEX);
 
-    expect(render).not.toHaveBeenCalled();
+    // No second approval — the pin's value did not move, so there is nothing to
+    // record. But this is the lever an operator reaches for to make the router
+    // look again, and returning the row unchanged having done nothing at all is
+    // what made SUP-527's workaround a no-op edit found by reading the source.
     const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
       (event) => event.kind === 'digest_pinned',
     );
     expect(pins).toHaveLength(1);
+    expect(render).toHaveBeenCalledTimes(1);
   });
 
   it('refuses something that is not a digest, and says what it wants', async () => {

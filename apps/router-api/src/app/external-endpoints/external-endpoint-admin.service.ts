@@ -388,9 +388,22 @@ export class ExternalEndpointAdminService {
    * Replaces the stored upstream key.
    *
    * Rotation is a write and nothing else — there is no "current key" to compare
-   * against, because no read path returns one. The sidecar config holds no
-   * secrets, so this does not re-render it; the egress leg opens the envelope per
-   * request and therefore picks the new key up on the next one.
+   * against, because no read path returns one.
+   *
+   * It still publishes, and SUP-527 is why. The rendered config genuinely holds
+   * no secrets, so the render is a no-op the writer skips and the sidecar does
+   * not reload — but the *other* half of {@link publish} is what matters here:
+   * the egress leg does not re-read this row per request, it reads
+   * `ExternalCatalogService`'s cached copy of the ciphertext
+   * (`routedExternalModel` → `ExternalUpstreamClient.send`). Rotation is the
+   * third way an external model changes underneath a running process, beside the
+   * admin edit and the sidecar verdict that class comment already names, and
+   * without the refresh the router keeps presenting the **old** credential on
+   * every completion until some unrelated mutation or a pod roll rebuilds the
+   * map. On production that read as the router's own 502 — "the external model
+   * endpoint refused the credential the router sent (401)" — on an endpoint
+   * still reporting `verified`, which for a leaked key is the opposite of what
+   * the operator just asked for.
    */
   async rotateKey(id: string, apiKey: string): Promise<ExternalEndpointView> {
     this.requireSecretsKey();
@@ -406,6 +419,7 @@ export class ExternalEndpointAdminService {
       { apiKeyCiphertext: sealed.ciphertext, apiKeyPrefix: sealed.prefix, updatedAt: now },
     );
     await this.status.recordEvent(id, 'key_rotated', { now });
+    await this.publish();
     return this.view(id);
   }
 
@@ -428,11 +442,20 @@ export class ExternalEndpointAdminService {
    * The render is part of the call, as for every trust edit: the sidecar reloads,
    * discards its cached verdict and re-attests at once — the "re-attest
    * (immediate)" the console's approval loop relies on.
+   *
+   * Re-pinning the digest an endpoint already holds approves nothing new, so it
+   * records no event — but it still publishes (SUP-527). This is the lever an
+   * operator reaches for when an endpoint is misbehaving and they want the router
+   * to go and look again, and it used to return the row unchanged having done
+   * literally nothing. Publishing makes it honest: the render is skipped as
+   * unchanged bytes, and the catalogue is rebuilt from the database, which is the
+   * part a stale in-memory copy needs.
    */
   async pinDigest(id: string, evidenceDigest: string): Promise<ExternalEndpointView> {
     const endpoint = await this.require(id);
     const digest = this.requireDigest(evidenceDigest);
     if (endpoint.pinnedEvidenceDigest === digest) {
+      await this.publish();
       return this.view(id);
     }
     const now = new Date();
