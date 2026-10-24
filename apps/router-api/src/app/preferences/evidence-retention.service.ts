@@ -347,6 +347,13 @@ export class EvidenceRetentionService implements OnApplicationBootstrap, OnModul
    * has never changed the setting has no row and is still promised the published
    * period. The join to `workspace_members` is what turns a workspace's
    * generation into the accounts whose archive it is.
+   *
+   * `IDX_generations_evidenceSnapshotId` and
+   * `IDX_generations_externalEndpointId_evidenceDigest` are these two queries'
+   * indexes. Neither predicate can use `generations`' `workspaceId` indexes, so
+   * without them every batch sequentially scans the table that grows per
+   * request — the one part of a pass whose cost tracks traffic rather than
+   * publication count.
    */
   private async windowDaysOf(candidates: Candidate[]): Promise<Map<string, number>> {
     const windows = new Map<string, number>();

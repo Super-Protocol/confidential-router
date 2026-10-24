@@ -16,6 +16,20 @@ export type GenerationStatus = 'ok' | 'error' | 'aborted';
  */
 @Entity({ name: 'generations' })
 @Index('IDX_generations_workspaceId_createdAt', ['workspaceId', 'createdAt'])
+/*
+ * The retention sweep's holder lookup, one index per way a generation names its
+ * publication (SUP-498, sized in SUP-525).
+ *
+ * `EvidenceRetentionService.windowDaysOf` asks "which accounts hold this
+ * publication" once per 500-id batch, and neither of its predicates can use the
+ * two `workspaceId` indexes above — so without these it sequentially scans
+ * `generations`, the fastest-growing table in the schema, several times a pass.
+ * With an `archiveEvidence` opt-out anywhere on the deployment the candidate
+ * range is the whole unstripped table and that happens on every pass, for good:
+ * every row inside an opted-in holder's open window stays a candidate.
+ */
+@Index('IDX_generations_evidenceSnapshotId', ['evidenceSnapshotId'])
+@Index('IDX_generations_externalEndpointId_evidenceDigest', ['externalEndpointId', 'evidenceDigest'])
 export class Generation {
   /** `gen-<ulid>`; also the `id` of the OpenAI-shaped response. */
   @PrimaryColumn({ type: 'varchar', length: 64 })

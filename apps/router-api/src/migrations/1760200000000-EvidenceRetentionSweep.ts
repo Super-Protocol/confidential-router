@@ -21,6 +21,11 @@ import { type MigrationInterface, type QueryRunner, TableColumn, TableIndex } fr
  * sweep has emptied drops out of the range for good, which is what makes the pass
  * cheaper every time rather than a growing scan.
  *
+ * Two more go on `generations`, for the step after the candidate read: see
+ * {@link HOLDER_INDEXES}. The sweep's cost is three parts — find the candidates,
+ * ask who holds them, empty the ones nobody does — and only the first and third
+ * were covered.
+ *
  * Nothing is backfilled and nothing is deleted here: the first pass of
  * `EvidenceRetentionService` after this migration decides what is past its
  * window, under the preference of every account that holds it. A migration that
@@ -53,6 +58,38 @@ const RETENTION_INDEX = new TableIndex({
   columnNames: ['payloadStrippedAt', 'issuedAt'],
 });
 
+/**
+ * The holder lookup's indexes, one per way a generation names its publication.
+ *
+ * `windowDaysOf` runs two queries per candidate batch — `evidenceSnapshotId IN
+ * (…)` for this deployment's own endpoints and `(externalEndpointId,
+ * evidenceDigest)` for an upstream's — and `generations` had indexes only on
+ * `workspaceId` and `(workspaceId, createdAt)`, neither of which either
+ * predicate can use. So each batch sequentially scanned the fastest-growing
+ * table in the schema. The candidate read is indexed by
+ * {@link RETENTION_INDEX} and the write is capped per pass; this is the step in
+ * between, and it is the one that scales with request volume rather than with
+ * publication count.
+ *
+ * Sized for the `archiveEvidence` opt-out (SUP-525), which is what makes the
+ * cost permanent rather than occasional: with one opted-out account anywhere the
+ * candidate range is every unstripped snapshot on every pass, because no row is
+ * too young to be past nobody's window.
+ *
+ * `workspaceId` is deliberately *not* carried as a third column to make the
+ * scans index-only. `generations` takes one insert per completion — it is the
+ * hottest write path there is — and two extra indexes on it are already a real
+ * cost; widening them to spare a heap fetch on a query that runs four times a
+ * day is the wrong side of that trade.
+ */
+const HOLDER_INDEXES = [
+  new TableIndex({ name: 'IDX_generations_evidenceSnapshotId', columnNames: ['evidenceSnapshotId'] }),
+  new TableIndex({
+    name: 'IDX_generations_externalEndpointId_evidenceDigest',
+    columnNames: ['externalEndpointId', 'evidenceDigest'],
+  }),
+];
+
 export class EvidenceRetentionSweep1760200000000 implements MigrationInterface {
   name = 'EvidenceRetentionSweep1760200000000';
 
@@ -66,6 +103,10 @@ export class EvidenceRetentionSweep1760200000000 implements MigrationInterface {
     await queryRunner.createIndex('evidence_snapshots', RETENTION_INDEX);
     await setNullable(queryRunner, 'evidence_snapshots', 'jws', 'text', true);
     await setNullable(queryRunner, 'evidence_snapshots', 'bundle', 'text', true);
+    // On `generations`, so untouched by the SQLite rebuilds above.
+    for (const index of HOLDER_INDEXES) {
+      await queryRunner.createIndex('generations', index);
+    }
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
@@ -83,6 +124,9 @@ export class EvidenceRetentionSweep1760200000000 implements MigrationInterface {
         `Cannot restore NOT NULL on evidence_snapshots.jws/bundle: the retention sweep has stripped ${swept} ` +
           'snapshot(s), and the rows still carry the digests the policy keeps. Decide what happens to them first.',
       );
+    }
+    for (const index of HOLDER_INDEXES) {
+      await queryRunner.dropIndex('generations', index);
     }
     await setNullable(queryRunner, 'evidence_snapshots', 'bundle', 'text', false);
     await setNullable(queryRunner, 'evidence_snapshots', 'jws', 'text', false);
