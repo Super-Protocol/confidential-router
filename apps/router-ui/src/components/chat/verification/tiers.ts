@@ -2,9 +2,14 @@ import type { BundleSource, GateResult } from './evidence-gate';
 import type { BridgeOutcome } from './extension-bridge';
 
 /**
- * Every claim the chat screen makes about verification, in one file.
+ * Every claim the chat screen makes about verification, in one file — and,
+ * since SUP-189 and SUP-501, the screen's other load-bearing copy with it: where
+ * a conversation is kept (`HISTORY_COPY`) and what the Private Preview asks a
+ * reader not to send (`PREVIEW_DATA_COPY`). Those two are not verification, but
+ * they are held to the same standard and by the same tests, which is the reason
+ * they live beside it rather than inline in a component.
  *
- * The rule the whole feature turns on: a stronger word may only appear when a
+ * The rule the verification half turns on: a stronger word may only appear when a
  * stronger thing actually happened. Three tiers, three different things, and the
  * labels must never blur —
  *
