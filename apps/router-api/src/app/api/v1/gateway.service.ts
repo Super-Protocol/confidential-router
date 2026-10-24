@@ -23,7 +23,7 @@ import {
   relayStream,
   type StreamFailure,
 } from './stream-relay.js';
-import { readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
+import { describeUpstreamError, readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 import { UpstreamTimeoutError } from './upstream-fetch.js';
 
 /** A model resolved to the external leg, narrowed so `external` is not optional. */
@@ -251,10 +251,14 @@ export class GatewayService {
    * request would be a lie. What changed with SUP-448 is the converse — a 4xx
    * LiteLLM raised *about the request body* is now reported as a 4xx, with its
    * wording, because nothing else in the chain knows which field is wrong.
+   *
+   * That wording reaches the caller and not the log: a refusal quotes the field
+   * it refused, so the line carries `describeUpstreamError`'s content-free
+   * summary instead (SUP-497).
    */
   private async mapUpstreamFailure(upstream: Response): Promise<OpenAiApiError> {
     const body = await readUpstreamError(upstream);
-    this.logger.warn(`LiteLLM answered ${upstream.status}: ${body.text || '(no detail)'}`);
+    this.logger.warn(`LiteLLM answered ${upstream.status}: ${describeUpstreamError(body)}`);
     return upstreamFailureOf('The model backend', upstream, body);
   }
 
