@@ -47,7 +47,7 @@ export default function OverviewPage() {
       {/* The claim above says attestation is the reader's to check; this is the
           value they check it with, in full, directly under it (SUP-541). */}
       <div className="mb-6">
-        <DeploymentDigest />
+        <DeploymentDigest headingLevel="h2" />
       </div>
 
       {/* Only for an account with credit and no key yet — see `NextStepCard`. It

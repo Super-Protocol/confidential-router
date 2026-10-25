@@ -75,7 +75,7 @@ test.describe('How to connect', () => {
     const card = page.locator('#how-to-connect');
     await expect(card.getByTestId('deployment-digest-value')).toHaveText(`sha256:${DEPLOYMENT_DIGEST_HEX}`);
     await expect(card.getByText('The digest this step must print back')).toBeVisible();
-    await expect(card.getByText(/Compare all 64 characters of that digest/)).toBeVisible();
+    await expect(card.getByText(/Compare all 64 characters of what it prints/)).toBeVisible();
   });
 
   test('explains the flow, then the pre-filled setup, then the client — with nothing to substitute', async ({

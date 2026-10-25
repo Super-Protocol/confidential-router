@@ -85,7 +85,7 @@ export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps
             be read before step 4 is run, not after.
           */}
           <div className="mb-3">
-            <DeploymentDigest title="The digest this step must print back" />
+            <DeploymentDigest title="The digest this step must print back" headingLevel="h4" />
           </div>
           <GatekeeperSetupBlock />
         </Step>

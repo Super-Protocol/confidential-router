@@ -3,9 +3,11 @@
 import { useQuery } from '@apollo/client/react';
 import { Badge } from '@confidential-router/ui/components/badge';
 import { CopyButton } from '@confidential-router/ui/components/copy-button';
+import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
+import * as React from 'react';
 import { graphql } from '../../generated';
-import { formatDigest } from '../../lib/format';
+import { formatDigest, formatTimestamp } from '../../lib/format';
 import { evidencePresentation } from './evidence-state';
 
 /**
@@ -37,6 +39,16 @@ export const DEPLOYMENT_DIGEST_QUERY = graphql(`
 export interface DeploymentDigestProps {
   /** Heading of the block; the two screens that show it introduce it differently. */
   title?: string;
+  /**
+   * Where the heading sits in the host page's outline.
+   *
+   * Not cosmetic: on Overview the block is a section of the page beside "This
+   * week's usage" (`h2`), and inside "How to connect" it is part of step 2,
+   * under that step's own `h3`. A fixed level made the block read as a fourth
+   * numbered step on the API Keys page — which is what `api-keys-screen.spec`
+   * caught.
+   */
+  headingLevel?: 'h2' | 'h3' | 'h4';
 }
 
 /**
@@ -54,13 +66,34 @@ export interface DeploymentDigestProps {
  * spelling the gatekeeper prints and its config file records (SUP-115) — a value
  * a reader can run their eye along character by character, or copy and diff.
  *
- * It renders nothing at all only when the router cannot name its own endpoint;
- * a deployment that publishes no current bundle says so, because "no digest
- * here" and "a digest you did not find" are different answers to the reader
- * standing at that y/n.
+ * Three outcomes are *said*, never left blank: a deployment that publishes no
+ * current bundle, and a query that failed, both render a reason. Nothing at all
+ * is reserved for the one case where there is genuinely no question to answer —
+ * the router cannot name its own endpoint, so no digest on this page would be
+ * the one a `--from-upstream` report is about. A reader standing at that y/n
+ * must never meet an empty space: "no digest here" and "a digest you did not
+ * find" are what SUP-541 is about.
  */
-export function DeploymentDigest({ title = 'This deployment’s evidence digest' }: DeploymentDigestProps) {
-  const { data, loading } = useQuery(DEPLOYMENT_DIGEST_QUERY, { fetchPolicy: 'cache-and-network' });
+export function DeploymentDigest({
+  title = 'This deployment’s evidence digest',
+  headingLevel: Heading = 'h3',
+}: DeploymentDigestProps) {
+  // The block is mounted on two screens, so the heading's id cannot be a
+  // literal — `aria-labelledby` would point at whichever copy rendered first.
+  const headingId = React.useId();
+  const { data, loading, error, refetch } = useQuery(DEPLOYMENT_DIGEST_QUERY, { fetchPolicy: 'cache-and-network' });
+
+  if (error && !data) {
+    return (
+      <ErrorState
+        title="The deployment’s evidence digest could not be loaded"
+        description="Nothing here says what this deployment publishes, so there is nothing to compare a gatekeeper’s report against. Retry before you answer its prompt."
+        onRetry={() => {
+          void refetch();
+        }}
+      />
+    );
+  }
 
   if (!data) {
     return loading ? <Skeleton className="h-28 rounded-xl" aria-hidden="true" /> : null;
@@ -73,26 +106,34 @@ export function DeploymentDigest({ title = 'This deployment’s evidence digest'
 
   const snapshot = endpoint.latestEvidence;
   const presentation = evidencePresentation(endpoint.evidenceState);
+  const digest = snapshot ? formatDigest(snapshot.evidenceDigestHex, snapshot.evidenceDigest) : null;
 
   return (
     <section
-      aria-labelledby="deployment-digest-heading"
+      aria-labelledby={headingId}
       data-testid="deployment-digest"
       className="rounded-xl border bg-card p-4 text-card-foreground"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="deployment-digest-heading" className="font-semibold text-sm">
+        <Heading id={headingId} className="font-semibold text-sm">
           {title}
-        </h3>
+        </Heading>
         <Badge variant={presentation.variant}>{presentation.label}</Badge>
       </div>
 
+      {/*
+        `issuedAt`, not the quote age: this is the line that tells a reader
+        whose gatekeeper printed a different digest which of the two is stale —
+        a tab left open since the last deployment, or a deployment that has
+        just changed under them.
+      */}
       <p className="mt-1 font-mono text-muted-foreground text-xs">
         {endpoint.hostname}
         {snapshot?.tee ? ` · ${snapshot.tee}` : ''}
+        {snapshot ? ` · issued ${formatTimestamp(snapshot.issuedAt)}` : ''}
       </p>
 
-      {snapshot ? (
+      {digest ? (
         <>
           <div className="mt-3 flex items-start gap-2 rounded-lg border bg-muted/40 p-3">
             {/*
@@ -101,10 +142,10 @@ export function DeploymentDigest({ title = 'This deployment’s evidence digest'
               a reader who would rather diff it than read it.
             */}
             <code data-testid="deployment-digest-value" className="min-w-0 select-all break-all font-mono text-xs">
-              {formatDigest(snapshot.evidenceDigestHex, snapshot.evidenceDigest)}
+              {digest}
             </code>
             <CopyButton
-              value={formatDigest(snapshot.evidenceDigestHex, snapshot.evidenceDigest)}
+              value={digest}
               label={`Copy the evidence digest of ${endpoint.hostname}`}
               className="-my-1 shrink-0"
             />
