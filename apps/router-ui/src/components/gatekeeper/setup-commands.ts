@@ -130,7 +130,7 @@ export function setupSteps(input: SetupInput): SetupStep[] {
           command: `gatekeeper endpoint trust add ${ENDPOINT_NAME} --from-upstream`,
           title: 'Pin what you are willing to trust',
           detail:
-            '--from-upstream is not trust-on-first-use: it verifies the endpoint first, prints the chain, the quote format and the evidenceDigest it found, and pins only what you then confirm. Compare that digest with the one Overview shows before you accept it.',
+            '--from-upstream is not trust-on-first-use: it verifies the endpoint first, prints the chain, the quote format and the evidenceDigest it found, and pins only what you then confirm. Compare all 64 characters of that digest against the one printed above — Overview shows the same value — before you accept it.',
         },
     {
       id: 'run',

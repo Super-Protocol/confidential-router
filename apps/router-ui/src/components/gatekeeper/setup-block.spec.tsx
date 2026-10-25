@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PUBLIC_CONFIG_GLOBAL, type PublicConfig } from '../../lib/public-config';
 import { verificationState } from '../../test-fixtures';
+import { renderWithApollo } from '../../test-utils';
 import { VerificationPanel } from '../chat/verification-panel';
 import { HowToConnect } from '../keys/how-to-connect';
 import { INSTALL_COMMANDS } from './install-commands';
@@ -50,7 +51,7 @@ afterEach(() => {
 
 describe('GatekeeperSetupBlock', () => {
   it('renders every command with this deployment’s own values and no placeholder', () => {
-    render(<HowToConnect />);
+    renderWithApollo(<HowToConnect />);
 
     const commands = renderedCommands();
 
@@ -66,7 +67,7 @@ describe('GatekeeperSetupBlock', () => {
   // root certificate is still one click away, for a build the registry never
   // signed — and it is not in the copy-all script.
   it('keeps the root certificate out of the default sequence and in the collapsed test-build section', () => {
-    render(<HowToConnect />);
+    renderWithApollo(<HowToConnect />);
 
     const commands = renderedCommands();
     expect(commands.some((command) => command.includes('trust roots add'))).toBe(false);
@@ -90,7 +91,7 @@ describe('GatekeeperSetupBlock', () => {
   // waiting to happen to the commands, so the block is shared and the two
   // surfaces are asserted against each other rather than against a literal.
   it('gives the chat panel and the API Keys page the same sequence for the same deployment', () => {
-    const page = render(<HowToConnect />);
+    const page = renderWithApollo(<HowToConnect />);
     const fromPage = renderedCommands();
     page.unmount();
 
@@ -125,7 +126,7 @@ describe('GatekeeperSetupBlock', () => {
   });
 
   it('copies the whole sequence as one script for the shell the reader picked', async () => {
-    render(<HowToConnect />);
+    renderWithApollo(<HowToConnect />);
 
     // Held by reference: the button renames itself to "Copied" for two seconds
     // after a copy, and the second press is the same control.

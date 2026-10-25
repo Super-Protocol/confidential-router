@@ -3,6 +3,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@confidential-router/ui/components/card';
 import { BookOpen } from 'lucide-react';
 import type * as React from 'react';
+import { DeploymentDigest } from '../evidence/deployment-digest';
 import { DataFlowDiagram } from '../gatekeeper/data-flow-diagram';
 import { GatekeeperSetupBlock } from '../gatekeeper/setup-block';
 import { InfoPopover } from '../info-popover';
@@ -76,6 +77,16 @@ export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps
           }
           moreLabel="About these commands"
         >
+          {/*
+            The pin step's `--from-upstream` asks a y/n that is only answerable
+            against a digest the reader already holds, and sending them to
+            another screen for it is what made the documented comparison
+            unfollowable (SUP-541). It sits above the commands because it has to
+            be read before step 4 is run, not after.
+          */}
+          <div className="mb-3">
+            <DeploymentDigest title="The digest this step must print back" />
+          </div>
           <GatekeeperSetupBlock />
         </Step>
 
