@@ -160,7 +160,11 @@ describe('setupSteps', () => {
       .flatMap((step) => [step.title, step.detail])
       .join('\n');
 
+    // Positional words and screen names both: "Overview shows this digest" is
+    // as false in the chat panel as "the one printed above" is, and only the
+    // first half of that was caught on the round that added this.
     expect(prose).not.toMatch(/\b(above|below|on the right|on the left|this page|the card)\b/i);
+    expect(prose).not.toMatch(/\b(Overview|API Keys|Models|Activity|Logs|Credits|Chat)\b/);
   });
 
   it('writes the two piped lines for the chosen shell', () => {
