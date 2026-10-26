@@ -1,17 +1,6 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { signIn } from './fixtures';
-
-/** Same bar as `accessibility.spec.ts`: nothing serious or critical. */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
-
-async function seriousViolations(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-
-  return results.violations
-    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
-    .map((violation) => ({ id: violation.id, nodes: violation.nodes.map((node) => node.target.join(' ')) }));
-}
 
 type Responder = Record<string, unknown> | ((variables: Record<string, unknown>) => Record<string, unknown>);
 
@@ -179,7 +168,7 @@ test.describe('Activity', () => {
     await page.goto('/activity');
     await expect(page.getByText('$1.23')).toBeVisible();
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
 
@@ -203,7 +192,7 @@ test.describe('Logs', () => {
     await page.goto('/logs');
     await expect(page.getByRole('cell', { name: 'Llama 3.3 70B Instruct' })).toBeVisible();
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('downloads the filtered log as CSV', async ({ page, baseURL }) => {
