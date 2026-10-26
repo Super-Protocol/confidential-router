@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException, ServiceUnava
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createTestDataSource } from '../../../test/seed.js';
 import type { routerConfig } from '../config.js';
 import { RouterConfigSchema } from '../config.schema.js';
@@ -71,7 +72,13 @@ beforeEach(async () => {
     new SecretEnvelopeService(),
     { render } as unknown as SidecarConfigWriterService,
     catalog,
-    new ExternalEndpointStatusService(config(), dataSource, catalog, new ExternalEndpointHealth()),
+    new ExternalEndpointStatusService(
+      config(),
+      dataSource,
+      catalog,
+      new ExternalEndpointHealth(),
+      new RecordingOperatorAlerts().asService(),
+    ),
   );
 });
 
@@ -509,6 +516,7 @@ describe('pinning a deployment’s evidence digest (SUP-252)', () => {
       dataSource,
       catalog,
       new ExternalEndpointHealth(),
+      new RecordingOperatorAlerts().asService(),
     ).resetToPending();
 
     const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });

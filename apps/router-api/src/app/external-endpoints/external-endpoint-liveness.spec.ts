@@ -7,8 +7,10 @@ import {
   type LivenessRow,
   livenessOf,
   type OutageThresholds,
+  outageAlert,
   outageLine,
   reachabilityOf,
+  recoveryAlert,
   summarise,
 } from './external-endpoint-liveness.js';
 
@@ -233,6 +235,68 @@ describe('outageLine', () => {
     expect(line).toContain('stage fetch');
     expect(line).toContain('fetch: EOF');
     expect(line).toContain('503 attestation_failed');
+  });
+});
+
+describe('outageAlert', () => {
+  /** The facts, as the message carries them — the shape an assertion wants. */
+  function factsOf(liveness: ReturnType<typeof livenessOf>): Record<string, string> {
+    return Object.fromEntries(outageAlert(liveness, NOW).facts);
+  }
+
+  it('says the same thing the log line says, so the two cannot be caught disagreeing', () => {
+    const liveness = livenessOf(dark(), THRESHOLDS, NOW);
+    const alert = outageAlert(liveness, NOW);
+    const facts = factsOf(liveness);
+
+    expect(alert.title).toContain('upstream-a');
+    expect(alert.summary).toContain('503 attestation_failed');
+    // The duration is the one number both readers quote; a mail saying 31m beside
+    // a log line saying 32m is how an operator learns to trust neither.
+    expect(facts['Not serving for']).toBe('31m');
+    expect(outageLine(liveness, NOW)).toContain('31m');
+    expect(facts['Failed checks in a row']).toBe('3');
+    expect(facts.Endpoint).toBe('upstream-a');
+  });
+
+  it('sends an operator to the upstream’s cloud when the upstream did not answer', () => {
+    const alert = outageAlert(livenessOf(dark(), THRESHOLDS, NOW), NOW);
+
+    // The distinction the whole feature exists for: "go fix the cloud" rather
+    // than "open the console and approve a deployment".
+    expect(factsOf(livenessOf(dark(), THRESHOLDS, NOW)).Upstream).toBe('did not answer at all');
+    expect(alert.action).toContain('Nothing here needs approving');
+  });
+
+  it('sends them to the console when the upstream answered and was refused', () => {
+    const redeployed = dark({ lastStage: 'policy', lastReason: 'digest-mismatch', upstreamUnreachable: false });
+    const alert = outageAlert(livenessOf(redeployed, THRESHOLDS, NOW), NOW);
+
+    expect(factsOf(livenessOf(redeployed, THRESHOLDS, NOW)).Upstream).toContain('refused what it answered with');
+    expect(alert.action).toContain('approve the new deployment');
+  });
+
+  it('carries no hostname and no digest: mail gets forwarded, the console needs a session', () => {
+    const liveness = livenessOf(dark(), THRESHOLDS, NOW);
+    const alert = outageAlert(liveness, NOW);
+    const everything = [alert.title, alert.summary, alert.action, ...alert.facts.flat()].join(' ');
+
+    // SUP-221 ruling 3: upstream identity and verdict detail stay behind a
+    // session. The endpoint's name is here because it is the operator's own label.
+    expect(everything).not.toContain(DIGEST);
+    expect(everything).not.toContain('sha256');
+    expect(everything).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe('recoveryAlert', () => {
+  it('closes the alert and says how long the run was', () => {
+    const declaredAt = new Date(NOW.getTime() - 90 * 60_000);
+    const alert = recoveryAlert(livenessOf(row(), THRESHOLDS, NOW), declaredAt, NOW);
+
+    expect(alert.title).toContain('is serving again');
+    expect(Object.fromEntries(alert.facts)['Was not serving for']).toBe('1h30m');
+    expect(alert.action).toContain('No action needed');
   });
 });
 

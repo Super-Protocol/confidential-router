@@ -1470,6 +1470,11 @@ type Mutation {
   """
   rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 
+  """
+  Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+
   """Turns automatic top-up on or off."""
   setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
 
@@ -1502,6 +1507,22 @@ type Mutation {
   Withdraws one unredeemed invitation code. Restricted to auth.adminEmails.
   """
   withdrawInviteCode(id: ID!): InviteWithdrawal!
+}
+
+type OperatorAlertTest {
+  """Addresses the message was accepted for."""
+  delivered: Int!
+
+  """Addresses the provider refused. Each one is in the container log."""
+  failed: Int!
+
+  """Whether at least one operator was written to."""
+  sent: Boolean!
+
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).
+  """
+  skipped: String
 }
 
 type PageInfo {

@@ -784,6 +784,29 @@
         }
       }
     },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where an alert goes so that a human reads it (SUP-535). An ERROR log line is an alert only on a deployment with a log sink somebody has wired an alarm to; this one has none, and both production outages so far were found by a person stumbling over them. So the alert leaves by the channel this deployment proves every day \u2014 the mail provider the sign-in codes go out through. Nothing here has to be set for the channel to work: `emails` falls back to `auth.adminEmails`.",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "items": { "type": "string", "format": "email" },
+          "default": [],
+          "description": "Who to write to. Empty means auth.adminEmails, which a deployment with an admin section already sets \u2014 a channel nobody had to configure is a channel that works on the deployment already running. Name a shared inbox or an on-call alias here to override."
+        },
+        "email": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switches the outbound path off. The log line, the /health block and the endpoint timeline are unchanged \u2014 they are the record; this is the thing that wakes somebody. Off is for a deployment whose log sink already pages."
+        },
+        "minInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "15m",
+          "description": "Least time between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox that has been flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. A recovery is sent past this interval \u2014 an operator who was woken is owed the \u201cit is back\u201d line. 0 disables it."
+        }
+      }
+    },
     "log": {
       "type": "object",
       "additionalProperties": false,

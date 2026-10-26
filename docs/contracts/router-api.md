@@ -423,6 +423,14 @@ same crossing writes an `ERROR` log line, and it is produced by the status pass 
 runs from the rows alone when the sidecar itself cannot be read, which is the one failure mode that
 produces no verdict to notice it by. `docs/router.md` carries the matcher a log sink needs.
 
+- `alerts` — whether an outage above can leave this deployment (SUP-535). `state` is `disabled`
+  (`alerts.email` off, or no mail provider), `unconfigured` (enabled with nobody to write to —
+  **the state that looks exactly like quiet**), `ready` (nothing raised yet) or `ok` / `failing` by
+  whether the last alert reached anybody. `recipients` is a count; the addresses are never reported.
+  Like `mail`, `analytics` and `externalEndpoints`, it never decides the overall `status`:
+  a deployment that cannot alert still serves every model. `externalEndpoints.status: outage` beside
+  `alerts.state: unconfigured` is the pair that says nobody has been told.
+
 `/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
 else: no project key, no key prefix, no `POSTHOG_HOST`. `externalEndpoints` is bounded the same way and for
 the stronger reason — ruling 3 on SUP-221 keeps upstream identity and verdict detail behind a session — so

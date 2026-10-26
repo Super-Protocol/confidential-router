@@ -700,3 +700,32 @@ export class UpdateTrustedMeasurementInputModel {
   @Length(0, 255)
   note?: string;
 }
+
+/**
+ * What one test of the alert channel did (SUP-535).
+ *
+ * `delivered` is a count, not a list: the operator asking already knows which
+ * inbox they are watching, and the addresses an alert goes to are configuration
+ * an authenticated-but-curious reader has no claim on. `failed` carries the
+ * coarse reason so an operator can tell "the mail server refused us" from
+ * "nobody is configured" without opening the container log.
+ */
+@ObjectType('OperatorAlertTest')
+export class OperatorAlertTestModel {
+  @Field(() => Boolean, { description: 'Whether at least one operator was written to.' })
+  sent!: boolean;
+
+  @Field(() => Int, { description: 'Addresses the message was accepted for.' })
+  delivered!: number;
+
+  @Field(() => Int, { description: 'Addresses the provider refused. Each one is in the container log.' })
+  failed!: number;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or ' +
+      'NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).',
+  })
+  skipped!: string | null;
+}

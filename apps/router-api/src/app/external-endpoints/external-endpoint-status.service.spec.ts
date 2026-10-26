@@ -1,6 +1,7 @@
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createTestDataSource, seedExternalEndpoint } from '../../../test/seed.js';
 import type { routerConfig } from '../config.js';
 import { RouterConfigSchema } from '../config.schema.js';
@@ -21,6 +22,7 @@ let dataSource: DataSource;
 let catalog: ExternalCatalogService;
 let health: ExternalEndpointHealth;
 let service: ExternalEndpointStatusService;
+let alerts: RecordingOperatorAlerts;
 
 function config(): ConfigType<typeof routerConfig> {
   return RouterConfigSchema.parse({
@@ -65,7 +67,8 @@ beforeEach(async () => {
   dataSource = await createTestDataSource();
   catalog = new ExternalCatalogService(dataSource);
   health = new ExternalEndpointHealth();
-  service = new ExternalEndpointStatusService(config(), dataSource, catalog, health);
+  alerts = new RecordingOperatorAlerts();
+  service = new ExternalEndpointStatusService(config(), dataSource, catalog, health, alerts.asService());
 });
 
 afterEach(async () => {
@@ -397,6 +400,40 @@ describe('the sustained-failure alert', () => {
     expect(errors[0]).toContain('the upstream did not answer');
     expect(errors[0]).toContain('fetch: EOF');
     expect((await eventsOf(endpoint.id)).filter((event) => event.kind === 'outage')).toHaveLength(1);
+  });
+
+  it('sends the outage out of the process, once per run, where a human will read it', async () => {
+    const endpoint = await pinnedEndpoint();
+    capture('error');
+
+    await failFor(endpoint.name, 3);
+    await failFor(endpoint.name, 5);
+
+    // The half SUP-517 left out: a log line is an alert only where something
+    // watches the log, and nothing watches this one (SUP-535).
+    expect(alerts.raised).toHaveLength(1);
+    const alert = alerts.one(endpoint.name);
+    expect(RecordingOperatorAlerts.factsOf(alert)).toMatchObject({
+      Endpoint: endpoint.name,
+      'Failed checks in a row': '3',
+      Upstream: 'did not answer at all',
+    });
+  });
+
+  it('sends the recovery past the alert interval, because the operator was woken', async () => {
+    const endpoint = await pinnedEndpoint();
+    capture('error');
+    await failFor(endpoint.name, 3);
+    capture('log');
+
+    const recoveredAt = new Date('2026-10-23T07:11:00.000Z');
+    sidecarReports(verified(endpoint.name, { checkedAt: recoveredAt.toISOString() }));
+    await service.sync(recoveredAt);
+    await service.sync(recoveredAt);
+
+    const recoveries = alerts.raised.filter((entry) => entry.alert.title.includes('serving again'));
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0].urgent).toBe(true);
   });
 
   it('records the outage on the endpoint’s own timeline, with the stage that caused it', async () => {

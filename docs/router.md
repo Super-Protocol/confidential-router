@@ -227,13 +227,18 @@ that, and it notices out loud — the check runs on the status poll's error path
 too, from the rows alone, precisely because a wedged sidecar is the failure that
 produces no verdict to notice it by.
 
-Crossing either threshold does three things, once per run:
+Crossing either threshold does four things, once per run:
 
+- **writes one message to the operators** — the outbound path, and the only one of
+  the four that reaches somebody who is not already looking (SUP-535). It carries
+  the endpoint, how long it has been dark, how many checks failed and whether the
+  upstream answered at all, and its closing line sends the reader to the upstream's
+  cloud when the upstream did not answer and to the console when it answered and
+  was refused. A recovery sends its counterpart. See *Where an alert goes* below.
 - **writes one `ERROR` log line** naming the endpoint, how long it has been dark,
   how many checks have failed, whether the upstream answered at all and the
-  sidecar's own reason. This is the alert — the deployment has no pager to call,
-  so `error` is the severity a log sink matches on, and the line carries
-  everything needed to act without opening a console. A recovery logs its
+  sidecar's own reason. `error` is the severity a log sink matches on, and the line
+  carries everything needed to act without opening a console. A recovery logs its
   counterpart at `log` level.
 - **appends an `outage` row** to that endpoint's timeline, which the admin
   section renders; `recovered` closes it.
@@ -264,10 +269,42 @@ structural. Polling `GET /health` for `externalEndpoints.status == "outage"` is
 the equivalent black-box rule for a sink that cannot read logs — it crosses at
 the same instant, by construction, because both come out of the same pass.
 
-A real outbound notification path — mail to `auth.adminEmails`, or an ops event —
-is deliberately **not** in this version; it is tracked as SUP-535 so that it is a
-decision rather than a side effect. Until it exists, the matcher above is the
-whole of the alert, which is why configuring it is part of deploying this.
+### Where an alert goes
+
+An `ERROR` line is an alert only where something watches the log, and this
+deployment has nothing watching it — both production outages so far were found by
+a person stumbling over them. So the alert also leaves the process, by the one
+channel this deployment proves every day: the mail provider the sign-in codes go
+out through (SUP-535). Nothing new to keep working; if mail breaks, sign-in breaks
+first and much more loudly.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `alerts.emails` | `[]` | Who to write to. **Empty falls back to `auth.adminEmails`**, which every deployment with an admin section already sets — so the channel works on the deployment that is already running, which is the one the outage happens on. Name a shared inbox or an on-call alias here to override. |
+| `alerts.email` | `true` | Switches the outbound path off and nothing else. The log line, the timeline row and the `/health` block are the record and are unaffected. Off is for a deployment whose log sink already pages. |
+| `alerts.minInterval` | `15m` | Least gap between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. A **recovery is sent past this interval** — an operator who was woken is owed the "it is back" line. |
+
+What the message does *not* carry: the upstream hostname, the pinned digest, the
+sidecar's verdict detail. Mail is forwarded, quoted and left open on screens, and
+SUP-221 ruling 3 keeps upstream identity behind a session — the endpoint's own
+name is the one identifier, and it is the operator's own label. The full verdict
+is in the console.
+
+**`GET /health` reports the channel, not just the outage.** The `alerts` block
+carries a state and a count of recipients — never an address:
+
+| `alerts.state` | Means |
+| --- | --- |
+| `disabled` | `alerts.email` is off, or `mail.provider` is `none`. |
+| `unconfigured` | Enabled with nobody to write to. **This is the state that looks exactly like quiet**: the deployment is detecting outages and telling no one. `externalEndpoints.status: outage` beside this pair is the reading that says nobody has been told. |
+| `ready` | Enabled, with recipients, nothing raised yet. |
+| `ok` / `failing` | Whether the last alert reached anybody. |
+
+**Proving it works:** the admin mutation `sendOperatorAlertTest` sends one message
+now, past the rate limit, to every configured recipient. Its body says in so many
+words that nothing is wrong. That exists because the acceptance criterion for an
+alerting path is a message that *arrived*, and inducing a real outage on a live
+deployment to watch the mail go out is what cost 28 minutes once already.
 
 Two endpoints are deliberately exempt, and both exemptions are about keeping the
 alert worth believing rather than keeping it quiet: one an operator **disabled**
