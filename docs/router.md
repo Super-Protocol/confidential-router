@@ -319,9 +319,43 @@ console checks the invitation before it asks for one.
 address and is rate-limited per source (429). One recipient is mailed at most
 `mailsPerAddressPerHour` codes — past that the answer is the same 200 and
 nothing is sent, so the limit cannot be used to learn or to silence anything. A
-send the mail server refused is also a 200: it shows in the log and in
-`/health`, not to the requester. A send an invite-only deployment withheld is
-the same 200 again, for the same reason.
+send an invite-only deployment withheld is the same 200 again, for the same
+reason.
+
+**A send that failed is not a 200.** While the mailer is down — `/health`
+reports `mail.state: failing` — both mail routes answer
+`503 {"code": "MAIL_SEND_FAILED"}` (SUP-460). This matters because a deployment
+with `emailCode` on and `magicLink` off has no other way in but the
+[bootstrap token](#first-sign-in-on-a-fresh-deployment), so a mail outage
+reported as success would be every account locked out while the router says
+everything is fine.
+
+The refusal is decided from the **mailer's** state as the request found it, and
+not from what happened to that request, which is what keeps it from saying
+anything about who asked. Deciding it per request would not: the invitation gate
+above returns before the send for an uninvited address, so during an outage an
+account holder would get the 503 and a stranger the 200, and the difference
+would be unauthenticated account enumeration. Decided this way, a withheld send,
+a recipient past their allowance and an attempted send all answer alike. The
+send is still attempted, so the first one that works puts `mail.state` back to
+`ok` and the route recovers on its own — at the cost of one 503 for a code that
+did reach the inbox, whose retry succeeds.
+
+**A recipient the server will not take is not the mailer being down.** That one
+refusal is logged, leaves `mail.state` alone, and is answered exactly as a
+withheld send is — a 200 with nothing behind it. Nothing else is treated that
+way: a relay refusing our *sender*, one refusing the body, and anything the
+provider does not classify are all the mailer, and make `mail.state` `failing`.
+The line is drawn at the recipient and defaults the other way on purpose. A
+false `failing` costs one uniform refusal that the next good send clears; a
+false `ok` would leave `/health` reporting a healthy mailer through a
+misconfiguration that can send nothing for anybody — an unverified sender
+domain, say — while the send route went back to answering an account holder
+differently from a stranger.
+
+It also keeps `mail.state` from being something an outsider can set. While any
+refusal flipped it, a sign-up to a bogus address was enough to put the whole
+deployment into `failing` and have every sign-in refused with it.
 
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and

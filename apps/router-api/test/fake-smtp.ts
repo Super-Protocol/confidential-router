@@ -24,11 +24,30 @@ export class FakeSmtpServer {
   private server?: Server;
   private readonly sockets = new Set<Socket>();
 
-  constructor(private readonly credentials?: { user: string; password: string }) {}
+  constructor(
+    private readonly credentials?: { user: string; password: string },
+    /**
+     * Recipients this server answers `550` to — a server that takes the
+     * connection and the credentials and refuses one message, which is what
+     * nodemailer reports as `EENVELOPE`.
+     */
+    private readonly refuses: readonly string[] = [],
+    /**
+     * Refuse `MAIL FROM` instead — a relay that will not carry this sender at
+     * all, which is what an unverified domain or a suspended account looks
+     * like. Same `EENVELOPE` as a refused recipient, and no `rejected` list.
+     */
+    private readonly refusesSender = false,
+  ) {}
 
-  async listen(): Promise<number> {
+  /**
+   * `port` is for the one case that needs a *particular* one: a harness booted
+   * against a dead port, so its mail state starts out `failing`, and then a
+   * server brought up underneath it. Everywhere else, an ephemeral port.
+   */
+  async listen(port = 0): Promise<number> {
     this.server = createServer((socket) => this.session(socket));
-    await new Promise<void>((resolve) => this.server?.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => this.server?.listen(port, '127.0.0.1', resolve));
     const address = this.server.address();
     if (!address || typeof address === 'string') {
       throw new Error('fake SMTP server has no port');
@@ -142,21 +161,29 @@ export class FakeSmtpServer {
               reply('530 5.7.0 Authentication required');
               break;
             }
+            if (this.refusesSender) {
+              reply('550 5.7.1 Sender domain is not verified');
+              break;
+            }
             current.from = line
               .replace(/^MAIL FROM:\s*/i, '')
               .replace(/[<>]/g, '')
               .split(' ')[0];
             reply('250 2.1.0 OK');
             break;
-          case 'RCPT':
-            current.to.push(
-              line
-                .replace(/^RCPT TO:\s*/i, '')
-                .replace(/[<>]/g, '')
-                .split(' ')[0],
-            );
+          case 'RCPT': {
+            const recipient = line
+              .replace(/^RCPT TO:\s*/i, '')
+              .replace(/[<>]/g, '')
+              .split(' ')[0];
+            if (this.refuses.includes(recipient)) {
+              reply('550 5.1.1 No such user here');
+              break;
+            }
+            current.to.push(recipient);
             reply('250 2.1.5 OK');
             break;
+          }
           case 'DATA':
             inData = true;
             reply('354 End data with <CR><LF>.<CR><LF>');
