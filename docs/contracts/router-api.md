@@ -29,7 +29,8 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
-| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key |
+| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key. In-cluster only — the chart does not publish it |
+| `GET /admin/health` | operational | the same document from outside the cluster, behind the operator's session and `auth.adminEmails` (SUP-479) |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
 
@@ -387,7 +388,7 @@ a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to 
 reads `configured` with `dropped: 0` forever. `configured` rules out the failure that has no other symptom
 (the variable never arrived); a key that is present and wrong is still found by looking for the events.
 
-`/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
+`/health` is unauthenticated, so `analytics` carries a two-value enum and a count and nothing
 else: no project key, no key prefix, no `POSTHOG_HOST`.
 
 One thing it does leak, knowingly: while `status` is `disabled` the counter rises once per captured event,
@@ -396,6 +397,26 @@ ingest, which makes part of that rate a sign-up volume. Accepted rather than ove
 deployment is collecting nothing to correlate it against, the resolution is whatever the poller's interval
 is, and `/health` already publishes the version, the uptime and the mail provider. Should that trade ever
 stop being worth it, the fix is to stop serving `dropped` without a session, not to stop counting.
+
+### `GET /admin/health`
+
+The same document, for a caller outside the cluster. Session cookie **and** `auth.adminEmails`, exactly as
+the other two `/admin` routes (`/admin/data`, `/admin/invite-codes`) are.
+
+`/health` is the kubelet's, and the chart deliberately leaves it off `ingress.paths` — so on a published
+deployment nginx answers `404` for `/health`, and a published cluster space has no exec and no
+port-forward to reach it another way. That made `mail` and `analytics`, the two reports `/health` exists to
+carry, readable only from inside the pod (SUP-479). Publishing `/health` itself was the other option and
+is the wrong one: the document carries the database's error text and the mail provider, which is why it
+has never been on a public hostname. `/admin` is already routed, so this needs no chart change.
+
+**Always `200`**, even when `status` is `error` — unlike `/health`, where `503` is what a probe reads.
+This is not a probe, and a monitor that found this route must not be able to use it as one; the body is
+what an operator reads. A deployment that genuinely cannot reach PostgreSQL will not authenticate the
+session either, so `/health` on the kubelet stays the answer for that case.
+
+`401` without a session, `403` for a session that is not an operator — including on a deployment that has
+named no operators, since `auth.adminEmails` is empty by default and `AdminGuard` refuses an empty list.
 
 ## Errors
 

@@ -276,7 +276,8 @@ authenticates once at boot without sending anything, and `/health` carries the
 outcome as `mail: { provider, state, reason }` — `ok`, or `failing` with
 `unreachable` (no connection at all), `auth_failed` or `rejected`. Every later
 send updates it. It never makes `/health` itself fail: a lost welcome mail is
-not an outage. The log line says which host and port, and never the password.
+not an outage. On a deployment, read it through `GET /admin/health` — `/health`
+itself is the kubelet's and is not published (SUP-479). The log line says which host and port, and never the password.
 On a Swarm cluster space, outbound connections to public addresses are open and
 private ranges are not, so the SMTP host has to resolve to a public address;
 some clouds also block outbound port 25, which is what 587 and 465 are for.
@@ -830,7 +831,10 @@ lose. `/health` therefore carries `analytics: { status, dropped }`:
 monotonic count of events lost since boot, whether the disabled sink discarded
 them, PostHog refused them or the host could not be reached (SUP-464). Like
 `mail`, it never makes `/health` itself fail: a missing chart is not an outage.
-`/health` is public, so that is all it says — no key, no key prefix, no host.
+`/health` is unauthenticated, so that is all it says — no key, no key prefix, no
+host. The chart does not publish `/health`, so on a deployment the place to read
+this is `GET /admin/health`, the same document behind the operator's session
+(SUP-479): `curl -b "$COOKIE" "$API/admin/health"`.
 `configured` answers "did the variable arrive", not "do events land": a key that
 is present and wrong also reads `configured`, since PostHog accepts a capture for
 a project that does not exist.

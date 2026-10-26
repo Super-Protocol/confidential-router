@@ -4,6 +4,11 @@ import type { Response } from 'express';
 import { HealthResponseDto } from './health.dto.js';
 import { HealthService } from './health.service.js';
 
+/**
+ * The kubelet's probe. Unauthenticated, and kept off the chart's `ingress.paths`
+ * on purpose — see {@link AdminHealthController}, which serves the same document
+ * to an operator on a prefix the Ingress does publish (SUP-479).
+ */
 @ApiTags('health')
 @Controller('health')
 export class HealthController {

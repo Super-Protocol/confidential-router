@@ -497,7 +497,7 @@ src/
     activity/             SQL aggregates, the generation log and its CSV
     billing/              credits ledger, payment providers, automatic top-up
     preferences/          console settings and the evidence export
-    api/health            /health
+    api/health            /health for the kubelet, /admin/health for the operator
     gatekeeper/           GitHub release metadata for the console's download screen
     api/graphql           Apollo code-first schema, its error codes and the committed SDL
     api/v1                the OpenAI-compatible gateway
