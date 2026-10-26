@@ -131,8 +131,10 @@ configured threshold is an event.**
   per run and in each direction, rate-limited by `alerts.minInterval` — the recovery excepted, which
   goes out past it. The channel is the deployment's own mail provider rather than a new one: an
   `ERROR` line is an alert only where something watches the log, and nothing watches this one. The
-  message carries the endpoint name, the duration and the reachability, and never the hostname, the
-  pinned digest or the verdict detail (ruling 3 on SUP-221 — mail gets forwarded).
+  message carries the endpoint name, the duration, the reachability and the stage, and never the
+  hostname, the pinned digest or the sidecar's own sentence (ruling 3 on SUP-221 — mail gets
+  forwarded, and `lastReason` is free text that routinely embeds the measurement hex). The interval is
+  armed by a message that landed, not by one that was attempted.
 - **The alert.** One `ERROR` log line per run, with the endpoint, the duration, the count, whether the
   upstream answered at all and the sidecar's reason; one `recovered` line when an admitting verdict
   closes it. `error` because a log sink can match on it; once per run because a line repeated every

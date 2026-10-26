@@ -314,6 +314,17 @@ export function recoveryLine(liveness: EndpointLiveness, declaredAt: Date, now: 
  * The endpoint's name is the only identifier: it is the operator's own label.
  * The upstream hostname, the pinned digest and the sidecar's verdict detail stay
  * in the console, behind a session (SUP-221 ruling 3) — mail gets forwarded.
+ *
+ * **{@link EndpointLiveness.reason} is deliberately not here**, which is the one
+ * place this was got wrong first. It is the sidecar's own sentence, up to 255
+ * characters of free text, and it routinely embeds exactly what the paragraph
+ * above says stays behind a session: `external-endpoints.e2e.spec.ts` asserts a
+ * denial's reason *contains the measurement hex*, and a `fetch` refusal names the
+ * URL it could not read. The stage is the same information in a bounded form —
+ * `policy`, `fetch`, `untrusted-root` — and it is what an operator needs to know
+ * which way to go. The sentence itself is in the log line and in the endpoint's
+ * timeline, both of which require being inside the deployment or holding a
+ * session.
  */
 export function outageAlert(
   liveness: EndpointLiveness,
@@ -335,9 +346,6 @@ export function outageAlert(
   if (liveness.stage) {
     facts.push(['Stopped at stage', liveness.stage]);
   }
-  if (liveness.reason) {
-    facts.push(['Sidecar’s reason', liveness.reason]);
-  }
   return {
     title: `External endpoint “${liveness.name}” has stopped serving`,
     summary:
@@ -349,7 +357,8 @@ export function outageAlert(
         ? 'The upstream did not answer, so this is the upstream’s cloud rather than an approval: check that the ' +
           'model deployment is up and that its hostname still routes. Nothing here needs approving.'
         : 'The upstream answered and this router refused what it answered with. If it was redeployed on purpose, ' +
-          'approve the new deployment’s evidence digest in the console; if it was not, that refusal is the point.',
+          'approve the new deployment’s evidence digest in the console; if it was not, that refusal is the point. ' +
+          'The sidecar’s own wording for the refusal is on the endpoint’s timeline in the console.',
   };
 }
 

@@ -48,6 +48,9 @@ export interface AlertChannelStatus {
  *   flapping upstream — a run that ends and begins again — from filling a mailbox,
  *   because a flooded mailbox grows a filter and then the next alert is lost for
  *   good. What was suppressed is counted and said out loud in the next message.
+ *   The interval is armed by a message that **landed**: a send that reached
+ *   nobody put nothing in a mailbox, and arming on it would spend the next
+ *   quarter-hour's alerting budget on a message that does not exist.
  * - **It reports what happened**, not what is configured. `status()` is the
  *   difference between "a channel exists" and "a human was written to".
  */
@@ -129,8 +132,6 @@ export class OperatorAlertsService {
     }
 
     const suppressed = this.suppressed;
-    this.suppressed = 0;
-    this.lastSentAt = now.getTime();
     this.lastAttemptAt = now;
 
     const delivery = await this.send(withSuppressed(alert, suppressed), recipients);
@@ -138,6 +139,14 @@ export class OperatorAlertsService {
       return null;
     }
     if (delivery.delivered.length > 0) {
+      // The interval is armed by a message that *landed*, not by one that was
+      // attempted. A send that reached nobody put nothing in a mailbox, so there
+      // is nothing to protect — and arming on failure would spend the next
+      // quarter-hour's alerting budget on a message that does not exist, which is
+      // the opposite of what this rate limit is for. The per-run latch still stops
+      // one outage from sending twice.
+      this.lastSentAt = now.getTime();
+      this.suppressed = 0;
       this.logger.log(`Outage alert "${alert.title}" delivered to ${delivery.delivered.length} operator(s).`);
     } else {
       this.logger.error(

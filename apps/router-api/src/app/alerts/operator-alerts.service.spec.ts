@@ -185,6 +185,56 @@ describe('the rate limit', () => {
     expect(mail.sent[1].alert.title).toBe('is serving again');
   });
 
+  it('is armed by a message that landed, not by one that was refused', async () => {
+    const mail = mailer({ refuse: true });
+    const service = new OperatorAlertsService(config({ alerts: { minInterval: '15m' } }), mail.mail);
+    const at = (minutes: number): Date => new Date(Date.UTC(2026, 9, 26, 10, minutes));
+
+    await service.raise(ALERT, at(0));
+    await service.raise(ALERT, at(1));
+
+    // A send that reached nobody put nothing in a mailbox, so there is nothing to
+    // protect. Arming on it would spend the next quarter-hour's alerting budget on
+    // a message that does not exist — one transient refusal silencing the window
+    // that matters most.
+    expect(mail.sent).toHaveLength(2);
+    expect(service.status().suppressed).toBeUndefined();
+  });
+
+  it('keeps the suppressed count when the message that would have reported it failed', async () => {
+    const sent: Sent[] = [];
+    let refuse = false;
+    const mail = {
+      enabled: true,
+      sendOperatorAlert: vi.fn(async (alert: OperatorAlert, recipients: readonly string[]) => {
+        sent.push({ alert, recipients: [...recipients] });
+        return refuse
+          ? {
+              attempted: 1,
+              delivered: [],
+              failed: [{ to: recipients[0], reason: 'unreachable' as const }],
+              skipped: null,
+            }
+          : { attempted: 1, delivered: [...recipients], failed: [], skipped: null };
+      }),
+    } as unknown as MailService;
+    const service = new OperatorAlertsService(config({ alerts: { minInterval: '15m' } }), mail);
+    const at = (minutes: number): Date => new Date(Date.UTC(2026, 9, 26, 10, minutes));
+
+    await service.raise(ALERT, at(0));
+    await service.raise(ALERT, at(5));
+    refuse = true;
+    await service.raise(ALERT, at(20));
+    refuse = false;
+    await service.raise(ALERT, at(21));
+
+    // The count belongs to whichever message actually carries it out. The refused
+    // one at :20 did not, so the one at :21 still has to say "1".
+    expect(Object.fromEntries(sent.at(-1)?.alert.facts ?? [])).toMatchObject({
+      'Alerts suppressed since the last message': '1',
+    });
+  });
+
   it('sends every alert when the interval is disabled', async () => {
     const mail = mailer();
     const service = new OperatorAlertsService(config({ alerts: { minInterval: 0 } }), mail.mail);
