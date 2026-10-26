@@ -19,6 +19,7 @@ export const SIGN_IN_OPTIONS_QUERY = graphql(`
       emailCodeLength
       magicLink
       inviteRequired
+      supportEmail
     }
   }
 `);

@@ -60,6 +60,14 @@ export interface EmailCodeStepProps {
   email: string;
   /** Digits in a code — the router's (`signInOptions.emailCodeLength`). */
   length: number;
+  /**
+   * A mailbox reachable from a *different* address (`signInOptions.supportEmail`),
+   * named only where the provider is dropping mail to this one (SUP-556).
+   *
+   * Null on a deployment that configured none, which is the one case this screen
+   * has nothing better to offer than a second address.
+   */
+  supportEmail: string | null;
   /** The verb on the primary button, and what it reads while the request is out. */
   submitLabel: string;
   submittingLabel: string;
@@ -107,6 +115,7 @@ function useAddressRejected(email: string): boolean {
 export function EmailCodeStep({
   email,
   length,
+  supportEmail,
   submitLabel,
   submittingLabel,
   pending,
@@ -205,10 +214,30 @@ export function EmailCodeStep({
              the message was accepted and then discarded, and pressing "Send a
              new code" produces another one that is discarded too (SUP-551).
              Said plainly, and about the address rather than about any account
-             — the router still does not say whether one exists. */
+             — the router still does not say whether one exists.
+
+             It also names where to write, because this is the one failure the
+             person cannot report to us: the channel they would use is the
+             broken one, and after sign-up clearing the suppression is the only
+             way back into the account at all (SUP-556). */
           <p role="status" data-testid="email-code-rejected" className="text-destructive text-sm leading-relaxed">
-            Mail to this address is being rejected, so the code did not arrive and a new one will not either. Sign in
-            with a different address, or ask us to look into this one.
+            Mail to this address is being rejected, so the code did not arrive and a new one will not either.{' '}
+            {supportEmail ? (
+              <>
+                Write to{' '}
+                <a
+                  href={`mailto:${supportEmail}`}
+                  className="underline underline-offset-2"
+                  data-testid="email-code-rejected-contact"
+                >
+                  {supportEmail}
+                </a>{' '}
+                from an address that works and ask for this one to be cleared — for an account that already exists on
+                it, that is the only way back. Signing in with a different address starts a separate account.
+              </>
+            ) : (
+              'Signing in with a different address starts a separate account; an address we are rejecting can only be cleared by whoever runs this deployment.'
+            )}
           </p>
         ) : (
           /* The router answers "sent" whatever happened — it mails one address
