@@ -303,6 +303,73 @@ export function recoveryLine(liveness: EndpointLiveness, declaredAt: Date, now: 
   );
 }
 
+/**
+ * The same outage, as the message that leaves the deployment (SUP-535).
+ *
+ * Built from {@link EndpointLiveness} beside {@link outageLine} rather than from
+ * the log line, so the mail and the log cannot disagree about how long an upstream
+ * has been down — the disagreement that teaches an operator to stop trusting
+ * whichever was cheaper to check.
+ *
+ * The endpoint's name is the only identifier: it is the operator's own label.
+ * The upstream hostname, the pinned digest and the sidecar's verdict detail stay
+ * in the console, behind a session (SUP-221 ruling 3) — mail gets forwarded.
+ */
+export function outageAlert(
+  liveness: EndpointLiveness,
+  now: Date,
+): { title: string; summary: string; facts: Array<[string, string]>; action: string } {
+  const facts: Array<[string, string]> = [
+    ['Endpoint', liveness.name],
+    ['Not serving for', durationSince(liveness.notServingSince, now)],
+    ['Failed checks in a row', String(liveness.consecutiveFailures)],
+    [
+      'Upstream',
+      liveness.reachability === 'unreachable'
+        ? 'did not answer at all'
+        : liveness.reachability === 'reachable'
+          ? 'answered, and this router refused what it answered with'
+          : 'not checked since this process started',
+    ],
+  ];
+  if (liveness.stage) {
+    facts.push(['Stopped at stage', liveness.stage]);
+  }
+  if (liveness.reason) {
+    facts.push(['Sidecar’s reason', liveness.reason]);
+  }
+  return {
+    title: `External endpoint “${liveness.name}” has stopped serving`,
+    summary:
+      `Every model on “${liveness.name}” is being refused with 503 attestation_failed, and has been for ` +
+      `${durationSince(liveness.notServingSince, now)}.`,
+    facts,
+    action:
+      liveness.reachability === 'unreachable'
+        ? 'The upstream did not answer, so this is the upstream’s cloud rather than an approval: check that the ' +
+          'model deployment is up and that its hostname still routes. Nothing here needs approving.'
+        : 'The upstream answered and this router refused what it answered with. If it was redeployed on purpose, ' +
+          'approve the new deployment’s evidence digest in the console; if it was not, that refusal is the point.',
+  };
+}
+
+/** The recovery, as the message that closes the alert. */
+export function recoveryAlert(
+  liveness: EndpointLiveness,
+  declaredAt: Date,
+  now: Date,
+): { title: string; summary: string; facts: Array<[string, string]>; action: string } {
+  return {
+    title: `External endpoint “${liveness.name}” is serving again`,
+    summary: `“${liveness.name}” holds an admitting verdict again; its models are routable.`,
+    facts: [
+      ['Endpoint', liveness.name],
+      ['Was not serving for', durationSince(declaredAt, now)],
+    ],
+    action: 'No action needed. The endpoint’s timeline in the console holds the run that just closed.',
+  };
+}
+
 /** `reason` for an `outage` / `recovered` timeline row. Clipped by the caller, like any other. */
 export function outageReason(liveness: EndpointLiveness, now: Date): string {
   const since = durationSince(liveness.notServingSince, now);

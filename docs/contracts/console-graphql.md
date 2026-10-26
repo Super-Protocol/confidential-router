@@ -1199,3 +1199,46 @@ extend type ExternalUpstream {
 The unauthenticated half of the same answer is `GET /health`'s `externalEndpoints` block
 (`docs/contracts/router-api.md`), which is counts and a word — no endpoint identity, because ruling 3
 holds there too.
+
+## As shipped (SUP-535) — proving the alert reaches a human
+
+The alert above now leaves the process by mail (`docs/router.md`, *Where an alert goes*). The one
+thing an operator cannot read off configuration is whether a message actually arrives, so there is a
+mutation that sends one.
+
+```graphql
+"""
+What one test of the alert channel did. `delivered` is a count, not a list: the
+operator asking already knows which inbox they are watching, and the addresses
+an alert goes to are configuration an authenticated-but-curious reader has no
+claim on.
+"""
+type OperatorAlertTest {
+  sent: Boolean!
+  delivered: Int!
+  """
+  Addresses the provider refused. Each one is in the container log.
+  """
+  failed: Int!
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER or NO_RECIPIENTS.
+  """
+  skipped: String
+}
+
+extend type Mutation {
+  """
+  Restricted to auth.adminEmails. Sends past alerts.minInterval, to every
+  configured recipient, with a body that says nothing is wrong.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+}
+```
+
+Admin-only, and logged with the name of whoever asked: it writes to every address the deployment
+alerts to, which is a thing to be accountable for rather than a read. It exists because the
+acceptance criterion for an alerting path is a message that *arrived*, and inducing a real outage on
+a live deployment to watch the mail go out is what cost 28 minutes once already.
+
+The unauthenticated half of the same answer is `GET /health`'s `alerts` block — a state and a count
+of recipients, never an address.

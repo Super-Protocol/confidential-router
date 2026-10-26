@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager, In } from 'typeorm';
+import { OperatorAlertsService } from '../alerts/operator-alerts.service.js';
 import { routerConfig } from '../config.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import {
@@ -16,8 +17,10 @@ import {
   type EndpointLiveness,
   livenessOf,
   type OutageThresholds,
+  outageAlert,
   outageLine,
   outageReason,
+  recoveryAlert,
   recoveryLine,
 } from './external-endpoint-liveness.js';
 import { fetchSidecarVerdicts, type SidecarVerdict } from './sidecar-admin.client.js';
@@ -82,6 +85,7 @@ export class ExternalEndpointStatusService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly catalog: ExternalCatalogService,
     private readonly health: ExternalEndpointHealth,
+    private readonly alerts: OperatorAlertsService,
   ) {}
 
   /**
@@ -266,12 +270,19 @@ export class ExternalEndpointStatusService {
    * its hostname and answered 503 for 30 hours before a human noticed; the
    * difference between that and a page is this method.
    *
-   * `logger.error` is the alert, and it is deliberately the only one: this
-   * deployment has no pager to call, and inventing an outbound channel here would
-   * be a second thing to keep working. `error` is a severity a log sink can match
-   * on, the line carries everything needed to act without opening a console
-   * (`outageLine`), and `GET /health` and the endpoint's own timeline carry the
-   * same verdict for whoever arrives later.
+   * Four readers, and the fourth is the one that matters (SUP-535). `logger.error`
+   * is a severity a log sink can match on; the timeline and `GET /health` carry
+   * the same verdict for whoever arrives later. None of those three reaches
+   * anybody who is not already looking — this deployment has no log alarm, and
+   * both production outages so far were found by a person stumbling over them. So
+   * the fourth reader is `OperatorAlertsService`, which puts the same facts in an
+   * operator's inbox by the one outbound channel this deployment proves every
+   * day: the mail provider the sign-in codes go out through.
+   *
+   * The send is awaited, and it cannot fail this pass: `raise` never rejects, and
+   * the row, the line and the `/health` status are all written first, so an alert
+   * that could not be delivered costs a detected outage no visibility it had
+   * before.
    *
    * Exactly once per run, in each direction. See {@link alerted}.
    *
@@ -299,6 +310,7 @@ export class ExternalEndpointStatusService {
           reason: outageReason(liveness, now),
           evidenceDigest: row.evidenceDigestSeen,
         });
+        await this.alerts.raise(outageAlert(liveness, now), now);
         continue;
       }
       // Recovery is keyed on the run being *over* — `notServingSince` cleared by
@@ -314,6 +326,10 @@ export class ExternalEndpointStatusService {
           reason: `Serving again after ${durationSince(new Date(alerted), now)}.`,
           evidenceDigest: row.evidenceDigestSeen,
         });
+        // The recovery goes out past the interval that governs declarations: an
+        // operator who was woken is owed the "it is back" message, and withholding
+        // it to protect the mailbox leaves them chasing an outage that ended.
+        await this.alerts.raise(recoveryAlert(liveness, new Date(alerted), now), now, { urgent: true });
       }
     }
     // A row that left the enabled set takes its latch with it: re-enabling it

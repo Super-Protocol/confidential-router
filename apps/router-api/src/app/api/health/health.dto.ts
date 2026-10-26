@@ -85,6 +85,30 @@ export class ExternalEndpointsHealthDto {
   verdictsReadAt?: string;
 }
 
+export class AlertsHealthDto {
+  @ApiProperty({
+    enum: ['disabled', 'unconfigured', 'ready', 'ok', 'failing'],
+    description:
+      'Whether an outage alert can leave this deployment (SUP-535). `disabled`: `alerts.email` is off or there is ' +
+      'no mail provider. `unconfigured`: enabled with nobody to write to — neither `alerts.emails` nor ' +
+      '`auth.adminEmails` names an address, which is the state that looks exactly like “quiet”. `ready`: nothing ' +
+      'has been raised yet. `ok` / `failing`: whether the last alert reached anybody.',
+  })
+  state!: 'disabled' | 'unconfigured' | 'ready' | 'ok' | 'failing';
+
+  @ApiProperty({ description: 'How many addresses an alert would go to. The addresses themselves are never reported.' })
+  recipients!: number;
+
+  @ApiProperty({ required: false, description: 'When an alert was last attempted. Absent until there has been one.' })
+  lastAttemptAt?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Alerts held back by `alerts.minInterval` since the last message that went out.',
+  })
+  suppressed?: number;
+}
+
 export class HealthResponseDto {
   @ApiProperty({ enum: ['ok', 'error'] })
   status!: 'ok' | 'error';
@@ -109,4 +133,13 @@ export class HealthResponseDto {
     description: 'Reported only; never makes the status `error`. Counts, never endpoint identity.',
   })
   externalEndpoints!: ExternalEndpointsHealthDto;
+
+  @ApiProperty({
+    type: () => AlertsHealthDto,
+    description:
+      'Whether the outage alert above has an outbound path. Reported only; never makes the status `error` — a ' +
+      'deployment that cannot alert still serves every model. `externalEndpoints.status: outage` beside ' +
+      '`alerts.state: unconfigured` is the pair that says nobody has been told.',
+  })
+  alerts!: AlertsHealthDto;
 }

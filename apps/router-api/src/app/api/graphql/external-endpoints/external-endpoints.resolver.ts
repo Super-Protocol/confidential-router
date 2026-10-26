@@ -2,6 +2,7 @@ import { evidenceDigestHex } from '@confidential-router/types';
 import { Inject, Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { OperatorAlertsService } from '../../../alerts/operator-alerts.service.js';
 import {
   AdminGuard,
   CurrentUser,
@@ -35,6 +36,7 @@ import {
   type ExternalModelInputModel,
   ExternalModelModel,
   measurementSourceOf,
+  OperatorAlertTestModel,
   PinExternalEndpointDigestInputModel,
   RegisterExternalEndpointInputModel,
   RotateExternalEndpointKeyInputModel,
@@ -105,6 +107,7 @@ export class ExternalEndpointsResolver {
     private readonly evidence: ExternalEvidenceService,
     private readonly discovery: ExternalModelDiscoveryService,
     private readonly profiles: UserProfileService,
+    private readonly alerts: OperatorAlertsService,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
 
@@ -332,6 +335,39 @@ export class ExternalEndpointsResolver {
     const row = await this.admin.removeMeasurement(id);
     this.logger.warn(`Trusted measurement ${row.measurement} withdrawn by ${user.email} — dependent upstreams deny.`);
     return true;
+  }
+
+  /**
+   * Sends one alert now, so an operator can prove the channel works (SUP-535).
+   *
+   * The acceptance criterion for an alerting path is a message that arrived, and
+   * the only honest way to produce one on a live deployment is to ask it to send
+   * one: inducing a real outage on production to watch the mail go out is what
+   * cost 28 minutes once already. The message says in its own body that nothing is
+   * wrong, so an operator who finds it later cannot mistake it for an incident.
+   *
+   * Admin-only and logged with the name of whoever asked — it writes to every
+   * address the deployment alerts to, which is a thing to be accountable for
+   * rather than a read.
+   */
+  @Mutation(() => OperatorAlertTestModel, {
+    description:
+      'Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would ' +
+      'arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async sendOperatorAlertTest(@CurrentUser() user: SessionUser): Promise<OperatorAlertTestModel> {
+    const delivery = await this.alerts.sendTest(user.email);
+    this.logger.warn(
+      `Operator alert channel tested by ${user.email}: ${delivery.delivered.length} delivered, ` +
+        `${delivery.failed.length} refused${delivery.skipped ? `, skipped (${delivery.skipped})` : ''}.`,
+    );
+    return {
+      sent: delivery.delivered.length > 0,
+      delivered: delivery.delivered.length,
+      failed: delivery.failed.length,
+      skipped: delivery.skipped ? delivery.skipped.toUpperCase() : null,
+    };
   }
 
   private async presentOne(view: ExternalEndpointView, user: SessionUser): Promise<ExternalEndpointModel> {

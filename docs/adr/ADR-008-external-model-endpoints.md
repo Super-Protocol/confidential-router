@@ -127,10 +127,16 @@ configured threshold is an event.**
   an admin rather than an upstream that went dark. Paging for it would have meant paging once for every
   endpoint that upgrade touched. A stale pin — `digest-mismatch` after an unapproved redeploy — is *not*
   exempt: the router was serving that upstream a moment ago.
+- **The outbound path (SUP-535).** One message to `alerts.emails`, falling back to `auth.adminEmails`,
+  per run and in each direction, rate-limited by `alerts.minInterval` — the recovery excepted, which
+  goes out past it. The channel is the deployment's own mail provider rather than a new one: an
+  `ERROR` line is an alert only where something watches the log, and nothing watches this one. The
+  message carries the endpoint name, the duration and the reachability, and never the hostname, the
+  pinned digest or the verdict detail (ruling 3 on SUP-221 — mail gets forwarded).
 - **The alert.** One `ERROR` log line per run, with the endpoint, the duration, the count, whether the
   upstream answered at all and the sidecar's reason; one `recovered` line when an admitting verdict
-  closes it. `error` because a log sink can match on it and this deployment has no pager to call;
-  once per run because a line repeated every five seconds is a line an alert is tuned to ignore.
+  closes it. `error` because a log sink can match on it; once per run because a line repeated every
+  five seconds is a line an alert is tuned to ignore.
 - **The timeline** (§7) gains `outage` and `recovered`, which are deliberately not `denied` / `verified`
   renamed: a denial is one check that refused, an outage is this router declaring the run of them
   actionable.

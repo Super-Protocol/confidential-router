@@ -477,6 +477,37 @@ describe('the external-endpoint sidecar section', () => {
   });
 });
 
+describe('the alert section', () => {
+  it('is on by default with nobody named, so the recipients come from the admin list', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    // The default that makes the channel work on the deployment already running:
+    // a new deploy parameter would be unset exactly where the outage happens
+    // (SUP-535).
+    expect(config.alerts).toEqual({ email: true, emails: [], minInterval: 900_000 });
+  });
+
+  it('takes a comma-separated list from the environment, the way the admin list does', () => {
+    const config = RouterConfigSchema.parse({
+      auth: { secret: SECRET },
+      alerts: { emails: 'oncall@example.test, second@example.test' },
+    });
+
+    expect(config.alerts.emails).toEqual(['oncall@example.test', 'second@example.test']);
+  });
+
+  it('refuses a recipient that is not an address, at boot rather than at the first outage', () => {
+    const result = RouterConfigSchema.safeParse({
+      auth: { secret: SECRET },
+      alerts: { emails: 'not-an-address' },
+    });
+
+    // A silent non-delivery is the failure mode this whole section exists to
+    // remove, so a typo has to be a boot error and not a surprise six weeks on.
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('the committed example configuration', () => {
   /**
    * `schemas/router-config.schema.json` is the contract; this schema is its

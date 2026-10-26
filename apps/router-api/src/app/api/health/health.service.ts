@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { OperatorAlertsService } from '../../alerts/operator-alerts.service.js';
 import { AnalyticsHealth } from '../../analytics/analytics-health.js';
 import { serviceVersion } from '../../config.js';
 import { ExternalEndpointHealth } from '../../external-endpoints/external-endpoint-health.js';
@@ -17,6 +18,7 @@ export class HealthService {
     private readonly mail: MailService,
     private readonly analytics: AnalyticsHealth,
     private readonly externalEndpoints: ExternalEndpointHealth,
+    private readonly alerts: OperatorAlertsService,
   ) {}
 
   /**
@@ -45,6 +47,12 @@ export class HealthService {
    * dark deployment. It is reported because the alternative is what happened —
    * 503s for 30 hours, found by a human.
    *
+   * The alert *channel* is reported for the reason the subsystems above are, one
+   * step further on (SUP-535): an outage that was detected and could not be told
+   * to anybody is indistinguishable from no outage, and `alerts.state:
+   * unconfigured` beside `externalEndpoints.status: outage` is the pair that says
+   * so. A count of recipients, never an address.
+   *
    * Counts only, no endpoint names: `/health` is unauthenticated, and ruling 3 on
    * SUP-221 keeps upstream identity and verdict detail behind a session.
    */
@@ -58,6 +66,7 @@ export class HealthService {
       mail: this.mail.status(),
       analytics: this.analytics.status(),
       externalEndpoints: this.externalEndpoints.status(),
+      alerts: this.alerts.status(),
     };
   }
 

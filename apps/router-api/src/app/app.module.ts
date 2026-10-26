@@ -4,6 +4,7 @@ import { ConfigModule, ConfigType } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import pinoPretty from 'pino-pretty';
 import { ActivityModule } from './activity/index.js';
+import { AlertsModule } from './alerts/index.js';
 import { GraphQLApiModule } from './api/graphql/graphql-api.module.js';
 import { RestApiModule } from './api/rest-api.module.js';
 import { AuthModule } from './auth/index.js';
@@ -35,6 +36,7 @@ import { SecretsModule } from './secrets/index.js';
       },
     }),
     DbModule,
+    AlertsModule,
     AuthModule,
     SecretsModule,
     CatalogModule,

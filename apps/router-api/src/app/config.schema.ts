@@ -782,6 +782,53 @@ const ExternalEndpointsSchema = z
   })
   .prefault({});
 
+/**
+ * Where an alert goes so that a human reads it (SUP-535).
+ *
+ * The router already had alerts; what it did not have was an outbound path. An
+ * `ERROR` line is an alert only for a deployment with a log sink somebody has
+ * wired an alarm to, and this one has none — two production outages were found
+ * by a person stumbling over them. So the alert leaves the process by the one
+ * channel this deployment demonstrably has: the mail provider the sign-in codes
+ * already go out through.
+ *
+ * `emails` is empty by default and **falls back to `auth.adminEmails`**, which
+ * every deployment with an admin section already sets. That default is the point:
+ * a channel nobody had to configure is a channel that works on the deployment
+ * that is already running, and the failure this exists to catch is exactly the
+ * one nobody got round to configuring for.
+ */
+const AlertsSchema = z
+  .strictObject({
+    /**
+     * Who to write to. Empty means `auth.adminEmails`; a deployment that wants a
+     * shared inbox or an on-call alias instead names it here, and `['']`-style
+     * emptiness is not expressible — an address that is not an address is a
+     * configuration error at boot rather than a silent non-delivery.
+     */
+    emails: stringArrayish()
+      .pipe(z.array(z.email('must be an email address')))
+      .prefault([]),
+    /**
+     * Off switches the outbound path only. The log line, the `/health` block and
+     * the endpoint timeline are unchanged, because they are the record; this is
+     * the thing that wakes somebody, and a deployment with a real pager wired to
+     * its log sink may legitimately not want a second one.
+     */
+    email: booleanish().prefault(true),
+    /**
+     * The least time between two outbound alerts, whatever raised them.
+     *
+     * The latch in `ExternalEndpointStatusService` already sends one message per
+     * outage run. This is the second belt: a flapping upstream is a run that ends
+     * and begins again, and the honest answer to twenty of those in an hour is
+     * one mail and a line in the log saying how many it stood for. A mailbox that
+     * has been flooded once is a mailbox with a filter on it.
+     */
+    minInterval: durationMs('15m'),
+  })
+  .prefault({});
+
 const LogSchema = z
   .strictObject({
     level: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).prefault('info'),
@@ -843,6 +890,7 @@ export const RouterConfigSchema = z.strictObject({
   analytics: AnalyticsSchema,
   feedback: FeedbackSchema,
   chat: ChatSchema,
+  alerts: AlertsSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,
@@ -854,3 +902,4 @@ export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
 export type MailConfig = RouterConfig['mail'];
 export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];
+export type AlertsConfig = RouterConfig['alerts'];
