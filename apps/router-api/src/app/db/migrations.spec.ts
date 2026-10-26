@@ -111,8 +111,15 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-466's client dimension is one additive column; the first undo drops
+      // only that and leaves the rest of the metering row alone.
+      expect(await queryRunner.hasColumn('generations', 'client')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('generations', 'client')).toBe(false);
+      expect(await queryRunner.hasColumn('generations', 'clientIpHash')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

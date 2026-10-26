@@ -3,7 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { AnalyticsService, eventUuid } from '../analytics/index.js';
 import { ApiKeyService } from '../api-keys/api-key.service.js';
-import { Generation, type GenerationStatus } from '../db/entities/generation.entity.js';
+import { Generation, type GenerationClient, type GenerationStatus } from '../db/entities/generation.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAttributionService } from '../invites/invite-attribution.service.js';
@@ -42,6 +42,8 @@ export interface MeteringRecord {
   tokensPerSecond: number | null;
   requestId: string | null;
   clientIpHash: string | null;
+  /** The closed-set label, never the agent string it was derived from (SUP-466). */
+  client: GenerationClient;
   createdAt: Date;
 }
 
@@ -145,6 +147,11 @@ export class MeteringService {
         campaign: attribution.campaign,
         had_invite_grant: attribution.hadInviteGrant,
         model_slug: record.modelId,
+        // The once-per-workspace boundary is the only place this belongs: it
+        // answers "which client did this account activate with", and it is the
+        // breakdown SUP-447 needed. Per-request client volume is a question for
+        // `generations`, not for an event.
+        client: record.client,
         hours_since_signup: workspace
           ? Math.max(0, Math.floor((record.createdAt.getTime() - workspace.createdAt.getTime()) / MS_PER_HOUR))
           : 0,
