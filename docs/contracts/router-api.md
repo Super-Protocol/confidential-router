@@ -304,12 +304,18 @@ document from anyone but that upstream was never filed; a real but superseded pu
 upstream is never handed out. The upstream may well be publishing something newer — that is what the
 `503` below covers until the next verdict catches up.
 
-Two refusals, told apart on purpose:
+Refusals, told apart on purpose:
 
 | HTTP | Body | Means |
 | --- | --- | --- |
 | `404` | Nest's shape, `{"statusCode":404,"message":…}` | no such endpoint — or, on the bare path, this router cannot tell which is its own |
 | `503` | `{"statusCode":503,"reason":"evidence_not_fetched","message":…}` | the endpoint exists and nothing has been retrieved for it yet |
+| `503` | `{"statusCode":503,"reason":"evidence_expired","message":…}` | the document was removed by the retention sweep; this router keeps only its digests |
+
+`evidence_expired` is a different instruction to a caller than `evidence_not_fetched` — "ask the
+publisher" rather than "wait a few seconds" — and in a healthy deployment it does not occur here at all:
+the sweep exempts the publication every live surface relays (SUP-498). It is a named reason rather than a
+`500` because this is the surface the whole product rests on.
 
 They used to be one `404`, which read on the chat's locked composer as the router denying an endpoint it
 in fact has (SUP-191). Never an empty `200`: a caller that verifies what it is handed must not have to
@@ -352,7 +358,7 @@ generation owned by the key's workspace. Never any content.
 
 ### `GET /health`
 
-Liveness, a real database round-trip, and the state of the two subsystems that can fail without anyone
+Liveness, a real database round-trip, and the state of the three subsystems that can fail without anyone
 noticing. `200` when `status` is `ok`, `503` when it is `error` — the body says which dependency is down,
 the status code is what a probe reads.
 
@@ -363,14 +369,21 @@ the status code is what a probe reads.
   "uptimeSeconds": 4821,
   "database": { "status": "up" },
   "mail": { "provider": "smtp", "state": "ok", "since": "2026-10-21T09:12:04.000Z" },
-  "analytics": { "status": "disabled", "dropped": 412 }
+  "analytics": { "status": "disabled", "dropped": 412 },
+  "evidenceRetention": {
+    "status": "enabled",
+    "lastSweepAt": "2026-10-24T06:00:11.000Z",
+    "stripped": 134,
+    "failed": 0
+  }
 }
 ```
 
 **Only `database` decides `status`.** A process that cannot reach PostgreSQL cannot meter a single
-generation and must leave the rotation. `mail` (SUP-269) and `analytics` (SUP-464) are reported and never
-promoted: a deployment whose mail server is down or whose analytics key went missing still serves every
-model, and taking it out of rotation over a lost welcome mail or a missing chart would be the worse bug.
+generation and must leave the rotation. `mail` (SUP-269), `analytics` (SUP-464) and `evidenceRetention`
+(SUP-498) are reported and never promoted: a deployment whose mail server is down, whose analytics key went
+missing or whose retention sweep is switched off still serves every model, and taking it out of rotation
+over a lost welcome mail, a missing chart or an unswept archive would be the worse bug.
 
 - `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
   `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
@@ -381,6 +394,14 @@ model, and taking it out of rotation over a lost welcome mail or a missing chart
   (`docs/contracts/analytics-events.md`). It is read from the sink the process actually built, not from
   configuration. `dropped` counts events lost since boot — discarded by the disabled sink, refused by
   PostHog, or undeliverable — and is monotonic: read it twice and subtract.
+- `evidenceRetention`: `status` is `enabled` while this process has a sweep timer, `disabled` when
+  `evidence.retentionSweepInterval` is `0ms` — which means archived evidence bundles are kept past the
+  period `/privacy` publishes, so it is a disclosure problem rather than an availability one.
+  `lastSweepAt` is when the last pass finished (null until the first one does, which is within seconds of
+  boot), `stripped` counts snapshots whose `bundle` and `jws` this process removed since boot — digests
+  are kept — and `failed` counts passes that threw. Both counters are monotonic: read them twice and
+  subtract. All four are process-lifetime values and no query, so a public probe cannot turn `/health`
+  into a table scan; the durable record is `evidence_snapshots.payloadStrippedAt`.
 
 **`configured` is not `verified`.** It says a key was present and a sink was built, not that events land in
 a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to nothing, so a mistyped key

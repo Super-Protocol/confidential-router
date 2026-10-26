@@ -93,6 +93,7 @@ models:
 evidence:
   pollInterval: 5m
   freshnessWindow: 24h
+  retentionSweepInterval: 6h
 
 log:
   level: debug

@@ -104,6 +104,7 @@ models:
 evidence:
   pollInterval: 5m
   freshnessWindow: 24h
+  retentionSweepInterval: 6h
 
 # The egress sidecar that attests external model endpoints (ADR-008). The endpoints
 # are not listed here — an admin registers them in the console at runtime and

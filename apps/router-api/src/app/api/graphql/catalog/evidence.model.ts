@@ -104,11 +104,26 @@ export class EvidenceSnapshotModel {
   @Field(() => [MeasurementModel], { description: 'Empty when the producer published none.' })
   measurements!: MeasurementModel[];
 
-  @Field(() => String, { description: 'The compact JWS as published — "Copy evidence JWS".' })
-  jws!: string;
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The compact JWS as published — "Copy evidence JWS". Null once the retention sweep has removed the ' +
+      'document: the `evidenceSnapshots` connection reaches an endpoint’s whole history, and a publication ' +
+      'past the retention window of every account that held it keeps its digests and nothing else.',
+  })
+  jws!: string | null;
 
-  @Field(() => JSONObject, { description: 'The raw bundle, for export and offline verification.' })
-  bundle!: Record<string, unknown>;
+  @Field(() => JSONObject, {
+    nullable: true,
+    description: 'The raw bundle, for export and offline verification. Null once the retention sweep has removed it.',
+  })
+  bundle!: Record<string, unknown> | null;
+
+  @Field(() => Date, {
+    nullable: true,
+    description: 'When the retention sweep removed `jws` and `bundle`, or null while this row still carries them.',
+  })
+  payloadStrippedAt!: Date | null;
 
   static from(snapshot: EvidenceSnapshot, now: Date = new Date()): EvidenceSnapshotModel {
     return {
@@ -126,8 +141,10 @@ export class EvidenceSnapshotModel {
       certFingerprintHex: fingerprintHex(snapshot.certFingerprint),
       quoteFormat: snapshot.quoteFormat,
       // Derived from the stored bundle rather than a column, like the hex
-      // spellings above: the root certificate is already in the row (SUP-270).
-      tee: teeLabelOfBundle(snapshot.bundle),
+      // spellings above: the root certificate is already in the row (SUP-270) —
+      // until the retention sweep takes the bundle, after which the row knows
+      // the digests and no longer the hardware (SUP-498).
+      tee: snapshot.bundle ? teeLabelOfBundle(snapshot.bundle) : null,
       containerImages: snapshot.containerImages,
       chain: snapshot.chainSummary.map((certificate, index) => ({
         ...certificate,
@@ -140,6 +157,7 @@ export class EvidenceSnapshotModel {
       })),
       jws: snapshot.jws,
       bundle: snapshot.bundle,
+      payloadStrippedAt: snapshot.payloadStrippedAt,
     };
   }
 }

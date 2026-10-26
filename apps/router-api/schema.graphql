@@ -522,8 +522,10 @@ type EvidenceExport {
 
 """What an endpoint published, and when. Never whether it was valid."""
 type EvidenceSnapshot {
-  """The raw bundle, for export and offline verification."""
-  bundle: JSON!
+  """
+  The raw bundle, for export and offline verification. Null once the retention sweep has removed it.
+  """
+  bundle: JSON
 
   """sha256/<base64url> of the TLS leaf the bundle asserts."""
   certFingerprint: String!
@@ -551,11 +553,18 @@ type EvidenceSnapshot {
   """When the platform signed it."""
   issuedAt: DateTime!
 
-  """The compact JWS as published — "Copy evidence JWS"."""
-  jws: String!
+  """
+  The compact JWS as published — "Copy evidence JWS". Null once the retention sweep has removed the document: the `evidenceSnapshots` connection reaches an endpoint’s whole history, and a publication past the retention window of every account that held it keeps its digests and nothing else.
+  """
+  jws: String
 
   """Empty when the producer published none."""
   measurements: [Measurement!]!
+
+  """
+  When the retention sweep removed `jws` and `bundle`, or null while this row still carries them.
+  """
+  payloadStrippedAt: DateTime
 
   """Quote age in seconds — "issued 4 min ago" in the evidence modal."""
   quoteAgeSeconds: Int!
@@ -1853,12 +1862,16 @@ type User {
 
 """Console settings, including the Evidence group."""
 type UserPreferences {
-  """Keep the published bundle and JWS, not just the digests."""
+  """
+  Whether this account holds the published bundle and JWS, not just the digests. Off, it holds nothing and contributes nothing to a publication’s retention window, so a publication only such accounts hold is stripped on the next retention pass; one an opted-in account also holds stays until that window closes. It does not stop the poller fetching bundles, which the live-evidence endpoints serve from.
+  """
   archiveEvidence: Boolean!
   desktopNotifications: Boolean!
   emailReceipts: Boolean!
 
-  """How long archived bundles are kept, in days. Digests are kept forever."""
+  """
+  How long archived bundles are kept, in days. Digests are kept forever. Ignored while archiveEvidence is off, and still settable, so the window is already right when it goes back on.
+  """
   evidenceRetentionDays: Int!
 
   """Notify when an endpoint publishes different measurements."""

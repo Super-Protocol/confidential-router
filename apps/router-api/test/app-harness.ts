@@ -124,6 +124,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     // the cases in `email-code.e2e.spec.ts` that set them back.
     CR_API_AUTH__EMAIL_CODE__REQUESTS_PER_MINUTE: '10000',
     CR_API_AUTH__EMAIL_CODE__MAILS_PER_ADDRESS_PER_HOUR: '10000',
+    // The evidence retention sweep measures a window in days against the wall
+    // clock, and every fixture in this directory carries a fixed `issuedAt`. Left
+    // on, a suite would start passing or failing on the calendar — so the timer
+    // is off by default and the sweep is driven directly in
+    // `evidence-retention.service.spec.ts`. A suite that wants it says so
+    // (`health.e2e.spec.ts` asserts the `/health` field with it on).
+    CR_API_EVIDENCE__RETENTION_SWEEP_INTERVAL: '0ms',
     ...options.env,
   };
   const previous = new Map<string, string | undefined>();
