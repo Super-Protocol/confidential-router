@@ -5,9 +5,9 @@ import { AnalyticsService, eventUuid } from '../analytics/index.js';
 import { ApiKeyService } from '../api-keys/api-key.service.js';
 import { Generation, type GenerationStatus } from '../db/entities/generation.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
-import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAttributionService } from '../invites/invite-attribution.service.js';
 import { CREDITS_GATEWAY, type CreditsGateway } from './credits.gateway.js';
+import { WorkspaceOwnerService } from './workspace-owner.service.js';
 
 /** An hour, in milliseconds. `hours_since_signup` is whole hours, floored. */
 const MS_PER_HOUR = 3_600_000;
@@ -65,6 +65,7 @@ export class MeteringService {
     private readonly apiKeys: ApiKeyService,
     private readonly analytics: AnalyticsService,
     private readonly attribution: InviteAttributionService,
+    private readonly owners: WorkspaceOwnerService,
   ) {}
 
   async record(record: MeteringRecord): Promise<void> {
@@ -127,7 +128,7 @@ export class MeteringService {
     // one with the workspace — and if it somehow did, an anonymous
     // `first_request_sent` would be a row nothing can be concluded from, which is
     // worse than the gap.
-    const ownerId = await this.ownerOf(record.workspaceId);
+    const ownerId = await this.owners.ownerOf(record.workspaceId);
     if (!ownerId) {
       this.logger.warn(`Workspace ${record.workspaceId} has no owner; first_request_sent not reported.`);
       return;
@@ -150,20 +151,5 @@ export class MeteringService {
           : 0,
       },
     });
-  }
-
-  /**
-   * The account the workspace's events are attributed to: its owner.
-   *
-   * Read from `workspace_members` rather than carried on the request, because the
-   * request authenticated with an API key and a key has no user — the account
-   * that created it may have left the workspace since.
-   */
-  private async ownerOf(workspaceId: string): Promise<string | null> {
-    const owner = await this.dataSource
-      .getRepository(WorkspaceMember)
-      .findOne({ where: { workspaceId, role: 'owner' } });
-
-    return owner?.userId ?? null;
   }
 }

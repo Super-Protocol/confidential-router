@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AnalyticsModule } from '../../analytics/index.js';
 import { ApiKeysModule } from '../../api-keys/api-keys.module.js';
 import { Generation } from '../../db/entities/generation.entity.js';
 import { MeteringModule } from '../../metering/metering.module.js';
@@ -7,6 +8,7 @@ import { ApiKeyGuard } from './api-key.guard.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
 import { GatewayController } from './gateway.controller.js';
 import { GatewayService } from './gateway.service.js';
+import { GatewayAnalytics } from './gateway-analytics.service.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
 import { GenerationRecorder } from './generation-recorder.service.js';
 import { GenerationsController } from './generations.controller.js';
@@ -32,12 +34,13 @@ import { V1FallbackController } from './v1-fallback.controller.js';
  * `SecretsModule` and `ExternalEndpointsModule`, like `CatalogService` does.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Generation]), ApiKeysModule, MeteringModule],
+  imports: [TypeOrmModule.forFeature([Generation]), ApiKeysModule, AnalyticsModule, MeteringModule],
   controllers: [GatewayController, ModelsController, GenerationsController, V1FallbackController],
   providers: [
     { provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter },
     ApiKeyGuard,
     ExternalUpstreamClient,
+    GatewayAnalytics,
     GatewayPolicyService,
     GatewayService,
     GenerationRecorder,

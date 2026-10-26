@@ -1,17 +1,21 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import type { Response as ExpressResponse } from 'express';
+import type { AuthenticatedApiKey } from '../../api-keys/index.js';
 import { bridgesCompletions } from '../../catalog/served-capabilities.js';
 import { routerConfig } from '../../config.js';
 import { estimatePromptTokens } from '../../metering/token-estimator.js';
+import { generationId } from '../../metering/ulid.js';
 import { type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
 import { chatBodyForPrompt, textCompletionOf } from './completions-bridge.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
 import type { ExternalRoute, GatewayContext, GenerationOutcome, RoutedModel, RouteKind } from './gateway.types.js';
 import { UPSTREAM_PATHS } from './gateway.types.js';
+import { GatewayAnalytics } from './gateway-analytics.service.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
 import { GenerationRecorder } from './generation-recorder.service.js';
 import { LiteLlmClient } from './litellm.client.js';
+import { requestedModelSlug, resultOf } from './model-demand.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import { readUsage, shapeResponse } from './response-shaping.js';
 import { formatDataEvent, SSE_DONE } from './sse.js';
@@ -55,12 +59,13 @@ export class GatewayService {
     private readonly recorder: GenerationRecorder,
     private readonly upstream: LiteLlmClient,
     private readonly external: ExternalUpstreamClient,
+    private readonly productAnalytics: GatewayAnalytics,
   ) {}
 
   async handle(request: ApiKeyRequest, response: ExpressResponse, kind: RouteKind): Promise<void> {
     const auth = apiKeyOf(request);
     const body = bodyOf(request);
-    const model = this.policy.resolve(kind, body, auth.key);
+    const model = this.resolveAndReport(kind, body, auth);
     // The legacy route for a chat-only model is served here rather than refused
     // (SUP-450): the prompt becomes a chat request, and the answer is translated
     // back on the way out. Beside `resolve` and before `admit`, because an
@@ -198,6 +203,55 @@ export class GatewayService {
 
     await this.policy.settle(auth.key, outcome.promptTokens + outcome.completionTokens);
     await this.recorder.finish(context, outcome);
+  }
+
+  /**
+   * Admission, with the one thing it refuses reported as demand (SUP-542).
+   *
+   * The refusals are the point. `unknown_model` — somebody asked for a model we
+   * do not serve — is the whole roadmap signal, and it is the one outcome that
+   * leaves no row anywhere else: `resolve` throws before a generation id exists,
+   * so without this the request is invisible to everything but the caller's own
+   * 404. An event emitted only on the success path would answer "which of our
+   * models is popular" and nothing about demand we are missing.
+   *
+   * Reported from the error the admission path threw rather than re-derived, so
+   * the chart and the status code the caller received cannot disagree about why a
+   * request was refused. `void`, never awaited: a refusal must not be answered
+   * more slowly because of a chart.
+   */
+  private resolveAndReport(kind: RouteKind, body: Record<string, unknown>, auth: AuthenticatedApiKey): RoutedModel {
+    const slug = requestedModelSlug(body);
+    const at = new Date();
+    try {
+      const model = this.policy.resolve(kind, body, auth.key);
+      if (slug) {
+        void this.productAnalytics.modelRequested({
+          workspaceId: auth.workspace.id,
+          // Its own id: the generation the recorder is about to open has not been
+          // minted yet, and the event is about the request rather than the row.
+          generationId: generationId(),
+          modelSlug: slug,
+          result: 'served',
+          route: kind,
+          at,
+        });
+      }
+      return model;
+    } catch (error) {
+      const result = slug ? resultOf(error) : null;
+      if (slug && result) {
+        void this.productAnalytics.modelRequested({
+          workspaceId: auth.workspace.id,
+          generationId: generationId(),
+          modelSlug: slug,
+          result,
+          route: kind,
+          at,
+        });
+      }
+      throw error;
+    }
   }
 
   /**

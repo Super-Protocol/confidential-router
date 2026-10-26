@@ -222,16 +222,19 @@ The event the whole campaign is judged on: an account that redeemed $100 and nev
 
 ### `model_requested`
 
-**Fires when** the `requestModel` mutation has committed a row.
+**Fires when** a `/v1` request names a model and the router has decided whether it will serve it — once per request, before anything is forwarded, on the success path and on every refusal alike. A request that names no model at all sends nothing: there is no demand to record.
 
-**Owner** SUP-146 · **transport** `server`
+**Owner** SUP-542 · **transport** `server`
 
-The requested model name and any note stay in our database, where SUP-146's admin aggregation and CSV export read them. They are not event properties: free text is a breakdown with one row per request, and it is the one field on either surface where a visitor could type something personal.
+Re-pointed by SUP-542 from the never-shipped `requestModel` console form (SUP-146) to the `/v1` path, which is where the question is actually answered: which model people ask for, how often, and whether anyone asks for one we do not serve. Nothing here is read from the request body beyond the `model` field — no prompt, no completion, no system text. Idempotency `uuid` is derived from the generation id the router mints for the request, so the per-request event stays exactly once per request.
 
 | Property | Type | Required | Values | Meaning |
 | --- | --- | --- | --- | --- |
-| `source` | string | yes | `models_page` `empty_state` `dashboard` | Which screen the request was raised from. |
-| `has_details` | boolean | yes | — | Whether the requester wrote anything in the free-text field — how much the field earns its place, without reading it. |
+| `model_slug` | string | yes | — | The model the request asked for, as it asked — lower-cased, trimmed, capped at 64 characters, and only when it has a model identifier's shape (`[a-z0-9]`, then any of `. _ : / + -`). Anything else is reported as `unparseable` rather than passed through. |
+| `result` | string | yes | `served` `unknown_model` `out_of_key_scope` `not_verified` `unsupported_route` | What the router decided. `unknown_model` is the roadmap signal — somebody asked for a model we do not have. `not_verified` is fail-closed working rather than demand. |
+| `route` | string | yes | `chat` `completions` `embeddings` | Which OpenAI-compatible route the request came in on. |
+
+**On `model_slug` and convention 2.** It is the one property in this list whose value a caller supplies, so it is bounded rather than trusted: the shape check above, a 64-character cap, and a single `unparseable` row for everything else. In practice a client's own configuration writes this field, so the breakdown is the handful of ids the OpenAI ecosystem uses — and that is precisely the breakdown the question needs. A caller who puts prose there buys one row called `unparseable`, not a row of their own.
 
 ### `feedback_grant_applied`
 

@@ -4,6 +4,7 @@ import type { ApiKeyRequest } from './api-key.guard.js';
 import type { ExternalUpstreamClient } from './external-upstream.client.js';
 import { GatewayService } from './gateway.service.js';
 import type { GatewayContext, GenerationOutcome, RoutedModel } from './gateway.types.js';
+import type { GatewayAnalytics } from './gateway-analytics.service.js';
 import type { GatewayPolicyService } from './gateway-policy.service.js';
 import type { GenerationRecorder } from './generation-recorder.service.js';
 import type { LiteLlmClient } from './litellm.client.js';
@@ -126,6 +127,7 @@ function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
     recorder,
     upstream,
     {} as unknown as ExternalUpstreamClient,
+    { modelRequested: async () => undefined } as unknown as GatewayAnalytics,
   );
 
   return {
