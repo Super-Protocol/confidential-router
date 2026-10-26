@@ -86,6 +86,26 @@ export class EvidenceSnapshot {
   @Column(timestampColumn())
   fetchedAt!: Date;
 
+  /**
+   * The hostname the bundle was fetched from and names as its own.
+   *
+   * An endpoint row is keyed by its config `name` and carries whatever hostname
+   * the config gives it, so a deployment that is reconfigured onto another
+   * hostname keeps the row — and its snapshots, which then span two names. The
+   * reads that answer "what is this endpoint publishing *now*" are scoped by
+   * this column for that reason: what the name it used to answer on published
+   * is not this endpoint's current digest, and reporting it as one is how a
+   * rename made the console show a digest belonging to another deployment
+   * (SUP-437).
+   *
+   * Null for a row filed before the column existed, which reads as "not
+   * recorded" rather than as a mismatch — the alternative would take every
+   * endpoint's evidence off the console on upgrade until the next poll. A row is
+   * stamped as soon as the publication behind it is re-observed.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  hostname!: string | null;
+
   @Column(timestampColumn())
   issuedAt!: Date;
 
