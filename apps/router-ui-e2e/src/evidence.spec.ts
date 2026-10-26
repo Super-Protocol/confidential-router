@@ -9,9 +9,10 @@ import {
   REFRESHED_JWS,
   ROTATING_HOST,
   UNPUBLISHED_HOST,
+  UPSTREAM_DIGEST_HEX,
   UPSTREAM_HOST,
 } from './evidence-fixtures';
-import { mockClipboard, signIn } from './fixtures';
+import { DEPLOYMENT_DIGEST_HEX, mockClipboard, signIn } from './fixtures';
 
 /**
  * Copying is one of the two actions the evidence modal exists for, so the suite
@@ -59,6 +60,33 @@ test.describe('Overview', () => {
     await expect(tile).toContainText('all 34 generations were served by external endpoints');
     await expect(tile).toContainText('verified by this router');
     await expect(tile).not.toContainText('0%');
+  });
+
+  /**
+   * The pin decision a reader is sent here to make (SUP-541).
+   *
+   * `gatekeeper endpoint trust add --from-upstream` prints all 64 hex
+   * characters and asks y/n, and the published docs tell the reader to compare
+   * it with what Overview shows. Overview showed `sha256:3509d9…100f16` — a
+   * twelve-character comparison, with the rest of the value reachable only
+   * through a tooltip and the clipboard. This asserts the whole string is on
+   * the page, because an elision of it is not the comparison the docs ask for.
+   */
+  test('prints this deployment’s evidence digest in full, as the gatekeeper prints it', async ({ page, baseURL }) => {
+    await enterConsole(page, baseURL as string, '/');
+
+    const block = page.getByTestId('deployment-digest');
+    await expect(block).toContainText('api.router.superprotocol.com');
+    await expect(page.getByTestId('deployment-digest-value')).toHaveText(`sha256:${DEPLOYMENT_DIGEST_HEX}`);
+    await expect(block).toContainText('character for character');
+  });
+
+  test('copies that digest whole, so it can be diffed rather than read', async ({ page, baseURL }) => {
+    await enterConsole(page, baseURL as string, '/');
+
+    await page.getByRole('button', { name: 'Copy the evidence digest of api.router.superprotocol.com' }).click();
+
+    expect(await clipboardText(page)).toBe(`sha256:${DEPLOYMENT_DIGEST_HEX}`);
   });
 
   test('copies the digest a gatekeeper pins', async ({ page, baseURL }) => {
@@ -195,7 +223,12 @@ test.describe('Models, with an external endpoint', () => {
 
     await page.getByRole('button', { name: `Attestation of ${UPSTREAM_HOST}: Verified by this router` }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText(/^sha256:41de2c07/)).toBeVisible();
+    // Two renderings of one value: the elision a cell has room for, and the
+    // whole string for assistive technology — which used to exist only in a
+    // tooltip and on the clipboard, neither of which a screen reader reaches
+    // (SUP-541).
+    await expect(dialog.getByText(/^sha256:41de2c07…/)).toBeVisible();
+    await expect(dialog.getByText(`sha256:${UPSTREAM_DIGEST_HEX}`, { exact: true })).toHaveCount(1);
     // The canonical `sha256/<base64url>` form is the wire format and stays
     // there (SUP-115); this dialog is where it leaked in 0.15.0 (SUP-255).
     await expect(dialog).not.toContainText(/sha256\//);

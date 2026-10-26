@@ -28,6 +28,9 @@ export const ROTATING_DIGEST = 'sha256/Kd8sB4nR2wYvT6xQmL0aZc9Ef1JhUpGi3NrXoVeSb
  * The same two digests as the console shows and copies them: hex, the spelling
  * the gatekeeper prints and its config file records (SUP-115).
  */
+/** The upstream's digest as the attestation dialog shows and copies it. */
+export const UPSTREAM_DIGEST_HEX = '41de2c0789d1db062f4fac5098bd1a65cf447f52615291a2dcdad7a157926c0a';
+
 export const PUBLISHED_DIGEST_HEX = 'sha256:f579367d3d6942f03b05d138acbd1e426dd7913a59f2f35cd58b16b87809a00b';
 export const ROTATING_DIGEST_HEX = 'sha256:29df2c0789d1db062f4fac5098bd1a65cf447f52615291a2dcdad7a157926c0a';
 
@@ -229,7 +232,7 @@ export const MIXED_CATALOGUE_DATA = {
         lastCheckedAt: '2026-10-06T11:58:00.000Z',
         measurementSeen: 'a'.repeat(64),
         evidenceDigestSeen: 'sha256/Qd4sB7nR1wYvT9xQmL2aZc3Ef5JhUpGi7NrXoVeSbAo',
-        evidenceDigestSeenHex: '41de2c0789d1db062f4fac5098bd1a65cf447f52615291a2dcdad7a157926c0a',
+        evidenceDigestSeenHex: UPSTREAM_DIGEST_HEX,
       },
     },
   ],

@@ -143,6 +143,30 @@ describe('setupSteps', () => {
     expect(pin?.detail).toContain('not trust-on-first-use');
   });
 
+  /**
+   * These strings are shared by the API Keys page, which mounts
+   * `DeploymentDigest` above the block, and by the chat's tier-3 panel, which
+   * renders the same steps with nothing above them. A sentence that names its
+   * own surroundings is therefore true on one surface and false on the other —
+   * the review catch on the first cut of SUP-541, where the pin step said "the
+   * one printed above".
+   */
+  it('describes the command and never the screen around it', () => {
+    const prose = [
+      ...setupSteps(input()),
+      ...setupSteps(input({ evidenceDigestHex: DIGEST })),
+      ...testBuildSteps(input()),
+    ]
+      .flatMap((step) => [step.title, step.detail])
+      .join('\n');
+
+    // Positional words and screen names both: "Overview shows this digest" is
+    // as false in the chat panel as "the one printed above" is, and only the
+    // first half of that was caught on the round that added this.
+    expect(prose).not.toMatch(/\b(above|below|on the right|on the left|this page|the card)\b/i);
+    expect(prose).not.toMatch(/\b(Overview|API Keys|Models|Activity|Logs|Credits|Chat)\b/);
+  });
+
   it('writes the two piped lines for the chosen shell', () => {
     const windows = setupSteps(input({ platform: POWERSHELL }));
 
