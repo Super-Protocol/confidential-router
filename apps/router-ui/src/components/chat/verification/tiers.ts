@@ -2,9 +2,14 @@ import type { BundleSource, GateResult } from './evidence-gate';
 import type { BridgeOutcome } from './extension-bridge';
 
 /**
- * Every claim the chat screen makes about verification, in one file.
+ * Every claim the chat screen makes about verification, in one file — and,
+ * since SUP-189 and SUP-501, the screen's other load-bearing copy with it: where
+ * a conversation is kept (`HISTORY_COPY`) and what the Private Preview asks a
+ * reader not to send (`PREVIEW_DATA_COPY`). Those two are not verification, but
+ * they are held to the same standard and by the same tests, which is the reason
+ * they live beside it rather than inline in a component.
  *
- * The rule the whole feature turns on: a stronger word may only appear when a
+ * The rule the verification half turns on: a stronger word may only appear when a
  * stronger thing actually happened. Three tiers, three different things, and the
  * labels must never blur —
  *
@@ -253,4 +258,59 @@ export const HISTORY_COPY: Record<string, HistoryCopy> = {
     /* Nothing maintenance can take: the history was never on the deployment. */
     maintenanceCaveat: null,
   },
+};
+
+/**
+ * The Private Preview's personal-data restriction, where someone is about to
+ * send content (SUP-501).
+ *
+ * Counsel's point was that a condition of the preview has to appear at the
+ * keyboard, not only in a document accepted at sign-up — so it ships on the two
+ * surfaces where content is about to leave: the chat composer's footer and the
+ * dialog that hands over a new API key. Her own constraint bounds what it may
+ * be: *"this text does not replace acceptance of the Terms."* A notice, then —
+ * no checkbox, no dialog to dismiss, nothing that has to be cleared before the
+ * product works, and no dismissal remembered in browser storage (that would be
+ * new storage to disclose, which is SUP-492's sibling problem).
+ *
+ * Split the way `HISTORY_COPY` is split, for the same reason: `summary` is the
+ * only part rendered inline, and it is the condition stated affirmatively,
+ * because this is a restriction on a preview and not a warning about a defect.
+ * `restriction` is counsel's sentence verbatim — it is the wording that was
+ * reviewed, and a paraphrase under the composer is how a reviewed sentence
+ * quietly becomes an unreviewed one. It lives one click away, behind an ⓘ whose
+ * accessible name says there is something to read.
+ *
+ * Shared with `keys/created-key-dialog.tsx`, which is why it is one constant
+ * rather than a sentence in each component: two copies of a lawyer's sentence
+ * is one copy that will go stale.
+ */
+export interface PreviewDataCopy {
+  /** The condition, affirmative and short. Inline, and nothing else is. */
+  summary: string;
+  /** Popover: counsel's wording, unedited. */
+  restriction: string;
+  /** Popover: what this notice is, and what it is not. */
+  standing: string;
+  /** Where the condition is actually written down. */
+  termsUrl: string;
+  /** The link's text — the clause, named, so the reader knows where they land. */
+  termsLabel: string;
+}
+
+export const PREVIEW_DATA_COPY: PreviewDataCopy = {
+  summary: 'Private Preview: use synthetic or non-personal data',
+  restriction:
+    'Please do not submit personal data, including sensitive personal data, in prompts or other content. Use synthetic or non-personal data for testing.',
+  standing: 'This is a condition of the Private Preview. It does not replace the Terms of Service you accepted.',
+  /*
+   * `/TOS_06`, the Acceptable use clause of the published Terms — the landing
+   * repo's `src/app/terms/page.tsx` renders it under this anchor, and counsel's
+   * Private Preview restriction is being added to that clause rather than to a
+   * new one. Hard-coded like `how-to-connect.tsx`'s `DOCS_URL`: the legal pages
+   * are published by the landing, not by this deployment, so there is nothing
+   * per-deployment to resolve.
+   */
+  termsUrl: 'https://router.superprotocol.com/terms#acceptable-use',
+  termsLabel: 'Acceptable use (Terms §6)',
 };
