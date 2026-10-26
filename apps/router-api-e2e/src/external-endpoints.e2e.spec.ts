@@ -12,7 +12,7 @@
  * verdict, and the gatekeeper's Go tests drive `trust: measurement-and-digest`
  * with a stubbed hardware report. What none of them can show is that the *seam* holds —
  * that the file router-api renders is a file the real binary accepts, that the
- * admin API's `removeTrustedMeasurement` reaches a running proxy and takes a
+ * admin API's `withdrawTrustedMeasurement` reaches a running proxy and takes a
  * model off `/v1/models`, and that a connection the gatekeeper closes mid-stream
  * comes back to the client as policy rather than as weather. ADR-007 §7a's
  * precedent applies: the gate lives in a library, so `nx affected` would skip
@@ -556,7 +556,7 @@ describe('sustained failure', () => {
       (await externalEndpointEvents(stand.admin, endpointId)).filter((event) => event.kind === 'RECOVERED'),
     ).toHaveLength(1);
 
-    await removeTrustedMeasurement(stand.admin, trusted.id);
+    await withdrawTrustedMeasurement(stand.admin, trusted.id);
   });
 
   it('does not call an upstream unreachable when it answered the bundle fetch badly', async () => {
@@ -581,7 +581,7 @@ describe('sustained failure', () => {
 
     stand.upstream.evidenceHost.resumePublishing();
     await waitForHealth((block) => block.status === 'ok');
-    await removeTrustedMeasurement(stand.admin, trusted.id);
+    await withdrawTrustedMeasurement(stand.admin, trusted.id);
   });
 
   it('reports a host that stops answering as unreachable, not merely denied', async () => {
@@ -602,7 +602,7 @@ describe('sustained failure', () => {
     expect(dossier?.liveness).toMatchObject({ reachability: 'UNREACHABLE', outage: true });
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
 
-    await removeTrustedMeasurement(stand.admin, trusted.id);
+    await withdrawTrustedMeasurement(stand.admin, trusted.id);
   });
 });
 
