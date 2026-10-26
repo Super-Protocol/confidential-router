@@ -396,6 +396,14 @@ SUP-75 deltas above, these are the differences between this document's outline a
   `POST /auth/bootstrap` does something. The token itself is never reported. `password`,
   `passwordMinLength`, `me.hasPassword` and the `setPassword` mutation were removed with password sign-in
   (SUP-269): there is nothing left for them to describe.
+- **`signInMailState(email)`** — new (SUP-551), and public for the same reason: the code-entry screen asks
+  it before there is a session. `state` is `UNKNOWN` | `REJECTING` | `DELAYED` | `DELIVERING`, from what
+  the mail provider reported after it accepted the message, and only `REJECTING` changes what the screen
+  says — for an address on the provider's suppression list every clause of "check spam, a new code may be
+  slow" is false. **Not an account-existence oracle**: the answer is about the mailbox, an address with an
+  account and one without answer identically, and the same fact is obtainable by anyone who mails the
+  address and reads the refusal. It spends `mail.stateLookupsPerMinute` per source address, which is what
+  stops it being walked down a list of addresses.
 - **`gatekeeperRelease`** — new, and the Gatekeeper screen's only query. Version, notes URL, checksum
   manifest and one `GatekeeperDownload` per platform, read from GitHub Releases and cached
   (`gatekeeper.*` in the router config). `stale: true` means GitHub could not be reached and these are the
@@ -441,7 +449,7 @@ error."* and could not tell a deliberate refusal from an outage.
 
 ### Screen → operations, as shipped
 
-**Sign in** `signInOptions` (public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
+**Sign in** `signInOptions` + `signInMailState` (both public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
 `models` (public) `+ endpoints`;
 **Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` / `evidenceDigestHistory` +
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**

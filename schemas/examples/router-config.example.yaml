@@ -173,6 +173,11 @@ mail:
     user: no-reply@tee.swarm.cloud
     password: ${CR_API_SMTP_PASSWORD}
   # resendApiKey: ${CR_API_RESEND_KEY}   # with `provider: resend` instead
+  # What the provider says became of a message once it accepted it (SUP-551).
+  # Without this the route is a 404 and a suppressed address stays invisible:
+  # the send succeeds and the message is discarded. Read whatever `provider` is
+  # — the events belong to the mail account, not to the transport.
+  webhookSecret: ${CR_API_MAIL__WEBHOOK_SECRET}   # the provider's signing secret, `whsec_…`
 
 billing:
   # `auto` is Stripe when the block below is set. The manual provider it otherwise

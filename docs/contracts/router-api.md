@@ -28,8 +28,10 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
 | `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
+| `POST /v1/webhooks/resend` | extension | **not OpenAI**: what the mail provider says became of a message. No key; the provider's signature instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
-| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key |
+| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key. In-cluster only — the chart does not publish it |
+| `GET /admin/health` | operational | the same document from outside the cluster, behind the operator's session and `auth.adminEmails` (SUP-479) |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
 
@@ -126,6 +128,29 @@ A hard `404` where `feedback.form` is unset: an endpoint that answered would be 
 deployment has a grant to give away. `429` with `Retry-After` past `feedback.webhooksPerMinute` per source
 address — the signature is the authority, and the budget only stops an unsigned flood from spending the
 service's time verifying HMACs.
+
+### `POST /v1/webhooks/resend`
+
+Where the mail provider posts what became of a message after the relay accepted it (SUP-551). Same shape
+as the form webhook above: under `/v1` because that is the prefix the chart publishes, registered before
+the `/v1` fallback, and authenticated by the provider's signature and by nothing else.
+
+- `svix-id`, `svix-timestamp`, `svix-signature: v1,<base64>` — HMAC-SHA256 over `<id>.<timestamp>.<body>`
+  under the base64-decoded `mail.webhookSecret`, which is why the raw body parser is mounted on this path
+  ahead of the JSON one. The header may carry several versioned signatures, so a secret rotation overlaps
+  rather than drops deliveries; a timestamp more than five minutes from this clock is refused, which is
+  what stops a captured delivery being replayed back.
+- `401` for any delivery that does not verify, `404` where `mail.webhookSecret` is unset, `429` with
+  `Retry-After` past `mail.webhooksPerMinute` per source address.
+- `200 {"recorded": n}` once it verifies, whatever it decided — `n` is how many addresses the delivery
+  said something about, and `0` for the events this deployment does not act on (`email.sent`,
+  `email.opened`, every `domain.*`). A provider that does not read a 2xx redelivers for days, and a
+  redelivery of a message already applied changes nothing: `svix-id` is the idempotency key.
+
+Acted on: `email.bounced` (a verdict on the address only when `bounce.type` is `Permanent` — a full
+mailbox arrives through the same event and will be retried), `email.complained`, `email.suppressed`,
+`suppression.added`, `email.failed`, `email.delivery_delayed`, `email.delivered`, `suppression.removed`.
+The last two are the only good news, and they clear a row rather than create one.
 
 ### `POST /v1/chat/completions`
 
@@ -362,7 +387,12 @@ the status code is what a probe reads.
   "version": "0.3.2",
   "uptimeSeconds": 4821,
   "database": { "status": "up" },
-  "mail": { "provider": "smtp", "state": "ok", "since": "2026-10-21T09:12:04.000Z" },
+  "mail": {
+    "provider": "smtp",
+    "state": "ok",
+    "since": "2026-10-21T09:12:04.000Z",
+    "undeliverable": { "addresses": 1, "lastAt": "2026-10-20T16:04:15.000Z" }
+  },
   "analytics": { "status": "disabled", "dropped": 412 },
   "externalEndpoints": {
     "status": "outage",
@@ -373,7 +403,8 @@ the status code is what a probe reads.
     "pending": 0,
     "since": "2026-10-23T06:11:12.000Z",
     "verdictsReadAt": "2026-10-24T12:41:03.000Z"
-  }
+  },
+  "alerts": { "state": "ok", "recipients": 2, "lastAttemptAt": "2026-10-23T06:41:30.000Z" }
 }
 ```
 
@@ -386,6 +417,11 @@ taking it out of rotation over any of those would be the worse bug.
 - `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
   `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
   the boot-time check or the most recent send, whichever is later. Never the SMTP password.
+- `mail.undeliverable` (SUP-551): `addresses`, how many the provider is currently dropping every message
+  to, and `lastAt`, when the most recent of those was reported. A different question from `state`, which
+  only ever knows whether the hand-off to the provider worked — a suppressed send succeeds. Fed by
+  `POST /v1/webhooks/resend`, so it stays `0` on a deployment that configured no `mail.webhookSecret`,
+  and never the addresses themselves: `/health` is unauthenticated.
 - `analytics`: `status` is `configured` once the process has built a sink that can deliver, `disabled` when
   it has not — which is what a rebuild that forgot `POSTHOG_PROJECT_KEY` looks like, since that key is a
   deployment environment value rather than an image build argument
@@ -445,6 +481,26 @@ ingest, which makes part of that rate a sign-up volume. Accepted rather than ove
 deployment is collecting nothing to correlate it against, the resolution is whatever the poller's interval
 is, and `/health` already publishes the version, the uptime and the mail provider. Should that trade ever
 stop being worth it, the fix is to stop serving `dropped` without a session, not to stop counting.
+
+### `GET /admin/health`
+
+The same document, for a caller outside the cluster. Session cookie **and** `auth.adminEmails`, exactly as
+the other two `/admin` routes (`/admin/data`, `/admin/invite-codes`) are.
+
+`/health` is the kubelet's, and the chart deliberately leaves it off `ingress.paths` — so on a published
+deployment nginx answers `404` for `/health`, and a published cluster space has no exec and no
+port-forward to reach it another way. That made `mail` and `analytics`, the two reports `/health` exists to
+carry, readable only from inside the pod (SUP-479). Publishing `/health` itself was the other option and
+is the wrong one: the document carries the database's error text and the mail provider, which is why it
+has never been on a public hostname. `/admin` is already routed, so this needs no chart change.
+
+**Always `200`**, even when `status` is `error` — unlike `/health`, where `503` is what a probe reads.
+This is not a probe, and a monitor that found this route must not be able to use it as one; the body is
+what an operator reads. A deployment that genuinely cannot reach PostgreSQL will not authenticate the
+session either, so `/health` on the kubelet stays the answer for that case.
+
+`401` without a session, `403` for a session that is not an operator — including on a deployment that has
+named no operators, since `auth.adminEmails` is empty by default and `AdminGuard` refuses an empty list.
 
 ## Errors
 
