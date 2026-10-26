@@ -4,15 +4,18 @@ import { DataSource } from 'typeorm';
 import { AnalyticsHealth } from '../../analytics/analytics-health.js';
 import { serviceVersion } from '../../config.js';
 import { MailService } from '../../mail/mail.service.js';
+import { MailDeliveryService } from '../../mail/mail-delivery.service.js';
 import type { HealthResponseDto } from './health.dto.js';
 
 @Injectable()
 export class HealthService {
   private readonly logger = new Logger(HealthService.name);
 
+  // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly mail: MailService,
+    private readonly deliveries: MailDeliveryService,
     private readonly analytics: AnalyticsHealth,
   ) {}
 
@@ -33,6 +36,13 @@ export class HealthService {
    * (SUP-464): a deployment whose `POSTHOG_PROJECT_KEY` a rebuild forgot still
    * serves every model, so a missing chart must never take it out of rotation —
    * but it must be answerable without reading the boot log.
+   *
+   * `mail.undeliverable` is the third of the same kind (SUP-551), and the one
+   * that is about people rather than about configuration: an address the
+   * provider is dropping mail to cannot be sent a sign-in code, and the send
+   * succeeds every time. It is counted here because it exists nowhere else in
+   * this process — and read on `/admin/health`, which the Ingress publishes,
+   * rather than only on this route, which it does not (SUP-479).
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();
@@ -41,9 +51,28 @@ export class HealthService {
       version: serviceVersion(),
       uptimeSeconds: Math.round(process.uptime()),
       database,
-      mail: this.mail.status(),
+      mail: { ...this.mail.status(), undeliverable: await this.undeliverable(database) },
       analytics: this.analytics.status(),
     };
+  }
+
+  /**
+   * One indexed count, and only while the database answered: a health document
+   * that threw because the query it added could not run would turn a reported
+   * dependency failure into an unreported one.
+   */
+  private async undeliverable(
+    database: HealthResponseDto['database'],
+  ): Promise<{ addresses: number; lastAt?: string }> {
+    if (database.status !== 'up') {
+      return { addresses: 0 };
+    }
+    try {
+      return await this.deliveries.undeliverable();
+    } catch (error) {
+      this.logger.error(`Could not count undeliverable addresses: ${error instanceof Error ? error.message : error}.`);
+      return { addresses: 0 };
+    }
   }
 
   private async checkDatabase(): Promise<HealthResponseDto['database']> {

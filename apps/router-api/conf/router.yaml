@@ -77,6 +77,10 @@ auth:
 mail:
   provider: console
   from: no-reply@confidential-router.local
+  # No `webhookSecret` here on purpose: with none, POST /v1/webhooks/resend is a
+  # 404, which is what a laptop wants. A deployment sets it to the provider's
+  # signing secret so that an address the provider is dropping mail to becomes
+  # visible instead of silent (SUP-551).
 
 # Invitation codes that grant credit. Nothing here switches the feature on: with
 # no codes generated it is inert. `landingBaseUrl` is only read by the generation

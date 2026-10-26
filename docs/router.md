@@ -282,6 +282,50 @@ On a Swarm cluster space, outbound connections to public addresses are open and
 private ranges are not, so the SMTP host has to resolve to a public address;
 some clouds also block outbound port 25, which is what 587 and 465 are for.
 
+### What happens after the relay accepts a message
+
+`state` above only ever knows whether the hand-off to the provider worked, and
+that is not the same question as whether the mail arrived. A single bounce puts
+an address on the provider's suppression list, and from then on every message to
+it is accepted at SMTP time and **silently discarded**: the send succeeds, the
+console tells the person a code is on its way, and nothing arrives — not late,
+not in spam, never (SUP-551).
+
+The outcome exists only in the provider's event stream, so the deployment reads
+it from there:
+
+```yaml
+mail:
+  webhookSecret: ${CR_API_MAIL__WEBHOOK_SECRET}   # the provider's signing secret, `whsec_…`
+  webhooksPerMinute: 120                          # per source address; the signature is the authority
+  stateLookupsPerMinute: 30                       # per source address, for `signInMailState`
+```
+
+- **`POST /v1/webhooks/resend`** takes the provider's notifications, verified by
+  HMAC over the raw bytes and by nothing else. Unset `webhookSecret` and the
+  route is a `404` — the state every deployment before this was in. Register the
+  endpoint in the provider's dashboard for `email.bounced`, `email.complained`,
+  `email.suppressed`, `email.failed`, `email.delivery_delayed`,
+  `email.delivered` and the two `suppression.*` events. It is read whatever
+  `mail.provider` is: the events belong to the mail account, not to the
+  transport, so an SMTP deployment sending through the same provider gets them
+  too.
+- **An address that is being dropped is written down** (`mail_address_states`)
+  and reported at `error` in the log, naming the provider's own words and
+  whether an account here holds the address — a stranger's typo and a user
+  locked out of their account are different emergencies.
+- **`mail.undeliverable`** on `/health` and `/admin/health` counts the addresses
+  in that state. Like `mail.state` it never decides the overall status.
+- **The code-entry screen stops lying.** `signInMailState(email)` is a public
+  query answering whether mail to an address is being dropped, and the console
+  replaces "check spam, it may be slow" with the truth when it is. It is a fact
+  about the mailbox and not about any account: an address with an account and
+  one without answer identically, so it is not an existence oracle.
+
+What this does **not** do is retry or re-route anything. Clearing a suppression
+is the operator's, in the provider's dashboard; the deployment's job is to stop
+the failure being invisible.
+
 ## Sign-in by emailed code
 
 How an account signs in, and how one is created (SUP-269). On wherever

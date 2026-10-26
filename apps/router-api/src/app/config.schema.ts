@@ -382,6 +382,34 @@ const MailSchema = z
      */
     consoleUrl: z.url().optional(),
     resendApiKey: optionalSecret(1),
+    /**
+     * Signs the provider's delivery notifications (SUP-551).
+     *
+     * Unset, `POST /v1/webhooks/resend` is a 404 and this deployment learns
+     * nothing about what happened to a message after the relay took it — which
+     * is the state every deployment before this was in. It is the Svix signing
+     * secret the provider shows when the endpoint is created (`whsec_…`), and
+     * it is read whatever `provider` is set to: production sends through the
+     * same provider's SMTP relay, and the events are the account's rather than
+     * the transport's.
+     */
+    webhookSecret: optionalSecret(16),
+    /**
+     * Provider deliveries accepted per minute per source address.
+     *
+     * The signature is the authority, not this; the budget exists so that an
+     * unsigned flood cannot spend the service's time on HMAC verification.
+     */
+    webhooksPerMinute: integerish().pipe(z.number().int().positive()).prefault(120),
+    /**
+     * How often one source address may ask whether an address is being
+     * rejected (`signInMailState`).
+     *
+     * The console asks once per code-entry screen. The budget is what stops the
+     * query being used to walk a list of addresses looking for the ones the
+     * provider has suppressed.
+     */
+    stateLookupsPerMinute: integerish().pipe(z.number().int().positive()).prefault(30),
     smtp: z
       .strictObject({
         host: z.string().trim().min(1),
