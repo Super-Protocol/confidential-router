@@ -379,11 +379,19 @@ Settings the events assume. They are UI state, not repository state, so they are
 
 **Plausible** — site `router.superprotocol.com`, EU-hosted, cookieless.
 
-- Script variant: `script.pageview-props.tagged-events.js`. `pageview-props` is what carries the
-  properties on `landing_view` without a second request; `tagged-events` is what lets the markup declare
-  a custom event with a class rather than shipping a handler per button.
+- Script variant: **`script.manual.js`**, which is what the landing ships and what
+  `router.superprotocol.com` serves today — not the `pageview-props.tagged-events` variant this
+  paragraph named until SUP-542 checked it. The manual variant is required rather than preferred:
+  `landing_view` must not be sent until the invitation code has left the URL (ADR-002 §3), and an
+  automatic pageview fires before any script of ours can take it out. Properties ride the manual call's
+  own second argument, so `pageview-props` buys nothing here; `tagged-events` buys nothing either,
+  because every event on this page is sent by `public/enhance.js` rather than declared with a class.
+- **Custom properties have to be allowed in the site's settings**, one by one, or Plausible counts the
+  event and silently drops the properties. That is UI state no deploy can carry, and it is the one
+  setting that makes `has_invite`, `campaign`, the `utm_*` set, `player` and `snippet` readable rather
+  than merely sent.
 - Goals, created from the names in this document: `cta_click`, `code_copied`, `faq_opened`,
-  `docs_link_click`, `diagram_variant_shown`.
+  `docs_link_click`, `diagram_variant_shown`, `explainer_video_opened`, `waitlist_click`.
 - Outbound-link tracking stays **off**: `docs_link_click` reports a closed set of destinations, where the
   extension would report one row per URL.
 - Optional, recommended to SUP-147: proxy `/js/script.js` and `/api/event` through the landing's ingress
