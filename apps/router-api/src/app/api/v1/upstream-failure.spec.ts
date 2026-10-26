@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
+import { describeUpstreamError, readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 
 /**
  * The shared upstream error table (SUP-448).
@@ -66,12 +66,91 @@ describe('readUpstreamError', () => {
     expect(await readUpstreamError(new Response(stream, { status: 400 }))).toEqual({
       text: '',
       structured: false,
+      length: 0,
       parsed: null,
     });
   });
 
   it('ignores a param that is not a non-empty string', async () => {
     expect(await readUpstreamError(answer(400, { message: 'nope', param: null }))).not.toHaveProperty('param');
+  });
+
+  it('reports the body’s full length, not the truncated one', async () => {
+    const body = await readUpstreamError(new Response('x'.repeat(4096), { status: 400 }));
+
+    expect(body.length).toBe(4096);
+    expect(body.text).toHaveLength(1000);
+  });
+});
+
+/**
+ * The log half of SUP-497. `/privacy` §5 says prompt text is never written to a
+ * log, and a model server's 4xx is where it quotes the request back — so these
+ * assert what the line does *not* carry, which is the only form the claim has.
+ */
+describe('describeUpstreamError', () => {
+  it('keeps the error class and the field, and drops the wording', async () => {
+    const body = await readUpstreamError(
+      answer(400, {
+        error: {
+          message: 'messages[2].content: "my production database password is hunter2" is not valid',
+          param: 'messages[2].content',
+          type: 'invalid_request_error',
+        },
+      }),
+    );
+
+    const line = describeUpstreamError(body);
+
+    expect(line).toContain('type=invalid_request_error');
+    expect(line).toContain('param=messages[2].content');
+    expect(line).not.toContain('hunter2');
+    expect(line).not.toContain(body.text);
+  });
+
+  it('drops an unstructured body entirely, naming only its size', async () => {
+    const quoted = 'Bad Request: rejected prompt "write me a poem about hunter2"';
+    const body = await readUpstreamError(new Response(quoted, { status: 400 }));
+
+    expect(describeUpstreamError(body)).toBe(`${quoted.length} chars, unstructured (not logged)`);
+  });
+
+  it('separates an upstream that said nothing from one that wrote a page', async () => {
+    expect(describeUpstreamError(await readUpstreamError(new Response('', { status: 502 })))).toBe('no body');
+    expect(describeUpstreamError(await readUpstreamError(new Response('<html>…</html>', { status: 502 })))).toContain(
+      '14 chars',
+    );
+  });
+
+  it('drops a `param` that is prose rather than a field path', async () => {
+    // The hole the field name would otherwise leave open: an upstream is free to
+    // put anything in `param`, and one that echoes the rejected value there
+    // would put it straight into the log.
+    const body = await readUpstreamError(
+      answer(400, { error: { message: 'no', param: 'the prompt "write me a poem about hunter2"', type: 'bad_req' } }),
+    );
+
+    const line = describeUpstreamError(body);
+
+    expect(line).toContain('type=bad_req');
+    expect(line).not.toContain('param=');
+    expect(line).not.toContain('hunter2');
+  });
+
+  it('never returns the body text, under any shape an upstream answers with', async () => {
+    const secret = 'the prompt I typed, verbatim';
+    const shapes: unknown[] = [
+      { error: { message: secret, param: secret, type: secret } },
+      { object: 'error', message: secret, code: 400 },
+      { detail: [{ loc: ['body', 'messages'], msg: secret }] },
+      secret,
+    ];
+
+    for (const shape of shapes) {
+      const body = await readUpstreamError(answer(400, shape));
+
+      expect(describeUpstreamError(body)).not.toContain(secret);
+    }
   });
 });
 

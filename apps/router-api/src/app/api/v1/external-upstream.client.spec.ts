@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { routerConfig } from '../../config.js';
 import type { SecretEnvelopeService } from '../../secrets/index.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
@@ -256,6 +257,35 @@ describe('mapFailure', () => {
 
     expect(error.status).toBe(502);
     expect(error.code).toBe('backend_error');
+  });
+
+  it('logs what the upstream refused without logging the request it quoted (SUP-497)', async () => {
+    /*
+     * An external endpoint is someone else's model server, and the least
+     * predictable quoter of a request there is: a 4xx from one may echo the
+     * field it rejected along with its value. `/privacy` §5 says prompt text
+     * reaches no log, so the line carries the error class, the field path and
+     * the body's size — and the caller still gets the wording on the wire.
+     */
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const response = jsonResponse(400, {
+      error: {
+        message: 'Rejected messages[1].content: "my private prompt, in full" exceeds the per-message limit.',
+        param: 'messages[1].content',
+        type: 'invalid_request_error',
+      },
+    });
+
+    const error = await clientFor().mapFailure(model(1), response);
+    const lines = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    warn.mockRestore();
+
+    expect(lines).toContain('answered 400');
+    expect(lines).toContain('type=invalid_request_error');
+    expect(lines).toContain('param=messages[1].content');
+    expect(lines).not.toContain('my private prompt');
+    // The caller is still told what to fix. Only the log is poorer.
+    expect(error.message).toContain('my private prompt');
   });
 });
 

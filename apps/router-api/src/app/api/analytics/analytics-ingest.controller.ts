@@ -44,7 +44,36 @@ const MAX_VALUE_LENGTH = 128;
 const MAX_PROPERTIES = 12;
 
 /**
- * The console's first-party analytics ingest.
+ * Where the console posts its two events.
+ *
+ * The spelling is load-bearing, which is why it is a constant with a test on it
+ * (`console-events-path.spec.ts`). A first-party route escapes a blocker's
+ * *domain* rules, but not its *path* rules: EasyPrivacy — on by default in
+ * uBlock Origin, Brave Shields and AdGuard — carries the unanchored pattern
+ * `/analytics/event`, which the ingest's original `/v1/analytics/events`
+ * matched, so `signup_started` never left the browser of a large part of a
+ * developer audience (SUP-463). `analytics`, `track`, `collect`, `telemetry`,
+ * `pixel`, `stats` and `beacon` are the words the lists are written with; none
+ * of them may appear here.
+ *
+ * Checked against EasyPrivacy, EasyList and uBO-privacy on 2026-10-21. A clear
+ * path today is not a guarantee for next year — the regression test is the
+ * durable protection, not the cleverness of the name.
+ */
+export const CONSOLE_EVENTS_PATH = 'v1/console-events';
+
+/**
+ * The path SUP-145 shipped, served for one release alongside the new one.
+ *
+ * A console deploy and an API deploy do not land together, and either order
+ * would drop every browser event in the gap if the old path stopped answering
+ * the moment the new one appeared. Removing it is a follow-up; until then both
+ * paths are the same handler, so there is no second behaviour to keep in step.
+ */
+export const LEGACY_CONSOLE_EVENTS_PATH = 'v1/analytics/events';
+
+/**
+ * The console's first-party event ingest, on {@link CONSOLE_EVENTS_PATH}.
  *
  * It exists so that the console makes no third-party request. `posthog-js` in
  * the bundle would have bought two events and written a persistent identifier to
@@ -61,8 +90,8 @@ const MAX_PROPERTIES = 12;
  * It answers 202 with an empty body. There is nothing for the console to do with
  * a result, and a caller that waited for one would be waiting on PostHog.
  */
-@ApiTags('analytics')
-@Controller('v1/analytics')
+@ApiTags('console-events')
+@Controller()
 export class AnalyticsIngestController {
   constructor(
     private readonly analytics: AnalyticsService,
@@ -70,7 +99,7 @@ export class AnalyticsIngestController {
     @Inject(RATE_LIMITER) private readonly limiter: RateLimiter,
   ) {}
 
-  @Post('events')
+  @Post([CONSOLE_EVENTS_PATH, LEGACY_CONSOLE_EVENTS_PATH])
   @HttpCode(HttpStatus.ACCEPTED)
   @Header('Cache-Control', 'no-store')
   @UseGuards(OptionalSessionGuard)
@@ -96,7 +125,14 @@ export class AnalyticsIngestController {
       throw new UnauthorizedException(`${event} is recorded against an account, and this request carries no session.`);
     }
 
-    await this.analytics.capture({
+    // Not awaited, and that is the whole point of answering 202: `capture()` ends
+    // in a real request to PostHog, so awaiting it spent the visitor's sign-up
+    // screen on our analytics host's latency — +162 ms measured on production,
+    // and up to `analytics.posthog.requestTimeout` on a stall. ADR-006 says
+    // emission never blocks a request; this is where it did (SUP-463). It never
+    // rejects — `AnalyticsService.capture` swallows, and so does each sink — so
+    // there is no rejection left to handle here.
+    void this.analytics.capture({
       event,
       distinctId: identified ? (user?.id ?? null) : null,
       // Random, because neither ingest event reports a database row: two

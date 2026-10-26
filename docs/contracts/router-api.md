@@ -26,8 +26,10 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `GET /v1/evidence` | required | raw passthrough of **this deployment's** latest published bundle; no key |
 | `GET /v1/evidence/{endpoint}` | required | the same, for a named endpoint — or for a registered external upstream; no key |
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
+| `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
+| `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key |
 
 Unsupported OpenAI paths return `404 {"error":{"type":"invalid_request_error","code":"not_found"}}`.
 
@@ -57,9 +59,9 @@ tenant's `/v1` traffic and the landing page's lookups do not spend each other's.
 Redemption is **not** on this surface, and there is no endpoint for it: a code is spent inside account
 creation (`docs/router.md`, "Invitation codes"), which is what makes a grant unreplayable.
 
-### `POST /v1/analytics/events`
+### `POST /v1/console-events`
 
-The console's first-party analytics ingest. Unauthenticated or session-authenticated, `Cache-Control:
+The console's first-party event ingest. Unauthenticated or session-authenticated, `Cache-Control:
 no-store`, answers `202` with an empty body.
 
 ```json
@@ -71,6 +73,15 @@ events and written a persistent identifier to the visitor's device, which is wha
 attaches consent to (ADR-006 §3). The other six console events are facts the database already holds and are
 captured server-side.
 
+**The path is part of the contract, and this one is spelled the way it is on purpose.** Being first-party
+escapes a blocker's *domain* rules, not its *path* rules. This ingest shipped as `POST /v1/analytics/events`
+and matched EasyPrivacy's unanchored `/analytics/event` — enabled by default in uBlock Origin, Brave Shields
+and AdGuard — so `signup_started` never left the browser for much of a developer audience (SUP-463).
+`analytics`, `/event`, `track`, `collect`, `telemetry`, `pixel`, `beacon` and `stats` must not appear in it;
+`console-events-path.spec.ts` fails the build if one does. `/v1/analytics/events` still answers identically
+for one release, so a console deploy and an API deploy that do not land together drop nothing; removing it
+is a follow-up.
+
 - `event` must be one of `CONSOLE_INGEST_EVENTS` — `signup_started`, `feedback_form_opened`. Anything else
   is `400`: an event the server can derive is one a client must not assert.
 - `properties` are dropped unless the taxonomy declares them for that event, and unless they are short
@@ -80,6 +91,9 @@ captured server-side.
   anonymously whatever session the request carries; `feedback_form_opened` needs one and answers `401`
   without it.
 - `429` with `Retry-After` past `analytics.ingestPerMinute` per source address, on a budget of its own.
+- The `202` does not wait on PostHog. Validation, the `401` and the rate limit all happen in front of the
+  response; the capture itself is started and not awaited, so a stalled analytics host costs a dropped
+  event and never a slow sign-up screen (ADR-006: emission never blocks a request).
 
 ### `POST /v1/webhooks/typeform`
 
@@ -335,6 +349,53 @@ signature whichever copy it got.
 
 Returns the `Generation` record (tokens, cost, model, endpoint, timings, `evidence_digest`) for a
 generation owned by the key's workspace. Never any content.
+
+### `GET /health`
+
+Liveness, a real database round-trip, and the state of the two subsystems that can fail without anyone
+noticing. `200` when `status` is `ok`, `503` when it is `error` — the body says which dependency is down,
+the status code is what a probe reads.
+
+```json
+{
+  "status": "ok",
+  "version": "0.3.2",
+  "uptimeSeconds": 4821,
+  "database": { "status": "up" },
+  "mail": { "provider": "smtp", "state": "ok", "since": "2026-10-21T09:12:04.000Z" },
+  "analytics": { "status": "disabled", "dropped": 412 }
+}
+```
+
+**Only `database` decides `status`.** A process that cannot reach PostgreSQL cannot meter a single
+generation and must leave the rotation. `mail` (SUP-269) and `analytics` (SUP-464) are reported and never
+promoted: a deployment whose mail server is down or whose analytics key went missing still serves every
+model, and taking it out of rotation over a lost welcome mail or a missing chart would be the worse bug.
+
+- `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
+  `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
+  the boot-time check or the most recent send, whichever is later. Never the SMTP password.
+- `analytics`: `status` is `configured` once the process has built a sink that can deliver, `disabled` when
+  it has not — which is what a rebuild that forgot `POSTHOG_PROJECT_KEY` looks like, since that key is a
+  deployment environment value rather than an image build argument
+  (`docs/contracts/analytics-events.md`). It is read from the sink the process actually built, not from
+  configuration. `dropped` counts events lost since boot — discarded by the disabled sink, refused by
+  PostHog, or undeliverable — and is monotonic: read it twice and subtract.
+
+**`configured` is not `verified`.** It says a key was present and a sink was built, not that events land in
+a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to nothing, so a mistyped key
+reads `configured` with `dropped: 0` forever. `configured` rules out the failure that has no other symptom
+(the variable never arrived); a key that is present and wrong is still found by looking for the events.
+
+`/health` is public and unauthenticated, so `analytics` carries a two-value enum and a count and nothing
+else: no project key, no key prefix, no `POSTHOG_HOST`.
+
+One thing it does leak, knowingly: while `status` is `disabled` the counter rises once per captured event,
+so polling `/health` measures the deployment's event rate — and `signup_started` comes from the public
+ingest, which makes part of that rate a sign-up volume. Accepted rather than overlooked: a `disabled`
+deployment is collecting nothing to correlate it against, the resolution is whatever the poller's interval
+is, and `/health` already publishes the version, the uptime and the mail provider. Should that trade ever
+stop being worth it, the fix is to stop serving `dropped` without a session, not to stop counting.
 
 ## Errors
 

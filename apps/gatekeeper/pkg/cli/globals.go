@@ -179,7 +179,10 @@ func (g *globals) verifier(ctx context.Context) (status.Verifier, error) {
 //
 // Building it binds no endpoint listener — `run` starts them one at a time so a
 // port that is already taken shows up as one broken endpoint rather than a
-// failed startup.
+// failed startup. It does start the supervisor's reconcile loop, so an endpoint
+// the configuration declares comes up within a reconcile interval whether or
+// not `run` got to it; starting them here is how a failure is reported at once
+// rather than inferred from a snapshot (SUP-537).
 func (g *globals) supervisor(ctx context.Context, cfg *config.Config) (status.Supervisor, error) {
 	if g.env.Supervisor != nil {
 		return g.env.Supervisor, nil
