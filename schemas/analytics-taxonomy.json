@@ -315,6 +315,26 @@
           "required": true,
           "description": "Whether this workspace's ledger holds an invitation grant — the split that says whether the $100 did anything.",
           "example": true
+        },
+        "client": {
+          "type": "string",
+          "required": true,
+          "description": "Which client sent the activating request (SUP-466). A closed set, derived in the `/v1` gateway from the headers a client announces itself in and stored on `generations.client`; anything unrecognised — and anything that sends no `User-Agent` at all — is `other`, and a growing `other` bucket is the signal to add a value here in a pull request. Never the agent string itself, and never a version of it: no editor build, no operating system, no architecture, no locale.",
+          "enum": [
+            "vscode-chat",
+            "cline",
+            "roo",
+            "continue",
+            "cursor",
+            "claude-code",
+            "openai-python",
+            "openai-node",
+            "litellm",
+            "langchain",
+            "curl",
+            "other"
+          ],
+          "example": "cline"
         }
       }
     },
