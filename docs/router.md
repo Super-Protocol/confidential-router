@@ -282,13 +282,24 @@ first and much more loudly.
 | --- | --- | --- |
 | `alerts.emails` | `[]` | Who to write to. **Empty falls back to `auth.adminEmails`**, which every deployment with an admin section already sets — so the channel works on the deployment that is already running, which is the one the outage happens on. Name a shared inbox or an on-call alias here to override. |
 | `alerts.email` | `true` | Switches the outbound path off and nothing else. The log line, the timeline row and the `/health` block are the record and are unaffected. Off is for a deployment whose log sink already pages. |
-| `alerts.minInterval` | `15m` | Least gap between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. A **recovery is sent past this interval** — an operator who was woken is owed the "it is back" line. |
+| `alerts.minInterval` | `15m` | Least gap between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. The interval is armed by a message that **landed**, not by one that was attempted: a send that reached nobody put nothing in a mailbox, and arming on it would spend the next quarter-hour's alerting budget on a message that does not exist. A **recovery is sent past this interval** — an operator who was woken is owed the "it is back" line. |
 
 What the message does *not* carry: the upstream hostname, the pinned digest, the
 sidecar's verdict detail. Mail is forwarded, quoted and left open on screens, and
 SUP-221 ruling 3 keeps upstream identity behind a session — the endpoint's own
 name is the one identifier, and it is the operator's own label. The full verdict
 is in the console.
+
+**The sidecar's own sentence is the sharp edge of that rule**, and the first
+version of this mail got it wrong. `lastReason` is up to 255 characters of free
+text written by the sidecar, and it routinely embeds the very things the
+paragraph above keeps behind a session: a denial names the measurement hex (the
+router-api e2e suite asserts that it does), and a `fetch` refusal names the URL
+it could not read. So the mail carries the **stage** — `policy`, `fetch`,
+`untrusted-root` — which is the same fact bounded, and which is what decides
+whether the operator goes to the upstream's cloud or to the console. The sentence
+itself stays in the `ERROR` log line and on the endpoint's timeline, both of
+which need being inside the deployment or holding a session.
 
 **`GET /health` reports the channel, not just the outage.** The `alerts` block
 carries a state and a count of recipients — never an address:

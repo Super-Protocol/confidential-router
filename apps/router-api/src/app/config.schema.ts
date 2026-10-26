@@ -824,6 +824,10 @@ const AlertsSchema = z
      * and begins again, and the honest answer to twenty of those in an hour is
      * one mail and a line in the log saying how many it stood for. A mailbox that
      * has been flooded once is a mailbox with a filter on it.
+     *
+     * Armed by a message that *landed*, not by one that was attempted: a send
+     * that reached nobody put nothing in a mailbox, and arming on it would spend
+     * the next interval's budget on a message that does not exist.
      */
     minInterval: durationMs('15m'),
   })

@@ -16,6 +16,8 @@ import {
 
 const NOW = new Date('2026-10-24T12:00:00.000Z');
 const DIGEST = 'sha256/BvG0Yy3Ir0QKPtC1TrSPuyZZD1sdKq7Gq_a1Mv1Hs0A';
+/** The shape a real sidecar refusal embeds — `external-endpoints.e2e.spec.ts` asserts it does. */
+const MEASUREMENT = '74c75a0ba5f36e55548a14aa0dae0d0c9de9cd6ad041a4f6c553c996e2c579a7';
 
 /** Production's defaults, so the thresholds under test are the ones that ship. */
 const THRESHOLDS: OutageThresholds = { afterFailures: 3, afterNoSuccess: 15 * 60_000 };
@@ -244,6 +246,11 @@ describe('outageAlert', () => {
     return Object.fromEntries(outageAlert(liveness, NOW).facts);
   }
 
+  /** Every character the message would put in an inbox, as one string. */
+  function everythingIn(alert: ReturnType<typeof outageAlert>): string {
+    return [alert.title, alert.summary, alert.action, ...alert.facts.flat()].join(' ');
+  }
+
   it('says the same thing the log line says, so the two cannot be caught disagreeing', () => {
     const liveness = livenessOf(dark(), THRESHOLDS, NOW);
     const alert = outageAlert(liveness, NOW);
@@ -279,13 +286,36 @@ describe('outageAlert', () => {
   it('carries no hostname and no digest: mail gets forwarded, the console needs a session', () => {
     const liveness = livenessOf(dark(), THRESHOLDS, NOW);
     const alert = outageAlert(liveness, NOW);
-    const everything = [alert.title, alert.summary, alert.action, ...alert.facts.flat()].join(' ');
 
     // SUP-221 ruling 3: upstream identity and verdict detail stay behind a
     // session. The endpoint's name is here because it is the operator's own label.
-    expect(everything).not.toContain(DIGEST);
-    expect(everything).not.toContain('sha256');
-    expect(everything).not.toMatch(/https?:\/\//);
+    expect(everythingIn(alert)).not.toContain(DIGEST);
+    expect(everythingIn(alert)).not.toContain('sha256');
+    expect(everythingIn(alert)).not.toMatch(/https?:\/\//);
+  });
+
+  it('leaves the sidecar’s own sentence out, because that is where the digest hides', () => {
+    // Not a hypothetical: `external-endpoints.e2e.spec.ts` asserts that a denial's
+    // `lastReason` *contains the measurement hex*, and a `fetch` refusal names the
+    // URL it could not read. The first version of this mail carried the reason
+    // verbatim, which quietly undid the rule the case above asserts — so this
+    // feeds it a reason shaped like the real ones.
+    const leaky = dark({
+      lastStage: 'policy',
+      lastReason: `attestedRoots.trustedMeasurements does not admit ${MEASUREMENT}; fetched https://upstream.example/.well-known/swarm-evidence`,
+      upstreamUnreachable: false,
+    });
+    const alert = outageAlert(livenessOf(leaky, THRESHOLDS, NOW), NOW);
+
+    expect(everythingIn(alert)).not.toContain(MEASUREMENT);
+    expect(everythingIn(alert)).not.toContain('upstream.example');
+    expect(everythingIn(alert)).not.toContain('trustedMeasurements');
+    // The stage is the same fact in a bounded form, and it is what the operator
+    // acts on — so losing the sentence must not lose the direction.
+    expect(factsOf(livenessOf(leaky, THRESHOLDS, NOW))['Stopped at stage']).toBe('policy');
+    expect(alert.action).toContain('timeline');
+    // And the log line, which stays inside the deployment, still carries it.
+    expect(outageLine(livenessOf(leaky, THRESHOLDS, NOW), NOW)).toContain(MEASUREMENT);
   });
 });
 

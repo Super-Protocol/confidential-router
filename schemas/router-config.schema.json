@@ -803,7 +803,7 @@
         "minInterval": {
           "$ref": "#/$defs/duration",
           "default": "15m",
-          "description": "Least time between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox that has been flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. A recovery is sent past this interval \u2014 an operator who was woken is owed the \u201cit is back\u201d line. 0 disables it."
+          "description": "Least time between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox that has been flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. The interval is armed by a message that landed, not by one that was attempted: a send that reached nobody put nothing in a mailbox. A recovery is sent past this interval \u2014 an operator who was woken is owed the \u201cit is back\u201d line. 0 disables it."
         }
       }
     },
