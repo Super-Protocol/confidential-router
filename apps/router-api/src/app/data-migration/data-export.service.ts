@@ -14,7 +14,7 @@ import { TrustedMeasurement } from '../db/entities/trusted-measurement.entity.js
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { EvidenceService } from '../evidence/index.js';
-import { inviteCodeStatus } from '../invites/index.js';
+import { inviteCodeStatus, signUpOrigin } from '../invites/index.js';
 import { buildBundle, type ExportBundle, type ExportData, type ExportedInviteCode } from './export-bundle.js';
 
 const isoOf = (value: Date): string => value.toISOString();
@@ -80,7 +80,12 @@ export class DataExportService {
       ]);
 
     const invitedBy = new Map(redemptions.map((row) => [row.userId, row.inviteCodeId]));
-    const bootstrapEmail = this.config.auth.bootstrapEmail.toLowerCase();
+    const bootstrapEmail = this.config.auth.bootstrapEmail.trim().toLowerCase();
+    // The operator's own account, found the way the console's statistics find it
+    // (`InviteAdminService.bootstrapAccountId`) and labelled by the same rule, so
+    // what this file says about an account is what the importing deployment
+    // re-derives for it (SUP-309).
+    const bootstrapId = users.find((user) => user.email.trim().toLowerCase() === bootstrapEmail)?.id ?? null;
     // A membership or redemption whose account is gone points at nothing; the
     // import would refuse a bundle that carried one.
     const known = new Set(users.map((user) => user.id));
@@ -94,11 +99,7 @@ export class DataExportService {
         image: user.image,
         createdAt: isoOf(user.createdAt),
         role: isAdminEmail(user.email, this.config.auth.adminEmails) ? ('admin' as const) : ('user' as const),
-        origin: invitedBy.has(user.id)
-          ? ('invite' as const)
-          : user.email.toLowerCase() === bootstrapEmail
-            ? ('bootstrap' as const)
-            : ('open' as const),
+        origin: signUpOrigin(user.id, invitedBy.has(user.id), bootstrapId),
         invitedByCodeId: invitedBy.get(user.id) ?? null,
       })),
       workspaces: workspaces.map((workspace) => ({

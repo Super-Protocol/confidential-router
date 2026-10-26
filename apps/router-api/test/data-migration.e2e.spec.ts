@@ -479,6 +479,14 @@ describe('deployment import', () => {
       inviteCodeId: codes[0]?.id,
       campaign: 'launch-2026-10',
     });
+    // And so does the operator's own origin: the import wrote A's accounts under
+    // timestamps older than B's claim, which used to make the administrator the
+    // latest row here and read as an open sign-up on an invite-only deployment
+    // (SUP-309).
+    expect(signUps.adminSignUps.nodes.find((node: { email: string }) => node.email === OPERATOR)).toMatchObject({
+      origin: 'BOOTSTRAP',
+      inviteCodeId: null,
+    });
 
     // An unredeemed code still works here; a spent one still does not.
     const dee = await signUp(b.harness, 'dee@example.test', codes[3]?.code);
