@@ -4,7 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { User } from '../db/entities/user.entity.js';
-import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
+import { emailCodeEnabled, magicLinkEnabled, supportEmailOf } from '../mail/mail-settings.js';
 import { EMAIL_CODE_LENGTH } from './auth.options.js';
 
 /** Which sign-in paths this deployment actually offers, right now. */
@@ -37,6 +37,18 @@ export interface SignInOptions {
    * screen has to say so and block a submission it knows will be refused.
    */
   inviteRequired: boolean;
+  /**
+   * A mailbox to write to from another address when our mail cannot reach this
+   * one (`mail.replyTo`, SUP-556).
+   *
+   * Also not a sign-in path, and on this deployment the thing to offer when
+   * every path is gone: one spam complaint suppresses an address for the whole
+   * provider account, every message to it is then accepted and discarded, and a
+   * code is the only way into an account — so the screen that has to say "no
+   * code will ever arrive here" also has to say where to write. Undefined where
+   * the deployment named no mailbox.
+   */
+  supportEmail?: string;
 }
 
 /**
@@ -63,6 +75,7 @@ export class SignInOptionsService {
 
   async get(): Promise<SignInOptions> {
     const { auth } = this.config;
+    const supportEmail = supportEmailOf(this.config);
     return {
       ...(await this.bootstrapState()),
       github: auth.github !== undefined,
@@ -71,6 +84,7 @@ export class SignInOptionsService {
       emailCodeLength: EMAIL_CODE_LENGTH,
       magicLink: magicLinkEnabled(this.config),
       inviteRequired: auth.requireInviteForSignUp,
+      ...(supportEmail ? { supportEmail } : {}),
     };
   }
 

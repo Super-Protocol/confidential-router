@@ -258,6 +258,7 @@ export function SignUpForm() {
         key={attempt}
         email={email}
         length={codeLength}
+        supportEmail={data?.signInOptions.supportEmail ?? null}
         submitLabel="Create account"
         submittingLabel="Creating…"
         pending={pending === 'request' ? null : pending}
