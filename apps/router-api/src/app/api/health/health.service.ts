@@ -41,7 +41,13 @@ export class HealthService {
    * serves every model, so a missing chart must never take it out of rotation —
    * but it must be answerable without reading the boot log.
    *
-<<<<<<< HEAD
+   * `mail.undeliverable` is the third of the same kind (SUP-551), and the one
+   * that is about people rather than about configuration: an address the
+   * provider is dropping mail to cannot be sent a sign-in code, and the send
+   * succeeds every time. It is counted here because it exists nowhere else in
+   * this process — and read on `/admin/health`, which the Ingress publishes,
+   * rather than only on this route, which it does not (SUP-479).
+   *
    * External upstreams are here under the same rule and for the sharpest version
    * of the reason (SUP-517). A dead upstream is the one subsystem failure that
    * *does* stop completions working, and it still must not decide `status`: the
@@ -58,14 +64,6 @@ export class HealthService {
    *
    * Counts only, no endpoint names: `/health` is unauthenticated, and ruling 3 on
    * SUP-221 keeps upstream identity and verdict detail behind a session.
-=======
-   * `mail.undeliverable` is the third of the same kind (SUP-551), and the one
-   * that is about people rather than about configuration: an address the
-   * provider is dropping mail to cannot be sent a sign-in code, and the send
-   * succeeds every time. It is counted here because it exists nowhere else in
-   * this process — and read on `/admin/health`, which the Ingress publishes,
-   * rather than only on this route, which it does not (SUP-479).
->>>>>>> origin/main
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();

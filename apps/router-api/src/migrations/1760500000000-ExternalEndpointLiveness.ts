@@ -17,8 +17,8 @@ import { type MigrationInterface, type QueryRunner, TableColumn } from 'typeorm'
  * `upstreamUnreachable` is nullable for the same reason and one more: "not
  * checked" is a third answer, distinct from "reachable".
  */
-export class ExternalEndpointLiveness1760300000000 implements MigrationInterface {
-  name = 'ExternalEndpointLiveness1760300000000';
+export class ExternalEndpointLiveness1760500000000 implements MigrationInterface {
+  name = 'ExternalEndpointLiveness1760500000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.addColumns('external_endpoints', [

@@ -111,9 +111,10 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-<<<<<<< HEAD
       // SUP-517's failure-run columns are five additive columns on one table; the
-      // first undo drops only those.
+      // first undo drops only those. First because this migration is numbered
+      // last — SUP-551's landed on `main` while this branch was in review, and a
+      // migration is appended rather than inserted.
       expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
       await dataSource.undoLastMigration();
       for (const column of [
@@ -126,13 +127,12 @@ describe('SQLite', () => {
         expect(await queryRunner.hasColumn('external_endpoints', column)).toBe(false);
       }
       expect(await queryRunner.hasColumn('external_endpoints', 'lastCheckedAt')).toBe(true);
-=======
-      // SUP-551's mail address states are one additive table; the first undo
+
+      // SUP-551's mail address states are one additive table; the next undo
       // drops only that and leaves the rest of the schema alone.
       expect(await queryRunner.hasTable('mail_address_states')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasTable('mail_address_states')).toBe(false);
->>>>>>> origin/main
 
       // SUP-466's client dimension is one additive column; the next undo drops
       // only that and leaves the rest of the metering row alone.
