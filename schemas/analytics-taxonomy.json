@@ -357,7 +357,13 @@
           "type": "string",
           "required": true,
           "description": "What the router decided. `served` is the only one that forwards anything. `unknown_model` is the roadmap signal — somebody asked for a model we do not have. `out_of_key_scope` is a model we do have, called with a key not scoped to it. `not_verified` is an external upstream holding no admitting verdict, which is fail-closed working rather than demand. `unsupported_route` is a model that does not serve this route.",
-          "enum": ["served", "unknown_model", "out_of_key_scope", "not_verified", "unsupported_route"],
+          "enum": [
+            "served",
+            "unknown_model",
+            "out_of_key_scope",
+            "not_verified",
+            "unsupported_route"
+          ],
           "example": "unknown_model"
         },
         "route": {
