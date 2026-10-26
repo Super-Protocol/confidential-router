@@ -98,6 +98,19 @@ The artboard ships two diagrams and the breakpoint decides; this is how we learn
 | `variant` | string | yes | `horizontal` `vertical` | Which of the artboard's two diagrams is rendered at this width. |
 | `viewport_bucket` | string | yes | `mobile` `tablet` `desktop` `wide` | Coarse width bucket at the moment the diagram appeared: mobile <768, tablet <1024, desktop <1440, wide otherwise. Buckets, not pixels — a pixel width is a high-cardinality property and a weak fingerprinting signal. |
 
+### `explainer_video_opened`
+
+**Fires when** the explainer's click-to-load facade is activated (click, or Enter on the focused link) — **before the player is created**, so at the moment it is recorded nothing has been requested from YouTube.
+
+**Owner** SUP-542 · **transport** `browser`
+
+The click is ours; the playback is YouTube's and is not measured. No player API is loaded, so there is no progress, no completion and no watch time anywhere in this — and nothing goes looking for any. Firing before the swap is deliberate twice over: it is the moment the visitor asked, and it is the moment before anything leaves for a third party, which is the boundary `/privacy`'s YouTube row discloses.
+
+| Property | Type | Required | Values | Meaning |
+| --- | --- | --- | --- | --- |
+| `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
+| `player` | string | yes | `inline` `youtube` | Where the visitor ended up watching. `inline` is the `youtube-nocookie.com` embed the page swaps in; `youtube` is the watch page a modified click (⌘/Ctrl/Shift/middle) opened in a new tab instead — that click is left to the browser, as it always was, but it is still a visitor choosing to watch, and counting only the inline case would undercount a habit this audience has. |
+
 ### `code_copied`
 
 **Fires when** a copy button on a code sample succeeds (the clipboard write resolved), or the sample is copied with the keyboard from inside its container.
@@ -131,6 +144,18 @@ Plausible's outbound-link extension would report these as `Outbound Link: Click`
 | --- | --- | --- | --- | --- |
 | `position` *(shared)* | string | yes | `nav` `hero` `how_it_works` `verify` `models` `pricing` `faq` `closing` `footer` | [As above](#shared-properties). |
 | `destination` | string | yes | `docs` `api_reference` `github` `attestation` `status` `superprotocol` | Which property the link leads to. Closed set: an unrecognised host is not sent at all rather than widening the breakdown. |
+
+### `waitlist_click`
+
+**Fires when** the waitlist link is activated on the invite-only build of the landing page.
+
+**Owner** SUP-202 · **transport** `browser`
+
+Listed here by SUP-542 to close a gap, not because the emission is new: the landing has been sending this event since SUP-202 and the taxonomy did not name it. The address it opens is a `mailto:`, which is why `docs_link_click` never fires on it — `destinationOf` cannot read a destination out of one — and why the anchor is marked instead.
+
+| Property | Type | Required | Values | Meaning |
+| --- | --- | --- | --- | --- |
+| `position` *(shared)* | string | yes | `nav` `hero` `how_it_works` `verify` `models` `pricing` `faq` `closing` `footer` | [As above](#shared-properties). |
 
 ## Console — PostHog, through router-api
 
