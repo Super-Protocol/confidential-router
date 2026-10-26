@@ -66,8 +66,8 @@ export const ADMIN_INVITE_CODES_QUERY = graphql(`
 `);
 
 export const ADMIN_SIGN_UPS_QUERY = graphql(`
-  query AdminSignUps($origin: SignUpOrigin, $offset: Int!, $limit: Int!) {
-    adminSignUps(origin: $origin, offset: $offset, limit: $limit) {
+  query AdminSignUps($origin: SignUpOrigin, $holdsLiveApiKey: Boolean, $offset: Int!, $limit: Int!) {
+    adminSignUps(origin: $origin, holdsLiveApiKey: $holdsLiveApiKey, offset: $offset, limit: $limit) {
       totalCount
       nodes {
         userId
@@ -78,7 +78,28 @@ export const ADMIN_SIGN_UPS_QUERY = graphql(`
         inviteCode
         campaign
         redeemedAt
+        apiKeys {
+          total
+          live
+          lastUsedAt
+        }
       }
+    }
+  }
+`);
+
+/**
+ * The deployment's credential totals (SUP-454) — what a key-affecting change
+ * would void, which no per-page sum can give: a key in a shared workspace
+ * belongs to every member of it, and one in a memberless workspace to nobody.
+ */
+export const ADMIN_API_KEY_POPULATION_QUERY = graphql(`
+  query AdminApiKeyPopulation {
+    adminApiKeyPopulation {
+      keys
+      liveKeys
+      accountsHoldingLiveKey
+      liveKeysWithoutAccount
     }
   }
 `);

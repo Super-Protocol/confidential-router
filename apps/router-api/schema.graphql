@@ -1,3 +1,19 @@
+"""
+How many /v1 credentials one account holds. Counts only — no key material of any kind.
+"""
+type AccountApiKeys {
+  """Most recent use across those keys; null if none was ever used."""
+  lastUsedAt: DateTime
+
+  """Of those, the ones that would authenticate right now."""
+  live: Int!
+
+  """
+  Person-created keys in the account’s workspaces, revoked and expired ones included. The console’s own chat credential is not counted.
+  """
+  total: Int!
+}
+
 """One bucket of an activity series. Quiet buckets are zeroes, not gaps."""
 type ActivityPoint {
   """Start of the bucket."""
@@ -106,8 +122,12 @@ type AdminInviteCodePage {
   totalCount: Int!
 }
 
-"""One account, and how it came to exist."""
+"""One account, how it came to exist, and what it holds."""
 type AdminSignUp {
+  """
+  The account’s /v1 credentials, counted across every workspace it belongs to (SUP-454).
+  """
+  apiKeys: AccountApiKeys!
   campaign: String
   createdAt: DateTime!
   email: String!
@@ -162,6 +182,29 @@ type ApiKeyCreated {
 
   """The full key. It is not stored and cannot be shown again."""
   secret: String!
+}
+
+"""
+Deployment-wide credential counts, for sizing and announcing a key-affecting change.
+"""
+type ApiKeyPopulation {
+  """
+  Accounts holding at least one live key — who would have to re-issue. Exactly `adminSignUps(holdsLiveApiKey: true).totalCount` with no other filter applied, so the number and the page agree.
+  """
+  accountsHoldingLiveKey: Int!
+
+  """
+  Every person-created key on the deployment, whatever its state. Not the row count of `api_keys`: the console’s own chat credential is left out.
+  """
+  keys: Int!
+
+  """Of those, the ones that would authenticate right now."""
+  liveKeys: Int!
+
+  """
+  Live keys whose workspace has no member this deployment can name — the remainder no account list can show, and the one number here an operator cannot act on. Normally 0.
+  """
+  liveKeysWithoutAccount: Int!
 }
 
 """
@@ -1502,14 +1545,27 @@ type Query {
   ): ActivitySummary!
 
   """
+  Deployment-wide API-key counts. No key material. Restricted to auth.adminEmails.
+  """
+  adminApiKeyPopulation: ApiKeyPopulation!
+
+  """
   Invitation codes, newest first, with who redeemed each. Restricted to auth.adminEmails.
   """
   adminInviteCodes(campaign: String, limit: Int! = 50, offset: Int! = 0, status: InviteCodeStatus): AdminInviteCodePage!
 
   """
-  Accounts, newest first, with how each came to exist. Restricted to auth.adminEmails.
+  Accounts, newest first, with how each came to exist and how many API keys it holds. Restricted to auth.adminEmails.
   """
-  adminSignUps(limit: Int! = 50, offset: Int! = 0, origin: SignUpOrigin): AdminSignUpPage!
+  adminSignUps(
+    """
+    True: only accounts holding a key that still authenticates — `totalCount` is then what a key-affecting change would cut off. False: only accounts holding none. Null: every account.
+    """
+    holdsLiveApiKey: Boolean
+    limit: Int! = 50
+    offset: Int! = 0
+    origin: SignUpOrigin
+  ): AdminSignUpPage!
 
   """Every key in the workspace, newest first."""
   apiKeys(workspaceId: ID!): [ApiKey!]!

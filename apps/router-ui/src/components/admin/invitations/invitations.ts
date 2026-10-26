@@ -94,6 +94,40 @@ export const ORIGIN_VARIANT = {
   OPEN: 'outline',
 } as const satisfies Record<SignUpOrigin, string>;
 
+/*
+ * The credential census the account list carries (SUP-454). Counts only — the
+ * API answers no key material, so there is nothing here to mask.
+ */
+
+/**
+ * `2 live of 3`, or `2 live` when none of them is revoked or expired; null for an
+ * account with no key at all, which the table draws as a dash rather than a zero.
+ */
+export function apiKeyCount(keys: { total: number; live: number }): string | null {
+  if (keys.total === 0) return null;
+  return keys.live === keys.total ? `${keys.live} live` : `${keys.live} live of ${keys.total}`;
+}
+
+/** The credential summary's subject, agreeing with its verb: "1 account holds". */
+export function accountsHolding(accounts: number): string {
+  return accounts === 1 ? '1 account holds' : `${accounts} accounts hold`;
+}
+
+/** The account list's credential filter. `null` is "either kind". */
+export const KEY_FILTER = {
+  all: null,
+  live: true,
+  none: false,
+} as const satisfies Record<string, boolean | null>;
+
+export type KeyFilter = keyof typeof KEY_FILTER;
+
+export const KEY_FILTER_LABEL: Record<KeyFilter, string> = {
+  all: 'Any credentials',
+  live: 'Holds a live key',
+  none: 'No live key',
+};
+
 /** "1–50 of 230", for a pager. */
 export function pageRange(offset: number, shown: number, total: number): string {
   if (total === 0) return '0 of 0';

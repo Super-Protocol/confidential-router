@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { campaignError, expiryFromDate, invitesCsv, invitesText, maskCode, pageRange } from './invitations';
+import {
+  accountsHolding,
+  apiKeyCount,
+  campaignError,
+  expiryFromDate,
+  invitesCsv,
+  invitesText,
+  KEY_FILTER,
+  maskCode,
+  pageRange,
+} from './invitations';
 import { validateIssueForm } from './issue-codes-dialog';
 
 describe('maskCode', () => {
@@ -86,5 +96,31 @@ describe('pageRange', () => {
     expect(pageRange(0, 50, 230)).toBe('1–50 of 230');
     expect(pageRange(200, 30, 230)).toBe('201–230 of 230');
     expect(pageRange(0, 0, 0)).toBe('0 of 0');
+  });
+});
+
+describe('the credential census on the account list (SUP-454)', () => {
+  it('says how many of an account’s keys still work, and only names the total when it differs', () => {
+    expect(apiKeyCount({ total: 3, live: 2 })).toBe('2 live of 3');
+    expect(apiKeyCount({ total: 2, live: 2 })).toBe('2 live');
+    // Every key revoked is not the same as never having had one, so the total
+    // stays on screen.
+    expect(apiKeyCount({ total: 2, live: 0 })).toBe('0 live of 2');
+  });
+
+  it('answers null for an account with no key, so the table draws a dash and not a zero', () => {
+    expect(apiKeyCount({ total: 0, live: 0 })).toBeNull();
+  });
+
+  it('agrees with its verb', () => {
+    expect(accountsHolding(1)).toBe('1 account holds');
+    expect(accountsHolding(0)).toBe('0 accounts hold');
+    expect(accountsHolding(8)).toBe('8 accounts hold');
+  });
+
+  it('asks the API for either kind by default, and never for "false" by accident', () => {
+    expect(KEY_FILTER.all).toBeNull();
+    expect(KEY_FILTER.live).toBe(true);
+    expect(KEY_FILTER.none).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { isAdminMock, renderWithSession, sessionMock } from '../../../test-utils';
 import { InvitationsScreen } from './invitations-screen';
 import {
+  ADMIN_API_KEY_POPULATION_QUERY,
   ADMIN_INVITE_CODES_QUERY,
   ADMIN_SIGN_UPS_QUERY,
   INVITE_STATISTICS_QUERY,
@@ -33,6 +34,74 @@ function day(date: string, values: Partial<Record<string, number>> = {}) {
     signUpsBootstrap: 0,
     signUpsOpen: 0,
     ...values,
+  };
+}
+
+/** An account row, with its credential census (SUP-454). */
+function signUp(
+  email: string,
+  values: Partial<{
+    userId: string;
+    origin: string;
+    inviteCode: string | null;
+    campaign: string | null;
+    apiKeys: { total: number; live: number; lastUsedAt: string | null };
+  }> = {},
+) {
+  const apiKeys = values.apiKeys ?? { total: 0, live: 0, lastUsedAt: null };
+  return {
+    __typename: 'AdminSignUp' as const,
+    userId: values.userId ?? email,
+    email,
+    createdAt: '2026-10-09T09:00:00.000Z',
+    origin: values.origin ?? 'OPEN',
+    inviteCodeId: values.inviteCode ? 'code-1' : null,
+    inviteCode: values.inviteCode ?? null,
+    campaign: values.campaign ?? null,
+    redeemedAt: values.inviteCode ? '2026-10-09T09:00:00.000Z' : null,
+    apiKeys: { __typename: 'AccountApiKeys' as const, ...apiKeys },
+  };
+}
+
+function signUpsMock(
+  nodes: ReturnType<typeof signUp>[],
+  variables: Record<string, unknown> = {},
+): MockLink.MockedResponse {
+  return {
+    request: {
+      query: ADMIN_SIGN_UPS_QUERY,
+      variables: { origin: null, holdsLiveApiKey: null, offset: 0, limit: 50, ...variables },
+    },
+    result: {
+      data: { adminSignUps: { __typename: 'AdminSignUpPage', totalCount: nodes.length, nodes } },
+    },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+function populationMock(
+  values: Partial<{
+    keys: number;
+    liveKeys: number;
+    accountsHoldingLiveKey: number;
+    liveKeysWithoutAccount: number;
+  }> = {},
+): MockLink.MockedResponse {
+  return {
+    request: { query: ADMIN_API_KEY_POPULATION_QUERY, variables: {} },
+    result: {
+      data: {
+        adminApiKeyPopulation: {
+          __typename: 'ApiKeyPopulation',
+          keys: 0,
+          liveKeys: 0,
+          accountsHoldingLiveKey: 0,
+          liveKeysWithoutAccount: 0,
+          ...values,
+        },
+      },
+    },
+    maxUsageCount: Number.POSITIVE_INFINITY,
   };
 }
 
@@ -456,42 +525,11 @@ describe('InvitationsScreen', () => {
   it('lists accounts with how each came to exist', async () => {
     renderScreen({
       mocks: [
-        {
-          request: { query: ADMIN_SIGN_UPS_QUERY, variables: { origin: null, offset: 0, limit: 50 } },
-          result: {
-            data: {
-              adminSignUps: {
-                __typename: 'AdminSignUpPage',
-                totalCount: 2,
-                nodes: [
-                  {
-                    __typename: 'AdminSignUp',
-                    userId: 'u-2',
-                    email: 'dev@example.com',
-                    createdAt: '2026-10-09T09:00:00.000Z',
-                    origin: 'INVITE',
-                    inviteCodeId: 'code-1',
-                    inviteCode: CODE,
-                    campaign: 'launch',
-                    redeemedAt: '2026-10-09T09:00:00.000Z',
-                  },
-                  {
-                    __typename: 'AdminSignUp',
-                    userId: 'u-1',
-                    email: 'admin@example.com',
-                    createdAt: '2026-10-08T09:00:00.000Z',
-                    origin: 'BOOTSTRAP',
-                    inviteCodeId: null,
-                    inviteCode: null,
-                    campaign: null,
-                    redeemedAt: null,
-                  },
-                ],
-              },
-            },
-          },
-          maxUsageCount: Number.POSITIVE_INFINITY,
-        },
+        signUpsMock([
+          signUp('dev@example.com', { userId: 'u-2', origin: 'INVITE', inviteCode: CODE, campaign: 'launch' }),
+          signUp('admin@example.com', { userId: 'u-1', origin: 'BOOTSTRAP' }),
+        ]),
+        populationMock(),
       ],
     });
 
@@ -503,5 +541,112 @@ describe('InvitationsScreen', () => {
     expect(invited).toHaveTextContent('ABCD-••••-••••');
     expect(invited).not.toHaveTextContent(CODE);
     expect(within(table).getByRole('row', { name: /admin@example\.com/ })).toHaveTextContent('Bootstrap');
+  });
+});
+
+/**
+ * The credential census on the account list (SUP-454) — the only supported answer
+ * to "which accounts here hold a live key", because `apiKeys(workspaceId)`
+ * refuses an operator who is not a member of the workspace asked about.
+ */
+describe('the Invitations section, on who holds an API key', () => {
+  it('counts each account’s keys and when one was last used, and nothing more', async () => {
+    renderScreen({
+      mocks: [
+        signUpsMock([
+          signUp('holder@example.com', {
+            apiKeys: { total: 3, live: 2, lastUsedAt: '2026-10-18T09:00:00.000Z' },
+          }),
+          signUp('keyless@example.com'),
+        ]),
+        populationMock({ keys: 3, liveKeys: 2, accountsHoldingLiveKey: 1 }),
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    const table = await screen.findByRole('table', { name: 'Sign-ups' });
+
+    const holder = within(table).getByRole('row', { name: /holder@example\.com/ });
+    expect(holder).toHaveTextContent('2 live of 3');
+    expect(holder).toHaveTextContent('Oct 18, 2026');
+    // The census is counts only; a prefix would be key material on a screen that
+    // gets screenshotted.
+    expect(holder).not.toHaveTextContent('sk-tee');
+    expect(within(table).getByRole('row', { name: /keyless@example\.com/ })).not.toHaveTextContent('live');
+  });
+
+  it('says deployment-wide how many accounts a key-affecting change would cut off', async () => {
+    renderScreen({
+      mocks: [
+        signUpsMock([signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } })]),
+        populationMock({ keys: 9, liveKeys: 7, accountsHoldingLiveKey: 5 }),
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+
+    expect(await screen.findByTestId('api-key-population')).toHaveTextContent(
+      '5 accounts hold a live API key — 7 live of 9 ever issued.',
+    );
+  });
+
+  it('names the live keys no account list can account for', async () => {
+    renderScreen({
+      mocks: [
+        signUpsMock([signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } })]),
+        populationMock({ keys: 3, liveKeys: 3, accountsHoldingLiveKey: 1, liveKeysWithoutAccount: 2 }),
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+
+    expect(await screen.findByTestId('api-key-population')).toHaveTextContent(
+      '2 live keys are held by no account this deployment can name',
+    );
+  });
+
+  it('narrows the list — and its total — to the accounts holding a live key', async () => {
+    renderScreen({
+      mocks: [
+        signUpsMock([
+          signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } }),
+          signUp('keyless@example.com'),
+        ]),
+        signUpsMock([signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } })], {
+          holdsLiveApiKey: true,
+        }),
+        populationMock({ keys: 1, liveKeys: 1, accountsHoldingLiveKey: 1 }),
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    await screen.findByRole('row', { name: /keyless@example\.com/ });
+
+    await userEvent.click(screen.getByLabelText('API keys'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Holds a live key' }));
+
+    // The pager, not a row: `holder` is in both lists, so only the total tells
+    // the filtered render apart from the one before it.
+    expect(await screen.findByText('1–1 of 1')).toBeInTheDocument();
+    expect(screen.queryByRole('row', { name: /keyless@example\.com/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('row', { name: /holder@example\.com/ })).toBeInTheDocument();
+  });
+
+  it('says the filters matched nothing, and never that every account holds a key', async () => {
+    renderScreen({
+      mocks: [
+        signUpsMock([signUp('keyless@example.com')]),
+        signUpsMock([], { holdsLiveApiKey: true }),
+        populationMock(),
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    await screen.findByRole('row', { name: /keyless@example\.com/ });
+
+    await userEvent.click(screen.getByLabelText('API keys'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Holds a live key' }));
+
+    expect(await screen.findByText('No accounts match these filters')).toBeInTheDocument();
   });
 });
