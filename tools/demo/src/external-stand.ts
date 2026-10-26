@@ -409,12 +409,26 @@ export interface ExternalModelRegistration {
   completionPer1mMicros?: number;
 }
 
+/** One row of the admin trust list. */
+export interface TrustedMeasurementRow {
+  id: string;
+  measurement: string;
+}
+
 export interface RegisteredExternalEndpoint {
   id: string;
   name: string;
   status: string;
   hostname: string;
   apiKeyPrefix: string | null;
+  /**
+   * The sidecar's own timestamp for the check this row is projecting (ISO 8601).
+   *
+   * Read by {@link waitForExternal}'s `since`, which is the only honest way to
+   * ask "a verdict about the change I just made": a status alone cannot say
+   * whether it is about this change or the previous one (SUP-528).
+   */
+  lastCheckedAt: string | null;
   measurementSeen: string | null;
   measurementSource: string | null;
   /** The deployment digest the last check saw — what an admin pins (SUP-252). */
@@ -445,6 +459,7 @@ const ENDPOINT_FIELDS = `
   hostname
   status
   apiKeyPrefix
+  lastCheckedAt
   measurementSeen
   measurementSource
   evidenceDigestSeen
@@ -513,20 +528,50 @@ export async function externalEndpointEvents(
   return externalEndpoint?.events ?? [];
 }
 
+/**
+ * Admits one more cloud — and is idempotent about it, which the product is not.
+ *
+ * `addTrustedMeasurement` answers a repeat with a CONFLICT, and should: a second
+ * row for one measurement is nothing an operator can want. A stand needs the
+ * other shape. The `afterEach` below withdraws the row after every case, which
+ * makes a leftover unlikely — but the hook is itself a GraphQL read plus a
+ * mutation, so a stand whose router-api has just died fails it, the row survives
+ * and every later case dies in setup on "already on the trust list". That is the
+ * cascade this is all about, so the conflict is resolved here the way an
+ * operator resolves it with the console in front of them: find the row that is
+ * already there and carry on (SUP-329, SUP-528).
+ */
 export async function addTrustedMeasurement(
   session: ConsoleSession,
   measurement: string,
   note = 'the stand upstream cloud',
-): Promise<{ id: string; measurement: string }> {
-  const { addTrustedMeasurement: added } = await session.graphql<{
-    addTrustedMeasurement: { id: string; measurement: string };
-  }>(
-    `mutation Trust($input: AddTrustedMeasurementInput!) {
-       addTrustedMeasurement(input: $input) { id measurement note }
-     }`,
-    { input: { measurement, note } },
-  );
-  return added;
+): Promise<TrustedMeasurementRow> {
+  try {
+    const { addTrustedMeasurement: added } = await session.graphql<{
+      addTrustedMeasurement: TrustedMeasurementRow;
+    }>(
+      `mutation Trust($input: AddTrustedMeasurementInput!) {
+         addTrustedMeasurement(input: $input) { id measurement note }
+       }`,
+      { input: { measurement, note } },
+    );
+    return added;
+  } catch (error) {
+    // Narrow on the product's own words rather than on any failure: a stand that
+    // swallowed, say, an authorisation error and reported a row that was never
+    // added would be hiding the defect it exists to find. The string is pinned
+    // on the product side too — see `ExternalEndpointAdminService.addMeasurement`.
+    if (!(error instanceof Error) || !error.message.includes('is already on the trust list')) {
+      throw error;
+    }
+    const listed = (await trustedMeasurements(session)).find(
+      (row) => normaliseMeasurement(row.measurement) === normaliseMeasurement(measurement),
+    );
+    if (!listed) {
+      throw error;
+    }
+    return listed;
+  }
 }
 
 /**
@@ -566,6 +611,36 @@ export async function removeTrustedMeasurement(session: ConsoleSession, id: stri
     { id },
   );
   return removed;
+}
+
+/** The trust list as the console reads it: every row, with the id a withdrawal needs. */
+export async function trustedMeasurements(session: ConsoleSession): Promise<TrustedMeasurementRow[]> {
+  const { trustedMeasurements: rows } = await session.graphql<{ trustedMeasurements: TrustedMeasurementRow[] }>(
+    'query Trusted { trustedMeasurements { id measurement } }',
+  );
+  return rows;
+}
+
+/**
+ * Takes a measurement off the trust list by its value, and reports whether it
+ * was on it.
+ *
+ * The id-taking {@link removeTrustedMeasurement} is the mutation the console
+ * calls, and it is the wrong shape for cleanup: it needs the row id from the
+ * `addTrustedMeasurement` that created it, so a suite can only undo an edit from
+ * inside the case that made it — which is exactly the test that has just failed.
+ * This one looks the row up instead and tolerates its absence, so it is safe to
+ * run unconditionally after every case (SUP-528).
+ */
+export async function withdrawTrustedMeasurement(session: ConsoleSession, measurement: string): Promise<boolean> {
+  const wanted = normaliseMeasurement(measurement);
+  const row = (await trustedMeasurements(session)).find((entry) => normaliseMeasurement(entry.measurement) === wanted);
+  return row ? removeTrustedMeasurement(session, row.id) : false;
+}
+
+/** As the admin API folds it on input — it accepts `0x…`, either case and stray space. */
+function normaliseMeasurement(measurement: string): string {
+  return measurement.trim().replace(/^0x/i, '').toLowerCase();
 }
 
 /**
@@ -631,24 +706,54 @@ export async function waitForExternalStatus(
 export async function waitForExternal(
   session: ConsoleSession,
   id: string,
-  { until, wanted }: { until: (endpoint: RegisteredExternalEndpoint) => boolean; wanted: string },
+  {
+    until,
+    wanted,
+    since,
+  }: {
+    until: (endpoint: RegisteredExternalEndpoint) => boolean;
+    wanted: string;
+    /**
+     * Discard any verdict the sidecar computed before this instant — pass
+     * `Date.now()` taken *after* the change being waited on.
+     *
+     * Without it a wait reads the row as it stands, and the row carries the
+     * previous check. Withdraw a measurement and the endpoint is still
+     * `VERIFIED_BY_THIS_ROUTER` until the poller projects the denial; make the
+     * next change in that window and the wait for *its* verdict is satisfied by
+     * the one before it. `lastCheckedAt` is the sidecar's own timestamp for the
+     * check the row is projecting, so this is the one field that can tell the
+     * two apart (SUP-528).
+     */
+    since?: number;
+  },
 ): Promise<RegisteredExternalEndpoint> {
   const timeoutMs = STATUS_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   let last: RegisteredExternalEndpoint | null = null;
   for (;;) {
     last = await readExternalEndpoint(session, id);
-    if (last && until(last)) {
+    if (last && checkedSince(last, since) && until(last)) {
       return last;
     }
     if (Date.now() > deadline) {
       throw new Error(
         `external endpoint ${id} was ${last?.status ?? 'absent'} after ${timeoutMs}ms, wanted ${wanted}` +
+          `${since === undefined ? '' : ` from a check after ${new Date(since).toISOString()} (last checked ${last?.lastCheckedAt ?? 'never'})`}` +
           `${last?.lastReason ? ` (last reason: ${last.lastStage}: ${last.lastReason})` : ''}`,
       );
     }
     await delay(200);
   }
+}
+
+/** Whether the check this row is projecting is at least as new as `since`. */
+function checkedSince(endpoint: RegisteredExternalEndpoint, since: number | undefined): boolean {
+  if (since === undefined) {
+    return true;
+  }
+  const checkedAt = endpoint.lastCheckedAt === null ? Number.NaN : Date.parse(endpoint.lastCheckedAt);
+  return Number.isFinite(checkedAt) && checkedAt >= since;
 }
 
 /* ------------------------------------------------------------------ *

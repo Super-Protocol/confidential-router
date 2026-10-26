@@ -346,6 +346,15 @@ that property:
    change. A reload that fails to load changes nothing and logs why (`pkg/cli/cmd_run.go`);
    unchanged endpoints keep their connections (`pkg/proxy/endpoint.go:156-158`).
 
+   **The declared set is reconciled, not applied once.** The supervisor re-checks every
+   `ReconcileInterval` that each endpoint in the configuration in force is holding a listener, and
+   starts the ones that are not (`pkg/proxy/supervisor.go`). This is the step that makes the egress
+   survive a bring-up that went wrong: a parked rollback once answered on every public surface and
+   could not serve a completion, because its one endpoint sat `PENDING` with
+   `lastReason: "listener stopped"` and `lastCheckedAt` null, and no path in the data plane ever
+   looked at it again (SUP-537). Reconciling cannot weaken anything — binding is not an admission
+   decision — and it stops short of an operator's own `Stop`.
+
    Two refinements the e2e stand forced (SUP-229), both about the difference between a file a *person*
    wrote and a file a control loop renders:
 
