@@ -22,3 +22,20 @@ export const SIGN_IN_OPTIONS_QUERY = graphql(`
     }
   }
 `);
+
+/**
+ * Whether the deployment's mail provider is dropping messages to the address a
+ * code was just asked for (SUP-551).
+ *
+ * Asked once the code screen appears, because the answer changes what that
+ * screen may honestly say. It is a fact about the mailbox and not about any
+ * account, so asking it before there is a session gives nothing away — see the
+ * resolver.
+ */
+export const SIGN_IN_MAIL_STATE_QUERY = graphql(`
+  query SignInMailState($email: String!) {
+    signInMailState(email: $email) {
+      state
+    }
+  }
+`);

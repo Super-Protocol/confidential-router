@@ -1,5 +1,6 @@
 'use client';
 
+import { useQuery } from '@apollo/client/react';
 import { Button } from '@confidential-router/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@confidential-router/ui/components/card';
 import { Input } from '@confidential-router/ui/components/input';
@@ -8,6 +9,7 @@ import { MailCheck } from 'lucide-react';
 import * as React from 'react';
 import { AuthRequestError } from '../../lib/auth';
 import { messageOf } from './messages';
+import { SIGN_IN_MAIL_STATE_QUERY } from './operations';
 
 /**
  * What the router can say about the two email-code requests that is not about
@@ -84,6 +86,24 @@ export interface EmailCodeStepProps {
  * emptied — the code was refused as spent, or a new one replaced it — remounts
  * this with a new `key`, so a dead code is never left sitting above the button.
  */
+/**
+ * Whether this deployment's provider is dropping mail to the address.
+ *
+ * Asked here rather than passed in: both screens that mount this step would
+ * otherwise have to carry a query neither of them reads, and the address this
+ * is about is the one prop this component already has. A failed or refused
+ * lookup is `false` — the honest line is an *addition* to the screen, and
+ * losing it costs the copy that was there before and nothing else.
+ */
+function useAddressRejected(email: string): boolean {
+  const { data } = useQuery(SIGN_IN_MAIL_STATE_QUERY, {
+    variables: { email },
+    skip: email.length === 0,
+    fetchPolicy: 'network-only',
+  });
+  return data?.signInMailState.state === 'REJECTING';
+}
+
 export function EmailCodeStep({
   email,
   length,
@@ -97,6 +117,7 @@ export function EmailCodeStep({
   onChangeAddress,
 }: EmailCodeStepProps) {
   const [code, setCode] = React.useState('');
+  const rejected = useAddressRejected(email);
 
   const input = React.useRef<HTMLInputElement>(null);
 
@@ -178,20 +199,41 @@ export function EmailCodeStep({
           </p>
         ) : null}
 
-        {/* The router answers "sent" whatever happened — it mails one address
-            only so many codes an hour and says nothing when that runs out, so
-            as not to tell a stranger anything about the address. This line is
-            what stops that from reading as a broken button. */}
-        <p className="text-muted-foreground text-xs leading-relaxed">
-          Nothing in the inbox? Check spam first. An address is mailed only a limited number of codes an hour, so a new
-          one may not arrive straight away.
-        </p>
+        {rejected ? (
+          /* The one case where "check spam, it may be slow" is false in every
+             clause: the provider has this address on its suppression list, so
+             the message was accepted and then discarded, and pressing "Send a
+             new code" produces another one that is discarded too (SUP-551).
+             Said plainly, and about the address rather than about any account
+             — the router still does not say whether one exists. */
+          <p role="status" data-testid="email-code-rejected" className="text-destructive text-sm leading-relaxed">
+            Mail to this address is being rejected, so the code did not arrive and a new one will not either. Sign in
+            with a different address, or ask us to look into this one.
+          </p>
+        ) : (
+          /* The router answers "sent" whatever happened — it mails one address
+             only so many codes an hour and says nothing when that runs out, so
+             as not to tell a stranger anything about the address. This line is
+             what stops that from reading as a broken button. */
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Nothing in the inbox? Check spam first. An address is mailed only a limited number of codes an hour, so a
+            new one may not arrive straight away.
+          </p>
+        )}
 
         <div className="flex flex-col gap-2">
           <Button variant="outline" className="w-full" disabled={pending !== null} onClick={onResend}>
             {pending === 'resend' ? 'Sending…' : 'Send a new code'}
           </Button>
-          <Button variant="ghost" className="w-full" disabled={pending !== null} onClick={onChangeAddress}>
+          {/* On an address the provider is dropping, a new code is another
+              discarded message and this is the only button that can still
+              work — so it leads rather than trails (SUP-551). */}
+          <Button
+            variant={rejected ? 'brand' : 'ghost'}
+            className="w-full"
+            disabled={pending !== null}
+            onClick={onChangeAddress}
+          >
             Use a different address
           </Button>
         </div>

@@ -111,7 +111,13 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-466's client dimension is one additive column; the first undo drops
+      // SUP-551's mail address states are one additive table; the first undo
+      // drops only that and leaves the rest of the schema alone.
+      expect(await queryRunner.hasTable('mail_address_states')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('mail_address_states')).toBe(false);
+
+      // SUP-466's client dimension is one additive column; the next undo drops
       // only that and leaves the rest of the metering row alone.
       expect(await queryRunner.hasColumn('generations', 'client')).toBe(true);
       await dataSource.undoLastMigration();

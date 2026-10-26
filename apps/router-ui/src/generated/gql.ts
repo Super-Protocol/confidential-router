@@ -35,6 +35,7 @@ type Documents = {
     "\n  mutation AddTrustedMeasurement($input: AddTrustedMeasurementInput!) {\n    addTrustedMeasurement(input: $input) {\n      id\n      measurement\n      note\n      addedByEmail\n      addedAt\n      admits\n    }\n  }\n": typeof types.AddTrustedMeasurementDocument,
     "\n  mutation RemoveTrustedMeasurement($id: ID!) {\n    removeTrustedMeasurement(id: $id)\n  }\n": typeof types.RemoveTrustedMeasurementDocument,
     "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n": typeof types.SignInOptionsDocument,
+    "\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n": typeof types.SignInMailStateDocument,
     "\n  query SignedIn {\n    me {\n      id\n    }\n  }\n": typeof types.SignedInDocument,
     "\n  query ChatScreen {\n    chatSettings {\n      enabled\n      maxMessageChars\n      maxThreads\n      maxMessagesPerThread\n      historyStorage\n      chatModelIds\n    }\n    routerEndpoint {\n      ...EndpointEvidenceFields\n    }\n    models {\n      id\n      name\n      contextLength\n      capabilities\n      tee\n      origin\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n      externalUpstream {\n        ...ExternalUpstreamFields\n      }\n    }\n  }\n": typeof types.ChatScreenDocument,
     "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n": typeof types.ChatCredentialDocument,
@@ -95,6 +96,7 @@ const documents: Documents = {
     "\n  mutation AddTrustedMeasurement($input: AddTrustedMeasurementInput!) {\n    addTrustedMeasurement(input: $input) {\n      id\n      measurement\n      note\n      addedByEmail\n      addedAt\n      admits\n    }\n  }\n": types.AddTrustedMeasurementDocument,
     "\n  mutation RemoveTrustedMeasurement($id: ID!) {\n    removeTrustedMeasurement(id: $id)\n  }\n": types.RemoveTrustedMeasurementDocument,
     "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n": types.SignInOptionsDocument,
+    "\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n": types.SignInMailStateDocument,
     "\n  query SignedIn {\n    me {\n      id\n    }\n  }\n": types.SignedInDocument,
     "\n  query ChatScreen {\n    chatSettings {\n      enabled\n      maxMessageChars\n      maxThreads\n      maxMessagesPerThread\n      historyStorage\n      chatModelIds\n    }\n    routerEndpoint {\n      ...EndpointEvidenceFields\n    }\n    models {\n      id\n      name\n      contextLength\n      capabilities\n      tee\n      origin\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n      externalUpstream {\n        ...ExternalUpstreamFields\n      }\n    }\n  }\n": types.ChatScreenDocument,
     "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n": types.ChatCredentialDocument,
@@ -232,6 +234,10 @@ export function graphql(source: "\n  mutation RemoveTrustedMeasurement($id: ID!)
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n"): (typeof documents)["\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n"): (typeof documents)["\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
