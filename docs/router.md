@@ -321,10 +321,77 @@ mail:
   replaces "check spam, it may be slow" with the truth when it is. It is a fact
   about the mailbox and not about any account: an address with an account and
   one without answer identically, so it is not an existence oracle.
+- **It names somewhere else to write.** `signInOptions.supportEmail` is
+  `mail.replyTo`, and the only screen that renders it is the one saying the
+  address is being rejected (SUP-556). Set `mail.replyTo` to a mailbox someone
+  reads: it is the single channel a locked-out person has left, since the one
+  they would otherwise use is the one that is broken.
 
 What this does **not** do is retry or re-route anything. Clearing a suppression
-is the operator's, in the provider's dashboard; the deployment's job is to stop
-the failure being invisible.
+is the operator's — the runbook below.
+
+### Clearing a suppression
+
+Read this before an invitation campaign goes out, because on this deployment a
+suppression is a lockout and not an inconvenience (SUP-555, SUP-556).
+
+**What puts an address on the list.** Three origins, and the provider treats
+them alike: `bounce`, `complaint` — the recipient pressed "report spam" — and
+`manual`. The list is the *account's*, so a suppressed address is skipped
+across every domain and subdomain the account sends from, transactional mail
+included. A single complaint is enough, and it needs no repeat.
+
+**Why that locks someone out.** Sign-in here is a mailed code and nothing else
+(ADR-004 §1) — no passwords, and OAuth only where a deployment configured it.
+An invitation code is redeemable only inside sign-up, so an account that
+already exists cannot be credited by re-issuing one. Two windows follow:
+
+| when it happens | consequence | way back |
+|---|---|---|
+| before sign-up | the invitation is still unredeemed, so a second address works — provided the person is told the first one is rejecting our mail, which is what the code-entry screen and `mail.replyTo` are for | a second address |
+| after sign-up | no sign-in code can ever arrive, and the credit is bound to that account | clearing the suppression |
+
+**Finding out.** `mail.undeliverable` on `GET /admin/health` counts the
+addresses in `rejecting`, and each one is in the log at `error` with the
+provider's own words. Both are fed by the webhook above: with no
+`mail.webhookSecret` configured and no endpoint registered, the count stays `0`
+by construction and says nothing. Until that is in place, read the list
+straight from the provider instead — it is short enough to read by eye, and one
+call per campaign is the whole check:
+
+```bash
+curl -s -H "authorization: Bearer $RESEND_API_KEY" https://api.resend.com/suppressions
+```
+
+**Clearing one.** The provider's dashboard has a Suppressions page, and the API
+does the same:
+
+```bash
+curl -s -X DELETE -H "authorization: Bearer $RESEND_API_KEY" \
+  https://api.resend.com/suppressions/someone@example.com
+```
+
+It needs the account credential, so it is the operator's action and nobody
+else's — which is why the owner has to be a named person rather than "whoever
+notices". The provider's own precondition: *address the reason for the
+suppression first, or the address is re-suppressed automatically.* That cuts
+differently per origin:
+
+- **`complaint`** — the reason was a button press, which does not recur by
+  itself. Clearing it is sound, and it is the only thing that gets an existing
+  account its sign-in back.
+- **`bounce`** — the address did not accept mail. Clearing it changes nothing
+  unless the mailbox itself was fixed; for the usual cause, a mistyped
+  invitation, there is nothing to fix and the person needs a second address.
+
+A cleared address produces `suppression.removed`, which the webhook consumes and
+which returns the row to `delivering` — so the console's code-entry screen stops
+warning on its own, with no deployment step.
+
+**What it does not restore.** Clearing a suppression restores *access*, and the
+account's balance was never touched. It cannot move credit between accounts: if
+someone signed up again on a second address, granting them the first account's
+credit needs an audited admin grant and not a second invitation code.
 
 ## Sign-in by emailed code
 

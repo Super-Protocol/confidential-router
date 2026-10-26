@@ -74,6 +74,7 @@ function optionsMock(
     emailCode: boolean;
     emailCodeLength: number;
     inviteRequired: boolean;
+    supportEmail: string | null;
   }> = {},
 ) {
   return {
@@ -90,6 +91,7 @@ function optionsMock(
           emailCodeLength: 6,
           magicLink: false,
           inviteRequired: false,
+          supportEmail: null,
           ...overrides,
         },
       },

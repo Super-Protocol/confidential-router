@@ -1772,6 +1772,11 @@ type SignInOptions {
 
   """A one-time sign-in link can be mailed as well as a code."""
   magicLink: Boolean!
+
+  """
+  A mailbox to write to from a different address when this deployment’s mail cannot reach the one a viewer is holding (`mail.replyTo`). Null where none is configured. Sign-in is an emailed code, so a suppressed address has no other way to ask for help.
+  """
+  supportEmail: String
 }
 
 """How an account came to exist."""

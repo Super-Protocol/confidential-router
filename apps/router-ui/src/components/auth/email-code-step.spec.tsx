@@ -10,11 +10,14 @@ const EMAIL = 'alexeykheben@superprotocol.com';
 const SLOW_MAIL = /Nothing in the inbox\? Check spam first/;
 const REJECTED = /Mail to this address is being rejected/;
 
-function renderStep(state?: SignInMailStateName) {
+const SUPPORT = 'community@superprotocol.com';
+
+function renderStep(state?: SignInMailStateName, supportEmail: string | null = null) {
   return renderWithApollo(
     <EmailCodeStep
       email={EMAIL}
       length={6}
+      supportEmail={supportEmail}
       submitLabel="Sign in"
       submittingLabel="Signing in…"
       pending={null}
@@ -64,6 +67,7 @@ describe('the code-entry screen', () => {
       <EmailCodeStep
         email={EMAIL}
         length={6}
+        supportEmail={null}
         submitLabel="Sign in"
         submittingLabel="Signing in…"
         pending={null}
@@ -78,5 +82,34 @@ describe('the code-entry screen', () => {
 
     await waitFor(() => expect(screen.getByText(SLOW_MAIL)).toBeInTheDocument());
     expect(screen.queryByTestId('email-code-rejected')).not.toBeInTheDocument();
+  });
+
+  /**
+   * SUP-556: a rejected address is the one case where the person has no way to
+   * tell us — the channel they would use is the broken one. So where the
+   * deployment names a mailbox, this screen is where they get it, as a `mailto:`
+   * they can open from any other address.
+   */
+  it('names the mailbox to write to from another address, when the deployment has one', async () => {
+    renderStep('REJECTING', SUPPORT);
+
+    const contact = await screen.findByTestId('email-code-rejected-contact');
+    expect(contact).toHaveTextContent(SUPPORT);
+    expect(contact).toHaveAttribute('href', `mailto:${SUPPORT}`);
+  });
+
+  it('offers no contact where the deployment configured none', async () => {
+    renderStep('REJECTING');
+
+    expect(await screen.findByTestId('email-code-rejected')).toHaveTextContent(REJECTED);
+    expect(screen.queryByTestId('email-code-rejected-contact')).not.toBeInTheDocument();
+  });
+
+  /** A contact is only ever an answer to a rejection; it is noise on a screen waiting for a code. */
+  it('keeps the contact off the ordinary screen', async () => {
+    renderStep('UNKNOWN', SUPPORT);
+
+    expect(await screen.findByText(SLOW_MAIL)).toBeInTheDocument();
+    expect(screen.queryByTestId('email-code-rejected-contact')).not.toBeInTheDocument();
   });
 });

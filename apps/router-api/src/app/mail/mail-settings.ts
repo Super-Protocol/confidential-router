@@ -74,6 +74,23 @@ export function resolveMailSettings(config: Pick<RouterConfig, 'mail' | 'auth' |
   };
 }
 
+/**
+ * The mailbox a person our mail cannot reach may write to (SUP-556).
+ *
+ * `mail.replyTo` and nothing new: a single spam complaint suppresses an address
+ * for the whole provider account, and sign-in here is an emailed code and
+ * nothing else — so the one person who most needs to reach the operator is the
+ * one who can no longer be sent anything. The address that already means "a
+ * mailbox someone reads" is the right one to hand them, and reusing it means a
+ * deployment that set `mail.replyTo` needs no new parameter to close this.
+ *
+ * Undefined where the deployment named no mailbox, which is what the console
+ * renders the shorter sentence for — a contact nobody reads is worse than none.
+ */
+export function supportEmailOf(config: Pick<RouterConfig, 'mail' | 'auth' | 'server'>): string | undefined {
+  return resolveMailSettings(config).replyTo;
+}
+
 /** Whether this deployment can send mail at all. */
 export function mailEnabled(config: Pick<RouterConfig, 'mail' | 'auth' | 'server'>): boolean {
   return resolveMailSettings(config).provider !== 'none';

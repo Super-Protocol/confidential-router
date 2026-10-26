@@ -395,7 +395,10 @@ SUP-75 deltas above, these are the differences between this document's outline a
   `adminRecovery` while it is set and the account it created exists — the two states in which
   `POST /auth/bootstrap` does something. The token itself is never reported. `password`,
   `passwordMinLength`, `me.hasPassword` and the `setPassword` mutation were removed with password sign-in
-  (SUP-269): there is nothing left for them to describe.
+  (SUP-269): there is nothing left for them to describe. `supportEmail` (SUP-556) is `mail.replyTo`, null
+  where the deployment configured none: not a sign-in path but the thing to offer when none can work, since
+  an address the provider has suppressed can never be mailed a code again and the person holding it has no
+  other way to reach the operator.
 - **`signInMailState(email)`** — new (SUP-551), and public for the same reason: the code-entry screen asks
   it before there is a session. `state` is `UNKNOWN` | `REJECTING` | `DELAYED` | `DELIVERING`, from what
   the mail provider reported after it accepted the message, and only `REJECTING` changes what the screen
