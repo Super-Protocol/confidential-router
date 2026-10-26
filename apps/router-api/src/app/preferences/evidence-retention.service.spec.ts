@@ -16,6 +16,7 @@ import { UserPreferences } from '../db/entities/user-preferences.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { EvidenceRetentionService } from './evidence-retention.service.js';
 import { EvidenceRetentionHealth } from './evidence-retention-health.js';
+import { DEFAULT_RETENTION_DAYS } from './preferences.service.js';
 
 const NOW = new Date('2026-10-24T12:00:00Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -87,6 +88,48 @@ async function seedMember(workspaceId: string, days?: number): Promise<string> {
     });
   }
   return userId;
+}
+
+/**
+ * An account of a workspace that has turned `Keep archived quotes` off.
+ *
+ * `days` is still stored, because the console keeps the window settable while
+ * the switch is off and the point of several of these tests is that the stored
+ * number no longer holds anything (SUP-525).
+ */
+async function seedOptedOutMember(workspaceId: string, days = DEFAULT_RETENTION_DAYS): Promise<string> {
+  const userId = randomUUID();
+  await dataSource
+    .getRepository(WorkspaceMember)
+    .insert({ workspaceId, userId, role: 'owner', createdAt: new Date(0) });
+  await dataSource.getRepository(UserPreferences).insert({
+    userId,
+    archiveEvidence: false,
+    evidenceRetentionDays: days,
+    notifyOnMeasurementChange: true,
+    desktopNotifications: false,
+    emailReceipts: true,
+    updatedAt: new Date(0),
+  });
+  return userId;
+}
+
+/** Points the catalogue's generation at `snapshotId` instead of the seed's. */
+async function holdSnapshot(snapshotId: string): Promise<void> {
+  await dataSource
+    .getRepository('generations')
+    .update({ evidenceSnapshotId: catalog.snapshotId }, { evidenceSnapshotId: snapshotId });
+}
+
+/**
+ * Makes the catalogue's own snapshot the endpoint's newest, so a fixture issued
+ * only a day ago is still ordinary archive rather than the live publication the
+ * sweep exempts.
+ */
+async function keepCatalogSnapshotNewest(): Promise<void> {
+  await dataSource
+    .getRepository(EvidenceSnapshot)
+    .update({ id: catalog.snapshotId }, { issuedAt: NOW, fetchedAt: NOW });
 }
 
 async function reload(id: string): Promise<EvidenceSnapshot> {
@@ -203,6 +246,101 @@ describe('whose preference governs a shared publication', () => {
   it('sweeps a publication no account holds on the default window', async () => {
     // Polled and never served to anybody — nobody's archive, so no preference
     // speaks for it, and keeping it forever is storage with no promise attached.
+    const fresh = await seedArchivedSnapshot(daysAgo(89));
+    const stale = await seedArchivedSnapshot(daysAgo(91));
+
+    await retention.sweep(NOW);
+
+    expect((await reload(fresh)).bundle).not.toBeNull();
+    expect((await reload(stale)).bundle).toBeNull();
+  });
+});
+
+describe('opting out of holding (SUP-525)', () => {
+  it('strips a publication whose only holder has opted out, however fresh it is', async () => {
+    await keepCatalogSnapshotNewest();
+    const id = await seedArchivedSnapshot(daysAgo(1));
+    await seedOptedOutMember(catalog.workspaceId, 365);
+    await seedGeneration(dataSource, catalog, { createdAt: daysAgo(1) });
+    await holdSnapshot(id);
+
+    const report = await retention.sweep(NOW);
+
+    // Past its window the moment it was published: nobody is holding it. The
+    // prefilter has to widen to reach a row this young, which is the half of
+    // the opt-out that `shortestWindowDays` carries.
+    expect(report).toMatchObject({ stripped: 1, held: 0 });
+    expect((await reload(id)).bundle).toBeNull();
+  });
+
+  it('does not let an opted-out account’s stored window hold anything', async () => {
+    const id = await seedArchivedSnapshot(daysAgo(100));
+    // The longest window the console offers, stored by an account that is not
+    // holding the publication. Before SUP-525 this number was what kept the row.
+    await seedOptedOutMember(catalog.workspaceId, 3650);
+    await seedGeneration(dataSource, catalog, { createdAt: daysAgo(100) });
+    await holdSnapshot(id);
+
+    expect((await retention.sweep(NOW)).stripped).toBe(1);
+    expect((await reload(id)).bundle).toBeNull();
+  });
+
+  it('keeps a publication an opted-in account also holds', async () => {
+    const id = await seedArchivedSnapshot(daysAgo(100));
+    await seedOptedOutMember(catalog.workspaceId, 1);
+    await seedMember(catalog.workspaceId, 365);
+    await seedGeneration(dataSource, catalog, { createdAt: daysAgo(100) });
+    await holdSnapshot(id);
+
+    const report = await retention.sweep(NOW);
+
+    // One row is the archived evidence of every account served under it, so one
+    // account's switch cannot remove a document another is still promised.
+    expect(report).toMatchObject({ stripped: 0, held: 1 });
+    expect((await reload(id)).bundle).not.toBeNull();
+  });
+
+  it('strips an upstream’s superseded publication its only holder opted out of', async () => {
+    const upstream = await seedExternalEndpoint(dataSource, { pinnedEvidenceDigest: 'sha256/current' });
+    const current = await seedExternalSnapshot(dataSource, upstream.id, 'sha256/current');
+    const earlier = await seedExternalSnapshot(dataSource, upstream.id, 'sha256/earlier');
+    await dataSource
+      .getRepository(EvidenceSnapshot)
+      .update({ id: earlier }, { issuedAt: daysAgo(100), fetchedAt: daysAgo(100) });
+    await seedOptedOutMember(catalog.workspaceId, 365);
+    await seedGeneration(dataSource, catalog, {
+      createdAt: daysAgo(100),
+      externalEndpointId: upstream.id,
+      evidenceDigest: 'sha256/earlier',
+    });
+
+    await retention.sweep(NOW);
+
+    // The `(externalEndpointId, evidenceDigest)` half of the holder lookup has
+    // to read the switch too, or an opt-out would mean one thing for our own
+    // endpoints and another for an upstream's.
+    expect((await reload(earlier)).bundle).toBeNull();
+    expect((await reload(current)).bundle).not.toBeNull();
+  });
+
+  it('still leaves the live publication alone when every account has opted out', async () => {
+    await seedOptedOutMember(catalog.workspaceId, 365);
+    await seedGeneration(dataSource, catalog, { createdAt: daysAgo(1) });
+
+    await retention.sweep(NOW);
+
+    // `GET /v1/evidence/{endpoint}` relays this one and `/v1/models` reads the
+    // TEE out of it. No preference can empty what is answering "what is running
+    // right now".
+    expect((await reload(catalog.snapshotId)).bundle).not.toBeNull();
+  });
+
+  it('keeps giving a publication nobody holds the published default', async () => {
+    // An opt-out elsewhere on the deployment widens the candidate range to the
+    // whole table, so these two rows are now examined. They must still be judged
+    // on 90 days: held-by-nobody is not the same answer as held-by-opted-out,
+    // and conflating the two would strip every unserved publication on the spot.
+    await seedOptedOutMember((await seedCatalog(dataSource)).workspaceId, 365);
     const fresh = await seedArchivedSnapshot(daysAgo(89));
     const stale = await seedArchivedSnapshot(daysAgo(91));
 
