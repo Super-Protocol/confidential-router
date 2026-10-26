@@ -1046,6 +1046,66 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    it.
 7. **Delete the export file.**
 
+### A parked rollback is not finished until it serves a completion
+
+A deploy train ends by parking the previous deployment on its own hostnames so
+there is something to fall back to. Parking is `unpublish → reconfigure →
+publish`, which is a full pod bring-up, so the parked deployment comes up from
+its stored configuration rather than from the sequence that built it — and that
+is a path worth checking rather than assuming.
+
+**The acceptance check is a generation, not a health page.** Published, evidence
+200, console 200 and a working sign-in are all things a deployment that cannot
+serve anything will report. After the hostnames move, take a key on the parked
+deployment and complete once through it:
+
+```bash
+curl -s -X POST https://<parked-api-host>/v1/chat/completions \
+  -H "Authorization: Bearer sk-tee-v1-…" -H 'content-type: application/json' \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"ping"}],"max_tokens":8}'
+```
+
+A 503 with `"type":"gatekeeper_error"` means the external endpoint is not
+serving, whatever the rest of the deployment says. Administration → External
+endpoints names the reason; `lastCheckedAt` empty means no verification has been
+attempted at all, which is a listener that is not up rather than an upstream
+that is refusing.
+
+**If the endpoint is not serving**, first establish which sidecar you have, from
+the **gatekeeper image digest the deployment pulled** — that is readable from the
+marketplace without reaching the cluster, which is the situation this section is
+written for. (`gatekeeper version` inside the container answers too, but it needs
+an exec you most likely do not have. There is no `--version` flag.) A sidecar
+carrying SUP-537 — the first gatekeeper release after it — brings its own
+listeners back within seconds and reports a bind it cannot make as `broken` with
+the reason, so on those builds this is a state to read rather than to repair.
+
+On an older sidecar, the recovery that needs no cluster access is to make the
+endpoint's *spec* change, because that is the only thing that has the sidecar
+rebuild it — and the spec is the **rendered `upstream`, which is scheme and
+authority only**:
+
+1. `updateExternalEndpoint` with a `baseUrl` whose **host or port differs**, and
+   `evidenceDigest` set to the digest the endpoint already holds, so the approval
+   survives the re-point (SUP-252).
+2. A second `updateExternalEndpoint` putting the original `baseUrl` back, again
+   stating the digest.
+
+**A path or query edit does nothing at all** — not "less", nothing. `baseUrl` is
+canonicalised to scheme-and-authority on the way into the row, so appending `/v1`
+is not even recorded as a change: no re-render, no reload, no rebuild, and the
+mutation returns success. It is the first thing most people try, because changing
+the host of a production-adjacent endpoint feels like the risky option. It is
+also the one edit that cannot work.
+
+Toggling `enabled`, re-pinning the digest and editing a price are no-ops for this
+purpose too, for a different reason: they do re-render, but they do not touch the
+upstream, the listen address or the tuning, which are the only fields the sidecar
+compares when deciding whether to rebuild an endpoint.
+
+Do this to a parked deployment, never to the one serving traffic — and verify the
+recipe on a test stand before using it on the only fallback you have.
+
 **If you have to go back to an older build**, know what its import will say. A
 file written by a build that carries the `apiKeys` section is refused by any
 build that predates it, with:
