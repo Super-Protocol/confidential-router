@@ -76,7 +76,7 @@ export function BuyCreditsCard({ workspaceId, minTopUpMicros, maxTopUpMicros, ca
                 size="sm"
                 disabled={!canSpend}
                 aria-pressed={amount === microsToUsdInput(micros)}
-                className="aria-pressed:border-brand aria-pressed:text-brand"
+                className="aria-pressed:border-brand aria-pressed:text-brand-emphasis"
                 onClick={() => {
                   setAmount(microsToUsdInput(micros));
                   setError(null);
