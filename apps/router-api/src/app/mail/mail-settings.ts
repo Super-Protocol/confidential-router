@@ -23,6 +23,12 @@ export interface MailSettings {
   /** Origin every link in a mail is built on — the console, never the API. */
   consoleUrl: string;
   resendApiKey?: string;
+  /**
+   * Verifies the provider's delivery notifications (SUP-551). Read whatever
+   * `provider` is: production sends through the same provider's SMTP relay and
+   * the webhook belongs to the account, not to the transport.
+   */
+  webhookSecret?: string;
   smtp?: SmtpSettings;
 }
 
@@ -52,6 +58,9 @@ export function resolveMailSettings(config: Pick<RouterConfig, 'mail' | 'auth' |
     replyTo: mail.replyTo,
     consoleUrl: consoleUrlOf(mail.consoleUrl, server),
     resendApiKey: mail.resendApiKey ?? (fromLegacy ? blankToUndefined(legacy.resendApiKey) : undefined),
+    // No legacy twin, and no fallback to the provider: the webhook is a
+    // property of the mail account and is configured once, for the deployment.
+    webhookSecret: mail.webhookSecret,
     smtp: mail.smtp
       ? {
           host: mail.smtp.host,

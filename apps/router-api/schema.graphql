@@ -1620,6 +1620,14 @@ type Query {
   """
   routerEndpoint: Endpoint
 
+  """
+  Whether this deployment’s mail provider is dropping messages to an address. Public, and says nothing about whether an account holds it.
+  """
+  signInMailState(
+    """The address a code was asked for."""
+    email: String!
+  ): SignInMailState!
+
   """The sign-in paths this deployment offers. Public."""
   signInOptions: SignInOptions!
 
@@ -1710,6 +1718,23 @@ input SetExternalEndpointEnabledInput {
   Switching it back on returns it to PENDING: it re-attests from nothing.
   """
   enabled: Boolean!
+}
+
+"""Whether a sign-in code can reach an address at all."""
+type SignInMailState {
+  """
+  When the current state began, as an ISO timestamp. Null while the state is UNKNOWN.
+  """
+  since: String
+  state: SignInMailStateName!
+}
+
+"""What this deployment’s mail provider last reported about an address."""
+enum SignInMailStateName {
+  DELAYED
+  DELIVERING
+  REJECTING
+  UNKNOWN
 }
 
 """Which sign-in paths this deployment offers."""

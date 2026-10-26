@@ -8,6 +8,21 @@ export class HealthCheckDto {
   error?: string;
 }
 
+export class UndeliverableMailDto {
+  @ApiProperty({
+    description:
+      'Addresses this deployment’s mail provider is dropping messages to — a hard bounce, a spam complaint, or ' +
+      'its suppression list. A send to one of them succeeds and is then discarded, so it appears nowhere else.',
+  })
+  addresses!: number;
+
+  @ApiProperty({
+    required: false,
+    description: 'When the most recent of those was reported. Absent while there are none.',
+  })
+  lastAt?: string;
+}
+
 export class MailHealthDto {
   @ApiProperty({ enum: ['none', 'console', 'resend', 'smtp'] })
   provider!: 'none' | 'console' | 'resend' | 'smtp';
@@ -27,6 +42,14 @@ export class MailHealthDto {
 
   @ApiProperty({ required: false, description: 'When `state` was last established.' })
   since?: string;
+
+  @ApiProperty({
+    type: () => UndeliverableMailDto,
+    description:
+      'What the provider reported after it accepted a message (SUP-551). Independent of `state`, which only ever ' +
+      'knows whether the hand-off to the provider worked.',
+  })
+  undeliverable!: UndeliverableMailDto;
 }
 
 export class AnalyticsHealthDto {

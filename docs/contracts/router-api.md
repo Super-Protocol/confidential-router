@@ -28,6 +28,7 @@ gatekeeper — same paths, same bodies; the gatekeeper is a transparent forward 
 | `GET /v1/invites/{code}` | extension | **not OpenAI**: what an invitation code grants. No key, rate-limited per source address |
 | `POST /v1/console-events` | extension | **not OpenAI**: the console's first-party event ingest. No key; session-optional. Also answers on the superseded `/v1/analytics/events` for one release |
 | `POST /v1/webhooks/typeform` | extension | **not OpenAI**: feedback form submissions. No key; two signatures instead |
+| `POST /v1/webhooks/resend` | extension | **not OpenAI**: what the mail provider says became of a message. No key; the provider's signature instead |
 | `GET /.well-known/swarm-evidence` | platform | served by the platform ingress, not by router-api — **and with no CORS headers**, so a browser cannot read it cross-origin |
 | `GET /health` | operational | **not** under `/v1` and not OpenAI: what an orchestrator's probe reads, and the one place a subsystem that has quietly stopped working is visible. No key. In-cluster only — the chart does not publish it |
 | `GET /admin/health` | operational | the same document from outside the cluster, behind the operator's session and `auth.adminEmails` (SUP-479) |
@@ -127,6 +128,29 @@ A hard `404` where `feedback.form` is unset: an endpoint that answered would be 
 deployment has a grant to give away. `429` with `Retry-After` past `feedback.webhooksPerMinute` per source
 address — the signature is the authority, and the budget only stops an unsigned flood from spending the
 service's time verifying HMACs.
+
+### `POST /v1/webhooks/resend`
+
+Where the mail provider posts what became of a message after the relay accepted it (SUP-551). Same shape
+as the form webhook above: under `/v1` because that is the prefix the chart publishes, registered before
+the `/v1` fallback, and authenticated by the provider's signature and by nothing else.
+
+- `svix-id`, `svix-timestamp`, `svix-signature: v1,<base64>` — HMAC-SHA256 over `<id>.<timestamp>.<body>`
+  under the base64-decoded `mail.webhookSecret`, which is why the raw body parser is mounted on this path
+  ahead of the JSON one. The header may carry several versioned signatures, so a secret rotation overlaps
+  rather than drops deliveries; a timestamp more than five minutes from this clock is refused, which is
+  what stops a captured delivery being replayed back.
+- `401` for any delivery that does not verify, `404` where `mail.webhookSecret` is unset, `429` with
+  `Retry-After` past `mail.webhooksPerMinute` per source address.
+- `200 {"recorded": n}` once it verifies, whatever it decided — `n` is how many addresses the delivery
+  said something about, and `0` for the events this deployment does not act on (`email.sent`,
+  `email.opened`, every `domain.*`). A provider that does not read a 2xx redelivers for days, and a
+  redelivery of a message already applied changes nothing: `svix-id` is the idempotency key.
+
+Acted on: `email.bounced` (a verdict on the address only when `bounce.type` is `Permanent` — a full
+mailbox arrives through the same event and will be retried), `email.complained`, `email.suppressed`,
+`suppression.added`, `email.failed`, `email.delivery_delayed`, `email.delivered`, `suppression.removed`.
+The last two are the only good news, and they clear a row rather than create one.
 
 ### `POST /v1/chat/completions`
 
@@ -363,7 +387,12 @@ the status code is what a probe reads.
   "version": "0.3.2",
   "uptimeSeconds": 4821,
   "database": { "status": "up" },
-  "mail": { "provider": "smtp", "state": "ok", "since": "2026-10-21T09:12:04.000Z" },
+  "mail": {
+    "provider": "smtp",
+    "state": "ok",
+    "since": "2026-10-21T09:12:04.000Z",
+    "undeliverable": { "addresses": 1, "lastAt": "2026-10-20T16:04:15.000Z" }
+  },
   "analytics": { "status": "disabled", "dropped": 412 }
 }
 ```
@@ -376,6 +405,11 @@ model, and taking it out of rotation over a lost welcome mail or a missing chart
 - `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
   `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
   the boot-time check or the most recent send, whichever is later. Never the SMTP password.
+- `mail.undeliverable` (SUP-551): `addresses`, how many the provider is currently dropping every message
+  to, and `lastAt`, when the most recent of those was reported. A different question from `state`, which
+  only ever knows whether the hand-off to the provider worked — a suppressed send succeeds. Fed by
+  `POST /v1/webhooks/resend`, so it stays `0` on a deployment that configured no `mail.webhookSecret`,
+  and never the addresses themselves: `/health` is unauthenticated.
 - `analytics`: `status` is `configured` once the process has built a sink that can deliver, `disabled` when
   it has not — which is what a rebuild that forgot `POSTHOG_PROJECT_KEY` looks like, since that key is a
   deployment environment value rather than an image build argument

@@ -509,6 +509,23 @@
           "type": "string",
           "description": "Needed with `provider: resend`. Blank counts as unset."
         },
+        "webhookSecret": {
+          "type": "string",
+          "minLength": 16,
+          "description": "Signs the provider's delivery notifications (SUP-551). Unset, `POST /v1/webhooks/resend` is a 404 and an address the provider is dropping mail to stays invisible. Read whatever `provider` is."
+        },
+        "webhooksPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 120,
+          "description": "Provider deliveries accepted per minute per source address. The signature is the authority; the budget only stops an unsigned flood."
+        },
+        "stateLookupsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "`signInMailState` lookups per minute per source address."
+        },
         "smtp": {
           "type": "object",
           "additionalProperties": false,
