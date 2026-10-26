@@ -26,8 +26,15 @@ import { OpenAiApiError, openAiErrors } from './openai-error.js';
  * blame. A 4xx says "fix the request", which is the truth, and the upstream's own
  * wording goes with it because it is the only thing that names the bad field.
  *
- * That wording is forwarded only when the upstream put it in an error field. A
- * raw body is logged and nothing more — see `UpstreamErrorBody.structured`.
+ * That wording is forwarded only when the upstream put it in an error field; a
+ * raw body is withheld — see `UpstreamErrorBody.structured`.
+ *
+ * Neither is logged. A model server refusing a request quotes the field it
+ * refused, so a 4xx body is one of the few places on this path where prompt
+ * text can turn up in something durable, and `/privacy` §5 says it does not.
+ * {@link describeUpstreamError} is what the log gets instead: the status, the
+ * structured `type` and `param` when there was one, and how long the body was
+ * (SUP-497).
  */
 
 /** How a leg names its upstream in a client-facing sentence. */
@@ -36,8 +43,9 @@ export type UpstreamName = 'The model backend' | 'The external model endpoint';
 export interface UpstreamErrorBody {
   /**
    * The best reason available: a structured error message when the body carried
-   * one, otherwise the raw body. Always safe to log; only forwarded to the client
-   * when {@link UpstreamErrorBody.structured} says where it came from.
+   * one, otherwise the raw body. Forwarded to the client only when
+   * {@link UpstreamErrorBody.structured} says where it came from — and never
+   * logged, whichever it is: see {@link describeUpstreamError}.
    */
   text: string;
   /**
@@ -48,12 +56,22 @@ export interface UpstreamErrorBody {
    * and only a structured message is. A raw body on that path is as likely to be
    * an intermediary's HTML error page or a FastAPI `{"detail":[…]}` validation
    * dump — neither of which the caller can act on, and neither of which it should
-   * be handed. So the raw text stays in the log and the client gets the
-   * "gave no reason" sentence instead.
+   * be handed. So the raw text is dropped and the client gets the "gave no
+   * reason" sentence instead.
    */
   structured: boolean;
   /** The request field it named, when it named one. */
   param?: string;
+  /** The error class it named, when it named one — OpenAI's `error.type`. */
+  type?: string;
+  /**
+   * How many characters the body was, before the {@link MAX_BODY_CHARS} cap.
+   *
+   * The one thing about a body worth having in a log: it separates "the upstream
+   * said nothing" from "the upstream wrote a page we decided not to keep", which
+   * is the difference between a dead backend and a rejected request.
+   */
+  length: number;
   /** The parsed body, for a leg that reads more than the message out of it. */
   parsed: unknown;
 }
@@ -103,30 +121,81 @@ const CONTEXT_LENGTH = /context[ _-]?length|maximum context|too many tokens/i;
  * is what a proxy in front of either returns when it is the one refusing.
  */
 export async function readUpstreamError(upstream: Response): Promise<UpstreamErrorBody> {
-  let text = '';
+  let raw = '';
   try {
-    text = (await upstream.text()).slice(0, MAX_BODY_CHARS);
+    raw = await upstream.text();
   } catch {
-    return { text: '', structured: false, parsed: null };
+    return { text: '', structured: false, length: 0, parsed: null };
   }
+
+  const length = raw.length;
+  const text = raw.slice(0, MAX_BODY_CHARS);
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { text, structured: false, parsed: null };
+    return { text, structured: false, length, parsed: null };
   }
 
-  const body = parsed as { error?: { message?: unknown; param?: unknown }; message?: unknown; param?: unknown } | null;
+  const body = parsed as {
+    error?: { message?: unknown; param?: unknown; type?: unknown };
+    message?: unknown;
+    param?: unknown;
+    type?: unknown;
+  } | null;
   const message = body?.error?.message ?? body?.message;
   const param = body?.error?.param ?? body?.param;
+  const type = body?.error?.type ?? body?.type;
   const structured = typeof message === 'string' && message.length > 0;
   return {
     text: structured ? (message as string) : text,
     structured,
     ...(typeof param === 'string' && param ? { param } : {}),
+    ...(typeof type === 'string' && type ? { type } : {}),
+    length,
     parsed,
   };
+}
+
+/**
+ * A log line about an upstream's error body that does not contain it.
+ *
+ * `/privacy` §5 promises prompt text is never written to a log, and a 4xx body
+ * is where a model server quotes the request back — vLLM names the offending
+ * field and some gateways echo its value with it. The caller still receives the
+ * upstream's own wording on the wire, which is what SUP-448 was for; the log
+ * does not need it to be useful. What is left is enough to triage with: the
+ * error class, the field it named, and whether there was a body at all.
+ *
+ * `type` and `param` are the upstream's own vocabulary for *its* API, not
+ * anything the caller typed — `invalid_request_error`, `messages[2].content` —
+ * which is why they stay. Both are checked against {@link LOGGABLE_LABEL} first
+ * rather than trusted to be what they are named: an upstream free to write
+ * anything into a JSON field is free to write a prompt fragment into this one,
+ * and a field *path* never has a space, a quote or a newline in it.
+ */
+export function describeUpstreamError(body: UpstreamErrorBody): string {
+  if (body.length === 0) {
+    return 'no body';
+  }
+  const parts = [
+    ...(label(body.type) ? [`type=${body.type}`] : []),
+    ...(label(body.param) ? [`param=${body.param}`] : []),
+    `${body.length} chars`,
+    ...(body.structured ? [] : ['unstructured']),
+  ];
+  return `${parts.join(', ')} (not logged)`;
+}
+
+/**
+ * What an OpenAI error class or a request field path looks like, and what prose
+ * does not: identifier characters, dots, dashes and array subscripts, and short.
+ */
+const LOGGABLE_LABEL = /^[\w.[\]-]{1,120}$/;
+
+function label(value: string | undefined): boolean {
+  return value !== undefined && LOGGABLE_LABEL.test(value);
 }
 
 /**
