@@ -445,13 +445,20 @@ describe('the whole funnel, and the code that is spent', () => {
       .send(CHAT)
       .expect(200);
 
-    expect(harness.events.sent.map((event) => event.event)).toEqual([
+    // `model_requested` is excluded from the ordered funnel on purpose: it is the
+    // one event the request does not await (SUP-542), so where it lands in this
+    // list is a race and asserting it would make the rehearsal flaky. That it
+    // arrives at all is `v1-model-demand.e2e.spec.ts`'s subject, and the line
+    // below keeps this suite's hold on it.
+    const funnel = harness.events.sent.map((event) => event.event).filter((event) => event !== 'model_requested');
+    expect(funnel).toEqual([
       'signup_started',
       'signup_completed',
       'invite_redeemed',
       'api_key_created',
       'first_request_sent',
     ]);
+    expect(await harness.events.waitFor('model_requested')).toHaveLength(1);
 
     // The ledger holds the grant and nothing but — the debit for the request is
     // the only other entry.
