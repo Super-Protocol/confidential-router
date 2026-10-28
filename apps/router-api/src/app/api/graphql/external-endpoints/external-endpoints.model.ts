@@ -19,6 +19,7 @@ import {
 import type { ExternalEndpointStatus } from '../../../db/entities/external-endpoint.entity.js';
 import type { ExternalEndpointEventKind } from '../../../db/entities/external-endpoint-event.entity.js';
 import type { ModelCapability } from '../../../db/entities/model.entity.js';
+import type { EndpointReachability } from '../../../external-endpoints/external-endpoint-liveness.js';
 import { MeasurementModel } from '../catalog/evidence.model.js';
 import { PricingModel, RouteCapabilityEnum } from '../catalog/model.model.js';
 import { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
@@ -41,6 +42,8 @@ export const ExternalEndpointEventKindEnum = {
   MEASUREMENT_CHANGED: 'measurement_changed',
   DISABLED: 'disabled',
   KEY_ROTATED: 'key_rotated',
+  OUTAGE: 'outage',
+  RECOVERED: 'recovered',
 } as const satisfies Record<string, ExternalEndpointEventKind>;
 
 registerEnumType(ExternalEndpointEventKindEnum, {
@@ -50,7 +53,9 @@ registerEnumType(ExternalEndpointEventKindEnum, {
     'DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives ' +
     'with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the ' +
     'digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no ' +
-    'longer approved, so an endpoint that stops serving says in its own timeline why.',
+    'longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are ' +
+    'the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this ' +
+    'router declaring that the run of them has passed the configured threshold and alerting on it.',
 });
 
 /**
@@ -208,6 +213,79 @@ export class ExternalModelModel {
  * plaintext exists in the mutation that seals it and in the egress leg that
  * injects it, and nowhere in between (ADR-008 §6, threat T15).
  */
+/**
+ * Whether the upstream answered the last check at all, as distinct from whether
+ * this router admitted what it answered with (SUP-517).
+ *
+ * The two refusals it separates ask for opposite actions: UNREACHABLE is "the
+ * upstream is down, go look at the cloud", REACHABLE-and-denied is "open this
+ * drawer and approve a deployment". Before this they rendered identically.
+ */
+export const ExternalEndpointReachabilityEnum = {
+  REACHABLE: 'reachable',
+  UNREACHABLE: 'unreachable',
+  UNKNOWN: 'unknown',
+} as const satisfies Record<string, EndpointReachability>;
+
+registerEnumType(ExternalEndpointReachabilityEnum, {
+  name: 'ExternalEndpointReachability',
+  description:
+    'Whether the last check got a document back. UNREACHABLE: it did not — the upstream is down or unroutable. ' +
+    'REACHABLE: it answered, and any refusal is a judgement about a live upstream. UNKNOWN: nothing checked yet.',
+});
+
+/**
+ * The failure run behind the latest verdict — how long this upstream has been
+ * dark and how many checks have said so (SUP-517).
+ *
+ * Grouped rather than flattened onto {@link ExternalEndpointModel} because they
+ * are one fact read together: a console row shows "not serving for 31h, 4 failed
+ * checks, did not answer", and a reader who took any one of them alone would draw
+ * the wrong conclusion. Every field is a projection of live verification, reset on
+ * boot like the verdict itself (ADR-008 §8).
+ */
+@ObjectType('ExternalEndpointLiveness', {
+  description: 'How long this upstream has been dark, and whether that has passed this router’s outage threshold.',
+})
+export class ExternalEndpointLivenessModel {
+  @Field(() => ExternalEndpointReachabilityEnum)
+  reachability!: EndpointReachability;
+
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description:
+      'Since when this endpoint has not been known to serve — a denial, an operator switching it back on, or this ' +
+      'process starting. Null while it is serving. What the outage threshold is measured from.',
+  })
+  notServingSince!: Date | null;
+
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description: 'When a verdict last admitted it. Null until the first admitting verdict of this process.',
+  })
+  lastSuccessAt!: Date | null;
+
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description: 'When a verdict last denied it. Kept across a recovery, so flapping is visible on the row.',
+  })
+  lastFailureAt!: Date | null;
+
+  @Field(() => Int, {
+    description:
+      'Denied checks in the current run, counted per distinct check rather than per poll. Zero while serving, and ' +
+      'zero while nothing has been checked — “not looked yet” is not a failure.',
+  })
+  consecutiveFailures!: number;
+
+  @Field(() => Boolean, {
+    description:
+      'Whether this run has passed `externalEndpoints.outage.*` and been alerted on. An endpoint an operator ' +
+      'disabled, or one whose deployment has never been approved, is never an outage: nothing is expected of it.',
+  })
+  outage!: boolean;
+}
+
 @ObjectType('ExternalEndpoint', { description: 'A model endpoint in another deployment, attested by this router.' })
 export class ExternalEndpointModel {
   @Field(() => ID)
@@ -244,6 +322,13 @@ export class ExternalEndpointModel {
 
   @Field(() => String, { nullable: true })
   lastReason!: string | null;
+
+  @Field(() => ExternalEndpointLivenessModel, {
+    description:
+      'The failure run behind the verdict above: since when, how many checks, whether the upstream answered, and ' +
+      'whether this router has declared an outage (SUP-517).',
+  })
+  liveness!: ExternalEndpointLivenessModel;
 
   @Field(() => String, { nullable: true, description: 'The upstream cloud’s root measurement, as the verdict saw it.' })
   measurementSeen!: string | null;
@@ -614,4 +699,33 @@ export class UpdateTrustedMeasurementInputModel {
   @IsString()
   @Length(0, 255)
   note?: string;
+}
+
+/**
+ * What one test of the alert channel did (SUP-535).
+ *
+ * `delivered` is a count, not a list: the operator asking already knows which
+ * inbox they are watching, and the addresses an alert goes to are configuration
+ * an authenticated-but-curious reader has no claim on. `failed` carries the
+ * coarse reason so an operator can tell "the mail server refused us" from
+ * "nobody is configured" without opening the container log.
+ */
+@ObjectType('OperatorAlertTest')
+export class OperatorAlertTestModel {
+  @Field(() => Boolean, { description: 'Whether at least one operator was written to.' })
+  sent!: boolean;
+
+  @Field(() => Int, { description: 'Addresses the message was accepted for.' })
+  delivered!: number;
+
+  @Field(() => Int, { description: 'Addresses the provider refused. Each one is in the container log.' })
+  failed!: number;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or ' +
+      'NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).',
+  })
+  skipped!: string | null;
 }

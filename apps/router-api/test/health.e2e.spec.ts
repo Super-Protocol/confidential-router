@@ -47,6 +47,34 @@ describe('GET /health', () => {
     expect(Object.keys(response.body.analytics).sort()).toEqual(['dropped', 'status']);
   });
 
+  it('answers whether the registered external upstreams are serving', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    // Nothing registered in the harness, so `none` — and that is the assertion
+    // worth making here: the field is served, and `none` is distinct from `ok`.
+    // Whether a dark upstream reads `outage` is `external-endpoint-status.service.spec.ts`'s job.
+    expect(response.body).toMatchObject({
+      status: 'ok',
+      externalEndpoints: { status: 'none', registered: 0, serving: 0, failing: 0, unreachable: 0, pending: 0 },
+    });
+  });
+
+  it('reports the upstreams without naming one', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    // `/health` is public and unauthenticated. Ruling 3 on SUP-221 keeps upstream
+    // identity and verdict detail behind a session, so this block is counts, two
+    // optional timestamps and a word — never a name, hostname, stage or reason.
+    expect(Object.keys(response.body.externalEndpoints).sort()).toEqual([
+      'failing',
+      'pending',
+      'registered',
+      'serving',
+      'status',
+      'unreachable',
+    ]);
+  });
+
   it('echoes the request id back so a client can correlate a failure', async () => {
     const response = await request(harness.app.getHttpServer())
       .get('/health')

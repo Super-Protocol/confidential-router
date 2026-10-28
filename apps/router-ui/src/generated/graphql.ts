@@ -82,7 +82,7 @@ export type EvidenceState =
   | 'PUBLISHED'
   | 'STALE';
 
-/** DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. */
+/** DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this router declaring that the run of them has passed the configured threshold and alerting on it. */
 export type ExternalEndpointEventKind =
   | 'DENIED_BY_THIS_ROUTER'
   | 'DIGEST_CHANGED'
@@ -91,6 +91,8 @@ export type ExternalEndpointEventKind =
   | 'DISABLED'
   | 'KEY_ROTATED'
   | 'MEASUREMENT_CHANGED'
+  | 'OUTAGE'
+  | 'RECOVERED'
   | 'REGISTERED'
   | 'VERIFIED_BY_THIS_ROUTER';
 

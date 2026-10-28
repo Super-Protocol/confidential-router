@@ -324,6 +324,25 @@
           "default": "5s",
           "description": "How often router-api reads the sidecar's /status and /verdicts back. 0 disables the poll."
         },
+        "outage": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "When a run of failed checks against a registered upstream stops being noise and becomes an outage worth waking somebody for (SUP-517). Crossing either threshold writes one ERROR log line, one `outage` row on the endpoint's timeline, and `status: outage` in GET /health's externalEndpoints block. Both halves exist because they miss different failures: a count is the honest unit while checks happen on schedule and sees nothing when the checking itself has stopped, which only elapsed time notices. An endpoint an operator disabled, or one whose deployment has never been approved, is never an outage.",
+          "properties": {
+            "afterFailures": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000,
+              "default": 3,
+              "description": "Distinct failed checks in a row, counted per re-attestation rather than per poll. Three against a 10-minute reattestInterval is roughly half an hour of a model refusing every request. 0 disables this threshold."
+            },
+            "afterNoSuccess": {
+              "$ref": "#/$defs/duration",
+              "default": "15m",
+              "description": "How long since the endpoint was last known to serve, however little has been checked in between \u2014 the threshold that notices a sidecar which never answers at all. 0 disables it."
+            }
+          }
+        },
         "connectTimeout": {
           "$ref": "#/$defs/duration",
           "default": "5s",
@@ -779,6 +798,29 @@
           "pattern": "^[0-9]+(ms|s|m|h|d)$",
           "default": "2h",
           "description": "How long the key the chat mints for itself stays valid. Hours, not days: it only has to survive one sitting at the screen."
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where an alert goes so that a human reads it (SUP-535). An ERROR log line is an alert only on a deployment with a log sink somebody has wired an alarm to; this one has none, and both production outages so far were found by a person stumbling over them. So the alert leaves by the channel this deployment proves every day \u2014 the mail provider the sign-in codes go out through. Nothing here has to be set for the channel to work: `emails` falls back to `auth.adminEmails`.",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "items": { "type": "string", "format": "email" },
+          "default": [],
+          "description": "Who to write to. Empty means auth.adminEmails, which a deployment with an admin section already sets \u2014 a channel nobody had to configure is a channel that works on the deployment already running. Name a shared inbox or an on-call alias here to override."
+        },
+        "email": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switches the outbound path off. The log line, the /health block and the endpoint timeline are unchanged \u2014 they are the record; this is the thing that wakes somebody. Off is for a deployment whose log sink already pages."
+        },
+        "minInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "15m",
+          "description": "Least time between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox that has been flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. The interval is armed by a message that landed, not by one that was attempted: a send that reached nobody put nothing in a mailbox. A recovery is sent past this interval \u2014 an operator who was woken is owed the \u201cit is back\u201d line. 0 disables it."
         }
       }
     },

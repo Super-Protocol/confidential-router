@@ -647,6 +647,11 @@ type ExternalEndpoint {
   latestEvidence: ExternalEndpointEvidence
 
   """
+  The failure run behind the verdict above: since when, how many checks, whether the upstream answered, and whether this router has declared an outage (SUP-517).
+  """
+  liveness: ExternalEndpointLiveness!
+
+  """
   Whether the sidecar found the measurement it saw signed in the Super Protocol registry, reported on a denial too. Informational only: it never admits — the admin trust list is the sole authority. Null when no measurement was derived.
   """
   measurementInRegistry: Boolean
@@ -718,7 +723,7 @@ type ExternalEndpointEvent {
 }
 
 """
-DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why.
+DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this router declaring that the run of them has passed the configured threshold and alerting on it.
 """
 enum ExternalEndpointEventKind {
   DENIED_BY_THIS_ROUTER
@@ -728,6 +733,8 @@ enum ExternalEndpointEventKind {
   DISABLED
   KEY_ROTATED
   MEASUREMENT_CHANGED
+  OUTAGE
+  RECOVERED
   REGISTERED
   VERIFIED_BY_THIS_ROUTER
 }
@@ -771,6 +778,37 @@ type ExternalEndpointEvidence {
 }
 
 """
+How long this upstream has been dark, and whether that has passed this router’s outage threshold.
+"""
+type ExternalEndpointLiveness {
+  """
+  Denied checks in the current run, counted per distinct check rather than per poll. Zero while serving, and zero while nothing has been checked — “not looked yet” is not a failure.
+  """
+  consecutiveFailures: Int!
+
+  """
+  When a verdict last denied it. Kept across a recovery, so flapping is visible on the row.
+  """
+  lastFailureAt: DateTime
+
+  """
+  When a verdict last admitted it. Null until the first admitting verdict of this process.
+  """
+  lastSuccessAt: DateTime
+
+  """
+  Since when this endpoint has not been known to serve — a denial, an operator switching it back on, or this process starting. Null while it is serving. What the outage threshold is measured from.
+  """
+  notServingSince: DateTime
+
+  """
+  Whether this run has passed `externalEndpoints.outage.*` and been alerted on. An endpoint an operator disabled, or one whose deployment has never been approved, is never an outage: nothing is expected of it.
+  """
+  outage: Boolean!
+  reachability: ExternalEndpointReachability!
+}
+
+"""
 A model an operator registered on an external endpoint, with the prices every generation freezes.
 """
 type ExternalEndpointModel {
@@ -789,6 +827,15 @@ type ExternalEndpointModel {
   The name the upstream knows it by; the egress leg rewrites `model` to this. Operator only — null for everyone else, because it is a fact about another operator’s deployment rather than about this catalogue.
   """
   upstreamModel: String
+}
+
+"""
+Whether the last check got a document back. UNREACHABLE: it did not — the upstream is down or unroutable. REACHABLE: it answered, and any refusal is a judgement about a live upstream. UNKNOWN: nothing checked yet.
+"""
+enum ExternalEndpointReachability {
+  REACHABLE
+  UNKNOWN
+  UNREACHABLE
 }
 
 """
@@ -853,6 +900,11 @@ type ExternalUpstream {
   The endpoint name. Also the key of this router’s raw-bundle relay, `GET /v1/evidence/{endpoint}`, which is how a browser reads the upstream’s published evidence and verifies it itself.
   """
   name: String!
+
+  """
+  Since when this upstream has not been known to serve, or null while it is serving (SUP-517). The answer to “is `available: false` a new registration or a model that has been dark for a day” — the question an advertised-but-refusing model left a reader unable to ask.
+  """
+  notServingSince: DateTime
 
   """
   Rendered as “verified by this router” / “denied by this router”, never a bare “verified”.
@@ -1418,6 +1470,11 @@ type Mutation {
   """
   rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 
+  """
+  Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+
   """Turns automatic top-up on or off."""
   setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
 
@@ -1450,6 +1507,22 @@ type Mutation {
   Withdraws one unredeemed invitation code. Restricted to auth.adminEmails.
   """
   withdrawInviteCode(id: ID!): InviteWithdrawal!
+}
+
+type OperatorAlertTest {
+  """Addresses the message was accepted for."""
+  delivered: Int!
+
+  """Addresses the provider refused. Each one is in the container log."""
+  failed: Int!
+
+  """Whether at least one operator was written to."""
+  sent: Boolean!
+
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).
+  """
+  skipped: String
 }
 
 type PageInfo {

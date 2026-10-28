@@ -199,6 +199,148 @@ What the console gets out of it:
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
 
+## When an external upstream goes dark
+
+An external model endpoint lives in somebody else's deployment and is reached
+through the egress sidecar, which attests it before any prompt is proxied
+(ADR-008). It is the one dependency whose failure stops completions working while
+every other part of the router keeps answering — so it is also the one that can
+fail for a long time without anyone finding out. Once: a published upstream lost
+the gateway route for its hostname at 2026-10-23 06:11 UTC and the router answered
+`503 attestation_failed` for 30 hours before a human noticed.
+
+```yaml
+externalEndpoints:
+  outage:
+    afterFailures: 3      # distinct failed checks in a row; 0 disables
+    afterNoSuccess: 15m   # since last known to serve; 0 disables
+```
+
+Each check is a re-attestation (`reattestInterval`, 10 minutes), not a status poll
+(`statusPollInterval`, 5 seconds) — counting the poll's re-readings of the same
+verdict would make `afterFailures` a number of seconds wearing a different name.
+Both thresholds are there because they miss different failures: the count is the
+honest unit while checks are happening, and sees nothing at all when the checking
+itself has stopped. A sidecar that never answers leaves every endpoint at
+`pending`, serving nothing, with no counter moving; only `afterNoSuccess` notices
+that, and it notices out loud — the check runs on the status poll's error path
+too, from the rows alone, precisely because a wedged sidecar is the failure that
+produces no verdict to notice it by.
+
+Crossing either threshold does four things, once per run:
+
+- **writes one message to the operators** — the outbound path, and the only one of
+  the four that reaches somebody who is not already looking (SUP-535). It carries
+  the endpoint, how long it has been dark, how many checks failed and whether the
+  upstream answered at all, and its closing line sends the reader to the upstream's
+  cloud when the upstream did not answer and to the console when it answered and
+  was refused. A recovery sends its counterpart. See *Where an alert goes* below.
+- **writes one `ERROR` log line** naming the endpoint, how long it has been dark,
+  how many checks have failed, whether the upstream answered at all and the
+  sidecar's own reason. `error` is the severity a log sink matches on, and the line
+  carries everything needed to act without opening a console. A recovery logs its
+  counterpart at `log` level.
+- **appends an `outage` row** to that endpoint's timeline, which the admin
+  section renders; `recovered` closes it.
+- **flips `GET /health`'s `externalEndpoints.status` to `outage`.** That block is
+  counts, two timestamps and one word — never an endpoint name, hostname, stage or
+  reason, because `/health` is unauthenticated. It never changes the overall
+  `status`, for the same reason mail and analytics do not: the process still serves
+  every built-in model and the whole console, and dropping it from the
+  load-balancer rotation would turn one dark upstream into a dark deployment.
+
+### Configuring the sink that listens
+
+**Until something matches that line, the behaviour change is zero.** "This is the
+alert" is only true once something is listening, so the matcher is part of
+deploying this, not an afterthought. Two stable handles, either of which is
+enough:
+
+| Match on | Value |
+| --- | --- |
+| Logger name (pino `context`) | `ExternalEndpointStatusService` |
+| Level | `error` (pino `level: 50`) |
+| Message prefix | `External endpoint "` … `" has not served for ` |
+
+The recovery line is the same logger at `log` level (pino `info`) and contains
+`is serving again after`. A rule on *name + level* is the one to prefer: the
+message wording is for a human and may be improved, while the logger name is
+structural. Polling `GET /health` for `externalEndpoints.status == "outage"` is
+the equivalent black-box rule for a sink that cannot read logs — it crosses at
+the same instant, by construction, because both come out of the same pass.
+
+### Where an alert goes
+
+An `ERROR` line is an alert only where something watches the log, and this
+deployment has nothing watching it — both production outages so far were found by
+a person stumbling over them. So the alert also leaves the process, by the one
+channel this deployment proves every day: the mail provider the sign-in codes go
+out through (SUP-535). Nothing new to keep working; if mail breaks, sign-in breaks
+first and much more loudly.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `alerts.emails` | `[]` | Who to write to. **Empty falls back to `auth.adminEmails`**, which every deployment with an admin section already sets — so the channel works on the deployment that is already running, which is the one the outage happens on. Name a shared inbox or an on-call alias here to override. |
+| `alerts.email` | `true` | Switches the outbound path off and nothing else. The log line, the timeline row and the `/health` block are the record and are unaffected. Off is for a deployment whose log sink already pages. |
+| `alerts.minInterval` | `15m` | Least gap between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. The interval is armed by a message that **landed**, not by one that was attempted: a send that reached nobody put nothing in a mailbox, and arming on it would spend the next quarter-hour's alerting budget on a message that does not exist. A **recovery is sent past this interval** — an operator who was woken is owed the "it is back" line. |
+
+What the message does *not* carry: the upstream hostname, the pinned digest, the
+sidecar's verdict detail. Mail is forwarded, quoted and left open on screens, and
+SUP-221 ruling 3 keeps upstream identity behind a session — the endpoint's own
+name is the one identifier, and it is the operator's own label. The full verdict
+is in the console.
+
+**The sidecar's own sentence is the sharp edge of that rule**, and the first
+version of this mail got it wrong. `lastReason` is up to 255 characters of free
+text written by the sidecar, and it routinely embeds the very things the
+paragraph above keeps behind a session: a denial names the measurement hex (the
+router-api e2e suite asserts that it does), and a `fetch` refusal names the URL
+it could not read. So the mail carries the **stage** — `policy`, `fetch`,
+`untrusted-root` — which is the same fact bounded, and which is what decides
+whether the operator goes to the upstream's cloud or to the console. The sentence
+itself stays in the `ERROR` log line and on the endpoint's timeline, both of
+which need being inside the deployment or holding a session.
+
+**`GET /health` reports the channel, not just the outage.** The `alerts` block
+carries a state and a count of recipients — never an address:
+
+| `alerts.state` | Means |
+| --- | --- |
+| `disabled` | `alerts.email` is off, or `mail.provider` is `none`. |
+| `unconfigured` | Enabled with nobody to write to. **This is the state that looks exactly like quiet**: the deployment is detecting outages and telling no one. `externalEndpoints.status: outage` beside this pair is the reading that says nobody has been told. |
+| `ready` | Enabled, with recipients, nothing raised yet. |
+| `ok` / `failing` | Whether the last alert reached anybody. |
+
+**Proving it works:** the admin mutation `sendOperatorAlertTest` sends one message
+now, past the rate limit, to every configured recipient. Its body says in so many
+words that nothing is wrong. That exists because the acceptance criterion for an
+alerting path is a message that *arrived*, and inducing a real outage on a live
+deployment to watch the mail go out is what cost 28 minutes once already.
+
+Two endpoints are deliberately exempt, and both exemptions are about keeping the
+alert worth believing rather than keeping it quiet: one an operator **disabled**
+(nothing is expected of a row taken out of service) and one whose deployment has
+**never been approved** — `pinnedEvidenceDigest` null, so it is `pending` with
+`digest-not-pinned` by design (SUP-252). That is a registration half-finished, not
+an upstream that went dark. An endpoint whose pin stopped matching after an
+unapproved redeploy is *not* exempt: the router was serving it a moment ago.
+
+Reachability — "did the upstream answer at all" — is read from the sidecar's own
+`unreachable` flag, never inferred from the stage. The `fetch` stage is wider than
+the flag: a non-2xx answer to the bundle fetch, an over-sized bundle and a
+hostname the gatekeeper refuses all stop there while the upstream demonstrably
+answered. An ingress that serves completions while `/.well-known/swarm-evidence`
+502s reads as `REACHABLE`, denied at `fetch` — which sends the operator to the
+evidence route rather than to a cloud that is fine.
+
+Per endpoint, the full answer is `ExternalEndpoint.liveness` in the console schema
+— reachability, since when, how many checks, whether an outage was declared. All
+of it is a projection of live verification and is cleared on boot, so a router
+restarted mid-outage reports the outage as starting at the restart; the timeline's
+`outage` row keeps the true start. A dead upstream's models are absent from
+`/v1/models` either way (fail-closed, ADR-008 decision 5) and carry
+`available: false` plus `notServingSince` on the console catalogue.
+
 ## Auth
 
 A one-time code mailed to the address, OAuth, and the deployment's own bootstrap

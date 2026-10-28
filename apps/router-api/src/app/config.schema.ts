@@ -738,6 +738,36 @@ const ExternalEndpointsSchema = z
     /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
     statusPollInterval: durationMs('5s'),
     /**
+     * When a run of failed checks against a registered upstream stops being noise
+     * and becomes an outage worth waking somebody for (SUP-517).
+     *
+     * A threshold rather than a constant because what counts as an outage is a
+     * property of the deployment, not of the code: a stand that re-points
+     * endpoints all afternoon wants a looser one than production, where a model
+     * that has not served for a quarter of an hour is the only thing anybody
+     * cares about.
+     *
+     * Both halves, because they miss different failures. `afterFailures` is the
+     * honest unit while checks are happening on schedule and says nothing at all
+     * when the checking itself has stopped — a sidecar that never answers leaves
+     * every row at `pending` and increments no counter. `afterNoSuccess` notices
+     * that, and is what the 30-hour outage this comes from would have tripped
+     * within fifteen minutes. `0` disables either.
+     */
+    outage: z
+      .strictObject({
+        /**
+         * Distinct failed checks in a row. Three, against a 10-minute
+         * re-attestation, is roughly half an hour of a model refusing every
+         * request — long enough that one bad fetch does not page, short enough
+         * that nobody finds out from a user.
+         */
+        afterFailures: integerish().pipe(z.number().int().min(0).max(1_000)).prefault(3),
+        /** Since the endpoint was last known to serve, however little has been checked in between. */
+        afterNoSuccess: durationMs('15m'),
+      })
+      .prefault({}),
+    /**
      * How often router-api fetches a verified upstream's published bundle, so the
      * admin section can render what a cloud-level admission let in (SUP-221
      * ruling 1, ADR-008 §7).
@@ -777,6 +807,57 @@ const ExternalEndpointsSchema = z
           'the hour Denis accepted as the worst case.',
       });
     }
+  })
+  .prefault({});
+
+/**
+ * Where an alert goes so that a human reads it (SUP-535).
+ *
+ * The router already had alerts; what it did not have was an outbound path. An
+ * `ERROR` line is an alert only for a deployment with a log sink somebody has
+ * wired an alarm to, and this one has none — two production outages were found
+ * by a person stumbling over them. So the alert leaves the process by the one
+ * channel this deployment demonstrably has: the mail provider the sign-in codes
+ * already go out through.
+ *
+ * `emails` is empty by default and **falls back to `auth.adminEmails`**, which
+ * every deployment with an admin section already sets. That default is the point:
+ * a channel nobody had to configure is a channel that works on the deployment
+ * that is already running, and the failure this exists to catch is exactly the
+ * one nobody got round to configuring for.
+ */
+const AlertsSchema = z
+  .strictObject({
+    /**
+     * Who to write to. Empty means `auth.adminEmails`; a deployment that wants a
+     * shared inbox or an on-call alias instead names it here, and `['']`-style
+     * emptiness is not expressible — an address that is not an address is a
+     * configuration error at boot rather than a silent non-delivery.
+     */
+    emails: stringArrayish()
+      .pipe(z.array(z.email('must be an email address')))
+      .prefault([]),
+    /**
+     * Off switches the outbound path only. The log line, the `/health` block and
+     * the endpoint timeline are unchanged, because they are the record; this is
+     * the thing that wakes somebody, and a deployment with a real pager wired to
+     * its log sink may legitimately not want a second one.
+     */
+    email: booleanish().prefault(true),
+    /**
+     * The least time between two outbound alerts, whatever raised them.
+     *
+     * The latch in `ExternalEndpointStatusService` already sends one message per
+     * outage run. This is the second belt: a flapping upstream is a run that ends
+     * and begins again, and the honest answer to twenty of those in an hour is
+     * one mail and a line in the log saying how many it stood for. A mailbox that
+     * has been flooded once is a mailbox with a filter on it.
+     *
+     * Armed by a message that *landed*, not by one that was attempted: a send
+     * that reached nobody put nothing in a mailbox, and arming on it would spend
+     * the next interval's budget on a message that does not exist.
+     */
+    minInterval: durationMs('15m'),
   })
   .prefault({});
 
@@ -841,6 +922,7 @@ export const RouterConfigSchema = z.strictObject({
   analytics: AnalyticsSchema,
   feedback: FeedbackSchema,
   chat: ChatSchema,
+  alerts: AlertsSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,
@@ -852,3 +934,4 @@ export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
 export type MailConfig = RouterConfig['mail'];
 export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];
+export type AlertsConfig = RouterConfig['alerts'];

@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { OperatorAlertsService } from '../../alerts/operator-alerts.service.js';
 import { AnalyticsHealth } from '../../analytics/analytics-health.js';
 import { serviceVersion } from '../../config.js';
+import { ExternalEndpointHealth } from '../../external-endpoints/external-endpoint-health.js';
 import { MailService } from '../../mail/mail.service.js';
 import { MailDeliveryService } from '../../mail/mail-delivery.service.js';
 import type { HealthResponseDto } from './health.dto.js';
@@ -17,6 +19,8 @@ export class HealthService {
     private readonly mail: MailService,
     private readonly deliveries: MailDeliveryService,
     private readonly analytics: AnalyticsHealth,
+    private readonly externalEndpoints: ExternalEndpointHealth,
+    private readonly alerts: OperatorAlertsService,
   ) {}
 
   /**
@@ -43,6 +47,23 @@ export class HealthService {
    * succeeds every time. It is counted here because it exists nowhere else in
    * this process — and read on `/admin/health`, which the Ingress publishes,
    * rather than only on this route, which it does not (SUP-479).
+   *
+   * External upstreams are here under the same rule and for the sharpest version
+   * of the reason (SUP-517). A dead upstream is the one subsystem failure that
+   * *does* stop completions working, and it still must not decide `status`: the
+   * process serves built-in models, the console and every other route perfectly
+   * well, and dropping it from the rotation would turn one dark upstream into a
+   * dark deployment. It is reported because the alternative is what happened —
+   * 503s for 30 hours, found by a human.
+   *
+   * The alert *channel* is reported for the reason the subsystems above are, one
+   * step further on (SUP-535): an outage that was detected and could not be told
+   * to anybody is indistinguishable from no outage, and `alerts.state:
+   * unconfigured` beside `externalEndpoints.status: outage` is the pair that says
+   * so. A count of recipients, never an address.
+   *
+   * Counts only, no endpoint names: `/health` is unauthenticated, and ruling 3 on
+   * SUP-221 keeps upstream identity and verdict detail behind a session.
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();
@@ -53,6 +74,8 @@ export class HealthService {
       database,
       mail: { ...this.mail.status(), undeliverable: await this.undeliverable(database) },
       analytics: this.analytics.status(),
+      externalEndpoints: this.externalEndpoints.status(),
+      alerts: this.alerts.status(),
     };
   }
 

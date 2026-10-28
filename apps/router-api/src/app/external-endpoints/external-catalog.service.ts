@@ -68,6 +68,8 @@ export interface ExternalCatalogueUpstream {
   hostname: string;
   status: ExternalEndpointStatus;
   lastCheckedAt: Date | null;
+  /** Since when it has not been known to serve, or null while it is (SUP-517). */
+  notServingSince: Date | null;
   measurementSeen: string | null;
   evidenceDigestSeen: string | null;
   /** {@link evidenceDigestSeen} as hex — the one spelling a user-facing screen shows (SUP-115). */
@@ -265,6 +267,7 @@ function catalogueEntryOf(row: Model, endpoint: ExternalEndpoint): ExternalCatal
       hostname: endpoint.hostname,
       status: endpoint.status,
       lastCheckedAt: endpoint.lastCheckedAt,
+      notServingSince: endpoint.notServingSince,
       measurementSeen: endpoint.measurementSeen,
       evidenceDigestSeen: endpoint.evidenceDigestSeen,
       evidenceDigestSeenHex: digestHexOrNull(endpoint.evidenceDigestSeen),

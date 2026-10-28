@@ -7,7 +7,7 @@ import type { ExternalEndpointStatusService, SyncReport } from './external-endpo
 import { ExternalEndpointStatusPollerService } from './external-endpoint-status-poller.service.js';
 import { SidecarUnavailableError } from './sidecar-admin.client.js';
 
-const QUIET: SyncReport = { seen: 0, flipped: 0, events: 0 };
+const QUIET: SyncReport = { seen: 0, flipped: 0, events: 0, outages: 0 };
 
 /**
  * The services keep their `Logger` private, and what reaches a log line is part
@@ -41,6 +41,7 @@ function statusStub(overrides: Partial<ExternalEndpointStatusService> = {}): Ext
   return {
     resetToPending: async () => 0,
     sync: async () => QUIET,
+    refreshFromRows: async () => undefined,
     recordEvent: async () => undefined,
     ...overrides,
   } as ExternalEndpointStatusService;
@@ -136,6 +137,53 @@ describe('pollOnce', () => {
 
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('ECONNREFUSED');
+  });
+
+  it('still runs the pass from the rows when the sidecar cannot be read', async () => {
+    // The warning above is deduped to once per failure, so on its own a wedged
+    // sidecar is silence. The rows-only pass is what alerts on it (SUP-517), and
+    // it has to run on *every* failed poll rather than once — the threshold is
+    // crossed by elapsed time, which is only true on some later pass.
+    const refreshFromRows = vi.fn(async () => undefined);
+    const poller = new ExternalEndpointStatusPollerService(
+      configWith('5s'),
+      statusStub({
+        sync: async () => {
+          throw new SidecarUnavailableError('/verdicts', 'ECONNREFUSED');
+        },
+        refreshFromRows,
+      }),
+    );
+    capture(poller, 'warn');
+
+    await poller.pollOnce();
+    await poller.pollOnce();
+
+    expect(refreshFromRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let the rows-only pass hide the failure that caused it', async () => {
+    const poller = new ExternalEndpointStatusPollerService(
+      configWith('5s'),
+      statusStub({
+        sync: async () => {
+          throw new SidecarUnavailableError('/verdicts', 'ECONNREFUSED');
+        },
+        refreshFromRows: async () => {
+          throw new Error('the database went away too');
+        },
+      }),
+    );
+    const warnings = capture(poller, 'warn');
+
+    await expect(poller.pollOnce()).resolves.toBeUndefined();
+
+    // Both, in order: the first warning is why the pass failed, the second is
+    // that the fallback could not run either. Swallowing the second would hide a
+    // branch that is now load-bearing for the alert.
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('ECONNREFUSED');
+    expect(warnings[1]).toContain('the database went away too');
   });
 
   it('warns again once the failure changes', async () => {

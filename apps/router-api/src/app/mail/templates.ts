@@ -288,6 +288,61 @@ export function renderWelcomeMail({ name, consoleUrl, startingCreditMicros }: We
   });
 }
 
+export interface OperatorAlertMail {
+  /** One line, in the subject and as the heading. No hostnames the reader cannot act on. */
+  title: string;
+  /** What happened and what it means for callers, in prose. */
+  summary: string;
+  /** The facts an operator needs before opening anything: endpoint, duration, stage. */
+  facts: Array<[label: string, value: string]>;
+  /** What to do next, or what closed the alert. */
+  action: string;
+  consoleUrl: string;
+}
+
+/**
+ * The message that wakes an operator (SUP-535).
+ *
+ * The same template set as every other mail, deliberately: a deployment whose
+ * sign-in codes land in an inbox is a deployment whose alerts do, and an alert on
+ * a channel of its own would be a second thing to keep working — which is the
+ * argument SUP-517 originally used for not sending one at all.
+ *
+ * `[Confidential Router]` leads the subject so an inbox rule can match it, and
+ * the facts carry the endpoint name and the duration rather than a link, because
+ * the reader is being woken and the first question is whether to get up.
+ *
+ * What is *not* here: the upstream hostname, the pinned digest, the sidecar's
+ * verdict detail. An operator reads those from the console, behind their session;
+ * mail is forwarded, quoted and left open on screens, and SUP-221 ruling 3 keeps
+ * upstream identity out of anything that leaves the deployment. The endpoint's
+ * own name is the one identifier here, and it is the operator's own label.
+ */
+export function renderOperatorAlertMail({
+  title,
+  summary,
+  facts,
+  action,
+  consoleUrl,
+}: OperatorAlertMail): RenderedMail {
+  return render({
+    subject: `[Confidential Router] ${title}`,
+    preheader: summary,
+    heading: title,
+    consoleUrl,
+    blocks: [
+      { kind: 'paragraph', text: summary },
+      ...(facts.length > 0 ? ([{ kind: 'facts', rows: facts }] as Block[]) : []),
+      { kind: 'paragraph', text: action },
+      { kind: 'button', label: 'Open the console', url: consoleUrl },
+      {
+        kind: 'note',
+        text: 'You are receiving this because this address is an operator of this deployment. Full detail — the upstream, the pinned digest and the endpoint’s timeline — is in the console, not in this email.',
+      },
+    ],
+  });
+}
+
 function plural(count: number, unit: string): string {
   return `${count} ${unit}${count === 1 ? '' : 's'}`;
 }

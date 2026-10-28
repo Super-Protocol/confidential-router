@@ -2,11 +2,15 @@ import { BadRequestException, ConflictException, NotFoundException, ServiceUnava
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createTestDataSource } from '../../../test/seed.js';
 import type { routerConfig } from '../config.js';
 import { RouterConfigSchema } from '../config.schema.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
-import { ExternalEndpointEvent } from '../db/entities/external-endpoint-event.entity.js';
+import {
+  ExternalEndpointEvent,
+  type ExternalEndpointEventKind,
+} from '../db/entities/external-endpoint-event.entity.js';
 import { Model } from '../db/entities/model.entity.js';
 import { TrustedMeasurement } from '../db/entities/trusted-measurement.entity.js';
 import { SECRETS_KEY_ENV, SecretEnvelopeService } from '../secrets/index.js';
@@ -16,6 +20,7 @@ import {
   ExternalEndpointAdminService,
   type ExternalModelSpec,
 } from './external-endpoint-admin.service.js';
+import { ExternalEndpointHealth } from './external-endpoint-health.js';
 import { ExternalEndpointStatusService } from './external-endpoint-status.service.js';
 import type { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 
@@ -70,7 +75,13 @@ beforeEach(async () => {
     new SecretEnvelopeService(),
     { render } as unknown as SidecarConfigWriterService,
     catalog,
-    new ExternalEndpointStatusService(config(), dataSource, catalog),
+    new ExternalEndpointStatusService(
+      config(),
+      dataSource,
+      catalog,
+      new ExternalEndpointHealth(),
+      new RecordingOperatorAlerts().asService(),
+    ),
   );
 });
 
@@ -503,7 +514,13 @@ describe('pinning a deployment’s evidence digest (SUP-252)', () => {
     await service.pinDigest(endpoint.id, DIGEST);
     await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { status: 'verified' });
 
-    await new ExternalEndpointStatusService(config(), dataSource, catalog).resetToPending();
+    await new ExternalEndpointStatusService(
+      config(),
+      dataSource,
+      catalog,
+      new ExternalEndpointHealth(),
+      new RecordingOperatorAlerts().asService(),
+    ).resetToPending();
 
     const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });
     expect(row.status).toBe('pending');
@@ -599,6 +616,15 @@ describe('reads', () => {
     const second = await register({ name: 'second', models: [model({ id: 'partner/second:snp' })] });
     await service.rotateKey(first.endpoint.id, 'sk-two');
     await service.setEnabled(first.endpoint.id, false);
+    // Aged apart on purpose. The timeline is ordered by `at`, and all three
+    // writes land in the same millisecond on a machine this fast — at which
+    // point the order is the random tiebreak on a UUID primary key, and this
+    // case passed or failed by luck. Sub-millisecond ordering is not something
+    // the table promises, nor anything an operator could read off a screen, so
+    // the fix belongs here rather than in a sequence column: the assertion is
+    // about "newest first" and "bounded", so give it events whose ages differ.
+    await age(first.endpoint.id, 'registered', 2_000);
+    await age(first.endpoint.id, 'key_rotated', 1_000);
 
     const timelines = await service.eventsFor([first.endpoint.id, second.endpoint.id], 2);
 
@@ -607,6 +633,13 @@ describe('reads', () => {
     expect(timelines.get(first.endpoint.id)?.map((event) => event.kind)).toEqual(['disabled', 'key_rotated']);
     expect(timelines.get(second.endpoint.id)?.map((event) => event.kind)).toEqual(['registered']);
   });
+
+  /** Moves one endpoint's event of a kind `ms` into the past. */
+  async function age(externalEndpointId: string, kind: ExternalEndpointEventKind, ms: number): Promise<void> {
+    await dataSource
+      .getRepository(ExternalEndpointEvent)
+      .update({ externalEndpointId, kind }, { at: new Date(Date.now() - ms) });
+  }
 
   it('answers an id with no timeline with an empty one rather than an error', async () => {
     // An entry per id asked for, so a caller never has to tell "no events" from

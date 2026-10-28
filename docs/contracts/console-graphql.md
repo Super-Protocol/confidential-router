@@ -1124,3 +1124,132 @@ this router reads none for someone else's hardware.
 | --- | --- | --- |
 | Models | `models` | One table. The origin badge comes from `origin`; the attestation column renders `EvidenceBadge` for a row with an `endpoint`, `ExternalAttestationBadge` for one with an `externalUpstream`, and `available` alone for an anonymous reader. The two badges share no component and no label. |
 | Chat | `chatSettings`, `routerEndpoint`, `models` | `chatModelIds` contains an external model only while its endpoint holds a live admitting verdict, and is also the scope every chat credential is minted with — so the picker and the key cannot disagree. The gate runs on `routerEndpoint`; `externalUpstream` drives the second inspect panel. |
+
+## As shipped (SUP-517) — the failure run beside the verdict
+
+A published upstream lost the gateway route for its hostname at 2026-10-23 06:11 UTC and this router
+answered `503 gatekeeper_error` / `attestation_failed` for 30 hours. Every individual behaviour was
+right: the verdict flipped to `DENIED_BY_THIS_ROUTER`, the model left `/v1/models`, the public
+catalogue carried `available: false`. What no surface could answer was *how long*, *how many checks*
+and *did the upstream answer at all* — so a dark upstream and a registration awaiting its first
+approval rendered identically, and nobody was told about either.
+
+- **`ExternalEndpoint.liveness`** — the run behind the latest verdict, grouped rather than flattened
+  because a console row reads them together: `reachability`, `notServingSince`, `lastSuccessAt`,
+  `lastFailureAt`, `consecutiveFailures`, `outage`. Readable by any signed-in user, like the rest of the
+  verdict (ruling 3). Every field is a projection of live verification and is reset on boot (ADR-008 §8).
+- **`ExternalEndpointReachability`** — `UNREACHABLE` when the sidecar reported that the dial, the
+  handshake or the read failed (`Report.unreachable`, SUP-422), `REACHABLE` when something answered and
+  verification or policy refused it, `UNKNOWN` before the first check. The distinction the outage turned
+  on: `UNREACHABLE` is "go look at the cloud", `REACHABLE`-and-denied is "open this drawer and approve a
+  deployment". **Read from the sidecar, not inferred from the stage** — `fetch` is wider than the flag,
+  and an upstream whose ingress is up while `/.well-known/swarm-evidence` 502s stops at `fetch` having
+  answered. Calling that one `UNREACHABLE` would be this field's own mis-direction pointing the other way.
+- **`liveness.consecutiveFailures`** counts *distinct checks*, not polls. The status poll re-reads the
+  sidecar every 5 s against a re-attestation every 10 minutes, so counting readings would make the
+  threshold a number of seconds wearing a different name.
+- **`liveness.outage`** is whether the run has crossed `externalEndpoints.outage.afterFailures` or
+  `.afterNoSuccess` and been alerted on. It is always false for an endpoint an operator disabled, and
+  for one whose deployment has never been approved (`pinnedEvidenceDigest: null`) — that is a
+  registration half-finished, not an upstream that went dark, and the two must not share an alarm.
+- **`OUTAGE`** / **`RECOVERED`** join the event kinds, one per run in each direction. They are not
+  `DENIED_BY_THIS_ROUTER` / `VERIFIED_BY_THIS_ROUTER` under another name: a denial is one check that
+  refused, an `OUTAGE` is this router declaring the run of them worth waking somebody for.
+- **`ExternalUpstream.notServingSince`** — the same clock on the public catalogue's reduced upstream
+  type, so `available: false` on a fresh registration and `available: false` on a model that has been
+  dark for a day are finally different answers. Still null for an anonymous caller, like the rest of
+  `externalUpstream`.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  OUTAGE
+  RECOVERED
+}
+
+"""
+Whether the last check got a document back, as distinct from whether this router
+admitted what it got.
+"""
+enum ExternalEndpointReachability {
+  REACHABLE
+  UNREACHABLE
+  UNKNOWN
+}
+
+"""
+How long this upstream has been dark, and whether that has passed this router's
+outage threshold. A projection of live verification, reset on boot like the
+verdict itself.
+"""
+type ExternalEndpointLiveness {
+  reachability: ExternalEndpointReachability!
+  """
+  Since when it has not been known to serve — a denial, an operator switching it
+  back on, or this process starting. Null while it is serving.
+  """
+  notServingSince: DateTime
+  lastSuccessAt: DateTime
+  """
+  Kept across a recovery, so flapping is visible on the row.
+  """
+  lastFailureAt: DateTime
+  consecutiveFailures: Int!
+  outage: Boolean!
+}
+
+extend type ExternalEndpoint {
+  liveness: ExternalEndpointLiveness!
+}
+
+extend type ExternalUpstream {
+  notServingSince: DateTime
+}
+```
+
+The unauthenticated half of the same answer is `GET /health`'s `externalEndpoints` block
+(`docs/contracts/router-api.md`), which is counts and a word — no endpoint identity, because ruling 3
+holds there too.
+
+## As shipped (SUP-535) — proving the alert reaches a human
+
+The alert above now leaves the process by mail (`docs/router.md`, *Where an alert goes*). The one
+thing an operator cannot read off configuration is whether a message actually arrives, so there is a
+mutation that sends one.
+
+```graphql
+"""
+What one test of the alert channel did. `delivered` is a count, not a list: the
+operator asking already knows which inbox they are watching, and the addresses
+an alert goes to are configuration an authenticated-but-curious reader has no
+claim on.
+"""
+type OperatorAlertTest {
+  sent: Boolean!
+  delivered: Int!
+  """
+  Addresses the provider refused. Each one is in the container log.
+  """
+  failed: Int!
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER or NO_RECIPIENTS.
+  """
+  skipped: String
+}
+
+extend type Mutation {
+  """
+  Restricted to auth.adminEmails. Sends past alerts.minInterval, to every
+  configured recipient, with a body that says nothing is wrong.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+}
+```
+
+Admin-only, and logged with the name of whoever asked: it writes to every address the deployment
+alerts to, which is a thing to be accountable for rather than a read. It exists because the
+acceptance criterion for an alerting path is a message that *arrived*, and inducing a real outage on
+a live deployment to watch the mail go out is what cost 28 minutes once already.
+
+The unauthenticated half of the same answer is `GET /health`'s `alerts` block — a state and a count
+of recipients, never an address.
