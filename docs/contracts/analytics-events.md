@@ -98,6 +98,19 @@ The artboard ships two diagrams and the breakpoint decides; this is how we learn
 | `variant` | string | yes | `horizontal` `vertical` | Which of the artboard's two diagrams is rendered at this width. |
 | `viewport_bucket` | string | yes | `mobile` `tablet` `desktop` `wide` | Coarse width bucket at the moment the diagram appeared: mobile <768, tablet <1024, desktop <1440, wide otherwise. Buckets, not pixels — a pixel width is a high-cardinality property and a weak fingerprinting signal. |
 
+### `explainer_video_opened`
+
+**Fires when** the explainer's click-to-load facade is activated (click, or Enter on the focused link) — **before the player is created**, so at the moment it is recorded nothing has been requested from YouTube.
+
+**Owner** SUP-542 · **transport** `browser`
+
+The click is ours; the playback is YouTube's and is not measured. No player API is loaded, so there is no progress, no completion and no watch time anywhere in this — and nothing goes looking for any. Firing before the swap is deliberate twice over: it is the moment the visitor asked, and it is the moment before anything leaves for a third party, which is the boundary `/privacy`'s YouTube row discloses.
+
+| Property | Type | Required | Values | Meaning |
+| --- | --- | --- | --- | --- |
+| `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
+| `player` | string | yes | `inline` `youtube` | Where the visitor ended up watching. `inline` is the `youtube-nocookie.com` embed the page swaps in; `youtube` is the watch page a modified click (⌘/Ctrl/Shift/middle) opened in a new tab instead — that click is left to the browser, as it always was, but it is still a visitor choosing to watch, and counting only the inline case would undercount a habit this audience has. |
+
 ### `code_copied`
 
 **Fires when** a copy button on a code sample succeeds (the clipboard write resolved), or the sample is copied with the keyboard from inside its container.
@@ -131,6 +144,18 @@ Plausible's outbound-link extension would report these as `Outbound Link: Click`
 | --- | --- | --- | --- | --- |
 | `position` *(shared)* | string | yes | `nav` `hero` `how_it_works` `verify` `models` `pricing` `faq` `closing` `footer` | [As above](#shared-properties). |
 | `destination` | string | yes | `docs` `api_reference` `github` `attestation` `status` `superprotocol` | Which property the link leads to. Closed set: an unrecognised host is not sent at all rather than widening the breakdown. |
+
+### `waitlist_click`
+
+**Fires when** the waitlist link is activated on the invite-only build of the landing page.
+
+**Owner** SUP-202 · **transport** `browser`
+
+Listed here by SUP-542 to close a gap, not because the emission is new: the landing has been sending this event since SUP-202 and the taxonomy did not name it. The address it opens is a `mailto:`, which is why `docs_link_click` never fires on it — `destinationOf` cannot read a destination out of one — and why the anchor is marked instead.
+
+| Property | Type | Required | Values | Meaning |
+| --- | --- | --- | --- | --- |
+| `position` *(shared)* | string | yes | `nav` `hero` `how_it_works` `verify` `models` `pricing` `faq` `closing` `footer` | [As above](#shared-properties). |
 
 ## Console — PostHog, through router-api
 
@@ -357,11 +382,19 @@ Settings the events assume. They are UI state, not repository state, so they are
 
 **Plausible** — site `router.superprotocol.com`, EU-hosted, cookieless.
 
-- Script variant: `script.pageview-props.tagged-events.js`. `pageview-props` is what carries the
-  properties on `landing_view` without a second request; `tagged-events` is what lets the markup declare
-  a custom event with a class rather than shipping a handler per button.
+- Script variant: **`script.manual.js`**, which is what the landing ships and what
+  `router.superprotocol.com` serves today — not the `pageview-props.tagged-events` variant this
+  paragraph named until SUP-542 checked it. The manual variant is required rather than preferred:
+  `landing_view` must not be sent until the invitation code has left the URL (ADR-002 §3), and an
+  automatic pageview fires before any script of ours can take it out. Properties ride the manual call's
+  own second argument, so `pageview-props` buys nothing here; `tagged-events` buys nothing either,
+  because every event on this page is sent by `public/enhance.js` rather than declared with a class.
+- **Custom properties have to be allowed in the site's settings**, one by one, or Plausible counts the
+  event and silently drops the properties. That is UI state no deploy can carry, and it is the one
+  setting that makes `has_invite`, `campaign`, the `utm_*` set, `player` and `snippet` readable rather
+  than merely sent.
 - Goals, created from the names in this document: `cta_click`, `code_copied`, `faq_opened`,
-  `docs_link_click`, `diagram_variant_shown`.
+  `docs_link_click`, `diagram_variant_shown`, `explainer_video_opened`, `waitlist_click`.
 - Outbound-link tracking stays **off**: `docs_link_click` reports a closed set of destinations, where the
   extension would report one row per URL.
 - Optional, recommended to SUP-147: proxy `/js/script.js` and `/api/event` through the landing's ingress

@@ -132,6 +132,25 @@
       }
     },
     {
+      "name": "explainer_video_opened",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-542",
+      "when": "The explainer's click-to-load facade is activated (click, or Enter on the focused link) — before the player is created, so at the moment it is recorded nothing has been requested from YouTube.",
+      "notes": "The click is ours; the playback is YouTube's and is not measured. No player API is loaded, so there is no progress, no completion and no watch time anywhere in this — and nothing goes looking for any. Firing before the swap is deliberate twice over: it is the moment the visitor asked, and it is the moment before anything leaves for a third party, which is the boundary /privacy's YouTube row discloses.",
+      "uses": ["has_invite"],
+      "properties": {
+        "player": {
+          "type": "string",
+          "required": true,
+          "description": "Where the visitor ended up watching. `inline` is the youtube-nocookie.com embed the page swaps in; `youtube` is the watch page a modified click (⌘/Ctrl/Shift/middle) opened in a new tab instead — that click is left to the browser, as it always was, but it is still a visitor choosing to watch, and counting only the inline case would undercount a habit this audience has.",
+          "enum": ["inline", "youtube"],
+          "example": "inline"
+        }
+      }
+    },
+    {
       "name": "code_copied",
       "surface": "landing",
       "tool": "plausible",
@@ -200,6 +219,16 @@
           "example": "docs"
         }
       }
+    },
+    {
+      "name": "waitlist_click",
+      "surface": "landing",
+      "tool": "plausible",
+      "transport": "browser",
+      "owner": "SUP-202",
+      "when": "The waitlist link is activated on the invite-only build of the landing page.",
+      "notes": "Listed here by SUP-542 to close a gap, not because the emission is new: the landing has been sending this event since SUP-202 and the taxonomy did not name it. The address it opens is a `mailto:`, which is why `docs_link_click` never fires on it — `destinationOf` cannot read a destination out of one — and why the anchor is marked instead.",
+      "uses": ["position"]
     },
     {
       "name": "signup_started",
