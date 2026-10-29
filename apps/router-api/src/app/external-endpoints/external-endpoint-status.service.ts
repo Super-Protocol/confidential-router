@@ -24,7 +24,14 @@ import {
   recoveryLine,
 } from './external-endpoint-liveness.js';
 import { fetchSidecarVerdicts, type SidecarVerdict } from './sidecar-admin.client.js';
-import { clip, expireVerdict, type ProjectedVerdict, projectVerdict, verdictGraceMs } from './status-projection.js';
+import {
+  clip,
+  expireVerdict,
+  type ProjectedVerdict,
+  projectVerdict,
+  verdictAttestWindowMs,
+  verdictGraceMs,
+} from './status-projection.js';
 
 /** What one alerting pass said out loud, by direction. */
 interface OutageAlerts {
@@ -278,6 +285,7 @@ export class ExternalEndpointStatusService {
     now: Date,
   ): Promise<{ projected: ExternalEndpoint[]; rows: ExternalEndpoint[] }> {
     const grace = verdictGraceMs(this.config.externalEndpoints.statusPollInterval);
+    const attestWindow = verdictAttestWindowMs(this.config.externalEndpoints.reattestInterval);
     const projected: ExternalEndpoint[] = [];
     const expired: ExternalEndpoint[] = [];
     for (const row of rows) {
@@ -285,6 +293,7 @@ export class ExternalEndpointStatusService {
       const lapsed = expireVerdict(row, {
         confirmedAt: confirmed === null ? null : new Date(confirmed),
         graceMs: grace,
+        attestWindowMs: attestWindow,
         now,
       });
       if (!lapsed) {
@@ -297,9 +306,8 @@ export class ExternalEndpointStatusService {
       projected.push(after);
       expired.push(after);
       this.logger.warn(
-        `External endpoint "${row.name}" has lost its verdict: the egress sidecar has not confirmed it for ` +
-          `${durationSince(confirmed === null ? null : new Date(confirmed), now)}. Its models are no longer ` +
-          'routable (ADR-008 §8).',
+        `External endpoint "${row.name}" has lost its verdict: ${lapsed.patch.lastReason} ` +
+          'Its models are no longer routable (ADR-008 §8).',
       );
     }
     // A row that left the enabled set takes its clock with it, for the reason the

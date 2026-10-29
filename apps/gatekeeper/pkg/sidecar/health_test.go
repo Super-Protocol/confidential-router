@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/sidecar"
 )
@@ -49,7 +50,10 @@ func check(t *testing.T, path string) (int, string) {
 // `exec`.
 func TestHealthyWhileWaitingForAnEndpoint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfig(t, path, "version: 1\nendpoints: []\n")
+	// An admin listener the configuration declares and nothing has bound, which
+	// is the shape router-api renders: the address is in the document from the
+	// first render, and the gatekeeper that would bind it has not started.
+	writeConfig(t, path, "version: 1\nendpoints: []\nadmin:\n  listen: 127.0.0.1:1\n")
 
 	code, out := check(t, path)
 
@@ -113,8 +117,47 @@ func TestUnhealthyWhenTheAdminAPIIsNotListening(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d, want 1 — a wedged gatekeeper is what the probe is for: %s", code, out)
 	}
+	if !strings.Contains(out, "should be listening") {
+		t.Errorf("the output does not say what failed: %q", out)
+	}
+}
+
+// The hole a file-only rule leaves. The *watcher* reloads on
+// `ValidateEditable`, so when an admin removes the last endpoint router-api
+// renders `endpoints: []`, the gatekeeper keeps running and keeps its admin
+// listener — while `runnableAt` calls that document unrunnable. A probe that
+// decided "waiting" from the file would report healthy for ever on exactly the
+// wedge this exists to catch, so a bound listener that will not answer is
+// unhealthy whatever the configuration says.
+func TestUnhealthyWhenARunningGatekeeperWedgesOnAnEmptyEndpointList(t *testing.T) {
+	// Bound, accepts, never replies — the production shape.
+	listen := fakeAdmin(t, func(http.ResponseWriter, *http.Request) {
+		time.Sleep(2 * sidecar.HealthTimeout)
+	})
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, fmt.Sprintf("version: 1\nendpoints: []\nadmin:\n  listen: %s\n", listen))
+
+	code, out := check(t, path)
+
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 — a bound listener that will not answer is a wedge: %s", code, out)
+	}
 	if !strings.Contains(out, "did not answer") {
 		t.Errorf("the output does not say what failed: %q", out)
+	}
+}
+
+// And the same wedge on a runnable configuration, which is the state the
+// incident was actually found in.
+func TestUnhealthyWhenTheAdminAPIAcceptsAndNeverReplies(t *testing.T) {
+	listen := fakeAdmin(t, func(http.ResponseWriter, *http.Request) {
+		time.Sleep(2 * sidecar.HealthTimeout)
+	})
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, configWithAdmin(listen))
+
+	if code, out := check(t, path); code != 1 {
+		t.Fatalf("exit %d, want 1: %s", code, out)
 	}
 }
 

@@ -45,13 +45,13 @@ check() {
 v2=$work/v2
 mkdir -p "$v2"
 echo 1073741824 > "$v2/memory.max"
-check 'a 1Gi cgroup v2 limit becomes a 768 MB heap' 768 "$(heap_of "$v2")"
+check 'a 1Gi cgroup v2 limit becomes a 682 MB heap' 682 "$(heap_of "$v2")"
 
 # cgroup v1, same limit, same answer: the file moved, the question did not.
 v1=$work/v1
 mkdir -p "$v1/memory"
 echo 1073741824 > "$v1/memory/memory.limit_in_bytes"
-check 'a 1Gi cgroup v1 limit becomes a 768 MB heap' 768 "$(heap_of "$v1")"
+check 'a 1Gi cgroup v1 limit becomes a 682 MB heap' 682 "$(heap_of "$v1")"
 
 # `max` is cgroup v2 for "no limit". Nothing to derive from, so nothing is said:
 # Node's own default is the right answer when the container has the whole host.
@@ -83,8 +83,21 @@ check 'a limit too small to serve from is left alone' '' "$(heap_of "$tiny")"
 # An operator who named a number has a reason. 1Gi is present and ignored.
 check 'an explicit --max-old-space-size wins' 256 "$(heap_of "$v2" '--max-old-space-size=256')"
 
+# V8 accepts underscores too, and an operator's explicit cap losing to a derived
+# one would be exactly the surprise this block exists to remove. `heap_of` reads
+# the dashed spelling, so the assertion is that nothing was appended.
+check 'an explicit --max_old_space_size wins as well' '' "$(heap_of "$v2" '--max_old_space_size=256')"
+underscored=$(CR_API_CGROUP_ROOT="$v2" NODE_OPTIONS='--max_old_space_size=256' sh "$entrypoint" node -p \
+  "Math.round(require('v8').getHeapStatistics().heap_size_limit / 1048576)")
+if [ "$underscored" -lt 400 ]; then
+  echo "ok — the underscored cap is the one V8 applied ($underscored MB)"
+else
+  echo "FAIL — V8 reports $underscored MB, so the operator's 256 MB cap was overridden"
+  failures=$((failures + 1))
+fi
+
 # And an unrelated NODE_OPTIONS is extended, not replaced.
-check 'other NODE_OPTIONS survive' 768 "$(heap_of "$v2" '--enable-source-maps')"
+check 'other NODE_OPTIONS survive' 682 "$(heap_of "$v2" '--enable-source-maps')"
 preserved=$(CR_API_CGROUP_ROOT="$v2" NODE_OPTIONS='--enable-source-maps' sh "$entrypoint" node -p \
   "process.env.NODE_OPTIONS.includes('--enable-source-maps')")
 check 'other NODE_OPTIONS survive verbatim' true "$preserved"
@@ -93,10 +106,22 @@ check 'other NODE_OPTIONS survive verbatim' true "$preserved"
 # exercise is the number the heap is actually held to.
 reported=$(CR_API_CGROUP_ROOT="$v2" sh "$entrypoint" node -p \
   "Math.round(require('v8').getHeapStatistics().heap_size_limit / 1048576)")
-if [ "$reported" -ge 700 ] && [ "$reported" -le 850 ]; then
-  echo "ok — V8 reports a heap limit near 768 MB ($reported MB)"
+if [ "$reported" -ge 650 ] && [ "$reported" -le 760 ]; then
+  echo "ok — V8 reports a heap limit near 682 MB ($reported MB)"
 else
-  echo "FAIL — V8 reports $reported MB, wanted something near 768"
+  echo "FAIL — V8 reports $reported MB, wanted something near 682"
+  failures=$((failures + 1))
+fi
+
+# And the headroom is the point of the fraction, not a side effect: V8 adds the
+# young generation on top of the old-space ceiling, so what has to stay under the
+# container limit is `heap_size_limit` plus everything native. 1Gi is 1024 MiB;
+# this asserts the heap cannot reach 80% of it, which is where the kernel's OOM
+# killer starts beating V8's own abort to the punch.
+if [ "$reported" -le 819 ]; then
+  echo "ok — the heap ceiling leaves $((1024 - reported)) MiB of a 1Gi limit for everything else"
+else
+  echo "FAIL — a $reported MiB heap in a 1024 MiB container leaves too little for the rest"
   failures=$((failures + 1))
 fi
 

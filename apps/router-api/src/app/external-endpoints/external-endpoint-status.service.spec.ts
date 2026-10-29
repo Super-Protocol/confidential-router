@@ -190,13 +190,24 @@ describe('resetToPending', () => {
 });
 
 describe('sync', () => {
+  /**
+   * The instant these passes run at.
+   *
+   * `verified()` and `refused()` carry a fixed `checkedAt`, and a verdict is only
+   * current while its own check is inside `reattestInterval * 3` (SUP-583). Left
+   * to the wall clock these specs would be asserting on a verdict formed
+   * whenever the fixture was written, which is a different thing every day and
+   * eventually an expired one.
+   */
+  const NOW = new Date('2026-10-06T12:00:00.000Z');
+
   it('projects an admission and makes the model routable', async () => {
     const endpoint = await seedExternalEndpoint(dataSource);
     await catalog.refresh();
     expect(catalog.list()).toEqual([]);
     sidecarReports(verified(endpoint.name));
 
-    await expect(service.sync()).resolves.toEqual({ seen: 1, flipped: 1, events: 1, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 1, flipped: 1, events: 1, outages: 0, expired: 0 });
 
     expect(await rowOf(endpoint.id)).toMatchObject({
       status: 'verified',
@@ -212,11 +223,11 @@ describe('sync', () => {
     // egress, and admission stops offering the model in the same pass.
     const endpoint = await seedExternalEndpoint(dataSource);
     sidecarReports(verified(endpoint.name));
-    await service.sync();
+    await service.sync(NOW);
     expect(catalog.list()).toHaveLength(1);
 
     sidecarReports(refused(endpoint.name));
-    await expect(service.sync()).resolves.toMatchObject({ flipped: 1 });
+    await expect(service.sync(NOW)).resolves.toMatchObject({ flipped: 1 });
 
     expect((await rowOf(endpoint.id)).status).toBe('denied');
     expect(catalog.list()).toEqual([]);
@@ -225,9 +236,9 @@ describe('sync', () => {
   it('writes one event per transition and none per repetition', async () => {
     const endpoint = await seedExternalEndpoint(dataSource);
     sidecarReports(verified(endpoint.name));
-    await service.sync();
+    await service.sync(NOW);
 
-    await expect(service.sync()).resolves.toEqual({ seen: 1, flipped: 0, events: 0, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 1, flipped: 0, events: 0, outages: 0, expired: 0 });
     expect((await eventsOf(endpoint.id)).map((event) => event.kind)).toEqual(['verified']);
   });
 
@@ -237,10 +248,10 @@ describe('sync', () => {
     // be pointless load and would keep `updatedAt` moving on an unchanged row.
     const endpoint = await seedExternalEndpoint(dataSource);
     sidecarReports(verified(endpoint.name));
-    await service.sync();
+    await service.sync(NOW);
     const after = await rowOf(endpoint.id);
 
-    await expect(service.sync()).resolves.toEqual({ seen: 1, flipped: 0, events: 0, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 1, flipped: 0, events: 0, outages: 0, expired: 0 });
 
     expect((await rowOf(endpoint.id)).updatedAt).toEqual(after.updatedAt);
   });
@@ -248,10 +259,10 @@ describe('sync', () => {
   it('records a digest change on a still-verified endpoint', async () => {
     const endpoint = await seedExternalEndpoint(dataSource);
     sidecarReports(verified(endpoint.name));
-    await service.sync();
+    await service.sync(NOW);
 
     sidecarReports(verified(endpoint.name, { evidenceDigest: OTHER_DIGEST }));
-    await expect(service.sync()).resolves.toEqual({ seen: 1, flipped: 0, events: 1, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 1, flipped: 0, events: 1, outages: 0, expired: 0 });
 
     const events = await eventsOf(endpoint.id);
     expect(events.map((event) => event.kind).sort()).toEqual(['digest_changed', 'verified']);
@@ -264,10 +275,10 @@ describe('sync', () => {
     // verdict because one poll raced a reload would flap the catalogue.
     const known = await seedExternalEndpoint(dataSource);
     sidecarReports(verified(known.name));
-    await service.sync();
+    await service.sync(NOW);
 
     sidecarReports();
-    await expect(service.sync()).resolves.toEqual({ seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 });
 
     expect((await rowOf(known.id)).status).toBe('verified');
     expect(catalog.list()).toHaveLength(1);
@@ -277,14 +288,14 @@ describe('sync', () => {
     await seedExternalEndpoint(dataSource);
     sidecarReports(verified('some-other-name'));
 
-    await expect(service.sync()).resolves.toEqual({ seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 });
   });
 
   it('does not project onto a disabled endpoint', async () => {
     const endpoint = await seedExternalEndpoint(dataSource, { enabled: false, status: 'disabled' });
     sidecarReports(verified(endpoint.name));
 
-    await expect(service.sync()).resolves.toEqual({ seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 });
     expect((await rowOf(endpoint.id)).status).toBe('disabled');
   });
 
@@ -293,7 +304,7 @@ describe('sync', () => {
     const second = await seedExternalEndpoint(dataSource);
     sidecarReports(verified(first.name), refused(second.name));
 
-    await expect(service.sync()).resolves.toEqual({ seen: 2, flipped: 2, events: 2, outages: 0, expired: 0 });
+    await expect(service.sync(NOW)).resolves.toEqual({ seen: 2, flipped: 2, events: 2, outages: 0, expired: 0 });
 
     expect((await rowOf(first.id)).status).toBe('verified');
     expect((await rowOf(second.id)).status).toBe('denied');
@@ -305,7 +316,7 @@ describe('sync', () => {
       new adminClient.SidecarUnavailableError('/verdicts', 'ECONNREFUSED'),
     );
 
-    await expect(service.sync()).rejects.toThrow(adminClient.SidecarUnavailableError);
+    await expect(service.sync(NOW)).rejects.toThrow(adminClient.SidecarUnavailableError);
   });
 });
 
@@ -729,6 +740,41 @@ describe('a verdict the sidecar stops confirming (SUP-583)', () => {
     expect(errors[0]).toContain(`"${endpoint.name}"`);
     expect((await eventsOf(endpoint.id)).map((event) => event.kind)).toContain('outage');
     expect(alerts.one('has stopped serving')).toBeDefined();
+  });
+
+  it('keeps the verdict while the sidecar keeps re-attesting it', async () => {
+    // `reattestInterval` is ten minutes and the window is three of them, so a
+    // verdict re-formed on schedule — even a cycle late — is current.
+    const endpoint = await admitted(READ_AT);
+    const later = new Date(READ_AT.getTime() + 20 * 60_000);
+
+    sidecarReports(verified(endpoint.name, { checkedAt: new Date(later.getTime() - 60_000).toISOString() }));
+    await expect(service.sync(later)).resolves.toMatchObject({ expired: 0 });
+
+    expect((await rowOf(endpoint.id)).status).toBe('verified');
+    expect(catalog.list()).toHaveLength(1);
+  });
+
+  it('lets the verdict go when the sidecar answers but has stopped re-attesting', async () => {
+    // The other way the present tense stops being true, and it looks nothing
+    // like the first: every poll succeeds, `/verdicts` is readable, and the
+    // `checkedAt` inside it has not moved. Read recency cannot see this one — the
+    // reads are fine — so without its own bound the row would stay `verified` for
+    // ever on a verdict nothing re-formed.
+    const endpoint = await admitted(READ_AT);
+    const warnings = capture('warn');
+    const later = new Date(READ_AT.getTime() + 31 * 60_000);
+
+    sidecarReports(verified(endpoint.name, { checkedAt: READ_AT.toISOString() }));
+    await expect(service.sync(later)).resolves.toMatchObject({ seen: 1, expired: 1 });
+
+    expect((await rowOf(endpoint.id)).status).toBe('pending');
+    expect(catalog.list()).toEqual([]);
+    // The timeline has to say which of the two it was: a wedged admin API and a
+    // wedged re-attestation loop are found in different places.
+    const expiry = (await eventsOf(endpoint.id)).find((event) => event.kind === 'verdict_expired');
+    expect(expiry?.reason).toContain('is answering, but the verdict it keeps repeating');
+    expect(warnings.some((line) => line.includes('has not been re-attested since'))).toBe(true);
   });
 
   it('comes back as soon as the sidecar confirms a verdict again', async () => {

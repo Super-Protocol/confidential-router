@@ -209,7 +209,29 @@ export function verdictGraceMs(statusPollIntervalMs: number): number {
   return Math.max(VERDICT_GRACE_FLOOR_MS, statusPollIntervalMs * VERDICT_GRACE_POLLS);
 }
 
-/** When a verdict was last confirmed, how long it may go unconfirmed, and now. */
+/**
+ * How many re-attestation intervals a verdict's own check may be behind before
+ * the verdict stops counting (SUP-583).
+ *
+ * The second way a verdict goes stale, and it does not look like the first at
+ * all: `/verdicts` answers, every poll succeeds, and the `checkedAt` inside the
+ * answer stops moving — a sidecar whose re-attestation loop is wedged while its
+ * admin API is not. Read recency alone cannot see it, because the reads are
+ * fine; this is the bound on the verdict rather than on the conversation.
+ *
+ * Three rather than one because a re-attestation is not instant and does not
+ * land on a tick: the loop arms the next one after the last verdict, an upstream
+ * that is slow to answer pushes it out, and a single missed cycle is not news.
+ * Thirty minutes at the default ten, and never the single-interval bound that
+ * would retire healthy verdicts on ordinary jitter.
+ */
+export const VERDICT_ATTEST_INTERVALS = 3;
+
+export function verdictAttestWindowMs(reattestIntervalMs: number): number {
+  return reattestIntervalMs * VERDICT_ATTEST_INTERVALS;
+}
+
+/** When a verdict was last confirmed and last formed, how long each may be, and now. */
 export interface VerdictClock {
   /**
    * When this router last read a verdict naming this endpoint, or null when it
@@ -219,10 +241,16 @@ export interface VerdictClock {
    * minutes old on a perfectly healthy endpoint — `reattestInterval` is ten
    * minutes, and a verdict being that old is the design rather than a fault.
    * What expires a verdict is this router no longer being handed it, which only
-   * the reader can know.
+   * the reader can know. {@link attestWindowMs} is what bounds the other one.
    */
   confirmedAt: Date | null;
   graceMs: number;
+  /**
+   * How far behind the *sidecar's* own `checkedAt` may fall — see
+   * {@link VERDICT_ATTEST_INTERVALS}. Zero turns the bound off, which nothing in
+   * production does.
+   */
+  attestWindowMs: number;
   now: Date;
 }
 
@@ -256,24 +284,29 @@ export interface VerdictClock {
  * from here the ordinary outage threshold runs, and an upstream that stops being
  * re-verified alerts by the same path as one that stops answering.
  *
+ * Two independent reasons, because there are two ways the present tense stops
+ * being true and they look nothing alike. The sidecar can stop answering, which
+ * {@link VerdictClock.confirmedAt} sees; or it can keep answering with a verdict
+ * whose own `checkedAt` has stopped moving, which only
+ * {@link VerdictClock.attestWindowMs} sees. Checking read recency alone would
+ * leave the second case believed indefinitely — every poll succeeding, nothing
+ * re-attested — which is the same defect wearing the opposite symptom. The
+ * timeline says which of the two it was.
+ *
  * @returns null when the row holds no verdict to lose, or holds one young
  *   enough. A pass calls this on every row and writes only what it returns.
  */
 export function expireVerdict(endpoint: ExternalEndpoint, clock: VerdictClock): ProjectedVerdict | null {
-  const { confirmedAt, graceMs, now } = clock;
   if (endpoint.status !== 'verified') {
     return null;
   }
-  if (confirmedAt && now.getTime() - confirmedAt.getTime() < graceMs) {
+  const why = lapsed(endpoint, clock);
+  if (!why) {
     return null;
   }
+  const { now } = clock;
 
-  const reason = clip(
-    'Verdict expired: the egress sidecar has not confirmed it since ' +
-      `${confirmedAt ? confirmedAt.toISOString() : 'this router started'}. ` +
-      'Every model on this endpoint is refused until it does.',
-    255,
-  );
+  const reason = clip(`Verdict expired: ${why} Every model on this endpoint is refused until it does.`, 255);
   const patch: ExternalEndpointStatusPatch = {
     status: 'pending',
     lastStage: null,
@@ -308,6 +341,31 @@ export function expireVerdict(endpoint: ExternalEndpoint, clock: VerdictClock): 
     statusChanged: true,
     patchChanged: true,
   };
+}
+
+/**
+ * Why this verdict no longer counts, or null while it does — and the sentence is
+ * the answer, because an operator reading the timeline has to be able to tell
+ * "the sidecar went quiet" from "the sidecar is talking and not re-attesting".
+ * The first is a wedged admin API; the second is a wedged re-attestation loop,
+ * and they are found in different places.
+ */
+function lapsed(endpoint: ExternalEndpoint, clock: VerdictClock): string | null {
+  const { confirmedAt, graceMs, attestWindowMs, now } = clock;
+  if (!confirmedAt || now.getTime() - confirmedAt.getTime() >= graceMs) {
+    return (
+      'the egress sidecar has not confirmed it since ' +
+      `${confirmedAt ? confirmedAt.toISOString() : 'this router started'}.`
+    );
+  }
+  const attestedAt = endpoint.lastCheckedAt;
+  if (attestWindowMs > 0 && (!attestedAt || now.getTime() - attestedAt.getTime() >= attestWindowMs)) {
+    return (
+      'the egress sidecar is answering, but the verdict it keeps repeating was formed at ' +
+      `${attestedAt ? attestedAt.toISOString() : 'an unknown time'} and has not been re-attested since.`
+    );
+  }
+  return null;
 }
 
 /**
