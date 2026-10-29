@@ -78,6 +78,13 @@ export interface EventPresentation {
  * alerting on it (SUP-517). It reads as more severe than the denial beside it
  * because it is — the denial is a fact about a check, the outage is a statement
  * that nobody has been served for a while.
+ *
+ * `VERDICT_EXPIRED` is a `warning` and not a `destructive`, and the difference is
+ * where it sends the reader (SUP-583). A denial and an outage are statements
+ * about the upstream; this one says the egress sidecar stopped confirming a
+ * verdict, so the router let it go and the models went with it. Nothing was
+ * judged about the upstream's cloud, and a label that read like a refusal would
+ * send an operator to go and look at one that is fine.
  */
 const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> = {
   REGISTERED: { label: 'Registered', variant: 'secondary' },
@@ -91,6 +98,7 @@ const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> =
   KEY_ROTATED: { label: 'Key rotated', variant: 'secondary' },
   OUTAGE: { label: 'Outage declared', variant: 'destructive' },
   RECOVERED: { label: 'Serving again', variant: 'success' },
+  VERDICT_EXPIRED: { label: 'Verdict expired', variant: 'warning' },
 };
 
 export function eventPresentation(kind: ExternalEndpointEventKind): EventPresentation {

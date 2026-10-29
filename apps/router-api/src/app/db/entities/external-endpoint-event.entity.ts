@@ -20,6 +20,13 @@ import { ExternalEndpoint } from './external-endpoint.entity.js';
  * passed the configured threshold and is worth waking somebody for. The timeline
  * needs both, because "it failed once at 06:11" and "it has been failing since
  * 06:11" are the two different things an operator reads a history to tell apart.
+ *
+ * `verdict_expired` is the third member of that family and the one that is not
+ * about the upstream at all (SUP-583): this router let go of an admitting verdict
+ * because the egress sidecar stopped confirming it. A `denied` says the upstream
+ * was judged and refused; this says nothing was judged, and the row stopped
+ * claiming otherwise. An operator reading it should look at the sidecar, not at
+ * the cloud.
  */
 export type ExternalEndpointEventKind =
   | 'registered'
@@ -32,7 +39,8 @@ export type ExternalEndpointEventKind =
   | 'disabled'
   | 'key_rotated'
   | 'outage'
-  | 'recovered';
+  | 'recovered'
+  | 'verdict_expired';
 
 /**
  * Append-only timeline of one external endpoint — the verdict history the admin

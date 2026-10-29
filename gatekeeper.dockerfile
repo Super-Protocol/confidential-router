@@ -85,10 +85,23 @@ RUN mkdir -p /etc/gatekeeper && chown nonroot:nonroot /etc/gatekeeper
 USER 65532:65532
 ENV GATEKEEPER_CONFIG=/etc/gatekeeper/config.yaml
 
-# No HEALTHCHECK: "is it serving?" is not a question this container can answer
-# about itself without a verdict, and a probe that reported healthy while every
-# endpoint was fail-closed would be worse than none. The admin API
-# (`admin.listen`) is what a readiness probe reads, and it is loopback-only by
-# construction — so the probe belongs to whoever shares the pod's network
-# namespace, not here.
+# "Is it serving?" is still not a question this container can answer about
+# itself: an endpoint that is fail-closed, denied, or awaiting an admin's
+# approval is a verdict, and a probe that failed on one would restart a
+# gatekeeper into the same refusal while dropping every working endpoint beside
+# it. So this answers the narrower question — is it *answering* — and
+# `--healthcheck` is what decides it (`pkg/sidecar/health.go`): healthy while
+# there is no configuration to run, healthy when the admin API answers whatever
+# it says, unhealthy only when a runnable configuration has an admin API that
+# does not.
+#
+# An `exec` rather than an `httpGet`, which is the whole reason this did not
+# exist before (SUP-583). The admin listener is loopback-only by construction,
+# so a kubelet could not reach it without this container growing a listener on
+# the pod IP; and it does not exist at all until router-api has rendered an
+# endpoint, so an HTTP probe would restart the state every deployment ships in.
+# Running the check inside the container has neither problem.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD ["/usr/local/bin/gatekeeper-sidecar", "--healthcheck"]
+
 ENTRYPOINT ["/usr/local/bin/gatekeeper-sidecar"]
