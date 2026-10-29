@@ -777,6 +777,83 @@ describe('a verdict the sidecar stops confirming (SUP-583)', () => {
     expect(warnings.some((line) => line.includes('has not been re-attested since'))).toBe(true);
   });
 
+  it('withdraws the stale verdict once over many passes, and the outage it starts does fire', async () => {
+    // The flap this shape invites, and why the bound lives in the projection.
+    //
+    // A pass that admitted the frozen verdict and *then* expired the row would
+    // write a `verified` and a `verdict_expired` every five seconds — ~34k
+    // timeline rows a day — and, worse, each `verified` clears `notServingSince`
+    // while each expiry resets it to `now`, so the run never ages past one poll
+    // and the outage alert this is supposed to raise never fires. The silent half
+    // of the defect would be back for the harder wedge.
+    //
+    // Refusing to admit it in the first place makes the row stable: one
+    // withdrawal, then nothing, and `notServingSince` left where the last real
+    // check was so the ordinary threshold can run out.
+    const endpoint = await admitted(READ_AT);
+    const warnings = capture('warn');
+    const errors = capture('error');
+
+    // Forty passes of a sidecar answering happily with the verdict it formed at
+    // READ_AT — five seconds apart, starting past the attest window.
+    for (let nth = 0; nth < 40; nth += 1) {
+      sidecarReports(verified(endpoint.name, { checkedAt: READ_AT.toISOString() }));
+      await service.sync(new Date(READ_AT.getTime() + 31 * 60_000 + nth * 5_000));
+    }
+
+    const kinds = (await eventsOf(endpoint.id)).map((event) => event.kind);
+    expect(kinds.filter((kind) => kind === 'verdict_expired')).toHaveLength(1);
+    // The `verified` from `admitted()` and not one more: no pass re-admitted it.
+    expect(kinds.filter((kind) => kind === 'verified')).toHaveLength(1);
+    expect(warnings.filter((line) => line.includes('has lost its verdict'))).toHaveLength(1);
+
+    // And the run reaches the threshold instead of being restarted every pass.
+    expect(kinds).toContain('outage');
+    expect(errors).toHaveLength(1);
+    expect(alerts.one('has stopped serving')).toBeDefined();
+    expect((await rowOf(endpoint.id)).status).toBe('pending');
+    expect(catalog.list()).toEqual([]);
+  });
+
+  it('counts the withdrawal as an expiry in the pass that made it, and not again', async () => {
+    const endpoint = await admitted(READ_AT);
+    capture('warn');
+    capture('error');
+    const stale = verified(endpoint.name, { checkedAt: READ_AT.toISOString() });
+
+    sidecarReports(stale);
+    await expect(service.sync(new Date(READ_AT.getTime() + 31 * 60_000))).resolves.toMatchObject({ expired: 1 });
+
+    sidecarReports(stale);
+    await expect(service.sync(new Date(READ_AT.getTime() + 31 * 60_000 + 5_000))).resolves.toMatchObject({
+      expired: 0,
+      flipped: 0,
+      events: 0,
+    });
+  });
+
+  it('leaves the row untouched while it repeats the withdrawn verdict', async () => {
+    // `lastReason` names `checkedAt` and never `now`, so the same frozen verdict
+    // produces the same row — a write per poll would keep `updatedAt` moving on
+    // a row nothing happened to.
+    const endpoint = await admitted(READ_AT);
+    capture('warn');
+    capture('error');
+    const stale = verified(endpoint.name, { checkedAt: READ_AT.toISOString() });
+
+    sidecarReports(stale);
+    await service.sync(new Date(READ_AT.getTime() + 31 * 60_000));
+    const after = await rowOf(endpoint.id);
+
+    sidecarReports(stale);
+    await service.sync(new Date(READ_AT.getTime() + 31 * 60_000 + 5_000));
+
+    expect((await rowOf(endpoint.id)).updatedAt).toEqual(after.updatedAt);
+    // Started at the last real check rather than at the pass that noticed, which
+    // is what lets the threshold run out at all.
+    expect(after.notServingSince).toEqual(READ_AT);
+  });
+
   it('comes back as soon as the sidecar confirms a verdict again', async () => {
     const endpoint = await admitted(READ_AT);
     capture('warn');

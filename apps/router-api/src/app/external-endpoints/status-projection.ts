@@ -102,20 +102,42 @@ export function statusOf(verdict: SidecarVerdict): ExternalEndpointStatus {
   return 'denied';
 }
 
+/** The clock a projection is formed against. */
+export interface ProjectionClock {
+  /**
+   * Passed in rather than read, so the events a test asserts on have the
+   * timestamps the test chose.
+   */
+  now: Date;
+  /**
+   * How old a verdict's own `checkedAt` may be and still admit — see
+   * {@link VERDICT_ATTEST_INTERVALS}. Zero turns the bound off, which nothing in
+   * production does; a test about something else passes zero so that its
+   * fixtures' timestamps stay irrelevant.
+   */
+  attestWindowMs: number;
+}
+
 /**
  * Projects a verdict onto the row it is about.
- *
- * `now` is passed in rather than read, so the events a test asserts on have the
- * timestamps the test chose.
  */
 export function projectVerdict(
   endpoint: ExternalEndpoint,
   verdict: SidecarVerdict,
-  now: Date = new Date(),
+  clock: ProjectionClock,
 ): ProjectedVerdict {
+  const { now } = clock;
   const report = verdict.report;
-  const status = statusOf(verdict);
   const check = checkOf(report, now);
+  const expired = expiredAdmission(verdict, check, clock);
+  // An admission whose own check is too old is not an admission. Withdrawing it
+  // here rather than a step later is what stops the two from fighting: a pass
+  // that admitted the verdict and then expired the row would write a `verified`
+  // and a `verdict_expired` every five seconds for ever, and — because every one
+  // of them restarts `notServingSince` — the outage this is supposed to raise
+  // would never age into one. See {@link expireVerdict} for the other half, the
+  // one the reader rather than the verdict is responsible for.
+  const status = expired ? 'pending' : statusOf(verdict);
   const measurement = report?.attestedRoot?.measurement ?? null;
   const evidenceDigest = report?.evidenceDigest ?? null;
 
@@ -130,10 +152,15 @@ export function projectVerdict(
     // The refused factor when the two-factor clause names one — it is the more
     // specific answer, and the one an operator acts on (`digest-mismatch` means
     // "approve the new digest", `policy` would mean nothing in particular).
-    lastStage: report?.refusal ?? report?.stage ?? null,
+    // Null for an expired admission: no stage refused it, the clock did, and a
+    // stage here would send an operator looking for a refusal that never happened.
+    lastStage: expired ? null : (report?.refusal ?? report?.stage ?? null),
     // The sidecar's one-line denial, or nothing when it admitted. Clipped to the
     // column: a reason is for a human to read, not a payload to carry.
-    lastReason: clip(verdict.reason ?? report?.reason ?? null, 255),
+    //
+    // The expiry sentence names `checkedAt` and not `now`, so a pass that reads
+    // the same frozen verdict again produces the same row and writes nothing.
+    lastReason: expired ?? clip(verdict.reason ?? report?.reason ?? null, 255),
     measurementSeen: measurement,
     measurementSource: report?.attestedRoot?.measurementSource ?? null,
     // Only meaningful about a measurement: with none derived, "not in the
@@ -169,7 +196,14 @@ export function projectVerdict(
   });
 
   const statusChanged = endpoint.status !== status;
-  if (statusChanged && status !== 'pending') {
+  if (statusChanged && expired) {
+    // `pending` is normally the one status that writes no event — "not checked"
+    // is where a row starts, and announcing it would be noise. This is the
+    // exception: the row *was* admitting and has stopped, and an operator whose
+    // model just left `/v1/models` is owed the reason in the one place they will
+    // look for it.
+    events.push(at('verdict_expired'));
+  } else if (statusChanged && status !== 'pending') {
     events.push(at(status === 'verified' ? 'verified' : 'denied'));
   }
   // Reported whether or not the status moved: a redeploy is the change an
@@ -231,7 +265,7 @@ export function verdictAttestWindowMs(reattestIntervalMs: number): number {
   return reattestIntervalMs * VERDICT_ATTEST_INTERVALS;
 }
 
-/** When a verdict was last confirmed and last formed, how long each may be, and now. */
+/** When a verdict was last read back, how long it may go unread, and now. */
 export interface VerdictClock {
   /**
    * When this router last read a verdict naming this endpoint, or null when it
@@ -241,16 +275,13 @@ export interface VerdictClock {
    * minutes old on a perfectly healthy endpoint — `reattestInterval` is ten
    * minutes, and a verdict being that old is the design rather than a fault.
    * What expires a verdict is this router no longer being handed it, which only
-   * the reader can know. {@link attestWindowMs} is what bounds the other one.
+   * the reader can know. The age of the verdict itself is the other half, and it
+   * is {@link ProjectionClock.attestWindowMs} that bounds it — in the projection,
+   * because a verdict too old to be current must not be admitted in the first
+   * place.
    */
   confirmedAt: Date | null;
   graceMs: number;
-  /**
-   * How far behind the *sidecar's* own `checkedAt` may fall — see
-   * {@link VERDICT_ATTEST_INTERVALS}. Zero turns the bound off, which nothing in
-   * production does.
-   */
-  attestWindowMs: number;
   now: Date;
 }
 
@@ -284,27 +315,30 @@ export interface VerdictClock {
  * from here the ordinary outage threshold runs, and an upstream that stops being
  * re-verified alerts by the same path as one that stops answering.
  *
- * Two independent reasons, because there are two ways the present tense stops
- * being true and they look nothing alike. The sidecar can stop answering, which
- * {@link VerdictClock.confirmedAt} sees; or it can keep answering with a verdict
- * whose own `checkedAt` has stopped moving, which only
- * {@link VerdictClock.attestWindowMs} sees. Checking read recency alone would
- * leave the second case believed indefinitely — every poll succeeding, nothing
- * re-attested — which is the same defect wearing the opposite symptom. The
- * timeline says which of the two it was.
+ * **One of the two ways the present tense stops being true, and the only one a
+ * reader can see.** The sidecar can stop answering, which is this; or it can keep
+ * answering with a verdict whose own `checkedAt` has stopped moving, which looks
+ * nothing like it — every poll succeeds and nothing about the conversation is
+ * wrong. That one is caught where the verdict is turned into a status, by
+ * {@link expiredAdmission}, because the fix for it is to stop admitting rather
+ * than to admit and then withdraw: a pass that did both would write a `verified`
+ * and a `verdict_expired` every five seconds and restart the outage clock on each
+ * one. Both land on the same timeline kind, with reasons that say which happened.
  *
  * @returns null when the row holds no verdict to lose, or holds one young
  *   enough. A pass calls this on every row and writes only what it returns.
  */
 export function expireVerdict(endpoint: ExternalEndpoint, clock: VerdictClock): ProjectedVerdict | null {
+  const { confirmedAt, graceMs, now } = clock;
   if (endpoint.status !== 'verified') {
     return null;
   }
-  const why = lapsed(endpoint, clock);
-  if (!why) {
+  if (confirmedAt && now.getTime() - confirmedAt.getTime() < graceMs) {
     return null;
   }
-  const { now } = clock;
+  const why =
+    'the egress sidecar has not confirmed it since ' +
+    `${confirmedAt ? confirmedAt.toISOString() : 'this router started'}.`;
 
   const reason = clip(`Verdict expired: ${why} Every model on this endpoint is refused until it does.`, 255);
   const patch: ExternalEndpointStatusPatch = {
@@ -344,31 +378,6 @@ export function expireVerdict(endpoint: ExternalEndpoint, clock: VerdictClock): 
 }
 
 /**
- * Why this verdict no longer counts, or null while it does — and the sentence is
- * the answer, because an operator reading the timeline has to be able to tell
- * "the sidecar went quiet" from "the sidecar is talking and not re-attesting".
- * The first is a wedged admin API; the second is a wedged re-attestation loop,
- * and they are found in different places.
- */
-function lapsed(endpoint: ExternalEndpoint, clock: VerdictClock): string | null {
-  const { confirmedAt, graceMs, attestWindowMs, now } = clock;
-  if (!confirmedAt || now.getTime() - confirmedAt.getTime() >= graceMs) {
-    return (
-      'the egress sidecar has not confirmed it since ' +
-      `${confirmedAt ? confirmedAt.toISOString() : 'this router started'}.`
-    );
-  }
-  const attestedAt = endpoint.lastCheckedAt;
-  if (attestWindowMs > 0 && (!attestedAt || now.getTime() - attestedAt.getTime() >= attestWindowMs)) {
-    return (
-      'the egress sidecar is answering, but the verdict it keeps repeating was formed at ' +
-      `${attestedAt ? attestedAt.toISOString() : 'an unknown time'} and has not been re-attested since.`
-    );
-  }
-  return null;
-}
-
-/**
  * What a verdict reports having done, as the run projection needs it.
  *
  * Two facts that have to travel together. `at` is the instant the row records,
@@ -390,6 +399,41 @@ function checkOf(report: SidecarReport | undefined, now: Date): ReportedCheck | 
     return null;
   }
   return report.checkedAt ? { at: new Date(report.checkedAt), stamped: true } : { at: now, stamped: false };
+}
+
+/**
+ * Why an otherwise-admitting verdict no longer admits, or null while it does
+ * (SUP-583).
+ *
+ * The sidecar can wedge in a way that leaves its admin API perfectly healthy:
+ * `/verdicts` answers on every poll, and the `checkedAt` inside the answer never
+ * moves. Nothing about the conversation looks wrong, so read recency — the other
+ * half of this rule, in {@link expireVerdict} — sees nothing at all. What is
+ * stale is the verdict itself, and only its own timestamp shows it.
+ *
+ * **Only an admission is withdrawn.** A denial whose `checkedAt` is old refuses
+ * traffic either way, and relabelling it `pending` would throw away the stage an
+ * operator acts on. The same goes for a verdict that is already `pending`: there
+ * is nothing there to withdraw.
+ *
+ * The sentence is the return value because it becomes `lastReason` and the
+ * timeline row, and it must not mention `now`: a pass that reads the same frozen
+ * verdict again has to produce the same row, or every poll would be a write.
+ */
+function expiredAdmission(verdict: SidecarVerdict, check: ReportedCheck | null, clock: ProjectionClock): string | null {
+  const { now, attestWindowMs } = clock;
+  if (attestWindowMs <= 0 || !verdict.admitted || check === null) {
+    return null;
+  }
+  if (now.getTime() - check.at.getTime() < attestWindowMs) {
+    return null;
+  }
+  return clip(
+    'Verdict expired: the egress sidecar is answering, but the verdict it keeps repeating was formed at ' +
+      `${check.at.toISOString()} and has not been re-attested since. ` +
+      'Every model on this endpoint is refused until it is.',
+    255,
+  );
 }
 
 /** The four columns of {@link ExternalEndpointStatusPatch} that describe the *run* rather than the check. */

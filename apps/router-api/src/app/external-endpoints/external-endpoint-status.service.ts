@@ -204,7 +204,10 @@ export class ExternalEndpointStatusService {
       // The sidecar named this endpoint, so its verdict is current as of this
       // read — whatever `checkedAt` says about when the sidecar last attested.
       this.confirmedAt.set(endpoint.id, now.getTime());
-      const projected = projectVerdict(endpoint, verdict, now);
+      const projected = projectVerdict(endpoint, verdict, {
+        now,
+        attestWindowMs: verdictAttestWindowMs(this.config.externalEndpoints.reattestInterval),
+      });
       if (projected.patchChanged || projected.events.length > 0) {
         await this.apply(endpoint.id, projected, now);
       }
@@ -212,9 +215,21 @@ export class ExternalEndpointStatusService {
       report.events += projected.events.length;
       if (projected.statusChanged) {
         report.flipped += 1;
-        this.logger.log(
-          `External endpoint "${endpoint.name}" is now ${projected.patch.status}${reasonSuffix(verdict)}.`,
-        );
+        const withdrawn = projected.events.some((event) => event.kind === 'verdict_expired');
+        if (withdrawn) {
+          // A warning rather than the usual flip line, and counted as an expiry:
+          // this is not the sidecar reporting a change, it is this router
+          // refusing to keep repeating one (ADR-008 §8).
+          report.expired += 1;
+          this.logger.warn(
+            `External endpoint "${endpoint.name}" has lost its verdict: ${projected.patch.lastReason} ` +
+              'Its models are no longer routable (ADR-008 §8).',
+          );
+        } else {
+          this.logger.log(
+            `External endpoint "${endpoint.name}" is now ${projected.patch.status}${reasonSuffix(verdict)}.`,
+          );
+        }
       }
     }
 
@@ -222,7 +237,7 @@ export class ExternalEndpointStatusService {
     // rows: an expired verdict is a row that stopped serving, and the pass that
     // let go of it is the pass that should say so.
     const expired = await this.expireStaleVerdicts(projectedRows, now);
-    report.expired = expired.rows.length;
+    report.expired += expired.rows.length;
     report.events += expired.rows.length;
 
     if (report.flipped > 0 || report.expired > 0) {
@@ -285,7 +300,6 @@ export class ExternalEndpointStatusService {
     now: Date,
   ): Promise<{ projected: ExternalEndpoint[]; rows: ExternalEndpoint[] }> {
     const grace = verdictGraceMs(this.config.externalEndpoints.statusPollInterval);
-    const attestWindow = verdictAttestWindowMs(this.config.externalEndpoints.reattestInterval);
     const projected: ExternalEndpoint[] = [];
     const expired: ExternalEndpoint[] = [];
     for (const row of rows) {
@@ -293,7 +307,6 @@ export class ExternalEndpointStatusService {
       const lapsed = expireVerdict(row, {
         confirmedAt: confirmed === null ? null : new Date(confirmed),
         graceMs: grace,
-        attestWindowMs: attestWindow,
         now,
       });
       if (!lapsed) {
