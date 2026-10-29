@@ -179,6 +179,20 @@ describe('the verdict labels', () => {
     expect(eventPresentation('OUTAGE').variant).toBe(eventPresentation('DENIED_BY_THIS_ROUTER').variant);
   });
 
+  it('do not lend themselves to an expired verdict either (SUP-583)', async () => {
+    // A `VERDICT_EXPIRED` is the one entry in the timeline that is not about the
+    // upstream: the egress sidecar stopped confirming the verdict and this router
+    // let it go. Spelling it as a refusal would send an operator to look at a
+    // cloud nobody judged.
+    const { eventPresentation } = await import('../admin/endpoint-status');
+
+    const { label, variant } = eventPresentation('VERDICT_EXPIRED');
+    expect(label).toBeTruthy();
+    expect(Object.values(EXTERNAL_VERDICT_LABELS)).not.toContain(label);
+    expect(variant).not.toBe(eventPresentation('DENIED_BY_THIS_ROUTER').variant);
+    expect(variant).not.toBe(eventPresentation('OUTAGE').variant);
+  });
+
   it('are what the public catalogue\u2019s badge renders', () => {
     expect(EXTERNAL_STATUS_PRESENTATION.VERIFIED_BY_THIS_ROUTER.label).toBe(
       EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,

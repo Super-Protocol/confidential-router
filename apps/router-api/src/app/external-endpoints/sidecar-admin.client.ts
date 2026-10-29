@@ -112,6 +112,31 @@ export async function fetchSidecarVerdicts(adminListen: string): Promise<readonl
  * addresses the gatekeeper schema allows, and `fetch` has no way to name one.
  * Everything else about the call is as plain as it looks — local HTTP, one small
  * JSON document, a hard timeout.
+ *
+ * `agent: false` — one socket per poll, and never a pooled one. This is the
+ * whole of SUP-583 and it is not an optimisation; the default agent made this
+ * client discard half the answers the sidecar gave it:
+ *
+ *  - `timeout` is a *socket* timeout, not a deadline on the call. It is armed
+ *    with `socket.setTimeout(5000)` when the socket is assigned, and the
+ *    default agent keeps the socket alive afterwards — so the timer goes into
+ *    the agent's free pool still armed.
+ *  - Five seconds after a poll returns, that idle socket emits `timeout`.
+ *    `externalEndpoints.statusPollInterval` is five seconds, so the *next*
+ *    poll has just claimed it and attached its own `timeout` listener. The
+ *    listener fires milliseconds in, [get] destroys the request and reports
+ *    "it did not answer within 5000 ms" — about a sidecar that answered.
+ *  - The following poll finds the pool empty, opens a fresh socket and
+ *    succeeds. Hence exactly every other poll, for ever.
+ *
+ * Production ran that way for days: 353 of the last 400 lines of the router's
+ * log were this client blaming a healthy sidecar, every warning 10 s after the
+ * last, each with a successful poll in between. A stand-in admin server logged
+ * serving every request the client called unanswered, twice per socket.
+ *
+ * With no pool the five seconds bound a fresh connection to a process that
+ * renders state already in memory, which is what the constant was written to
+ * mean. The cost is one loopback connect per poll.
  */
 function get(adminListen: string, path: string): Promise<unknown> {
   const socketPath = adminListen.startsWith('unix:') ? adminListen.slice('unix:'.length) : undefined;
@@ -119,23 +144,26 @@ function get(adminListen: string, path: string): Promise<unknown> {
 
   return new Promise((resolve, reject) => {
     const fail = (reason: string) => reject(new SidecarUnavailableError(path, reason));
-    const call = request({ socketPath, host, port, path, method: 'GET', timeout: REQUEST_TIMEOUT_MS }, (response) => {
-      if (response.statusCode !== 200) {
-        response.resume();
-        fail(`it answered ${response.statusCode}`);
-        return;
-      }
-      const chunks: Buffer[] = [];
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.on('end', () => {
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        } catch (error) {
-          fail(`its body was not JSON (${error instanceof Error ? error.message : String(error)})`);
+    const call = request(
+      { socketPath, host, port, path, method: 'GET', timeout: REQUEST_TIMEOUT_MS, agent: false },
+      (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          fail(`it answered ${response.statusCode}`);
+          return;
         }
-      });
-      response.on('error', (error: Error) => fail(error.message));
-    });
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+          } catch (error) {
+            fail(`its body was not JSON (${error instanceof Error ? error.message : String(error)})`);
+          }
+        });
+        response.on('error', (error: Error) => fail(error.message));
+      },
+    );
     call.on('timeout', () => {
       // `timeout` only fires the event; the socket has to be closed explicitly,
       // or a hung sidecar would hold this promise open for ever.

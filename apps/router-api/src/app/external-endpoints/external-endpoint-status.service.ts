@@ -24,7 +24,7 @@ import {
   recoveryLine,
 } from './external-endpoint-liveness.js';
 import { fetchSidecarVerdicts, type SidecarVerdict } from './sidecar-admin.client.js';
-import { clip, type ProjectedVerdict, projectVerdict } from './status-projection.js';
+import { clip, expireVerdict, type ProjectedVerdict, projectVerdict, verdictGraceMs } from './status-projection.js';
 
 /** What one alerting pass said out loud, by direction. */
 interface OutageAlerts {
@@ -41,6 +41,8 @@ export interface SyncReport {
   events: number;
   /** Runs that crossed an outage threshold in this pass. Declarations only — a recovery is not one. */
   outages: number;
+  /** Verdicts this pass let go of because the sidecar stopped confirming them (SUP-583). */
+  expired: number;
 }
 
 /**
@@ -78,6 +80,23 @@ export class ExternalEndpointStatusService {
    * reach it either.
    */
   private readonly alerted = new Map<string, number>();
+
+  /**
+   * When this process last read a verdict naming each endpoint, by endpoint id —
+   * the clock {@link expireVerdict} measures against (SUP-583).
+   *
+   * In memory, and a process lifetime is the right scope rather than a
+   * compromise: the question is "is this router still being told that this
+   * upstream is admitted", which is only ever about this process. A restart
+   * answers it from scratch, and {@link resetToPending} has already thrown away
+   * every verdict by then, so there is nothing for an empty map to be wrong
+   * about.
+   *
+   * Not a column, and not `lastCheckedAt`: that one carries the *sidecar's*
+   * timestamp, which is up to a whole `reattestInterval` — ten minutes — old on a
+   * healthy endpoint. Expiring on it would retire every verdict in the product.
+   */
+  private readonly confirmedAt = new Map<string, number>();
 
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
@@ -142,6 +161,7 @@ export class ExternalEndpointStatusService {
       now,
     );
     this.alerted.clear();
+    this.confirmedAt.clear();
     return enabled.length;
   }
 
@@ -153,13 +173,16 @@ export class ExternalEndpointStatusService {
    * The usual cause is a render that has not reached the sidecar yet, and
    * `pending` is already where a new row starts — overwriting a live verdict
    * because one poll raced a reload would flap the catalogue for no reason.
+   * "Left as it is" has a limit, and {@link expireStaleVerdicts} is it: an
+   * endpoint that goes unmentioned for a minute has no live verdict, whatever
+   * the row still says.
    */
   async sync(now: Date = new Date()): Promise<SyncReport> {
     const verdicts = await fetchSidecarVerdicts(this.config.externalEndpoints.adminListen);
     const byName = new Map(verdicts.map((verdict) => [verdict.endpoint, verdict]));
     const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true } });
 
-    const report: SyncReport = { seen: 0, flipped: 0, events: 0, outages: 0 };
+    const report: SyncReport = { seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 };
     // The rows as this pass leaves them. Collected rather than re-read: the
     // alerting and the `/health` summary are statements about the verdict just
     // projected, and a second `find` could only disagree with it.
@@ -171,6 +194,9 @@ export class ExternalEndpointStatusService {
         continue;
       }
       report.seen += 1;
+      // The sidecar named this endpoint, so its verdict is current as of this
+      // read — whatever `checkedAt` says about when the sidecar last attested.
+      this.confirmedAt.set(endpoint.id, now.getTime());
       const projected = projectVerdict(endpoint, verdict, now);
       if (projected.patchChanged || projected.events.length > 0) {
         await this.apply(endpoint.id, projected, now);
@@ -185,15 +211,22 @@ export class ExternalEndpointStatusService {
       }
     }
 
-    if (report.flipped > 0) {
+    // Before the alerting and the publish, so that all three readers see the same
+    // rows: an expired verdict is a row that stopped serving, and the pass that
+    // let go of it is the pass that should say so.
+    const expired = await this.expireStaleVerdicts(projectedRows, now);
+    report.expired = expired.rows.length;
+    report.events += expired.rows.length;
+
+    if (report.flipped > 0 || report.expired > 0) {
       // Membership of `/v1/models` follows the verdict, so the map is rebuilt in
       // the same pass that saw the flip rather than on the next request.
       await this.catalog.refresh();
     }
-    const alerts = await this.alertOnOutages(projectedRows, now);
+    const alerts = await this.alertOnOutages(expired.projected, now);
     report.outages = alerts.declared;
     report.events += alerts.declared + alerts.recovered;
-    this.publish(projectedRows, now, now);
+    this.publish(expired.projected, now, now);
     return report;
   }
 
@@ -216,8 +249,68 @@ export class ExternalEndpointStatusService {
    */
   async refreshFromRows(now: Date = new Date()): Promise<void> {
     const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true } });
-    await this.alertOnOutages(endpoints, now);
-    this.publish(endpoints, null, now);
+    // This is the path a wedged sidecar leaves the router on, so it is the path
+    // that has to let go of the verdicts it can no longer re-read (SUP-583).
+    const expired = await this.expireStaleVerdicts(endpoints, now);
+    if (expired.rows.length > 0) {
+      await this.catalog.refresh();
+    }
+    await this.alertOnOutages(expired.projected, now);
+    this.publish(expired.projected, null, now);
+  }
+
+  /**
+   * Lets go of every verdict the sidecar has stopped confirming, and says so on
+   * the timeline (SUP-583).
+   *
+   * The rule itself is {@link expireVerdict}; this is the write. Called from both
+   * passes, because both can leave a `verified` row unconfirmed: the sidecar may
+   * answer and not mention an endpoint, or it may not answer at all. One rule for
+   * the two, so the catalogue cannot keep a model alive through whichever shape
+   * of silence it happened to meet.
+   *
+   * @returns the rows as this pass leaves them (`projected`) and the ones it
+   *   expired (`rows`), so the caller can rebuild the catalogue, alert and publish
+   *   from the same values rather than re-reading them.
+   */
+  private async expireStaleVerdicts(
+    rows: readonly ExternalEndpoint[],
+    now: Date,
+  ): Promise<{ projected: ExternalEndpoint[]; rows: ExternalEndpoint[] }> {
+    const grace = verdictGraceMs(this.config.externalEndpoints.statusPollInterval);
+    const projected: ExternalEndpoint[] = [];
+    const expired: ExternalEndpoint[] = [];
+    for (const row of rows) {
+      const confirmed = this.confirmedAt.get(row.id) ?? null;
+      const lapsed = expireVerdict(row, {
+        confirmedAt: confirmed === null ? null : new Date(confirmed),
+        graceMs: grace,
+        now,
+      });
+      if (!lapsed) {
+        projected.push(row);
+        continue;
+      }
+      await this.apply(row.id, lapsed, now);
+      this.confirmedAt.delete(row.id);
+      const after = { ...row, ...lapsed.patch };
+      projected.push(after);
+      expired.push(after);
+      this.logger.warn(
+        `External endpoint "${row.name}" has lost its verdict: the egress sidecar has not confirmed it for ` +
+          `${durationSince(confirmed === null ? null : new Date(confirmed), now)}. Its models are no longer ` +
+          'routable (ADR-008 §8).',
+      );
+    }
+    // A row that left the enabled set takes its clock with it, for the reason the
+    // alert latch is pruned the same way.
+    const present = new Set(rows.map((row) => row.id));
+    for (const id of [...this.confirmedAt.keys()]) {
+      if (!present.has(id)) {
+        this.confirmedAt.delete(id);
+      }
+    }
+    return { projected, rows: expired };
   }
 
   /**

@@ -44,6 +44,7 @@ export const ExternalEndpointEventKindEnum = {
   KEY_ROTATED: 'key_rotated',
   OUTAGE: 'outage',
   RECOVERED: 'recovered',
+  VERDICT_EXPIRED: 'verdict_expired',
 } as const satisfies Record<string, ExternalEndpointEventKind>;
 
 registerEnumType(ExternalEndpointEventKindEnum, {
@@ -55,7 +56,10 @@ registerEnumType(ExternalEndpointEventKindEnum, {
     'digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no ' +
     'longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are ' +
     'the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this ' +
-    'router declaring that the run of them has passed the configured threshold and alerting on it.',
+    'router declaring that the run of them has passed the configured threshold and alerting on it. ' +
+    'VERDICT_EXPIRED is this router letting go of an admitting verdict because the egress sidecar stopped ' +
+    'confirming it: nothing was judged about the upstream, and the endpoint stopped claiming otherwise ' +
+    '(SUP-583).',
 });
 
 /**

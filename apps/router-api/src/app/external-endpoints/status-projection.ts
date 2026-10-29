@@ -186,6 +186,131 @@ export function projectVerdict(
 }
 
 /**
+ * How many polls a `verified` row keeps its verdict for once the sidecar stops
+ * confirming it (SUP-583).
+ *
+ * Derived from `externalEndpoints.statusPollInterval` rather than configured, so
+ * that the window cannot drift out of step with the thing it counts — and so
+ * that enforcing ADR-008 §8 costs the attested `router.yaml` no new key and
+ * nobody a re-pin. Twelve at the default five seconds is a minute: generous
+ * enough that a slow pass, a reload or a restarting sidecar is never why a
+ * model disappears, short enough that a wedged one does not keep selling an
+ * upstream nothing has re-checked.
+ */
+export const VERDICT_GRACE_POLLS = 12;
+
+/**
+ * …and never shorter than this, so a deployment that polls every 200 ms does not
+ * end up with a two-and-a-half-second grace and flap its own catalogue.
+ */
+export const VERDICT_GRACE_FLOOR_MS = 30_000;
+
+export function verdictGraceMs(statusPollIntervalMs: number): number {
+  return Math.max(VERDICT_GRACE_FLOOR_MS, statusPollIntervalMs * VERDICT_GRACE_POLLS);
+}
+
+/** When a verdict was last confirmed, how long it may go unconfirmed, and now. */
+export interface VerdictClock {
+  /**
+   * When this router last read a verdict naming this endpoint, or null when it
+   * never has in this process.
+   *
+   * **Not `lastCheckedAt`**, which is the *sidecar's* own timestamp and is ten
+   * minutes old on a perfectly healthy endpoint — `reattestInterval` is ten
+   * minutes, and a verdict being that old is the design rather than a fault.
+   * What expires a verdict is this router no longer being handed it, which only
+   * the reader can know.
+   */
+  confirmedAt: Date | null;
+  graceMs: number;
+  now: Date;
+}
+
+/**
+ * Lets go of a verdict the sidecar has stopped confirming (SUP-583).
+ *
+ * The rule ADR-008 §8 states and this is the enforcement of: **a stored status
+ * is never trust.** `verified` on a row means "the sidecar holds an admitting
+ * verdict for this upstream right now", and `/verdicts` being re-read is the
+ * entirety of what makes that present tense true. {@link projectVerdict} keeps
+ * it true while answers arrive; nothing kept it true when they stopped.
+ *
+ * Without this, a sidecar that wedges leaves every row exactly as the last
+ * answer left it, for ever: the boot reset is the only thing that ever clears a
+ * verdict, so one that outlives the restart that produced it is simply believed.
+ * `models { available }` stays true, `/v1/models` keeps listing the model and
+ * admission keeps proxying prompts to an upstream whose evidence this router can
+ * no longer verify — which is the one thing the attested egress exists to
+ * prevent. It is also silent: the outage alert keys on `notServingSince`, and a
+ * `verified` row has none.
+ *
+ * Expiring is not a verdict about the upstream, and the patch says so. The row
+ * goes back to `pending` — "not checked", the state every row boots in — with
+ * `lastCheckedAt` cleared, so `reachabilityOf` reads `unknown` rather than
+ * asserting anything about a cloud nobody asked. `consecutiveFailures` stays at
+ * zero for the same reason: no check failed, the checking stopped.
+ * `lastSuccessAt` and `lastFailureAt` are kept, because when this upstream last
+ * served is history and remains true.
+ *
+ * `notServingSince` is set to `now` and that is the half that wakes somebody:
+ * from here the ordinary outage threshold runs, and an upstream that stops being
+ * re-verified alerts by the same path as one that stops answering.
+ *
+ * @returns null when the row holds no verdict to lose, or holds one young
+ *   enough. A pass calls this on every row and writes only what it returns.
+ */
+export function expireVerdict(endpoint: ExternalEndpoint, clock: VerdictClock): ProjectedVerdict | null {
+  const { confirmedAt, graceMs, now } = clock;
+  if (endpoint.status !== 'verified') {
+    return null;
+  }
+  if (confirmedAt && now.getTime() - confirmedAt.getTime() < graceMs) {
+    return null;
+  }
+
+  const reason = clip(
+    'Verdict expired: the egress sidecar has not confirmed it since ' +
+      `${confirmedAt ? confirmedAt.toISOString() : 'this router started'}. ` +
+      'Every model on this endpoint is refused until it does.',
+    255,
+  );
+  const patch: ExternalEndpointStatusPatch = {
+    status: 'pending',
+    lastStage: null,
+    lastReason: reason,
+    measurementSeen: null,
+    measurementSource: null,
+    measurementInRegistry: null,
+    evidenceDigestSeen: null,
+    pinnedCertFingerprint: null,
+    observedCertFingerprint: null,
+    lastCheckedAt: null,
+    lastSuccessAt: endpoint.lastSuccessAt,
+    lastFailureAt: endpoint.lastFailureAt,
+    notServingSince: now,
+    consecutiveFailures: 0,
+    upstreamUnreachable: null,
+  };
+
+  return {
+    patch,
+    events: [
+      {
+        kind: 'verdict_expired',
+        stage: null,
+        reason,
+        measurement: null,
+        // The deployment whose verdict just lapsed, so the timeline names what
+        // stopped being believed rather than only that something did.
+        evidenceDigest: endpoint.evidenceDigestSeen,
+      },
+    ],
+    statusChanged: true,
+    patchChanged: true,
+  };
+}
+
+/**
  * What a verdict reports having done, as the run projection needs it.
  *
  * Two facts that have to travel together. `at` is the instant the row records,

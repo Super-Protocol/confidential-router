@@ -82,7 +82,7 @@ export type EvidenceState =
   | 'PUBLISHED'
   | 'STALE';
 
-/** DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this router declaring that the run of them has passed the configured threshold and alerting on it. */
+/** DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this router declaring that the run of them has passed the configured threshold and alerting on it. VERDICT_EXPIRED is this router letting go of an admitting verdict because the egress sidecar stopped confirming it: nothing was judged about the upstream, and the endpoint stopped claiming otherwise (SUP-583). */
 export type ExternalEndpointEventKind =
   | 'DENIED_BY_THIS_ROUTER'
   | 'DIGEST_CHANGED'
@@ -94,6 +94,7 @@ export type ExternalEndpointEventKind =
   | 'OUTAGE'
   | 'RECOVERED'
   | 'REGISTERED'
+  | 'VERDICT_EXPIRED'
   | 'VERIFIED_BY_THIS_ROUTER';
 
 /** What this router currently says about an upstream. Rendered as “verified by this router” / “denied by this router” — never a bare “verified”, which is reserved for nothing in this schema (ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing. */

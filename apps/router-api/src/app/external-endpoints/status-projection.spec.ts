@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import type { SidecarVerdict } from './sidecar-admin.client.js';
-import { projectVerdict, statusOf } from './status-projection.js';
+import { projectVerdict, statusOf, VERDICT_GRACE_FLOOR_MS, verdictGraceMs } from './status-projection.js';
 
 const NOW = new Date('2026-10-06T12:00:00.000Z');
 const MEASUREMENT = 'a'.repeat(64);
@@ -507,5 +507,16 @@ describe('projectVerdict and the sidecar’s unreachable flag (SUP-517)', () => 
     const verdict = { ...unstamped, report: { ...unstamped.report, checkedAt: undefined } };
 
     expect(projectVerdict(failing, verdict, NOW).patch.consecutiveFailures).toBe(1);
+  });
+});
+
+describe('verdictGraceMs', () => {
+  it('is twelve polls at the configured interval', () => {
+    expect(verdictGraceMs(5_000)).toBe(60_000);
+    expect(verdictGraceMs(10_000)).toBe(120_000);
+  });
+
+  it('never drops below the floor, so a fast poller cannot flap the catalogue', () => {
+    expect(verdictGraceMs(200)).toBe(VERDICT_GRACE_FLOOR_MS);
   });
 });

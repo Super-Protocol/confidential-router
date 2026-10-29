@@ -108,6 +108,13 @@ jobs:
           pnpm nx run @confidential-router/router-ui:codegen
           git diff --exit-code -- apps/router-ui/src/generated
 
+      # `docker/router-api/entrypoint.sh` belongs to no Nx project, so `nx
+      # affected` never runs anything for it. Unconditional and two seconds: it
+      # decides the heap ceiling the router actually runs under, and getting it
+      # wrong cost production a total outage (SUP-583).
+      - name: Image entrypoint heap ceiling
+        run: sh docker/router-api/entrypoint.heap.test.sh
+
       - name: Check formatting
         run: pnpm format:check
 
