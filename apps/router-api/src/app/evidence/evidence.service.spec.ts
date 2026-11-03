@@ -138,6 +138,30 @@ describe('reading snapshots', () => {
     expect(latest.get(other)?.issuedAt.toISOString()).toBe('2026-07-01T00:00:00.000Z');
   });
 
+  it('leaves an endpoint that has published nothing out of the map', async () => {
+    const silent = await seedEndpoint(fixture.dataSource, 'silent');
+    await service.record(endpointId, parsed({ issuedAt: '2026-08-01T00:00:00.000Z' }));
+
+    const latest = await service.latestForMany([endpointId, silent, endpointId]);
+
+    expect([...latest.keys()]).toEqual([endpointId]);
+    expect(await service.latestForMany([])).toEqual(new Map());
+  });
+
+  it('agrees with latestFor however long the history has grown', async () => {
+    for (let day = 1; day <= 30; day++) {
+      await service.record(endpointId, parsed({ issuedAt: `2026-08-${String(day).padStart(2, '0')}T00:00:00.000Z` }));
+    }
+    const newest = await service.record(endpointId, parsed({ issuedAt: '2026-09-01T00:00:00.000Z' }));
+    // Recorded last but issued first: insertion order must not decide which row is newest.
+    await service.record(endpointId, parsed({ issuedAt: '2026-07-01T00:00:00.000Z' }));
+
+    const latest = await service.latestForMany([endpointId]);
+
+    expect(latest.get(endpointId)?.id).toBe(newest.id);
+    expect(latest.get(endpointId)?.id).toBe((await service.latestFor(endpointId))?.id);
+  });
+
   it('pages newest first', async () => {
     for (const day of ['01', '02', '03', '04', '05']) {
       await service.record(endpointId, parsed({ issuedAt: `2026-08-${day}T00:00:00.000Z` }));
