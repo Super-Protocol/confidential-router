@@ -218,6 +218,76 @@ describe('sync', () => {
     expect(catalog.list().map((model) => model.id)).toEqual([endpoint.modelId]);
   });
 
+  it('rebuilds the catalogue from the rows even when it projected no flip of its own', async () => {
+    // SUP-600. A second writer — the pod still serving while this one boots
+    // beside it, under the chart's default rolling update — can leave the row
+    // saying `verified` before this process has ever projected a verdict onto
+    // it. Then this pass sees an admission that matches the row, flips nothing,
+    // and under the old `if (flipped)` gate never rebuilt: `/v1/models` answered
+    // empty for the life of the pod while `/admin/health` read the row and
+    // called the upstream serving.
+    const endpoint = await seedExternalEndpoint(dataSource);
+    // This process's boot: every row held at `pending`, the catalogue built from
+    // them and therefore empty.
+    await catalog.refresh();
+    expect(catalog.list()).toEqual([]);
+    // The other writer's poll, against its own sidecar.
+    await dataSource.getRepository(ExternalEndpoint).update(
+      { id: endpoint.id },
+      {
+        status: 'verified',
+        lastCheckedAt: new Date('2026-10-06T11:59:58.000Z'),
+        measurementSeen: MEASUREMENT,
+        measurementSource: 'operator-pinned',
+        evidenceDigestSeen: DIGEST,
+        pinnedCertFingerprint: FINGERPRINT,
+        lastSuccessAt: new Date('2026-10-06T11:59:58.000Z'),
+        notServingSince: null,
+      },
+    );
+    sidecarReports(verified(endpoint.name));
+
+    await expect(service.sync(NOW)).resolves.toMatchObject({ seen: 1, flipped: 0 });
+
+    expect((await rowOf(endpoint.id)).status).toBe('verified');
+    expect(catalog.list().map((model) => model.id)).toEqual([endpoint.modelId]);
+  });
+
+  it('does not call /health an outage when a write straddles the pass (SUP-600)', async () => {
+    // A pass reads the rows at its start and rebuilds the catalogue at its end,
+    // so `serving` and `routable` come from two reads one pass apart. The pod
+    // booting beside this one lands its `resetToPending` between them on every
+    // rolling update — and that window is exactly the one an operator watches
+    // `routable == serving` in to confirm this fix worked. One disagreeing pass
+    // is therefore not a fault; two in a row are.
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    sidecarReports(verified(endpoint.name));
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
+
+    // The other pod's reset, committed after this pass read the rows and before
+    // it rebuilt the catalogue.
+    const rebuild = catalog.refresh.bind(catalog);
+    const straddle = vi.spyOn(catalog, 'refresh').mockImplementation(async () => {
+      await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { status: 'pending' });
+      return rebuild();
+    });
+
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 0 });
+
+    // A second pass still short of the rows is no longer explicable as one write
+    // landing mid-pass — the window closes, and a catalogue that stays behind is
+    // the fault itself.
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'outage', serving: 1, routable: 0 });
+
+    // With the other writer gone, the next pass finds the two agreeing again.
+    straddle.mockRestore();
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
+  });
+
   it('drops the model the moment a verdict turns negative', async () => {
     // Decision 5, as seen from router-api's side: the sidecar refuses at the
     // egress, and admission stops offering the model in the same pass.

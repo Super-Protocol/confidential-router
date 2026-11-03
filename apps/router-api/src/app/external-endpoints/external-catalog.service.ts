@@ -111,7 +111,9 @@ export interface ExternalCatalogueEntry {
  * underneath a running process". That assumption is still true, and this class
  * exists so that it stays narrowly true: external models *can* change underneath
  * a running process, twice over. An admin registers or edits one, and the sidecar
- * flips an endpoint's verdict. Both call {@link refresh}.
+ * flips an endpoint's verdict. Both call {@link refresh}, and so does every
+ * status poll — a map built from rows another writer can move is only as good as
+ * the last time it was re-derived from them (SUP-600).
  *
  * Membership is the fail-closed drop of decision 5, and it is a property of this
  * map rather than a check at the call site: a model is here **iff** its endpoint
@@ -128,6 +130,25 @@ export class ExternalCatalogService {
   private models = new Map<string, ExternalCatalogModel>();
   private unadmitted = new Map<string, UnadmittedExternalModel>();
   private catalogue: ExternalCatalogueEntry[] = [];
+  /**
+   * The enabled endpoints the maps above will route to, by id — this map's own
+   * record of whom it admits, kept so that {@link routableEndpoints} can answer
+   * for an upstream that has no models yet as well as for one that has
+   * (SUP-600).
+   */
+  private admitting = new Set<string>();
+  /**
+   * The refreshes in flight, serialised.
+   *
+   * {@link refresh} reads the rows and then assigns the maps, so two overlapping
+   * calls can finish in the order they read rather than the order they started —
+   * and the one that read first assigning last would restore a model an admin
+   * has just disabled, until the next pass. Chaining them makes the newest read
+   * the newest assignment. The poll now calls this every five seconds rather
+   * than only on a flip, which is what turns that from a theoretical ordering
+   * into one worth closing.
+   */
+  private queue: Promise<number> = Promise.resolve(0);
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
@@ -171,8 +192,57 @@ export class ExternalCatalogService {
    * gatekeeper's own dashboard snapshots are full rather than incremental: a
    * reader that missed an update must not be able to drift. There are tens of
    * these rows, not thousands.
+   *
+   * The status pass calls it on **every** poll, not only on the ones that
+   * projected a flip (SUP-600). The gate that used to stand at that call site —
+   * `if (flipped || expired)` — asked whether *this process* had seen the
+   * admission move, which is not the same question as whether the rows moved. A
+   * rolling update is where the two come apart: the chart ships
+   * `replicaCount: 1` with Kubernetes' default `maxSurge`, so the new pod boots
+   * beside the old one and the two poll their own sidecar against one database.
+   * The new pod's {@link ExternalEndpointStatusService.resetToPending} puts the
+   * row back to `pending` and builds an empty catalogue; the old pod — still
+   * taking every request — projects its own admitting verdict on its next poll
+   * and writes `verified` back. From then on the new pod reads a row that
+   * already says `verified`, sees no transition of its own and never rebuilds:
+   * `/v1/models` answers empty and every completion is a 503
+   * `attestation_failed`, for the life of the pod, while `/admin/health` reads
+   * the row and reports the upstream as serving. That cost production a dark
+   * `/v1` on every deploy train until an operator cycled the endpoint by hand —
+   * which is this refresh reached by another route.
+   *
+   * Two indexed reads of tens of rows every five seconds is the whole price,
+   * and it buys the one property a cache of shared state has to have: it is
+   * re-derived from its source rather than from one process's account of what
+   * changed.
+   *
+   * Serialised — see {@link queue}.
    */
   async refresh(): Promise<number> {
+    const next = this.queue.then(
+      () => this.rebuild(),
+      () => this.rebuild(),
+    );
+    this.queue = next;
+    return next;
+  }
+
+  /**
+   * How many enabled upstreams these maps will route to right now.
+   *
+   * The catalogue's side of the comparison `/health` publishes (SUP-600): the
+   * rows' own count of admitting upstreams is `serving`, this is what admission
+   * will actually do with them, and the two being equal is the invariant. Counted
+   * in endpoints rather than models so that the two numbers are the same unit,
+   * and off {@link admitting} rather than off the model map so that an admitted
+   * upstream with no models yet is not mistaken for a disagreement.
+   */
+  routableEndpoints(): number {
+    return this.admitting.size;
+  }
+
+  /** One rebuild. Call {@link refresh}; this is the body it serialises. */
+  private async rebuild(): Promise<number> {
     const rows = await this.dataSource.getRepository(Model).find({
       where: { origin: 'external', enabled: true },
       order: { id: 'ASC' },
@@ -233,6 +303,9 @@ export class ExternalCatalogService {
     this.models = models;
     this.unadmitted = unadmitted;
     this.catalogue = catalogue;
+    this.admitting = new Set(
+      [...endpoints.values()].filter((endpoint) => endpoint.status === 'verified').map((endpoint) => endpoint.id),
+    );
     return models.size;
   }
 }

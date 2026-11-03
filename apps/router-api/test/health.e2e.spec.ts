@@ -55,7 +55,15 @@ describe('GET /health', () => {
     // Whether a dark upstream reads `outage` is `external-endpoint-status.service.spec.ts`'s job.
     expect(response.body).toMatchObject({
       status: 'ok',
-      externalEndpoints: { status: 'none', registered: 0, serving: 0, failing: 0, unreachable: 0, pending: 0 },
+      externalEndpoints: {
+        status: 'none',
+        registered: 0,
+        serving: 0,
+        routable: 0,
+        failing: 0,
+        unreachable: 0,
+        pending: 0,
+      },
     });
   });
 
@@ -69,6 +77,7 @@ describe('GET /health', () => {
       'failing',
       'pending',
       'registered',
+      'routable',
       'serving',
       'status',
       'unreachable',

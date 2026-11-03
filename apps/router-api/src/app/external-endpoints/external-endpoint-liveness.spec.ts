@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import {
+  type CatalogueReach,
   durationSince,
   expectedToServe,
   isOutage,
@@ -171,20 +172,35 @@ describe('isOutage', () => {
 describe('summarise', () => {
   const read = new Date(NOW.getTime() - 5_000);
 
+  /** A catalogue that agrees with the rows, and a pass before it that did too. */
+  const reach = (routable: number, behindBefore = false): CatalogueReach => ({ routable, behindBefore });
+
+  it('calls the catalogue falling behind an outage only once it has twice', () => {
+    // SUP-600. A pass reads the rows at its start and rebuilds the catalogue at
+    // its end, so a write between the two — the pod booting beside this one, on
+    // every rolling update — leaves them disagreeing for that one pass with
+    // nothing wrong. The fault this pair names lasted the life of a pod.
+    const serving = [livenessOf(row(), THRESHOLDS, NOW)];
+
+    expect(summarise(serving, read, reach(0))).toMatchObject({ status: 'ok', serving: 1, routable: 0 });
+    expect(summarise(serving, read, reach(0, true))).toMatchObject({ status: 'outage', serving: 1, routable: 0 });
+  });
+
   it('says none when nothing is registered, so there is nothing to be wrong', () => {
-    expect(summarise([], null)).toMatchObject({ status: 'none', registered: 0 });
+    expect(summarise([], null, reach(0))).toMatchObject({ status: 'none', registered: 0 });
   });
 
   it('says unknown while no verdict has been read back', () => {
     const liveness = livenessOf(row({ status: 'pending', lastCheckedAt: null }), THRESHOLDS, NOW);
-    expect(summarise([liveness], null).status).toBe('unknown');
+    expect(summarise([liveness], null, reach(0)).status).toBe('unknown');
   });
 
   it('says ok only when every enabled upstream is serving', () => {
-    expect(summarise([livenessOf(row(), THRESHOLDS, NOW)], read)).toMatchObject({
+    expect(summarise([livenessOf(row(), THRESHOLDS, NOW)], read, reach(1))).toMatchObject({
       status: 'ok',
       registered: 1,
       serving: 1,
+      routable: 1,
       failing: 0,
       unreachable: 0,
       pending: 0,
@@ -194,7 +210,7 @@ describe('summarise', () => {
 
   it('says degraded for a refusal below the thresholds, and names no endpoint', () => {
     const fresh = dark({ consecutiveFailures: 1, notServingSince: new Date(NOW.getTime() - 60_000) });
-    const summary = summarise([livenessOf(fresh, THRESHOLDS, NOW)], read);
+    const summary = summarise([livenessOf(fresh, THRESHOLDS, NOW)], read, reach(0));
 
     expect(summary).toMatchObject({ status: 'degraded', failing: 1, unreachable: 1, serving: 0 });
     // Public and unauthenticated: counts, never identity (SUP-221 ruling 3).
@@ -202,7 +218,11 @@ describe('summarise', () => {
   });
 
   it('says outage once a run has crossed a threshold, with the oldest start', () => {
-    const summary = summarise([livenessOf(dark(), THRESHOLDS, NOW), livenessOf(row(), THRESHOLDS, NOW)], read);
+    const summary = summarise(
+      [livenessOf(dark(), THRESHOLDS, NOW), livenessOf(row(), THRESHOLDS, NOW)],
+      read,
+      reach(1),
+    );
 
     expect(summary).toMatchObject({
       status: 'outage',
@@ -222,7 +242,7 @@ describe('summarise', () => {
       notServingSince: new Date(NOW.getTime() - 16 * 60_000),
     });
 
-    expect(summarise([livenessOf(silent, THRESHOLDS, NOW)], null).status).toBe('outage');
+    expect(summarise([livenessOf(silent, THRESHOLDS, NOW)], null, reach(0)).status).toBe('outage');
   });
 });
 

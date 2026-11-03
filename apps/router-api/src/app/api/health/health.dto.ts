@@ -81,8 +81,23 @@ export class ExternalEndpointsHealthDto {
   @ApiProperty({ description: 'Enabled upstreams. One an operator disabled is out of service and counted nowhere.' })
   registered!: number;
 
-  @ApiProperty({ description: 'Holding an admitting verdict right now — what the catalogue will route to.' })
+  @ApiProperty({
+    description:
+      'Holding an admitting verdict right now, as of the last pass — the stored rows’ answer, not a promise ' +
+      'about `/v1`. Compare `routable`.',
+  })
   serving!: number;
+
+  @ApiProperty({
+    description:
+      'How many enabled upstreams the catalogue the gateway resolves against will actually route to — ' +
+      'admission’s own answer, derived independently of the rows’ and in the same unit, so the two are meant ' +
+      'to be equal. `routable` below `serving` means a model whose row says it is admitted is being refused ' +
+      'with a 503 `attestation_failed`. The two come from two reads one pass apart, so a single disagreeing ' +
+      'pass can be a write that landed between them; `status` becomes `outage` only once a second ' +
+      'consecutive pass is still short. Recovery: cycle the endpoint, or restart the pod.',
+  })
+  routable!: number;
 
   @ApiProperty({ description: 'Denied by the last check: this router looked and refused.' })
   failing!: number;

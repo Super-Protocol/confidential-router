@@ -202,13 +202,50 @@ export interface ExternalEndpointsStatus {
    *   never answered.
    * - `ok` — every enabled upstream holds an admitting verdict.
    * - `degraded` — at least one does not, and no run has passed a threshold yet.
-   * - `outage` — at least one run has. This is the value to alert on.
+   * - `outage` — at least one run has, **or** `routable` has been behind
+   *   `serving` for two consecutive passes: the rows admit an upstream and
+   *   admission refuses it (SUP-600). This is the value to alert on.
    */
   status: 'none' | 'unknown' | 'ok' | 'degraded' | 'outage';
   /** Enabled upstreams. A disabled one is out of service and counted nowhere. */
   registered: number;
-  /** Holding an admitting verdict right now — what the catalogue will route to. */
+  /**
+   * Holding an admitting verdict right now, as of the last pass — the rows' own
+   * answer, and **not** a promise about `/v1` (SUP-600).
+   */
   serving: number;
+  /**
+   * How many enabled upstreams the *catalogue* will route to — admission's own
+   * answer, counted independently of the rows'.
+   *
+   * Not a subset of {@link serving} but a second derivation of it, in the same
+   * unit and from the same table: `serving` is what the stored verdicts say,
+   * this is what `/v1` will do with them, and the two are meant to be equal.
+   * `routable < serving` means a model whose row says it is admitted is being
+   * refused with a 503 `attestation_failed`.
+   *
+   * **The two come from two reads, one pass apart at most.** `serving` is
+   * derived from the rows the pass read at its start plus the verdicts it then
+   * projected; `routable` from the rebuild at its end. A write that lands
+   * between them — which is exactly what the pod booting beside this one does
+   * during the surge window — makes them differ for that one pass and no
+   * longer. So a single disagreeing pass is not a fault, and
+   * {@link ExternalEndpointsStatus.status} waits for a second one before it says
+   * `outage`: one pass's two reads can straddle a commit, two consecutive
+   * passes' four cannot straddle the same one. The fault this pair exists to
+   * name did not come and go — it lasted for the life of the pod.
+   *
+   * Here because that pair happened and this document could not say so. A cold
+   * pod start left the row saying `verified` and this router's catalogue empty;
+   * `serving: 1` was the whole answer an operator got while production's `/v1`
+   * was dark. The cause is fixed — the catalogue is re-derived from the rows on
+   * every pass — and the comparison stays, because "what the row says" and "what
+   * admission will do" are different facts and a health document that reports
+   * one as if it were the other is how that outage stayed invisible. An
+   * inequality also makes {@link ExternalEndpointsStatus.status} `outage`, so
+   * nothing has to notice two numbers to notice the fault.
+   */
+  routable: number;
   /** Denied by the last check: this router looked and refused. */
   failing: number;
   /** Of {@link failing}, those whose last check never got a document back. */
@@ -227,9 +264,23 @@ export interface ExternalEndpointsStatus {
   verdictsReadAt?: string;
 }
 
+/**
+ * The catalogue's side of the `/health` cross-check (SUP-600).
+ *
+ * Two facts that have to travel together, because one of them is only
+ * meaningful as a repetition — see {@link ExternalEndpointsStatus.routable}.
+ */
+export interface CatalogueReach {
+  /** How many enabled upstreams the catalogue will route to, as this pass left it. */
+  routable: number;
+  /** Whether the pass before this one was already short of `serving`. */
+  behindBefore: boolean;
+}
+
 export function summarise(
   livenesses: readonly EndpointLiveness[],
   verdictsReadAt: Date | null,
+  catalogue: CatalogueReach,
 ): ExternalEndpointsStatus {
   const failing = livenesses.filter((liveness) => liveness.status === 'denied');
   const since = livenesses
@@ -238,10 +289,14 @@ export function summarise(
     .filter((value): value is Date => value !== null)
     .reduce<Date | null>((oldest, value) => (oldest === null || value < oldest ? value : oldest), null);
 
+  const serving = livenesses.filter((liveness) => liveness.status === 'verified').length;
+  const { routable, behindBefore } = catalogue;
+
   return {
-    status: statusOfSummary(livenesses, verdictsReadAt),
+    status: statusOfSummary(livenesses, verdictsReadAt, routable < serving && behindBefore),
     registered: livenesses.length,
-    serving: livenesses.filter((liveness) => liveness.status === 'verified').length,
+    serving,
+    routable,
     failing: failing.length,
     unreachable: failing.filter((liveness) => liveness.reachability === 'unreachable').length,
     pending: livenesses.filter((liveness) => liveness.status === 'pending').length,
@@ -253,11 +308,19 @@ export function summarise(
 function statusOfSummary(
   livenesses: readonly EndpointLiveness[],
   verdictsReadAt: Date | null,
+  /** The catalogue has been short of the rows for two passes running. */
+  unroutable: boolean,
 ): ExternalEndpointsStatus['status'] {
   if (livenesses.length === 0) {
     return 'none';
   }
-  if (livenesses.some((liveness) => liveness.outage)) {
+  // Two causes, one word. A run that crossed a threshold is the upstream's
+  // outage; a catalogue two passes short of the rows is this router's own — the
+  // rows admit and admission refuses, which is the same thing to a caller and
+  // was reported as `ok` until SUP-600. Saying `outage` is what lets a probe
+  // that watches one field catch it; the two counts beside it say which of the
+  // two it is.
+  if (unroutable || livenesses.some((liveness) => liveness.outage)) {
     return 'outage';
   }
   // Checked after `outage` on purpose: a threshold crossed on elapsed time is a

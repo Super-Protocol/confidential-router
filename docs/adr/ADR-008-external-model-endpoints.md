@@ -416,9 +416,14 @@ display; rotation is a new write). This is the repo's first reversible secret at
 pattern should be written once, in one module.
 
 Catalogue runtime behaviour: external models live in a second in-memory map beside the config
-catalogue, refreshed on admin mutation and on status flips from the sidecar poll — the
+catalogue, refreshed on admin mutation and on **every** pass of the sidecar poll — the
 `catalog.service.ts:49-51` assumption ("config cannot change underneath a running process") stays
-true for config models and is explicitly not extended to external ones. A model is listed in
+true for config models and is explicitly not extended to external ones. Refreshing only on a status
+flip *this process observed* was not the same rule and cost production an outage per deploy train
+(SUP-600): under the chart's default rolling update two pods write these rows, so the pod that
+boots can read a row another pod flipped, see no transition of its own, and keep an empty catalogue
+for its whole life. A cache of rows a second writer can move is only as good as the last time it was
+re-derived from them, and re-deriving it is two indexed reads of tens of rows. A model is listed in
 `/v1/models` and resolvable by the gateway **iff its endpoint status is `verified`** — the
 fail-closed drop of decision 5, enforced at admission as well as at the egress.
 
