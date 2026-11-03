@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In, LessThan } from 'typeorm';
+import { DataSource, LessThan } from 'typeorm';
 import { routerConfig } from '../config.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
@@ -162,25 +162,27 @@ export class EvidenceService {
       .findOne({ where: { endpointId }, order: { issuedAt: 'DESC', fetchedAt: 'DESC' } });
   }
 
-  /** Same, for a list of endpoints — the Overview table's one query. */
+  /**
+   * Same, for a list of endpoints — what the Overview, the Models screen and
+   * `/v1/models` read on every request.
+   *
+   * One `latestFor` per endpoint rather than one query over all of them: the
+   * table only ever grows, and reading every snapshot an endpoint has published
+   * — bundles and certificates included — to keep the last one made `models`
+   * slower every day until the console timed out on it (SUP-598). A window
+   * function would do it in one round trip but is not portable to SQLite, and
+   * a deployment has a handful of endpoints, so this is a handful of LIMIT 1s.
+   */
   async latestForMany(endpointIds: string[]): Promise<Map<string, EvidenceSnapshot>> {
+    const unique = [...new Set(endpointIds)];
+    const rows = await Promise.all(unique.map((endpointId) => this.latestFor(endpointId)));
     const latest = new Map<string, EvidenceSnapshot>();
-    if (endpointIds.length === 0) {
-      return latest;
-    }
-    // Ordered ascending so that the last row written per endpoint is the newest;
-    // a window function would be tighter but is not portable to SQLite.
-    const rows = await this.dataSource.getRepository(EvidenceSnapshot).find({
-      where: { endpointId: In(endpointIds) },
-      order: { issuedAt: 'ASC', fetchedAt: 'ASC' },
-    });
-    for (const row of rows) {
-      // Narrowing, not filtering: the `where` above names the ids, so a null here
-      // would mean the query had picked up an upstream's publication.
-      if (row.endpointId) {
-        latest.set(row.endpointId, row);
+    unique.forEach((endpointId, index) => {
+      const row = rows[index];
+      if (row) {
+        latest.set(endpointId, row);
       }
-    }
+    });
     return latest;
   }
 
