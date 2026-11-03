@@ -240,11 +240,13 @@ export class ExternalEndpointStatusService {
     report.expired += expired.rows.length;
     report.events += expired.rows.length;
 
-    if (report.flipped > 0 || report.expired > 0) {
-      // Membership of `/v1/models` follows the verdict, so the map is rebuilt in
-      // the same pass that saw the flip rather than on the next request.
-      await this.catalog.refresh();
-    }
+    // Membership of `/v1/models` follows the verdict, so the map is rebuilt in
+    // the pass that read it rather than on the next request — and in every pass,
+    // not only the ones that flipped something. "This process saw the admission
+    // move" and "the rows moved" are different facts whenever a second writer
+    // exists, and a rolling update makes one exist (SUP-600, and
+    // {@link ExternalCatalogService.refresh} for what it cost).
+    await this.catalog.refresh();
     const alerts = await this.alertOnOutages(expired.projected, now);
     report.outages = alerts.declared;
     report.events += alerts.declared + alerts.recovered;
@@ -274,9 +276,9 @@ export class ExternalEndpointStatusService {
     // This is the path a wedged sidecar leaves the router on, so it is the path
     // that has to let go of the verdicts it can no longer re-read (SUP-583).
     const expired = await this.expireStaleVerdicts(endpoints, now);
-    if (expired.rows.length > 0) {
-      await this.catalog.refresh();
-    }
+    // Unconditional for the reason {@link sync} states: the rows are what the
+    // catalogue is a projection of, and this pass has just read them (SUP-600).
+    await this.catalog.refresh();
     await this.alertOnOutages(expired.projected, now);
     this.publish(expired.projected, null, now);
   }
@@ -461,7 +463,10 @@ export class ExternalEndpointStatusService {
   private publish(rows: readonly ExternalEndpoint[], verdictsReadAt: Date | null, now: Date): void {
     const thresholds = this.thresholds();
     const livenesses: EndpointLiveness[] = rows.map((row) => livenessOf(row, thresholds, now));
-    this.health.report(livenesses, verdictsReadAt);
+    // The catalogue's own count travels with the rows' — the two answer different
+    // questions, and publishing only the rows' is what let a dark `/v1` read as
+    // `serving: 1` (SUP-600).
+    this.health.report(livenesses, verdictsReadAt, this.catalog.list().length);
   }
 
   private thresholds(): OutageThresholds {

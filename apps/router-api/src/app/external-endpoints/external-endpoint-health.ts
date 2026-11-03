@@ -21,6 +21,7 @@ import { type EndpointLiveness, type ExternalEndpointsStatus, summarise } from '
 export class ExternalEndpointHealth {
   private livenesses: readonly EndpointLiveness[] = [];
   private verdictsReadAt: Date | null = null;
+  private routableModels = 0;
 
   /**
    * Publishes the latest view of every *enabled* endpoint.
@@ -30,15 +31,20 @@ export class ExternalEndpointHealth {
    *   whose sidecar read failed. A null never clears an earlier timestamp: the
    *   question it answers is "when did this router last hear from the sidecar",
    *   and the answer to that does not become "never" because one poll failed.
+   * @param routableModels how many external models the catalogue the gateway
+   *   resolves against holds, as the same pass left it — the second reader, so
+   *   that the two cannot disagree in silence
+   *   ({@link ExternalEndpointsStatus.routableModels}, SUP-600).
    */
-  report(livenesses: readonly EndpointLiveness[], verdictsReadAt: Date | null): void {
+  report(livenesses: readonly EndpointLiveness[], verdictsReadAt: Date | null, routableModels: number): void {
     this.livenesses = livenesses;
+    this.routableModels = routableModels;
     if (verdictsReadAt) {
       this.verdictsReadAt = verdictsReadAt;
     }
   }
 
   status(): ExternalEndpointsStatus {
-    return summarise(this.livenesses, this.verdictsReadAt);
+    return summarise(this.livenesses, this.verdictsReadAt, this.routableModels);
   }
 }

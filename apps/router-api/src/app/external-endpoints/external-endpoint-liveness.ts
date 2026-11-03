@@ -207,8 +207,28 @@ export interface ExternalEndpointsStatus {
   status: 'none' | 'unknown' | 'ok' | 'degraded' | 'outage';
   /** Enabled upstreams. A disabled one is out of service and counted nowhere. */
   registered: number;
-  /** Holding an admitting verdict right now — what the catalogue will route to. */
+  /**
+   * Holding an admitting verdict right now, as of the last pass — the rows' own
+   * answer, and **not** a promise about `/v1` (SUP-600).
+   */
   serving: number;
+  /**
+   * External models `/v1/models` will actually list, read off the catalogue the
+   * gateway resolves against rather than off the rows.
+   *
+   * Here because the two can disagree, and when they do this document was the
+   * only place that could have said so and did not. A cold pod start left the row
+   * saying `verified` and this router's catalogue empty; `serving: 1` was the
+   * answer an operator got while every single request was refused with a 503
+   * `attestation_failed`. The cause is fixed — the catalogue is re-derived from
+   * the rows on every pass — and the count stays, because "what admission will
+   * do" is a different fact from "what the row says" and a health document that
+   * reports one as if it were the other is how that outage stayed invisible.
+   *
+   * Zero beside a non-zero `serving` is therefore the shape to act on, and the
+   * recovery is the same by either route: cycle the endpoint, or restart the pod.
+   */
+  routableModels: number;
   /** Denied by the last check: this router looked and refused. */
   failing: number;
   /** Of {@link failing}, those whose last check never got a document back. */
@@ -230,6 +250,7 @@ export interface ExternalEndpointsStatus {
 export function summarise(
   livenesses: readonly EndpointLiveness[],
   verdictsReadAt: Date | null,
+  routableModels: number,
 ): ExternalEndpointsStatus {
   const failing = livenesses.filter((liveness) => liveness.status === 'denied');
   const since = livenesses
@@ -242,6 +263,7 @@ export function summarise(
     status: statusOfSummary(livenesses, verdictsReadAt),
     registered: livenesses.length,
     serving: livenesses.filter((liveness) => liveness.status === 'verified').length,
+    routableModels,
     failing: failing.length,
     unreachable: failing.filter((liveness) => liveness.reachability === 'unreachable').length,
     pending: livenesses.filter((liveness) => liveness.status === 'pending').length,

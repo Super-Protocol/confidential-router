@@ -172,19 +172,20 @@ describe('summarise', () => {
   const read = new Date(NOW.getTime() - 5_000);
 
   it('says none when nothing is registered, so there is nothing to be wrong', () => {
-    expect(summarise([], null)).toMatchObject({ status: 'none', registered: 0 });
+    expect(summarise([], null, 0)).toMatchObject({ status: 'none', registered: 0 });
   });
 
   it('says unknown while no verdict has been read back', () => {
     const liveness = livenessOf(row({ status: 'pending', lastCheckedAt: null }), THRESHOLDS, NOW);
-    expect(summarise([liveness], null).status).toBe('unknown');
+    expect(summarise([liveness], null, 0).status).toBe('unknown');
   });
 
   it('says ok only when every enabled upstream is serving', () => {
-    expect(summarise([livenessOf(row(), THRESHOLDS, NOW)], read)).toMatchObject({
+    expect(summarise([livenessOf(row(), THRESHOLDS, NOW)], read, 1)).toMatchObject({
       status: 'ok',
       registered: 1,
       serving: 1,
+      routableModels: 1,
       failing: 0,
       unreachable: 0,
       pending: 0,
@@ -194,7 +195,7 @@ describe('summarise', () => {
 
   it('says degraded for a refusal below the thresholds, and names no endpoint', () => {
     const fresh = dark({ consecutiveFailures: 1, notServingSince: new Date(NOW.getTime() - 60_000) });
-    const summary = summarise([livenessOf(fresh, THRESHOLDS, NOW)], read);
+    const summary = summarise([livenessOf(fresh, THRESHOLDS, NOW)], read, 0);
 
     expect(summary).toMatchObject({ status: 'degraded', failing: 1, unreachable: 1, serving: 0 });
     // Public and unauthenticated: counts, never identity (SUP-221 ruling 3).
@@ -202,7 +203,7 @@ describe('summarise', () => {
   });
 
   it('says outage once a run has crossed a threshold, with the oldest start', () => {
-    const summary = summarise([livenessOf(dark(), THRESHOLDS, NOW), livenessOf(row(), THRESHOLDS, NOW)], read);
+    const summary = summarise([livenessOf(dark(), THRESHOLDS, NOW), livenessOf(row(), THRESHOLDS, NOW)], read, 1);
 
     expect(summary).toMatchObject({
       status: 'outage',
@@ -222,7 +223,7 @@ describe('summarise', () => {
       notServingSince: new Date(NOW.getTime() - 16 * 60_000),
     });
 
-    expect(summarise([livenessOf(silent, THRESHOLDS, NOW)], null).status).toBe('outage');
+    expect(summarise([livenessOf(silent, THRESHOLDS, NOW)], null, 0).status).toBe('outage');
   });
 });
 

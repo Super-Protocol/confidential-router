@@ -111,7 +111,9 @@ export interface ExternalCatalogueEntry {
  * underneath a running process". That assumption is still true, and this class
  * exists so that it stays narrowly true: external models *can* change underneath
  * a running process, twice over. An admin registers or edits one, and the sidecar
- * flips an endpoint's verdict. Both call {@link refresh}.
+ * flips an endpoint's verdict. Both call {@link refresh}, and so does every
+ * status poll — a map built from rows another writer can move is only as good as
+ * the last time it was re-derived from them (SUP-600).
  *
  * Membership is the fail-closed drop of decision 5, and it is a property of this
  * map rather than a check at the call site: a model is here **iff** its endpoint
@@ -171,6 +173,29 @@ export class ExternalCatalogService {
    * gatekeeper's own dashboard snapshots are full rather than incremental: a
    * reader that missed an update must not be able to drift. There are tens of
    * these rows, not thousands.
+   *
+   * The status pass calls it on **every** poll, not only on the ones that
+   * projected a flip (SUP-600). The gate that used to stand at that call site —
+   * `if (flipped || expired)` — asked whether *this process* had seen the
+   * admission move, which is not the same question as whether the rows moved. A
+   * rolling update is where the two come apart: the chart ships
+   * `replicaCount: 1` with Kubernetes' default `maxSurge`, so the new pod boots
+   * beside the old one and the two poll their own sidecar against one database.
+   * The new pod's {@link ExternalEndpointStatusService.resetToPending} puts the
+   * row back to `pending` and builds an empty catalogue; the old pod — still
+   * taking every request — projects its own admitting verdict on its next poll
+   * and writes `verified` back. From then on the new pod reads a row that
+   * already says `verified`, sees no transition of its own and never rebuilds:
+   * `/v1/models` answers empty and every completion is a 503
+   * `attestation_failed`, for the life of the pod, while `/admin/health` reads
+   * the row and reports the upstream as serving. That cost production a dark
+   * `/v1` on every deploy train until an operator cycled the endpoint by hand —
+   * which is this refresh reached by another route.
+   *
+   * Two indexed reads of tens of rows every five seconds is the whole price,
+   * and it buys the one property a cache of shared state has to have: it is
+   * re-derived from its source rather than from one process's account of what
+   * changed.
    */
   async refresh(): Promise<number> {
     const rows = await this.dataSource.getRepository(Model).find({

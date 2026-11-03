@@ -28,7 +28,7 @@ describe('ExternalEndpointHealth', () => {
 
   it('reports the count from the rows and the timestamp from the sidecar read', () => {
     const health = new ExternalEndpointHealth();
-    health.report([serving('a')], READ);
+    health.report([serving('a')], READ, 1);
 
     expect(health.status()).toMatchObject({
       status: 'ok',
@@ -38,15 +38,27 @@ describe('ExternalEndpointHealth', () => {
     });
   });
 
+  it('reports the catalogue beside the rows, so a dark /v1 cannot read as serving', () => {
+    // SUP-600. The row said `verified` and this process's catalogue was empty,
+    // so `/v1/models` answered `[]` and every completion was a 503 while this
+    // document said `serving: 1`. The cause is fixed; the count stays, because
+    // the two readers disagreeing has to be visible in the document an operator
+    // opens during an outage.
+    const health = new ExternalEndpointHealth();
+    health.report([serving('a')], READ, 0);
+
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routableModels: 0 });
+  });
+
   it('keeps the last read timestamp when a pass could not reach the sidecar', () => {
     // The shape of "this router is no longer being told anything": the counts
     // stay true to the last projection while the timestamp stops moving. Clearing
     // it would answer "when did we last hear from the sidecar" with "never",
     // which is false and strictly less useful.
     const health = new ExternalEndpointHealth();
-    health.report([serving('a')], READ);
+    health.report([serving('a')], READ, 1);
 
-    health.report([serving('a')], null);
+    health.report([serving('a')], null, 1);
 
     expect(health.status().verdictsReadAt).toBe(READ.toISOString());
   });
