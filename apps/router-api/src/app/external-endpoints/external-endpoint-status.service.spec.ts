@@ -253,6 +253,41 @@ describe('sync', () => {
     expect(catalog.list().map((model) => model.id)).toEqual([endpoint.modelId]);
   });
 
+  it('does not call /health an outage when a write straddles the pass (SUP-600)', async () => {
+    // A pass reads the rows at its start and rebuilds the catalogue at its end,
+    // so `serving` and `routable` come from two reads one pass apart. The pod
+    // booting beside this one lands its `resetToPending` between them on every
+    // rolling update — and that window is exactly the one an operator watches
+    // `routable == serving` in to confirm this fix worked. One disagreeing pass
+    // is therefore not a fault; two in a row are.
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    sidecarReports(verified(endpoint.name));
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
+
+    // The other pod's reset, committed after this pass read the rows and before
+    // it rebuilt the catalogue.
+    const rebuild = catalog.refresh.bind(catalog);
+    const straddle = vi.spyOn(catalog, 'refresh').mockImplementation(async () => {
+      await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { status: 'pending' });
+      return rebuild();
+    });
+
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 0 });
+
+    // A second pass still short of the rows is no longer explicable as one write
+    // landing mid-pass — the window closes, and a catalogue that stays behind is
+    // the fault itself.
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'outage', serving: 1, routable: 0 });
+
+    // With the other writer gone, the next pass finds the two agreeing again.
+    straddle.mockRestore();
+    await service.sync(NOW);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
+  });
+
   it('drops the model the moment a verdict turns negative', async () => {
     // Decision 5, as seen from router-api's side: the sidecar refuses at the
     // egress, and admission stops offering the model in the same pass.

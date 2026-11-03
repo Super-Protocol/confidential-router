@@ -34,6 +34,7 @@ describe('ExternalEndpointHealth', () => {
       status: 'ok',
       registered: 1,
       serving: 1,
+      routable: 1,
       verdictsReadAt: READ.toISOString(),
     });
   });
@@ -46,8 +47,26 @@ describe('ExternalEndpointHealth', () => {
     // word, not two numbers — in the document an operator opens during an outage.
     const health = new ExternalEndpointHealth();
     health.report([serving('a')], READ, 0);
+    health.report([serving('a')], READ, 0);
 
     expect(health.status()).toMatchObject({ status: 'outage', serving: 1, routable: 0 });
+  });
+
+  it('does not call one disagreeing pass an outage', () => {
+    // A pass reads the rows at its start and rebuilds the catalogue at its end,
+    // so the pod booting beside this one — which resets every row to `pending`
+    // on every rolling update — makes a single pass disagree with nothing wrong.
+    // Reporting that as `outage` would fire on exactly the window an operator
+    // watches `routable == serving` to confirm this fix worked.
+    const health = new ExternalEndpointHealth();
+    health.report([serving('a')], READ, 1);
+
+    health.report([serving('a')], READ, 0);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 0 });
+
+    // …and the next pass finds the two agreeing again, so nothing was ever said.
+    health.report([serving('a')], READ, 1);
+    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
   });
 
   it('keeps the last read timestamp when a pass could not reach the sidecar', () => {

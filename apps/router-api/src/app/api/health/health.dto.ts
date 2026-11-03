@@ -93,9 +93,9 @@ export class ExternalEndpointsHealthDto {
       'How many enabled upstreams the catalogue the gateway resolves against will actually route to — ' +
       'admission’s own answer, derived independently of the rows’ and in the same unit, so the two are meant ' +
       'to be equal. `routable` below `serving` means a model whose row says it is admitted is being refused ' +
-      'with a 503 `attestation_failed`, and makes `status` `outage`. Both counts come from one pass, so an ' +
-      'inequality is a real disagreement rather than two reads landing at different times. Recovery: cycle ' +
-      'the endpoint, or restart the pod.',
+      'with a 503 `attestation_failed`. The two come from two reads one pass apart, so a single disagreeing ' +
+      'pass can be a write that landed between them; `status` becomes `outage` only once a second ' +
+      'consecutive pass is still short. Recovery: cycle the endpoint, or restart the pod.',
   })
   routable!: number;
 
