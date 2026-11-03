@@ -463,10 +463,10 @@ export class ExternalEndpointStatusService {
   private publish(rows: readonly ExternalEndpoint[], verdictsReadAt: Date | null, now: Date): void {
     const thresholds = this.thresholds();
     const livenesses: EndpointLiveness[] = rows.map((row) => livenessOf(row, thresholds, now));
-    // The catalogue's own count travels with the rows' — the two answer different
-    // questions, and publishing only the rows' is what let a dark `/v1` read as
-    // `serving: 1` (SUP-600).
-    this.health.report(livenesses, verdictsReadAt, this.catalog.list().length);
+    // The catalogue's own count travels with the rows' — the two answer
+    // different questions, and publishing only the rows' is what let a dark
+    // `/v1` read as `serving: 1` (SUP-600).
+    this.health.report(livenesses, verdictsReadAt, this.catalog.routableEndpoints());
   }
 
   private thresholds(): OutageThresholds {

@@ -185,7 +185,7 @@ describe('summarise', () => {
       status: 'ok',
       registered: 1,
       serving: 1,
-      routableModels: 1,
+      routable: 1,
       failing: 0,
       unreachable: 0,
       pending: 0,

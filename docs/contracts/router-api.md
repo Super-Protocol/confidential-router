@@ -398,7 +398,7 @@ the status code is what a probe reads.
     "status": "outage",
     "registered": 1,
     "serving": 0,
-    "routableModels": 0,
+    "routable": 0,
     "failing": 1,
     "unreachable": 1,
     "pending": 0,
@@ -439,8 +439,9 @@ reads `configured` with `dropped: 0` forever. `configured` rules out the failure
   registered), `unknown` (registered, and no status pass has completed — a boot, polling switched off, or a
   sidecar that has never answered), `ok` (every enabled upstream holds an admitting verdict), `degraded`
   (one or more does not, below the thresholds) or `outage` (a run has passed
-  `externalEndpoints.outage.afterFailures` or `.afterNoSuccess`). **`outage` is the value to alert on**, and
-  the same crossing writes one `error` log line and one `outage` row on the endpoint's timeline.
+  `externalEndpoints.outage.afterFailures` or `.afterNoSuccess`, or `routable` is behind `serving`).
+  **`outage` is the value to alert on**, and a threshold crossing writes one `error` log line and one
+  `outage` row on the endpoint's timeline.
   `registered` counts enabled rows; `serving` / `failing` / `pending` are their verdicts; `unreachable` is
   the subset of `failing` the *sidecar* reported as unreachable — the dial, the handshake or the read
   failed, so nothing arrived. It is read from `Report.unreachable` and never inferred from the `fetch`
@@ -450,15 +451,15 @@ reads `configured` with `dropped: 0` forever. `configured` rules out the failure
   outstanding "not serving" began, and `verdictsReadAt` is when the sidecar's verdicts were last read: a
   timestamp that has stopped moving says the counts are stale, which is the one failure the counts cannot
   show by themselves.
-- `externalEndpoints.routableModels` (SUP-600): how many external models `GET /v1/models` will actually
-  list, read off the catalogue the gateway resolves against rather than off the rows. The second reader,
-  and **`0` beside a non-zero `serving` is the shape to act on**: the rows say an upstream is admitted and
-  admission refuses every request to it with a 503 `attestation_failed`. It exists because that pair
-  happened — a cold pod start left a row saying `verified` next to an empty catalogue, and `serving: 1` was
-  the whole answer this document gave while production's `/v1` was dark. The cause is fixed (the catalogue
-  is re-derived from the rows on every status pass), and the count stays, because "what the row says" and
-  "what admission will do" are different facts and reporting one as the other is how that outage stayed
-  invisible. Recovery by either route: cycle the endpoint, or restart the pod.
+- `externalEndpoints.routable` (SUP-600): of `serving`, how many the in-memory catalogue the gateway
+  resolves against will actually route to — admission's own answer rather than the rows'. The two are
+  meant to be equal, and **`routable` below `serving` makes `status` `outage`**: a model whose row says it
+  is admitted is being refused with a 503 `attestation_failed`. It exists because that pair happened — a
+  cold pod start left a row saying `verified` next to an empty catalogue, and `status: ok` / `serving: 1`
+  was the whole answer this document gave while production's `/v1` was dark. The cause is fixed (the
+  catalogue is re-derived from the rows on every status pass), and the comparison stays, because "what the
+  row says" and "what admission will do" are different facts and reporting one as the other is how that
+  outage stayed invisible. Recovery by either route: cycle the endpoint, or restart the pod.
 
 **Why `externalEndpoints` is here at all.** A published upstream lost the gateway route for its hostname at
 2026-10-23 06:11 UTC and this router answered `503 gatekeeper_error` / `attestation_failed` to every caller

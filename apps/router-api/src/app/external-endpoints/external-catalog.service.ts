@@ -130,6 +130,25 @@ export class ExternalCatalogService {
   private models = new Map<string, ExternalCatalogModel>();
   private unadmitted = new Map<string, UnadmittedExternalModel>();
   private catalogue: ExternalCatalogueEntry[] = [];
+  /**
+   * The enabled endpoints the maps above will route to, by id — this map's own
+   * record of whom it admits, kept so that {@link routableEndpoints} can answer
+   * for an upstream that has no models yet as well as for one that has
+   * (SUP-600).
+   */
+  private admitting = new Set<string>();
+  /**
+   * The refreshes in flight, serialised.
+   *
+   * {@link refresh} reads the rows and then assigns the maps, so two overlapping
+   * calls can finish in the order they read rather than the order they started —
+   * and the one that read first assigning last would restore a model an admin
+   * has just disabled, until the next pass. Chaining them makes the newest read
+   * the newest assignment. The poll now calls this every five seconds rather
+   * than only on a flip, which is what turns that from a theoretical ordering
+   * into one worth closing.
+   */
+  private queue: Promise<number> = Promise.resolve(0);
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
@@ -196,8 +215,34 @@ export class ExternalCatalogService {
    * and it buys the one property a cache of shared state has to have: it is
    * re-derived from its source rather than from one process's account of what
    * changed.
+   *
+   * Serialised — see {@link queue}.
    */
   async refresh(): Promise<number> {
+    const next = this.queue.then(
+      () => this.rebuild(),
+      () => this.rebuild(),
+    );
+    this.queue = next;
+    return next;
+  }
+
+  /**
+   * How many enabled upstreams these maps will route to right now.
+   *
+   * The catalogue's side of the comparison `/health` publishes (SUP-600): the
+   * rows' own count of admitting upstreams is `serving`, this is what admission
+   * will actually do with them, and the two being equal is the invariant. Counted
+   * in endpoints rather than models so that the two numbers are the same unit,
+   * and off {@link admitting} rather than off the model map so that an admitted
+   * upstream with no models yet is not mistaken for a disagreement.
+   */
+  routableEndpoints(): number {
+    return this.admitting.size;
+  }
+
+  /** One rebuild. Call {@link refresh}; this is the body it serialises. */
+  private async rebuild(): Promise<number> {
     const rows = await this.dataSource.getRepository(Model).find({
       where: { origin: 'external', enabled: true },
       order: { id: 'ASC' },
@@ -258,6 +303,9 @@ export class ExternalCatalogService {
     this.models = models;
     this.unadmitted = unadmitted;
     this.catalogue = catalogue;
+    this.admitting = new Set(
+      [...endpoints.values()].filter((endpoint) => endpoint.status === 'verified').map((endpoint) => endpoint.id),
+    );
     return models.size;
   }
 }

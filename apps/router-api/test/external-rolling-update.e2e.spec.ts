@@ -60,6 +60,8 @@ let dir: string;
 let litellmUrl: string;
 let secret: string;
 let endpointId: string;
+/** Both incarnations, so a failed assertion cannot leave a Nest app running. */
+const pods: Harness[] = [];
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'cr-train-'));
@@ -67,6 +69,11 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  // Newest first: each harness restores the environment it captured, and the
+  // older one's capture predates the newer one's.
+  for (const harness of pods.reverse()) {
+    await harness.close().catch(() => undefined);
+  }
   await oldSidecar.stop();
   await newSidecar.stop();
   await litellm.stop();
@@ -79,7 +86,7 @@ afterAll(async () => {
  * way two pods' `emptyDir` volumes are.
  */
 async function pod(sidecar: MockEgressSidecar, tag: string): Promise<Harness> {
-  return createHarness({
+  const harness = await createHarness({
     env: {
       CR_API_DATABASE__FILE: join(dir, 'router.sqlite'),
       CR_API_SECRETS_KEY: Buffer.alloc(32, 7).toString('base64url'),
@@ -92,6 +99,8 @@ async function pod(sidecar: MockEgressSidecar, tag: string): Promise<Harness> {
       },
     }),
   });
+  pods.push(harness);
+  return harness;
 }
 
 async function models(harness: Harness): Promise<string[]> {
@@ -173,7 +182,9 @@ it('the pod that survives a rolling update serves the external model', async () 
   // The new pod's own poll: its sidecar admits, and the row already agrees.
   await expect(current.app.get(ExternalEndpointStatusService).sync()).resolves.toMatchObject({ seen: 1, flipped: 0 });
 
-  // The old pod is drained. Everything now goes to the pod that never saw a flip.
+  // The old pod is drained — its process is gone and only the new one is left
+  // taking requests. The harness itself is torn down in `afterAll`, so that a
+  // failing assertion below still releases both.
   await previous.app.close();
   expect(await models(current)).toContain(MODEL_ID);
   await request(current.app.getHttpServer())
@@ -186,6 +197,5 @@ it('the pod that survives a rolling update serves the external model', async () 
   // and nothing in it said so: `serving: 1` was the whole answer an operator got
   // while `/v1` refused everything (SUP-600).
   const health = await request(current.app.getHttpServer()).get('/health').expect(200);
-  expect(health.body.externalEndpoints).toMatchObject({ status: 'ok', serving: 1, routableModels: 1 });
-  await current.close();
+  expect(health.body.externalEndpoints).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
 }, 120_000);

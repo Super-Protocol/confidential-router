@@ -84,17 +84,18 @@ export class ExternalEndpointsHealthDto {
   @ApiProperty({
     description:
       'Holding an admitting verdict right now, as of the last pass — the stored rows’ answer, not a promise ' +
-      'about `/v1`. Compare `routableModels`.',
+      'about `/v1`. Compare `routable`.',
   })
   serving!: number;
 
   @ApiProperty({
     description:
-      'External models `GET /v1/models` will actually list, read off the catalogue the gateway resolves ' +
-      'against. `0` beside a non-zero `serving` means the rows say one thing and admission does another: every ' +
-      'request to those models is refused with a 503 `attestation_failed`. Cycle the endpoint, or restart the pod.',
+      'Of `serving`, how many the catalogue the gateway resolves against will actually route to — admission’s ' +
+      'own answer rather than the rows’. The two are meant to be equal; `routable` below `serving` means a ' +
+      'model whose row says it is admitted is being refused with a 503 `attestation_failed`, and makes ' +
+      '`status` `outage`. Recovery: cycle the endpoint, or restart the pod.',
   })
-  routableModels!: number;
+  routable!: number;
 
   @ApiProperty({ description: 'Denied by the last check: this router looked and refused.' })
   failing!: number;

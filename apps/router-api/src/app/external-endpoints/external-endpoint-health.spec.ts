@@ -38,16 +38,16 @@ describe('ExternalEndpointHealth', () => {
     });
   });
 
-  it('reports the catalogue beside the rows, so a dark /v1 cannot read as serving', () => {
+  it('calls it an outage when the rows admit and the catalogue will not route', () => {
     // SUP-600. The row said `verified` and this process's catalogue was empty,
     // so `/v1/models` answered `[]` and every completion was a 503 while this
-    // document said `serving: 1`. The cause is fixed; the count stays, because
-    // the two readers disagreeing has to be visible in the document an operator
-    // opens during an outage.
+    // document said `status: ok, serving: 1`. The cause is fixed; the comparison
+    // stays, because the two readers disagreeing has to be visible — and one
+    // word, not two numbers — in the document an operator opens during an outage.
     const health = new ExternalEndpointHealth();
     health.report([serving('a')], READ, 0);
 
-    expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routableModels: 0 });
+    expect(health.status()).toMatchObject({ status: 'outage', serving: 1, routable: 0 });
   });
 
   it('keeps the last read timestamp when a pass could not reach the sidecar', () => {
