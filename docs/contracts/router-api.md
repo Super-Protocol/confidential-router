@@ -451,10 +451,12 @@ reads `configured` with `dropped: 0` forever. `configured` rules out the failure
   outstanding "not serving" began, and `verdictsReadAt` is when the sidecar's verdicts were last read: a
   timestamp that has stopped moving says the counts are stale, which is the one failure the counts cannot
   show by themselves.
-- `externalEndpoints.routable` (SUP-600): of `serving`, how many the in-memory catalogue the gateway
-  resolves against will actually route to — admission's own answer rather than the rows'. The two are
-  meant to be equal, and **`routable` below `serving` makes `status` `outage`**: a model whose row says it
-  is admitted is being refused with a 503 `attestation_failed`. It exists because that pair happened — a
+- `externalEndpoints.routable` (SUP-600): how many enabled upstreams the in-memory catalogue the gateway
+  resolves against will actually route to — admission's own answer, derived independently of the rows' and
+  in the same unit, so the two are meant to be equal. **`routable` below `serving` makes `status`
+  `outage`**: a model whose row says it is admitted is being refused with a 503 `attestation_failed`. Both
+  counts are published by one pass, so an inequality is a real disagreement and never two reads landing at
+  different times. It exists because that pair happened — a
   cold pod start left a row saying `verified` next to an empty catalogue, and `status: ok` / `serving: 1`
   was the whole answer this document gave while production's `/v1` was dark. The cause is fixed (the
   catalogue is re-derived from the rows on every status pass), and the comparison stays, because "what the

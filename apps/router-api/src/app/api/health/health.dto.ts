@@ -90,10 +90,12 @@ export class ExternalEndpointsHealthDto {
 
   @ApiProperty({
     description:
-      'Of `serving`, how many the catalogue the gateway resolves against will actually route to — admission’s ' +
-      'own answer rather than the rows’. The two are meant to be equal; `routable` below `serving` means a ' +
-      'model whose row says it is admitted is being refused with a 503 `attestation_failed`, and makes ' +
-      '`status` `outage`. Recovery: cycle the endpoint, or restart the pod.',
+      'How many enabled upstreams the catalogue the gateway resolves against will actually route to — ' +
+      'admission’s own answer, derived independently of the rows’ and in the same unit, so the two are meant ' +
+      'to be equal. `routable` below `serving` means a model whose row says it is admitted is being refused ' +
+      'with a 503 `attestation_failed`, and makes `status` `outage`. Both counts come from one pass, so an ' +
+      'inequality is a real disagreement rather than two reads landing at different times. Recovery: cycle ' +
+      'the endpoint, or restart the pod.',
   })
   routable!: number;
 

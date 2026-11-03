@@ -215,13 +215,20 @@ export interface ExternalEndpointsStatus {
    */
   serving: number;
   /**
-   * Of {@link serving}, how many the *catalogue* will route to — admission's own
-   * answer rather than the rows'.
+   * How many enabled upstreams the *catalogue* will route to — admission's own
+   * answer, counted independently of the rows'.
    *
-   * The same unit as `serving` on purpose, because the two are meant to be
-   * equal: `serving` is what the stored verdicts say, this is what `/v1` will do
-   * with them, and `routable < serving` means a model whose row says it is
-   * admitted is being refused with a 503 `attestation_failed`.
+   * Not a subset of {@link serving} but a second derivation of it, in the same
+   * unit and from the same table: `serving` is what the stored verdicts say,
+   * this is what `/v1` will do with them, and the two are meant to be equal.
+   * `routable < serving` means a model whose row says it is admitted is being
+   * refused with a 503 `attestation_failed`.
+   *
+   * Both are captured by one {@link ExternalEndpointHealth.report} call, so they
+   * always describe one instant: the document can be stale as a whole — the
+   * counts are as of the last pass, which is what `verdictsReadAt` is beside
+   * them for — but it cannot report a disagreement that is only two reads
+   * landing at different times.
    *
    * Here because that pair happened and this document could not say so. A cold
    * pod start left the row saying `verified` and this router's catalogue empty;
