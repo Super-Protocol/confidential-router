@@ -423,6 +423,47 @@ describe('the external-endpoint sidecar section', () => {
     ).toBe(false);
   });
 
+  it('defaults the relayed-evidence windows to an hourly refresh and a six-hour alert (SUP-615)', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    // An hour of refresh against the 24 hours at which every verifier rejects a
+    // bundle leaves 23 attempts' headroom; six hours of silence is five failed
+    // refreshes, which no longer reads as one bad fetch.
+    expect(config.externalEndpoints.evidenceRefreshAfter).toBe(3_600_000);
+    expect(config.externalEndpoints.evidenceStaleAfter).toBe(21_600_000);
+  });
+
+  it('refuses a staleness alert that could only fire on an already-locked console', () => {
+    for (const evidenceStaleAfter of ['24h', '48h']) {
+      const result = RouterConfigSchema.safeParse({
+        auth: { secret: SECRET },
+        externalEndpoints: { evidenceStaleAfter },
+      });
+
+      expect(result.success, evidenceStaleAfter).toBe(false);
+      expect(result.error?.issues[0].path).toEqual(['externalEndpoints', 'evidenceStaleAfter']);
+    }
+  });
+
+  it('refuses a staleness alert that fires before the refresh it is waiting on', () => {
+    const result = RouterConfigSchema.safeParse({
+      auth: { secret: SECRET },
+      externalEndpoints: { evidenceRefreshAfter: '2h', evidenceStaleAfter: '1h' },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['externalEndpoints', 'evidenceStaleAfter']);
+  });
+
+  it('lets an operator switch the staleness alert off', () => {
+    const config = RouterConfigSchema.parse({
+      auth: { secret: SECRET },
+      externalEndpoints: { evidenceStaleAfter: '0s' },
+    });
+
+    expect(config.externalEndpoints.evidenceStaleAfter).toBe(0);
+  });
+
   it('accepts the whole of the range Denis ruled on, and nothing outside it', () => {
     // Ruling 6: 10 minutes by default, bounded to [1m, 1h]. The upper bound is
     // the point of the range — "hourly" was the acceptable worst case, so a

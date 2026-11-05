@@ -25,6 +25,17 @@ const name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'must be a lowercase 
 export const MIN_REATTEST_INTERVAL_MS = 60_000;
 export const MAX_REATTEST_INTERVAL_MS = 3_600_000;
 
+/**
+ * How old a bundle may be before the verifiers that read one reject it: the
+ * console's chat gate (`evidence-gate.ts`, `MAX_BUNDLE_AGE_MS`), the browser
+ * extension and the Gatekeeper all draw the line at 24 hours.
+ *
+ * Not a knob — it is somebody else's rule, restated here because
+ * `externalEndpoints.evidenceStaleAfter` is only an *alert* if it fires on the
+ * near side of it (SUP-615).
+ */
+export const RELAYED_EVIDENCE_REJECTED_AFTER_MS = 24 * 60 * 60 * 1000;
+
 const ServerSchema = z
   .strictObject({
     port: integerish().pipe(z.number().int().min(1).max(65535)).prefault(3000),
@@ -780,6 +791,42 @@ const ExternalEndpointsSchema = z
      */
     evidencePollInterval: durationMs('1m'),
     /**
+     * How old this router's filed copy of an upstream's publication may get
+     * before a pass fetches that upstream again — even though its digest has not
+     * changed (SUP-615).
+     *
+     * The digest is a statement about *what* is deployed and it does not move
+     * while a deployment stands; `issuedAt` is a statement about *when* the
+     * upstream last said so, and it moves every time it republishes. Polling on
+     * the digest alone therefore files one copy on the day an upstream is
+     * approved and relays that same copy for as long as the deployment lives —
+     * which is what made the console report for 37 hours that a production
+     * upstream's evidence did not check out, every verifier having correctly
+     * refused a bundle signed the day before while that upstream was publishing
+     * a one-minute-old one.
+     *
+     * An hour against a 24-hour rejection window
+     * ({@link RELAYED_EVIDENCE_REJECTED_AFTER_MS}) leaves 23 attempts' worth of
+     * headroom and costs one HTTPS fetch per upstream per hour. `0` re-fetches
+     * on every pass, which is `evidencePollInterval` and is a stand's setting,
+     * not production's.
+     */
+    evidenceRefreshAfter: durationMs('1h'),
+    /**
+     * When the copy the relay hands out has aged enough to wake somebody
+     * (SUP-615).
+     *
+     * Deliberately far inside the 24 hours at which the verifiers refuse it: the
+     * alert exists so that an operator hears about a relay that stopped
+     * advancing *before* the console starts reporting that an upstream's
+     * evidence did not check out, rather than from whoever read that sentence.
+     * Six hours is five failed refreshes at the default, which no longer reads
+     * as one bad fetch.
+     *
+     * `0` turns the alert off, like `outage.afterNoSuccess`.
+     */
+    evidenceStaleAfter: durationMs('6h'),
+    /**
      * How long the egress leg waits for the sidecar's loopback listener to accept
      * a connection. Its own value rather than LiteLLM's: a refusal here means the
      * sidecar has not started that listener yet, which is a different fault with a
@@ -795,6 +842,27 @@ const ExternalEndpointsSchema = z
     readTimeout: durationMs('120s'),
   })
   .check((ctx) => {
+    const { evidenceRefreshAfter, evidenceStaleAfter } = ctx.value;
+    if (evidenceStaleAfter > 0 && evidenceStaleAfter >= RELAYED_EVIDENCE_REJECTED_AFTER_MS) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['evidenceStaleAfter'],
+        message:
+          'externalEndpoints.evidenceStaleAfter must be below 24h: that is when every verifier rejects a relayed ' +
+          'bundle outright, so an alert at or past it reports a console that is already locked (SUP-615).',
+      });
+    }
+    if (evidenceStaleAfter > 0 && evidenceRefreshAfter >= evidenceStaleAfter) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['evidenceStaleAfter'],
+        message:
+          'externalEndpoints.evidenceStaleAfter must be greater than evidenceRefreshAfter: otherwise the alert ' +
+          'fires on copies this router has not yet tried to refresh, and every upstream pages once an hour.',
+      });
+    }
     const { reattestInterval } = ctx.value;
     if (reattestInterval < MIN_REATTEST_INTERVAL_MS || reattestInterval > MAX_REATTEST_INTERVAL_MS) {
       ctx.issues.push({

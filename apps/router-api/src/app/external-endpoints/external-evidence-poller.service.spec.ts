@@ -6,7 +6,7 @@ import { RouterConfigSchema } from '../config.schema.js';
 import type { ExternalEvidenceReport, ExternalEvidenceService } from './external-evidence.service.js';
 import { ExternalEvidencePollerService } from './external-evidence-poller.service.js';
 
-const QUIET: ExternalEvidenceReport = { polled: 0, stored: 0, failed: 0 };
+const QUIET: ExternalEvidenceReport = { polled: 0, stored: 0, failed: 0, stale: 0 };
 
 function configWith(evidencePollInterval: string): ConfigType<typeof routerConfig> {
   return RouterConfigSchema.parse({
@@ -120,5 +120,19 @@ describe('pollOnce', () => {
     expect(warnings[0]).toContain('SQLITE_BUSY');
     // And the latch is released, so the next pass still runs.
     expect((poller as unknown as { running: boolean }).running).toBe(false);
+  });
+
+  it('warns about a relayed copy that has gone stale on a pass that fetched nothing (SUP-615)', async () => {
+    const poller = new ExternalEvidencePollerService(
+      configWith('1m'),
+      // The shape of the fault: nothing was polled, nothing failed, and one
+      // upstream's relayed publication is ageing out from under the verifiers.
+      evidenceStub({ refreshAll: async () => ({ polled: 0, stored: 0, failed: 0, stale: 1 }) }),
+    );
+    const warnings = capture(poller, 'warn');
+
+    await poller.pollOnce();
+
+    expect(warnings[0]).toContain('evidenceStaleAfter');
   });
 });

@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Not } from 'typeorm';
+import { OperatorAlertsService } from '../alerts/operator-alerts.service.js';
+import { routerConfig } from '../config.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 // The leaf modules rather than `../evidence/index.js`, and not as a style
@@ -12,6 +15,9 @@ import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 // current module?" pointing at a module that has nothing wrong with it.
 import { type ParsedEvidenceBundle, parseEvidenceBundle } from '../evidence/evidence-bundle.js';
 import { EVIDENCE_PATH, EvidenceFetchError, fetchEvidenceBundle } from '../evidence/evidence-fetcher.js';
+// The leaf module, for the import-cycle reason above: `./index.js` re-exports
+// this service.
+import { durationSince } from './external-endpoint-liveness.js';
 
 /**
  * Same budget as the own-endpoint poller: evidence is served by the platform's
@@ -24,11 +30,17 @@ const FETCH_TIMEOUT_MS = 10_000;
 type ByDigest = Map<string, EvidenceSnapshot>;
 
 export interface ExternalEvidenceReport {
-  /** Endpoints that had a digest worth fetching and no snapshot for it yet. */
+  /** Endpoints this pass asked, because their filed copy was missing or due a refresh. */
   polled: number;
   stored: number;
   /** Fetches that produced nothing storable — unreachable, unparseable, or unbound. */
   failed: number;
+  /**
+   * Endpoints whose relayed publication is past `evidenceStaleAfter` — a count
+   * rather than a flag because the poller logs it and one upstream's stale copy
+   * says nothing about the next one's (SUP-615).
+   */
+  stale: number;
 }
 
 /**
@@ -60,23 +72,48 @@ export class ExternalEvidenceService {
   private readonly logger = new Logger(ExternalEvidenceService.name);
 
   /**
-   * Per endpoint, the `evidenceDigestSeen` this process has already finished a
-   * pass for — so a poll every minute does not keep asking the same question.
+   * Per endpoint, the `evidenceDigestSeen` this process last asked about and
+   * when — so a poll every minute does not keep asking the same question, and so
+   * that it does eventually ask it again.
    *
-   * It settles on three outcomes, and it is worth naming which: the publication
-   * was filed; the upstream served something that cannot be bound to this
-   * verdict's pin; or the upstream has already moved on and a fetch returns a
-   * *different* digest, which is the case that would otherwise re-fetch every
-   * minute until the sidecar's next re-attestation caught up. It does **not**
-   * settle on a transport failure — an upstream mid-restart is unreachable, not
-   * wrong, and one 503 must not suppress its summary until it next redeploys.
+   * It records an answer on three outcomes, and it is worth naming which: the
+   * publication was filed; the upstream served something that cannot be bound to
+   * this verdict's pin; or the upstream has already moved on and a fetch returns
+   * a *different* digest, which is the case that would otherwise re-fetch every
+   * minute until the sidecar's next re-attestation caught up. It records
+   * **nothing** on a transport failure — an upstream mid-restart is unreachable,
+   * not wrong, and one 503 must not suppress its summary until it next redeploys.
+   *
+   * The timestamp is the SUP-615 half. A digest-only latch is permanent for as
+   * long as a deployment stands, because the digest says *what* is deployed and
+   * only `issuedAt` says *when* the upstream last asserted it — so this router
+   * filed one copy, relayed it for 37 hours, and every verifier correctly
+   * refused a bundle signed the day before while the upstream was publishing a
+   * one-minute-old one. `evidenceRefreshAfter` is how long an answer stands
+   * before the question is worth asking again.
    *
    * One entry per endpoint, so the map is bounded by the registration count, and
    * a new verdict digest is a different value and therefore a new question.
    */
-  private readonly settled = new Map<string, string>();
+  private readonly asked = new Map<string, { digest: string; at: number }>();
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  /**
+   * Per endpoint, the `issuedAt` of the relayed publication this process has
+   * already declared stale — the latch that makes the alert fire once per run
+   * rather than once per minute (`alertOnOutages`' `alerted`, SUP-517).
+   *
+   * Keyed on the publication rather than on a boolean so that a relay which
+   * recovers and then falls behind again is a second run and earns a second
+   * message; and cleared when the copy is fresh again, which is what sends the
+   * "it is back" line an operator who was woken is owed.
+   */
+  private readonly declaredStale = new Map<string, number>();
+
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
+    private readonly alerts: OperatorAlertsService,
+  ) {}
 
   /**
    * One pass over every upstream whose last report's cryptography held.
@@ -93,42 +130,137 @@ export class ExternalEvidenceService {
    * rendered beside a measurement.
    */
   async refreshAll(now: Date = new Date()): Promise<ExternalEvidenceReport> {
-    const report: ExternalEvidenceReport = { polled: 0, stored: 0, failed: 0 };
+    const report: ExternalEvidenceReport = { polled: 0, stored: 0, failed: 0, stale: 0 };
     const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({
       where: { enabled: true, observedCertFingerprint: Not(IsNull()) },
     });
 
     for (const endpoint of endpoints) {
       const digest = endpoint.evidenceDigestSeen;
-      if (!digest || !endpoint.observedCertFingerprint || this.settled.get(endpoint.id) === digest) {
+      if (!digest || !endpoint.observedCertFingerprint) {
         continue;
       }
-      if (await this.has(endpoint.id, digest)) {
-        this.settled.set(endpoint.id, digest);
-        continue;
-      }
-      report.polled += 1;
-      try {
-        await this.refresh(endpoint, now);
-        report.stored += 1;
-        // Settled whatever digest came back. When it is not the one this verdict
-        // names, the upstream republished between the sidecar's check and this
-        // fetch — the publication the verdict named is gone and asking again
-        // cannot produce it; the next verdict will name the new one.
-        this.settled.set(endpoint.id, digest);
-      } catch (error) {
-        report.failed += 1;
-        if (!(error instanceof EvidenceFetchError)) {
-          this.settled.set(endpoint.id, digest);
+      if (await this.due(endpoint.id, digest, now)) {
+        report.polled += 1;
+        try {
+          await this.refresh(endpoint, now);
+          report.stored += 1;
+          // Asked under whatever digest came back. When it is not the one this
+          // verdict names, the upstream republished between the sidecar's check
+          // and this fetch — the publication the verdict named is gone and asking
+          // again before `evidenceRefreshAfter` cannot produce it; the next
+          // verdict will name the new one.
+          this.asked.set(endpoint.id, { digest, at: now.getTime() });
+        } catch (error) {
+          report.failed += 1;
+          if (!(error instanceof EvidenceFetchError)) {
+            this.asked.set(endpoint.id, { digest, at: now.getTime() });
+          }
+          this.logger.warn(
+            `No evidence summary for external endpoint "${endpoint.name}": ${
+              error instanceof Error ? error.message : String(error)
+            }.`,
+          );
         }
-        this.logger.warn(
-          `No evidence summary for external endpoint "${endpoint.name}": ${
-            error instanceof Error ? error.message : String(error)
-          }.`,
-        );
+      }
+      if (await this.reportStaleRelay(endpoint, now)) {
+        report.stale += 1;
       }
     }
     return report;
+  }
+
+  /**
+   * Whether this pass should ask this upstream for its bundle again.
+   *
+   * Three states, and the third is SUP-615's: nothing filed for the digest the
+   * verdict names (ask), something filed and recently looked at (do not), or
+   * something filed whose last retrieval is older than
+   * `externalEndpoints.evidenceRefreshAfter` (ask again, because the upstream has
+   * republished since and the copy this router relays has aged).
+   *
+   * "Last looked at" is `fetchedAt` rather than `issuedAt` on purpose. `issuedAt`
+   * is the upstream's clock, so keying the re-poll on it would turn an upstream
+   * whose *publisher* is wedged — reachable, serving, republishing nothing — into
+   * a fetch every minute for ever. `fetchedAt` is this router's own clock, moved
+   * by {@link record} on every retrieval including an idempotent one, so the cost
+   * is one fetch per endpoint per refresh window whatever the upstream does. That
+   * it lives in the row rather than only in {@link asked} is what keeps replicas
+   * from each paying for it, and what makes a restarted pod inherit the schedule
+   * instead of re-fetching everything at boot.
+   */
+  private async due(externalEndpointId: string, digest: string, now: Date): Promise<boolean> {
+    const refreshAfter = this.config.externalEndpoints.evidenceRefreshAfter;
+    const asked = this.asked.get(externalEndpointId);
+    if (asked?.digest === digest && now.getTime() - asked.at < refreshAfter) {
+      // This process asked recently. Answered without a query, which is the
+      // point of the map: the common pass over a settled catalogue costs nothing.
+      return false;
+    }
+    const filed = await this.filed(externalEndpointId, digest);
+    return filed === null || now.getTime() - filed.fetchedAt.getTime() >= refreshAfter;
+  }
+
+  /**
+   * Declares — once — that the copy this router hands out has aged past
+   * `externalEndpoints.evidenceStaleAfter`, and says so where somebody will read
+   * it (SUP-615). Returns whether it is stale, declared on this pass or earlier.
+   *
+   * This is the half the router was missing, and the shape of the miss is worth
+   * recording: the relay went on answering 200 with a correctly signed bundle for
+   * 37 hours, so nothing was failing anywhere — no verdict was denied, no
+   * endpoint was dark, `/health` was green, and the first reader to notice was a
+   * browser refusing to accept the document, as it should. A relayed publication
+   * that is merely *old* is the one fault in this path that looks exactly like
+   * health from the inside.
+   *
+   * Keyed on what the relay would actually serve
+   * ({@link latestAdmitted}) rather than on the newest row for the endpoint,
+   * because that is the document whose age locks the console. An endpoint with
+   * nothing to relay is not reported here at all: a missing publication is the
+   * typed 503 the controller already returns and the poll's own warning, and
+   * declaring that one stale too would page an operator at the moment they
+   * approve a new deployment.
+   *
+   * Four readers, as SUP-535 settled: the `ERROR` line a log sink can match, the
+   * count this pass returns, the operator's inbox, and — through the inbox — the
+   * person who would otherwise hear it from a user. The alert is awaited and
+   * cannot fail the pass: `raise` never rejects.
+   */
+  private async reportStaleRelay(endpoint: ExternalEndpoint, now: Date): Promise<boolean> {
+    const staleAfter = this.config.externalEndpoints.evidenceStaleAfter;
+    if (staleAfter <= 0) {
+      return false;
+    }
+    const relayed = await this.latestAdmitted(endpoint);
+    if (!relayed) {
+      // Nothing is being relayed, so there is no stale relay to report — and no
+      // recovery either: the "it is back" line must not go out because an admin
+      // withdrew the approval.
+      this.declaredStale.delete(endpoint.id);
+      return false;
+    }
+
+    const issuedAt = relayed.issuedAt.getTime();
+    const stale = now.getTime() - issuedAt >= staleAfter;
+    const declared = this.declaredStale.get(endpoint.id);
+    if (stale && declared !== issuedAt) {
+      this.declaredStale.set(endpoint.id, issuedAt);
+      this.logger.error(staleRelayLine(endpoint, relayed.issuedAt, now));
+      await this.alerts.raise(staleRelayAlert(endpoint, relayed.issuedAt, now), now);
+      return true;
+    }
+    if (!stale && declared !== undefined) {
+      this.declaredStale.delete(endpoint.id);
+      this.logger.log(
+        `The evidence this router relays for external endpoint "${endpoint.name}" is current again ` +
+          `(signed ${durationSince(relayed.issuedAt, now)} ago).`,
+      );
+      // Past the interval, like a recovery from an outage: an operator who was
+      // woken is owed the line that closes it.
+      await this.alerts.raise(freshRelayAlert(endpoint, relayed.issuedAt, now), now, { urgent: true });
+    }
+    return stale;
   }
 
   /**
@@ -246,12 +378,20 @@ export class ExternalEvidenceService {
     return byEndpoint;
   }
 
-  private async has(externalEndpointId: string, evidenceDigest: string): Promise<boolean> {
-    return (
-      (await this.dataSource
-        .getRepository(EvidenceSnapshot)
-        .findOne({ where: { externalEndpointId, evidenceDigest }, select: { id: true } })) !== null
-    );
+  /**
+   * The most recently retrieved copy of one (endpoint, digest), or null.
+   *
+   * `fetchedAt DESC` rather than `issuedAt DESC`: the question this answers is
+   * "when did this router last manage to get this publication", which is what
+   * {@link due} schedules on. What to *hand out* is {@link latestAdmitted}'s
+   * question, and it orders the other way for its own reason.
+   */
+  private async filed(externalEndpointId: string, evidenceDigest: string): Promise<EvidenceSnapshot | null> {
+    return this.dataSource.getRepository(EvidenceSnapshot).findOne({
+      where: { externalEndpointId, evidenceDigest },
+      select: { id: true, fetchedAt: true },
+      order: { fetchedAt: 'DESC' },
+    });
   }
 
   /**
@@ -304,4 +444,71 @@ export class ExternalEvidenceService {
       return raced;
     }
   }
+}
+
+/**
+ * The stale relay as the `ERROR` line a log sink can match on.
+ *
+ * It names the consequence rather than the measurement, because the measurement
+ * is fine: the bundle is genuine, its signature holds, and the only thing wrong
+ * with it is its age — which is exactly why this took 37 hours to notice.
+ */
+function staleRelayLine(endpoint: ExternalEndpoint, issuedAt: Date, now: Date): string {
+  return (
+    `The evidence this router relays for external endpoint "${endpoint.name}" was signed ` +
+    `${durationSince(issuedAt, now)} ago (${issuedAt.toISOString()}) and is no longer advancing. ` +
+    'Past 24 hours every verifier refuses it, so the console’s upstream-evidence panel reports that the ' +
+    'endpoint’s evidence did not check out and anyone verifying it through GET /v1/evidence answers the same — ' +
+    'while the upstream itself may be publishing a fresh bundle every minute.'
+  );
+}
+
+/**
+ * The same fact, as the message that leaves the deployment (SUP-535).
+ *
+ * The endpoint's operator label and two timestamps, and nothing else: the
+ * upstream hostname and the pinned digest stay behind a session (SUP-221 ruling
+ * 3), as they do in `outageAlert`, because mail gets forwarded.
+ */
+function staleRelayAlert(
+  endpoint: ExternalEndpoint,
+  issuedAt: Date,
+  now: Date,
+): { title: string; summary: string; facts: Array<[string, string]>; action: string } {
+  return {
+    title: `Evidence relayed for “${endpoint.name}” has stopped advancing`,
+    summary:
+      `This router is still handing out a copy of “${endpoint.name}”’s evidence that was signed ` +
+      `${durationSince(issuedAt, now)} ago. The upstream is serving — its models still route — but the ` +
+      'relayed document is ageing, and once it passes 24 hours every verifier refuses it: the console reports ' +
+      'that this endpoint’s evidence did not check out, and so does anyone who verifies it through this ' +
+      'router. It is the copy that is old, not necessarily the upstream.',
+    facts: [
+      ['Endpoint', endpoint.name],
+      ['Relayed copy signed', issuedAt.toISOString()],
+      ['Age', durationSince(issuedAt, now)],
+    ],
+    action:
+      'Nothing needs approving: the digest has not changed. Check that this deployment can still reach the ' +
+      'upstream’s /.well-known/swarm-evidence — a refresh that has been failing is in this router’s log as ' +
+      '“No evidence summary for external endpoint”.',
+  };
+}
+
+/** Its counterpart, sent once when a refresh lands and the copy is current again. */
+function freshRelayAlert(
+  endpoint: ExternalEndpoint,
+  issuedAt: Date,
+  now: Date,
+): { title: string; summary: string; facts: Array<[string, string]>; action: string } {
+  return {
+    title: `Evidence relayed for “${endpoint.name}” is current again`,
+    summary: `This router has refreshed its copy of “${endpoint.name}”’s evidence; verifiers will accept it again.`,
+    facts: [
+      ['Endpoint', endpoint.name],
+      ['Relayed copy signed', issuedAt.toISOString()],
+      ['Age', durationSince(issuedAt, now)],
+    ],
+    action: 'No action needed.',
+  };
 }
