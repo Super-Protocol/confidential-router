@@ -2,6 +2,7 @@ import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import JSZip from 'jszip';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import {
   type Catalog,
   createTestDataSource,
@@ -24,7 +25,11 @@ let catalog: Catalog;
 
 beforeEach(async () => {
   dataSource = await createTestDataSource();
-  exports = new EvidenceExportService(dataSource, testConfig(), new ExternalEvidenceService(dataSource));
+  exports = new EvidenceExportService(
+    dataSource,
+    testConfig(),
+    new ExternalEvidenceService(dataSource, testConfig(), new RecordingOperatorAlerts().asService()),
+  );
   catalog = await seedCatalog(dataSource);
 });
 
