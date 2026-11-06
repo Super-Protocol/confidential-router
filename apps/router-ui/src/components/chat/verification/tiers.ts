@@ -1,4 +1,4 @@
-import type { BundleSource, GateResult } from './evidence-gate';
+import type { BundleSource, EndpointKind, GateResult } from './evidence-gate';
 import type { BridgeOutcome } from './extension-bridge';
 
 /**
@@ -24,9 +24,14 @@ import type { BridgeOutcome } from './extension-bridge';
  * ADR-002 forbids the *router* from asserting a verdict, and nothing here breaks
  * that: each of these is the viewer's own agent reporting what it did, and the
  * router never learns the answer.
+ *
+ * Tier 1 comes in two flavours, and {@link UPSTREAM_TIER} is why: the same
+ * verifier run over *this* deployment's evidence and over a copy of another
+ * deployment's evidence are two different claims, and only the first one gates
+ * anything.
  */
 
-export type TierId = 'page' | 'extension' | 'gatekeeper';
+export type TierId = 'page' | 'upstream' | 'extension' | 'gatekeeper';
 
 export type TierState = 'pending' | 'pass' | 'fail' | 'unavailable';
 
@@ -67,6 +72,63 @@ export const PAGE_TIER: Record<Exclude<TierState, 'unavailable'>, TierPresentati
     label: 'Evidence did not check out',
     caveat:
       'The endpoint’s evidence failed a check this page can make, so the composer stays locked. Nothing is sent to a deployment whose evidence does not verify.',
+    variant: 'destructive',
+  },
+};
+
+/**
+ * Tier 1 again, over an *external* upstream's relayed document (SUP-618).
+ *
+ * The same verifier, the same checks, a different claim — and the difference is
+ * exactly the one {@link PAGE_TIER} must not be allowed to make here. Three
+ * things are true of this tier and of no other:
+ *
+ *  - **It unlocks nothing.** The composer is gated by the chat's own tier 1 over
+ *    `routerEndpoint`; this panel runs its own `useVerification` precisely
+ *    because "it unlocks nothing" (`external-inspect-button.tsx`). Borrowing
+ *    tier 1's failure copy made a panel that gates nothing announce "the
+ *    composer stays locked" — a lock it does not apply and cannot observe. On
+ *    production 0.19.8 it printed that sentence while the composer answered a
+ *    real turn, and sent a round of triage at the wrong deployment.
+ *  - **It is not about the hop the prompt takes.** The browser opened no channel
+ *    to this host. The traffic goes to this router, whose egress sidecar
+ *    attested and pinned the connection (ADR-008 §1), so a failure here is a
+ *    failure to verify a *document* and not evidence of an unattested leg.
+ *  - **It reads a copy.** The relay serves the publication this router's own
+ *    verdict named, which may be older than what the upstream's host serves now.
+ *
+ * So the copy says what is true of this panel, and does not use the word
+ * "composer" at all — not a softer claim about it, none. The screen that is
+ * allowed to talk about the composer is the one that locks it, and a panel that
+ * reassures a reader about a lock it cannot observe is the same mistake in a
+ * friendlier tone.
+ *
+ * The topology itself — that the prompt goes to this router, which proxies over
+ * a channel its egress attested and pinned — is said once, by the dialog that
+ * has the room for it (`attestation/inspector.tsx`). These caveats stop at what
+ * the *tier* established, which is what keeps the two from becoming two
+ * paraphrases of one sentence.
+ */
+export const UPSTREAM_TIER: Record<Exclude<TierState, 'unavailable'>, TierPresentation> = {
+  pending: {
+    id: 'upstream',
+    label: 'Checking this upstream',
+    caveat:
+      'Fetching the copy of this upstream’s signed evidence that this router relayed, and checking it here in your browser.',
+    variant: 'secondary',
+  },
+  pass: {
+    id: 'upstream',
+    label: 'Upstream evidence checked by this page',
+    caveat:
+      'This page checked the signature on the document this router relayed for the upstream — a copy of what that deployment published, which may be older than what its own host serves now. It is that deployment’s own claim about itself, verified here, and this check is not the one that decides whether your prompt may be sent.',
+    variant: 'warning',
+  },
+  fail: {
+    id: 'upstream',
+    label: 'Upstream evidence did not check out',
+    caveat:
+      'This page could not verify the copy of the upstream’s evidence that this router relayed. Nothing on this screen is gated by that result: this panel unlocks nothing and locks nothing. What failed is the document this page read, which is not by itself a verdict on the channel the egress pinned.',
     variant: 'destructive',
   },
 };
@@ -115,8 +177,19 @@ export const GATEKEEPER_TIER: TierPresentation = {
  * The strongest tier that actually concluded something wins, and a refusal
  * outranks a pass: if the extension says no while the page says yes, the badge
  * says no, because the extension is the less credulous of the two.
+ *
+ * `kind` is the one thing this cannot default its way out of. For an external
+ * upstream the ranking above does not apply at all: tier 2 is never asked (see
+ * `useVerification`), so `extension` is always the borrowed `unavailable` and
+ * there is nothing to rank tier 1 against. The answer is {@link UPSTREAM_TIER}
+ * by page state alone — which is also why the extension argument is ignored
+ * rather than consulted on that branch: a tier nobody asked has no opinion, and
+ * reading one out of a borrowed value is how the next wrong sentence gets
+ * shipped. If the extension is ever asked about an upstream, that is the day
+ * this branch grows a ranking of its own.
  */
-export function badgeTier(page: TierState, extension: TierState): TierPresentation {
+export function badgeTier(page: TierState, extension: TierState, kind: EndpointKind = 'own'): TierPresentation {
+  if (kind === 'external') return UPSTREAM_TIER[page === 'unavailable' ? 'pending' : page];
   if (extension === 'fail') return EXTENSION_TIER.fail;
   if (page === 'fail') return PAGE_TIER.fail;
   if (extension === 'pass') return EXTENSION_TIER.pass;

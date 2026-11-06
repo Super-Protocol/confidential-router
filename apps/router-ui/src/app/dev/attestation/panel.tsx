@@ -56,6 +56,43 @@ export function AttestationReviewPanel() {
       }),
     [],
   );
+  /**
+   * The relayed bundle that did *not* check out (SUP-618).
+   *
+   * The one state of this panel nobody could look at. It is unreachable on a
+   * stand — the relay answers only with a publication this router already
+   * verified — and on production it appears exactly when an external upstream
+   * starts failing a check, which is the worst moment to be reading it for the
+   * first time. That is how the panel came to announce "the composer stays
+   * locked" for a whole release: the sentence was only ever on screen while
+   * somebody was busy with an incident.
+   *
+   * Freshness is the check that fails here because it is the one that actually
+   * did: the relayed copy was 37.8 hours stale on 0.19.8.
+   */
+  const relayFailed = React.useMemo(
+    () =>
+      verificationState({
+        gate: {
+          unlocked: false,
+          checks: [
+            ...PASSING_GATE_CHECKS.filter((check) => check.id !== 'freshness'),
+            {
+              id: 'freshness',
+              status: 'fail',
+              detail: 'The copy this router relayed was signed 37.8 hours ago, outside the 24-hour window.',
+            },
+          ],
+          registry: null,
+          evidence: null,
+        },
+        extension: { status: 'absent' },
+        extensionState: 'unavailable',
+        pageState: 'fail',
+        unlocked: false,
+      }),
+    [],
+  );
   /** The doctored case, so the loud-red path is reviewed as well as the clean one. */
   const undeclared = React.useMemo(() => {
     const snapshot = structuredClone(SIGNED_SNAPSHOT) as { resources: { kind: string }[] };
@@ -103,6 +140,16 @@ export function AttestationReviewPanel() {
         <h2 className="font-medium text-sm">An external upstream, relayed</h2>
         <InspectAttestationButton
           verification={relayed}
+          hostname={verifiedUpstream().hostname}
+          endpointKind="external"
+          declaredImages={null}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-medium text-sm">An external upstream whose relayed evidence did not check out</h2>
+        <InspectAttestationButton
+          verification={relayFailed}
           hostname={verifiedUpstream().hostname}
           endpointKind="external"
           declaredImages={null}

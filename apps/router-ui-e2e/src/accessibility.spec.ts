@@ -178,7 +178,7 @@ test.describe('accessibility', () => {
        */
       await page.addInitScript((value) => window.localStorage.setItem('theme', value), theme);
       await page.goto('/dev/attestation');
-      await page.getByRole('button', { name: 'Inspect upstream attestation' }).click();
+      await page.getByRole('button', { name: 'Inspect upstream attestation' }).first().click();
 
       const dialog = page.getByRole('dialog', { name: /Attestation for this external upstream/i });
       await expect(dialog).toBeVisible();
@@ -192,6 +192,40 @@ test.describe('accessibility', () => {
       expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
     });
   }
+
+  test('a failing upstream panel claims nothing about the composer', async ({ page }) => {
+    /*
+     * SUP-618, in a browser. The panel used to render tier 1's failure copy —
+     * "so the composer stays locked" — over an upstream whose panel gates
+     * nothing, and on production 0.19.8 it printed that while the composer
+     * answered a real turn. The state is unreachable on any stand (the relay
+     * serves only a publication this router already verified), so the review
+     * route is where it can be looked at at all.
+     */
+    await page.goto('/dev/attestation');
+    await page.getByRole('button', { name: 'Inspect upstream attestation' }).last().click();
+
+    const dialog = page.getByRole('dialog', { name: /Attestation for this external upstream/i });
+    await expect(dialog.getByText('Upstream evidence did not check out')).toBeVisible();
+    await expect(dialog.getByText(/composer/i)).toHaveCount(0);
+
+    // And what is true instead: the panel gates nothing, the egress pinned the
+    // hop, and the check that actually failed says so in its own words.
+    await expect(dialog.getByText(/unlocks nothing and locks nothing/)).toBeVisible();
+    await expect(dialog.getByText(/its egress attested and pinned/)).toBeVisible();
+    await expect(dialog.getByText(/outside the 24-hour window/)).toBeVisible();
+    await expect(dialog.getByRole('tab', { name: 'Deployment graph' })).toHaveCount(0);
+
+    /*
+     * Audited too, because this state is where the panel's scrolling body holds
+     * nothing focusable — no tabs, no graph, just the checks that explain the
+     * failure — and a keyboard reader has to be able to reach them. The longer
+     * caveat above is what first pushed the list past the fold and made
+     * `scrollable-region-focusable` fire; `inspector.tsx` carries the tab stop.
+     */
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
 
   test('the deployment graph is walkable with the keyboard, node by node', async ({ page }) => {
     await page.goto('/dev/attestation');
