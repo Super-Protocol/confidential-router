@@ -53,7 +53,7 @@ func (r *mockRegistry) baseURL() string { return r.server.URL }
 // measurement, against the mock registry and the pins in the config file as it
 // stands at this moment.
 //
-// The hardware half is covered where it can be: pkg/attestation/attestedroot
+// The hardware half is covered where it can be: libs/swarm-evidence-go's attestedroot
 // runs the real Super Swarm Root CA evidence, and asserts that pinning its
 // measurement rescues neither a tampered report nor a key binding that fails.
 type hardwareReport struct {

@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-protocol.com/schemas/swarmclaims.v1.schema.json",
+  "title": "SwarmClaims v1",
+  "description": "What an appraisal of Super Swarm Evidence establishes, and nothing more. The predicates a relying party cares about - image in the approved set, space locked, Pod Security Standard restricted, network type trusted, sp-vm build in the reference values - are deliberately absent: they are the relying party's policy. The core reports; the policy decides. A claim that is absent was not established; a document carrying `denial` carries nothing else beyond `schema_version` and `freshness_input`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "description": "The version of this contract. Always \"1\" for SwarmClaims v1.",
+      "const": "1"
+    },
+
+    "freshness_input": {
+      "description": "The nonce the appraisal was asked to bind, reported verbatim. It is an echo of the input, never a verified claim: what proves the attester saw it is `binding_ok`.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$"
+    },
+    "binding_ok": {
+      "description": "Whether the quote's report data commits to SHA-512(len32 || freshness || len32 || target || len32 || subject), and so whether this quote answers this request. Absent until the composite form carries the NodeRequestEnvelope it is computed from.",
+      "type": "boolean"
+    },
+    "binding_subject_digest": {
+      "description": "SHA-256 of the request subject the binding covers.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "channel_binding": {
+      "description": "How the bundle form's signed statement was tied to a concrete TLS certificate. \"producer-asserted\" binds it to a certificate the producer named rather than to the connection the claims will be acted on; a policy that requires channel binding must refuse it.",
+      "type": "string",
+      "enum": ["observed", "producer-asserted"]
+    },
+
+    "platform": {
+      "description": "The attester's TEE and the cloud it runs in. On the two Azure branches the hardware measurement describes Microsoft's paravisor and the image identity comes from the vTPM instead, so this is the discriminator a policy reads first.",
+      "type": "string",
+      "enum": ["tdx-qemu", "tdx-gcp", "tdx-azure", "snp-qemu", "snp-azure"]
+    },
+    "quote_verified": {
+      "description": "Whether the hardware quote's signature and its chain to the CPU vendor's root were checked and held.",
+      "type": "boolean"
+    },
+    "quote_appraiser": {
+      "description": "What appraised the quote. \"builtin\" is this module, offline, with the vendor libraries. It is what makes `tcb_status` readable.",
+      "type": "string"
+    },
+    "tcb_status": {
+      "description": "The appraiser's verdict about the platform's trusted computing base, in that appraiser's own vocabulary. The built-in appraiser answers \"unknown\" (no collateral consulted - not a clean bill of health), \"ok\" or \"revoked-or-indeterminate\".",
+      "type": "string"
+    },
+    "collateral_checked": {
+      "description": "Whether vendor collateral - CRLs, TCB info - was consulted at all. False means `tcb_status` says nothing.",
+      "type": "boolean"
+    },
+
+    "measurements": {
+      "description": "The raw hardware registers the appraisal read, hex-encoded as the quote carries them. A reference-value set names these directly: a CoRIM publishes {tdattributes, mrtd, rtmr1, rtmr2, rtmr3}, because raw rtmr0 accumulates boot events and is not usable as one. Which members are present depends on `platform`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tdattributes": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "mrtd": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+        "rtmr0": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+        "rtmr1": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+        "rtmr2": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+        "rtmr3": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+        "launch_digest": {
+          "description": "The SEV-SNP report's MEASUREMENT field.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{96}$"
+        }
+      }
+    },
+    "platform_security": {
+      "description": "The report fields that describe how the VM was allowed to run. Reported, never judged: whether ciphertext hiding being off disqualifies a cloud is the policy's decision.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vmpl",
+        "debug_allowed",
+        "ciphertext_hiding",
+        "page_swap_disabled",
+        "snp_firmware_tcb",
+        "report_version"
+      ],
+      "properties": {
+        "vmpl": { "type": "integer", "minimum": 0 },
+        "debug_allowed": {
+          "description": "The host may decrypt the guest. The one field whose bad value nobody sensibly tolerates.",
+          "type": "boolean"
+        },
+        "ciphertext_hiding": { "type": "boolean" },
+        "page_swap_disabled": { "type": "boolean" },
+        "snp_firmware_tcb": { "type": "integer", "minimum": 0 },
+        "report_version": { "type": "integer", "minimum": 0 },
+        "cpu_generation": { "type": "string" }
+      }
+    },
+
+    "mrenclave": {
+      "description": "The normalised, vCPU-independent image identity (sp-vm/docs/04-vm-measurements.md).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "mrenclave_approved": {
+      "description": "Whether anything vouches for that image. False with `quote_verified` true is what an unsigned or test build looks like - a claim for the policy to decide on, not a failure.",
+      "type": "boolean"
+    },
+    "mrenclave_source": {
+      "description": "What vouched for the image. \"registry\" is Super Protocol's signature, checked against a key pinned in the module - the closed chain. \"reference-values\" is the relying party's own list, which proves strictly less.",
+      "type": "string",
+      "enum": ["registry", "reference-values"]
+    },
+    "spvm_build": {
+      "description": "The sp-vm release the evidence claims the VM booted. Producer-supplied: it located the artefacts the measurement was rebuilt from, and proves nothing on its own.",
+      "type": "string"
+    },
+
+    "pki_root_fingerprint": {
+      "description": "The sha256/<base64url> digest of the root the chain terminated at.",
+      "type": "string",
+      "pattern": "^sha256/[A-Za-z0-9_-]{43}$"
+    },
+    "pki_chain_ok": {
+      "description": "Whether the certificate chain validated, leaf to root, and terminated at a root the relying party pinned.",
+      "type": "boolean"
+    },
+    "root_quote_ok": {
+      "description": "Whether the root certificate's own TEE evidence verified and committed to that certificate's public key - the step that makes the attestation about this certificate authority rather than about some VM.",
+      "type": "boolean"
+    },
+    "network_type": {
+      "description": "What the root says about its own network. Reported, never enforced: the live Swarm stand's root declares \"untrusted\".",
+      "type": "string",
+      "enum": ["trusted", "untrusted"]
+    },
+
+    "evidence_digest": {
+      "description": "The digest of the canonical deployment snapshot a user pins, for evidence that carries one.",
+      "type": "string"
+    },
+
+    "statement_signer_fingerprint": {
+      "description": "The sha256/<base64url> digest of the certificate that signed the control-plane statement.",
+      "type": "string",
+      "pattern": "^sha256/[A-Za-z0-9_-]{43}$"
+    },
+    "statement_ok": {
+      "description": "Whether that signature verified and chained to the pinned root.",
+      "type": "boolean"
+    },
+
+    "envelope_ok": {
+      "description": "Whether the node-signed NodeRequestEnvelope verified and chained to the pinned root through the node certificate.",
+      "type": "boolean"
+    },
+    "node_cert_fingerprint": {
+      "description": "The sha256/<base64url> digest of the node certificate that signed the envelope.",
+      "type": "string",
+      "pattern": "^sha256/[A-Za-z0-9_-]{43}$"
+    },
+    "gpu_attested": {
+      "description": "Derived from the envelope's gpu_attestation_token_sha256, never from the quote: the request-binding digest owns all 64 bytes of report data, so there is no room beside it for a GPU token hash.",
+      "type": "boolean"
+    },
+
+    "pod_uid": { "type": "string" },
+    "namespace": { "type": "string" },
+    "cluster_space_id": { "type": "string" },
+    "image_digests": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "locked": { "type": "boolean" },
+    "locked_at": { "type": "string" },
+    "pss_enforce": { "type": "string" },
+
+    "denial": {
+      "description": "Why the evidence could not be appraised. A document that carries this carries no other claim beyond `schema_version` and `freshness_input`: a refusal must never be readable as a partial pass.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "reason"],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "options",
+            "blob",
+            "pki-chain",
+            "root-quote",
+            "binding",
+            "envelope",
+            "statement"
+          ]
+        },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@
  *
  * The vectors themselves are plain JSON and are the contract: the TypeScript
  * verifier (`@confidential-router/attestation`) and the Go verifier
- * (`apps/gatekeeper/pkg/attestation`) must produce the same verdict for every
+ * (`libs/swarm-evidence-go/attestation`) must produce the same verdict for every
  * case. This module is only the convenience wrapper the TypeScript side uses;
  * Go reads the same files with `go:embed`.
  *

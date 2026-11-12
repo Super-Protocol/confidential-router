@@ -4,7 +4,7 @@ import { EvidenceDigestError, fingerprintHex, parseEvidenceDigest } from './evid
 
 /**
  * The vectors are the contract, shared with the Go parser in
- * `apps/gatekeeper/pkg/attestation` (SUP-87). A digest this parser normalises
+ * `libs/swarm-evidence-go/attestation` (SUP-87). A digest this parser normalises
  * differently from that one would let a user pin a value in the console that
  * their gatekeeper then refuses.
  */

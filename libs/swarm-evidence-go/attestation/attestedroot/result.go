@@ -1,0 +1,187 @@
+package attestedroot
+
+import (
+	"encoding/hex"
+	"fmt"
+	"strings"
+)
+
+// SecurityFields are the report fields that describe how the VM was allowed to
+// run. The gatekeeper surfaces them and never judges them: whether, say,
+// ciphertext hiding being off disqualifies a cloud is a decision for the
+// operator's Rego, and hard-coding it here would make the verdict unarguable.
+type SecurityFields struct {
+	// VMPL is the privilege level the report was produced at; 0 is highest.
+	VMPL uint32 `json:"vmpl"`
+	// DebugAllowed means the host may decrypt the guest. It is the one field
+	// whose bad value nobody sensibly tolerates.
+	DebugAllowed bool `json:"debugAllowed"`
+	// CiphertextHiding and PageSwapDisabled are hardening options the guest
+	// policy may or may not require.
+	CiphertextHiding bool `json:"ciphertextHiding"`
+	PageSwapDisabled bool `json:"pageSwapDisabled"`
+	// SnpFirmwareTCB is the SNP firmware security-version number from the
+	// launch TCB.
+	SnpFirmwareTCB uint8 `json:"snpFirmwareTcb"`
+	// ReportVersion is the attestation report format version.
+	ReportVersion uint32 `json:"reportVersion"`
+}
+
+// RawMeasurements are the hardware registers the normalised mrEnclave is
+// derived from, hex-encoded, exactly as the quote carries them.
+//
+// They are reported because a reference-value set names them directly — a CoRIM
+// publishes {TDATTRIBUTES, MRTD, RTMR1, RTMR2, RTMR3}, since raw RTMR0 contains
+// boot events and is not usable as one — and because an appraiser that only
+// ever emitted the normalised value would make a disagreement about the formula
+// impossible to diagnose from the claim set alone.
+//
+// Which members are populated depends on the platform: the TDX branches fill
+// the TD registers, the SEV-SNP branches fill LaunchDigest. On either Azure
+// branch they describe Microsoft's paravisor rather than the image, whose
+// identity is the vTPM-derived mrEnclave (sp-vm/docs/08-azure-attestation.md).
+type RawMeasurements struct {
+	TDAttributes string `json:"tdattributes,omitempty"`
+	MRTD         string `json:"mrtd,omitempty"`
+	RTMR0        string `json:"rtmr0,omitempty"`
+	RTMR1        string `json:"rtmr1,omitempty"`
+	RTMR2        string `json:"rtmr2,omitempty"`
+	RTMR3        string `json:"rtmr3,omitempty"`
+	LaunchDigest string `json:"launchDigest,omitempty"`
+}
+
+// Result is everything one attested-root check learned. It is populated as far
+// as the check got, so a failed verdict still carries the evidence that
+// explains it — a report whose measurement is sound but absent from the
+// registry reads very differently from one whose signature is wrong.
+type Result struct {
+	// Attested is the verdict: true only when every step passed and the
+	// measurement is in the trusted registry.
+	Attested bool `json:"attested"`
+	// Reason explains a false Attested.
+	Reason string `json:"reason,omitempty"`
+
+	// EvidenceType is the hardware the root enrolled from.
+	EvidenceType EvidenceType `json:"-"`
+	// EvidenceTypeName is [EvidenceType] as the platform's UI labels it.
+	EvidenceTypeName string `json:"evidenceType,omitempty"`
+	// NetworkType is what the certificate says about its own network. The live
+	// Swarm stand's root says "untrusted"; that is reported, not enforced.
+	NetworkType NetworkType `json:"networkType,omitempty"`
+
+	// ReportIntegrity is true once the hardware report's signature and its
+	// chain to a built-in vendor root have been checked.
+	ReportIntegrity bool `json:"reportIntegrity"`
+	// RevocationChecked and NotRevoked describe the optional CRL check.
+	// RevocationChecked false means it was not asked for or could not be run —
+	// never that the chain is clean.
+	RevocationChecked bool `json:"revocationChecked"`
+	NotRevoked        bool `json:"notRevoked,omitempty"`
+	// CPUGeneration is the vendor CPU line the verified chain belongs to.
+	CPUGeneration string `json:"cpuGeneration,omitempty"`
+
+	// KeyBinding is whether the report's reportData commits to the root
+	// certificate's public key. Without it the attestation is about some VM,
+	// not about this CA.
+	KeyBinding bool `json:"keyBinding"`
+	// ReportData is the raw 64-byte field, for an operator comparing by eye.
+	ReportData []byte `json:"-"`
+
+	// SecurityFields are the report's policy and TCB fields.
+	SecurityFields SecurityFields `json:"security"`
+
+	// RawMeasurements are the registers [Result.Measurement] was derived from.
+	RawMeasurements RawMeasurements `json:"measurements,omitzero"`
+	// Build names the sp-vm release the evidence claims the VM booted, when it
+	// carries one. It is producer-supplied and only ever used to locate the
+	// artefacts the measurement is rebuilt from, so it proves nothing on its
+	// own — a policy that cares compares it against its reference values.
+	Build string `json:"build,omitempty"`
+
+	// Measurement is the normalised 32-byte mrEnclave, empty when it could not
+	// be derived.
+	Measurement []byte `json:"-"`
+	// InRegistry is whether Super Protocol signed this measurement.
+	InRegistry bool `json:"inRegistry"`
+	// MeasurementSource names what admitted the measurement, empty when nothing
+	// did. It is the difference between a closed chain and an operator's own
+	// decision, and it is reported rather than folded into Attested so that a
+	// policy can tell the two apart.
+	MeasurementSource MeasurementSource `json:"measurementSource,omitempty"`
+	// MeasurementUnknown means the registry was reached and it holds no
+	// signature for this measurement.
+	//
+	// It is kept apart from a registry that could not be consulted, because only
+	// this one is a statement. "Not one of ours" is something an operator can
+	// decide to override; "I could not ask" is a transient failure, and treating
+	// the two alike would invite pinning an image during an outage that Super
+	// Protocol had signed all along.
+	MeasurementUnknown bool `json:"measurementUnknown,omitempty"`
+
+	// Logs are the steps that ran, in order, so a denial can be read without
+	// re-running the check with a debugger attached.
+	Logs []string `json:"logs,omitempty"`
+}
+
+// MeasurementHex renders the normalised measurement the way the registry names
+// it, empty when there is none.
+func (r *Result) MeasurementHex() string {
+	if r == nil || len(r.Measurement) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(r.Measurement)
+}
+
+// SPKIDigestHex renders the certificate key digest the report should commit to.
+func (r *Result) SPKIDigestHex() string {
+	if r == nil || len(r.ReportData) < 32 {
+		return ""
+	}
+	return hex.EncodeToString(r.ReportData[:32])
+}
+
+// Label is the short form a verdict line uses: which anchor admitted the root
+// when one did, the failure otherwise.
+func (r *Result) Label() string {
+	switch {
+	case r == nil:
+		return ""
+	case r.Attested:
+		return "attested (" + string(r.MeasurementSource) + ")"
+	case r.Reason != "":
+		return "not attested: " + r.Reason
+	default:
+		return "not attested"
+	}
+}
+
+// NeedsMeasurementAnchor reports whether the check produced a sound measurement
+// and was refused only because nothing vouches for it.
+//
+// It is the one denial an operator can clear by pinning, so it is what the
+// caller keys the "pin it with…" advice off. A report that failed earlier — a
+// bad signature, a key the report does not commit to — never derives a
+// measurement, and no pin would help it; nor would one help a registry that
+// could not be reached, which is a failure to ask rather than an answer.
+func (r *Result) NeedsMeasurementAnchor() bool {
+	return r != nil && !r.Attested && r.MeasurementUnknown && r.MeasurementSource == ""
+}
+
+// RevocationLabel renders the optional CRL check for a report.
+func (r *Result) RevocationLabel() string {
+	switch {
+	case r == nil || !r.RevocationChecked:
+		return "not checked"
+	case r.NotRevoked:
+		return "ok"
+	default:
+		return "REVOKED or indeterminate"
+	}
+}
+
+// logf records one step of the check. The lines are what `gatekeeper verify`
+// prints under "Verification logs", so they are written for a reader who has
+// only the output.
+func (r *Result) logf(format string, args ...any) {
+	r.Logs = append(r.Logs, strings.TrimSpace(fmt.Sprintf(format, args...)))
+}

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "description": "Conformance vectors for the /.well-known/swarm-evidence verifier. Every implementation (TypeScript libs/attestation, Go apps/gatekeeper/pkg/attestation) must reproduce every verdict.",
+  "description": "Conformance vectors for the /.well-known/swarm-evidence verifier. Every implementation (TypeScript libs/attestation, Go libs/swarm-evidence-go/attestation) must reproduce every verdict.",
   "generator": "libs/attestation-fixtures/tools/generate.ts",
   "referenceNow": "2026-01-15T12:00:00.000Z",
   "rootsFile": "roots.json",

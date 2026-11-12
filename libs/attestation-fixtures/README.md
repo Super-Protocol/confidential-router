@@ -3,7 +3,7 @@
 Language-neutral conformance vectors for the `/.well-known/swarm-evidence` verifier.
 
 The vectors are the contract. Every implementation — the TypeScript
-`@confidential-router/attestation` and the Go `apps/gatekeeper/pkg/attestation` — must
+`@confidential-router/attestation` and the Go `libs/swarm-evidence-go/attestation` — must
 produce the same verdict for every case. A verifier that passes its own unit tests but
 not these has drifted.
 

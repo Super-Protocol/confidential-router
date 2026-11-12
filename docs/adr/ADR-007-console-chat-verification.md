@@ -77,7 +77,7 @@ in my trust store". A page served by the deployment under test has no independen
 pinning the root out of the bundle being checked would be a green tick that proves nothing. So the
 chat calls the verifier's stages individually and asks the root question of something outside the
 deployment: the signed `sp-vm` measurement registry, under an RSA key pinned in the console bundle —
-byte-identical to the one `apps/gatekeeper/pkg/attestation/attestedroot/registry.go` pins, so the
+byte-identical to the one `libs/swarm-evidence-go/attestation/attestedroot/registry.go` pins, so the
 page and the gatekeeper accept the same set of images.
 
 Consequence, stated plainly because it is the honest part: the root check reports **"not

@@ -1,7 +1,8 @@
 name: Go checks (gatekeeper)
 description: >-
   vet, race tests, the static CGO_ENABLED=0 build and golangci-lint over
-  apps/gatekeeper. Shared by the PR checks and the release workflow so a release
+  apps/gatekeeper, and the same checks over the libs/swarm-evidence-go module it
+  is built out of. Shared by the PR checks and the release workflow so a release
   cannot be cut from code the PR gate would have rejected.
 
 # A composite action rather than a reusable workflow on purpose: a reusable
@@ -23,7 +24,21 @@ runs:
       uses: actions/setup-go@v7
       with:
         go-version-file: apps/gatekeeper/go.mod
-        cache-dependency-path: apps/gatekeeper/go.sum
+        cache-dependency-path: |
+          apps/gatekeeper/go.sum
+          libs/swarm-evidence-go/go.sum
+
+    # The claim core is its own Go module (SUP-647), which a bank or a Veraison
+    # deployment imports without the router — so it is checked on its own terms
+    # and not only through the gatekeeper's `replace`. It is checked first:
+    # everything the gatekeeper verifies evidence with lives here, and a failure
+    # here explains a gatekeeper failure rather than the other way round.
+    - name: swarm-evidence-go — vet and race tests
+      shell: bash
+      working-directory: libs/swarm-evidence-go
+      run: |
+        go vet ./...
+        go test -race -count=1 ./...
 
     - name: go vet
       shell: bash
@@ -58,8 +73,14 @@ runs:
         go vet -tags teststand ./cmd/gatekeeper-teststand
         go test -tags teststand -race -count=1 ./cmd/gatekeeper-teststand
 
-    - name: golangci-lint
+    - name: golangci-lint (gatekeeper)
       uses: golangci/golangci-lint-action@v9
       with:
         version: ${{ inputs.golangci-lint-version }}
         working-directory: apps/gatekeeper
+
+    - name: golangci-lint (swarm-evidence-go)
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: ${{ inputs.golangci-lint-version }}
+        working-directory: libs/swarm-evidence-go

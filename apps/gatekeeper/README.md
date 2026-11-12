@@ -485,6 +485,7 @@ docker build -f gatekeeper.dockerfile -t gatekeeper .
 | `cmd/gatekeeper-sidecar/`| Entry point of the container image. Flags and signals onto `pkg/sidecar`; never part of a Release. |
 | `cmd/gatekeeper-teststand/`| The gatekeeper with its attested-root *hardware* leg read from a file, for the external-endpoint e2e stand. Behind the `teststand` build tag, so no release build contains it; `go build ./cmd/...` does not compile it. |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
+| `pkg/attestation/`       | The gatekeeper's view of the claim core. The verifier itself is the standalone `libs/swarm-evidence-go` module (SUP-647), which a bank or a Veraison deployment imports without the router; this package re-exports the names the gatekeeper uses and nothing else. |
 | `pkg/cli/`               | Every command, its output and its exit code. Driven end to end in tests through `cli.Run`. |
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
 | `pkg/status/`            | What an endpoint's live state and one verification look like, plus the two seams the CLI and TUI are written against. |

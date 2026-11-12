@@ -1,0 +1,45 @@
+# golangci-lint v2 configuration for the swarm-evidence-go module. It is a copy
+# of apps/gatekeeper/.golangci.yml on purpose: the module is a separate Go
+# module with its own CI step, and the two must be held to the same rules or
+# code that moved between them would change what it is linted for.
+#
+# Run locally with `pnpm nx run swarm-evidence-go:lint`.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - revive
+    - unconvert
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go$
+        linters:
+          - gosec
+      # conformance/ is test code that cannot live in a _test.go file: the
+      # harness is exported across module boundaries so the gatekeeper can
+      # replay the same vectors. Reading the files the manifest names is its
+      # whole job, so the same exemption the suites above get applies here.
+      - path: conformance/
+        linters:
+          - gosec
+      # A verbatim copy of sp-nodejs-addons' azurecvm (see its package
+      # comment); kept byte-identical to upstream rather than restyled here.
+      - path: attestation/attestedroot/internal/azurecvm/
+        linters:
+          - gosec
+          - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

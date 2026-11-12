@@ -1,20 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { REGISTRY_FIXTURE_DIR } from './external-stand.js';
 import { type RegistryServer, startRegistryServer } from './registry-server.js';
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const REGISTRY_DIR = join(
-  REPO_ROOT,
-  'apps',
-  'gatekeeper',
-  'pkg',
-  'attestation',
-  'attestedroot',
-  'testdata',
-  'registry',
-);
+// The same constant the stand serves, not a second copy of the path: this
+// spec's whole job is proving the directory is reachable, so a copy that drifted
+// would make it pass while the stand 404s (SUP-647).
+const REGISTRY_DIR = REGISTRY_FIXTURE_DIR;
 const APPS_448 =
   'sev-snp-azure/pre-release/mrenclave-74c75a0ba5f36e55548a14aa0dae0d0c9de9cd6ad041a4f6c553c996e2c579a7.json';
 

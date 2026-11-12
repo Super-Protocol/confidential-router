@@ -1,0 +1,57 @@
+{
+  "name": "swarm-evidence-go",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/swarm-evidence-go",
+  "projectType": "library",
+  "tags": ["type:lib", "lang:go"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/**/*.json",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum",
+        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*"
+      ],
+      "options": {
+        "command": "go test ./...",
+        "cwd": "libs/swarm-evidence-go"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum",
+        "{projectRoot}/.golangci.yml"
+      ],
+      "options": {
+        "commands": ["go vet ./...", "golangci-lint run"],
+        "cwd": "libs/swarm-evidence-go",
+        "parallel": false
+      }
+    },
+    "lint-fix": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": ["gofmt -w .", "golangci-lint run --fix"],
+        "cwd": "libs/swarm-evidence-go",
+        "parallel": false
+      }
+    },
+    "tidy": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "go mod tidy",
+        "cwd": "libs/swarm-evidence-go"
+      }
+    }
+  },
+  "implicitDependencies": ["@confidential-router/attestation-fixtures"]
+}

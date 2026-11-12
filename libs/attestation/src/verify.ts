@@ -4,7 +4,7 @@
  *
  * Ported from Super-Protocol/swarm-cloud `libs/swarm-attestation/src/verify.ts`
  * (BSL-1.1) with permission; see the repository NOTICE. The Go verifier in
- * `apps/gatekeeper/pkg/attestation` implements the same stages and is held to the
+ * `libs/swarm-evidence-go/attestation` implements the same stages and is held to the
  * same conformance vectors (`@confidential-router/attestation-fixtures`).
  */
 import { X509Certificate } from '@peculiar/x509';

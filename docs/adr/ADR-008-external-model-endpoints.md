@@ -201,14 +201,14 @@ held up against the code; the evidence:
 - **The TS port is three large subsystems, not one.** `libs/attestation` covers pipeline stages 1–6
   and is conformance-tested against the Go verifier (`libs/attestation-fixtures/vectors/`), but the
   spec'd semantics — "verify the TEE report" — is the attested-root path: AMD/Intel hardware report
-  verification (`apps/gatekeeper/pkg/attestation/attestedroot/`, 1,773 LOC on `go-sev-guest` /
+  verification (`libs/swarm-evidence-go/attestation/attestedroot/`, 1,773 LOC on `go-sev-guest` /
   `go-tdx-guest`), the OVMF launch-measurement rebuild (`internal/snpmeasure`, 734 LOC), and the
   Rego engine (`pkg/policy`, 721 LOC, embedded OPA). None has a TS equivalent, and the TS source
   says so itself (`libs/attestation/src/root-tee-evidence.ts:26-46`).
 - **Node cannot even observe the channel the way the pipeline requires.** The TS verifier takes
   `observedTlsFingerprint` as a parameter (`libs/attestation/src/verify.ts:101`); the Go fetcher
   observes the leaf on the very dial that carries the bundle and fails on more than one peer cert
-  per exchange (`pkg/attestation/fetch.go:131-146,239-250`).
+  per exchange (`libs/swarm-evidence-go/attestation/fetch.go:131-146,239-250`).
 - **The data plane we need already exists and is tested.** Pinned-cert upstream pools that verify
   against the pinned leaf only — never a CA bundle (`pkg/proxy/upstream.go:161-219`), fail-closed
   503 with an OpenAI-shaped body (`pkg/proxy/handler.go:84-111`), in-flight connections dropped on
@@ -257,7 +257,7 @@ fetch bundle (observed dial) ─▶ chain ─▶ root anchor ─▶ JWS ─▶ f
 
 - **"The measurement" is the normalised VM launch measurement of the upstream cloud's root CA**
   (mrEnclave hex) — the value the attested-root check derives, never asserts
-  (`pkg/attestation/attestedroot/`, ADR-003 §2a). This is the only measurement that exists for every
+  (`libs/swarm-evidence-go/attestation/attestedroot/`, ADR-003 §2a). This is the only measurement that exists for every
   Swarm deployment today (ADR-007 §3a records that no producer publishes deployment-level
   measurements), and it is what SUP-139 (draft PR #56) already teaches the core to pin:
   `attestedRoots.trustedMeasurements`, replacing exactly the registry-signature leg while the
