@@ -40,6 +40,7 @@ func (v *Verifier) verifyTdx(ev *TdxEvidence, ext *RootExtensions, out *Result) 
 	if err != nil {
 		return err
 	}
+	out.RawMeasurements = tdRegisters(body)
 	out.ReportData = body.GetReportData()
 	out.KeyBinding = BindsPublicKey(out.ReportData, ext.SPKIDigest)
 	if !out.KeyBinding {
@@ -107,6 +108,24 @@ func tdQuoteBody(raw []byte) (*tdxpb.TDQuoteBody, error) {
 		return nil, errors.New("tdx quote: the quote carries no TD quote body")
 	}
 	return body, nil
+}
+
+// tdRegisters records the TD quote's own measurement registers, before any
+// check decides whether they are acceptable. They are recorded even when the
+// steps after this one fail: a reader comparing a denial against a reference
+// value needs the numbers that were compared.
+func tdRegisters(body *tdxpb.TDQuoteBody) RawMeasurements {
+	out := RawMeasurements{
+		TDAttributes: hex.EncodeToString(body.GetTdAttributes()),
+		MRTD:         hex.EncodeToString(body.GetMrTd()),
+	}
+	rtmrs := body.GetRtmrs()
+	for i, target := range []*string{&out.RTMR0, &out.RTMR1, &out.RTMR2, &out.RTMR3} {
+		if i < len(rtmrs) {
+			*target = hex.EncodeToString(rtmrs[i])
+		}
+	}
+	return out
 }
 
 // tdxMeasurement derives the normalised mrEnclave of a TD

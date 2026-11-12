@@ -62,6 +62,13 @@ func (v *Verifier) verifyAzure(ev *AzureEvidence, kind EvidenceType, ext *RootEx
 		if err := v.verifyTdxQuote(ev.Quote, out); err != nil {
 			return err
 		}
+		// The registers of the paravisor's TD, not of our image: on Azure the
+		// image is measured by the vTPM, and out.Measurement below is that.
+		body, err := tdQuoteBody(ev.Quote)
+		if err != nil {
+			return err
+		}
+		out.RawMeasurements = tdRegisters(body)
 	}
 
 	// The CA's key is bound through the HCL user-data, which both the hardware

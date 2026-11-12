@@ -3,6 +3,7 @@ package attestedroot
 import (
 	"context"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ const (
 // Everything that can be decided offline is decided before anything is
 // fetched, so a root that fails on its own evidence never causes a download.
 func (v *Verifier) verifySevSnp(ctx context.Context, ev *SevSnpEvidence, ext *RootExtensions, out *Result) error {
+	out.Build = ev.Build
 	report, err := v.verifySnpReport(ev.RawReport, ev.Certs, out)
 	if err != nil {
 		return err
@@ -61,6 +63,7 @@ func (v *Verifier) verifySnpReport(raw []byte, certs map[SevSnpCertType][]byte, 
 		return nil, fmt.Errorf("attestation report: %w", err)
 	}
 	out.SecurityFields = securityFieldsOf(report)
+	out.RawMeasurements.LaunchDigest = hex.EncodeToString(report.GetMeasurement())
 
 	chain := &spb.CertificateChain{
 		ArkCert:  derOf(certs[CertARK]),

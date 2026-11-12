@@ -172,6 +172,15 @@ type Result struct {
 	// the bundle carried none.
 	RootCaTeeQuote json.RawMessage `json:"rootCaTeeQuote,omitempty"`
 	ChannelBinding ChannelBinding  `json:"channelBinding,omitempty"`
+	// Chain is the validated certificate chain the verdict rests on, nil on a
+	// denial. A caller that turns a verdict into claims needs the root — to
+	// appraise the TEE evidence it carries — and both fingerprints; without
+	// this it would have to parse the bundle a second time and could then
+	// disagree with the chain the verdict was actually reached over.
+	//
+	// It is not serialised: the fields that belong in a verdict document are
+	// MatchedRoot and the fingerprints on ParsedChain, not DER.
+	Chain *ParsedChain `json:"-"`
 
 	// Set when not OK.
 	Stage  Stage  `json:"stage,omitempty"`

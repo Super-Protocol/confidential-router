@@ -27,6 +27,29 @@ type SecurityFields struct {
 	ReportVersion uint32 `json:"reportVersion"`
 }
 
+// RawMeasurements are the hardware registers the normalised mrEnclave is
+// derived from, hex-encoded, exactly as the quote carries them.
+//
+// They are reported because a reference-value set names them directly — a CoRIM
+// publishes {TDATTRIBUTES, MRTD, RTMR1, RTMR2, RTMR3}, since raw RTMR0 contains
+// boot events and is not usable as one — and because an appraiser that only
+// ever emitted the normalised value would make a disagreement about the formula
+// impossible to diagnose from the claim set alone.
+//
+// Which members are populated depends on the platform: the TDX branches fill
+// the TD registers, the SEV-SNP branches fill LaunchDigest. On either Azure
+// branch they describe Microsoft's paravisor rather than the image, whose
+// identity is the vTPM-derived mrEnclave (sp-vm/docs/08-azure-attestation.md).
+type RawMeasurements struct {
+	TDAttributes string `json:"tdattributes,omitempty"`
+	MRTD         string `json:"mrtd,omitempty"`
+	RTMR0        string `json:"rtmr0,omitempty"`
+	RTMR1        string `json:"rtmr1,omitempty"`
+	RTMR2        string `json:"rtmr2,omitempty"`
+	RTMR3        string `json:"rtmr3,omitempty"`
+	LaunchDigest string `json:"launchDigest,omitempty"`
+}
+
 // Result is everything one attested-root check learned. It is populated as far
 // as the check got, so a failed verdict still carries the evidence that
 // explains it — a report whose measurement is sound but absent from the
@@ -66,6 +89,14 @@ type Result struct {
 
 	// SecurityFields are the report's policy and TCB fields.
 	SecurityFields SecurityFields `json:"security"`
+
+	// RawMeasurements are the registers [Result.Measurement] was derived from.
+	RawMeasurements RawMeasurements `json:"measurements,omitzero"`
+	// Build names the sp-vm release the evidence claims the VM booted, when it
+	// carries one. It is producer-supplied and only ever used to locate the
+	// artefacts the measurement is rebuilt from, so it proves nothing on its
+	// own — a policy that cares compares it against its reference values.
+	Build string `json:"build,omitempty"`
 
 	// Measurement is the normalised 32-byte mrEnclave, empty when it could not
 	// be derived.

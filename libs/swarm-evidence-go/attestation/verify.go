@@ -165,6 +165,7 @@ func VerifyBundle(document []byte, params Params) Result {
 		Kind:                   payload.Base().Kind,
 		Payload:                payload,
 		MatchedRoot:            *matchedRoot,
+		Chain:                  chain,
 		RootCaTeeQuote:         bundle.RootCaTeeQuote,
 		ChannelBinding:         binding,
 		ObservedTLSFingerprint: params.ObservedTLSFingerprint,
