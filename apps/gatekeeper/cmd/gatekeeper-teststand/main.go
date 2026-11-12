@@ -12,8 +12,9 @@
 // that certificate's own public key, and yields a launch measurement on the
 // admin's list. The first three of those cannot be produced by a mock: a
 // SEV-SNP report is signed by AMD, and the one real fixture the repository
-// holds (pkg/attestation/attestedroot/testdata) is bound to a CA whose private
-// key nobody outside the platform has, so no stand can issue leaves from it.
+// holds (libs/swarm-evidence-go/attestation/attestedroot/testdata) is bound to a
+// CA whose private key nobody outside the platform has, so no stand can issue
+// leaves from it.
 //
 // Everything else in the loop is real and is exercised as such: the rendered
 // configuration, the config loader and its validation, the evidence fetch over

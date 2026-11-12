@@ -7,9 +7,6 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260830003929-9f48cc723c1c
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
-	github.com/google/go-sev-guest v0.15.0
-	github.com/google/go-tdx-guest v0.3.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/muesli/termenv v0.16.0
 	github.com/open-policy-agent/opa v1.20.1
@@ -20,6 +17,13 @@ require (
 )
 
 require (
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+	github.com/google/go-sev-guest v0.15.0 // indirect
+	github.com/google/go-tdx-guest v0.3.1 // indirect
+)
+
+require (
+	github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go v0.0.0
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymanbagabas/go-udiff v0.3.1 // indirect
@@ -75,3 +79,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go => ../../libs/swarm-evidence-go

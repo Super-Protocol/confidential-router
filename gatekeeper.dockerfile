@@ -9,7 +9,10 @@
 # (ADR-008 §2, §5). The entrypoint is the supervisor that watches that file and
 # reloads the gatekeeper in place; see apps/gatekeeper/pkg/sidecar.
 #
-# Build from the repository root; only apps/gatekeeper is in play.
+# Build from the repository root. Two paths are in play: apps/gatekeeper and the
+# libs/swarm-evidence-go module its go.mod replaces to a relative path, so the
+# builder has to reproduce that layout rather than flatten one directory into
+# /src (SUP-647).
 #
 #   docker build -f gatekeeper.dockerfile -t gatekeeper .
 #   docker run --rm -v ./config.yaml:/etc/gatekeeper/config.yaml:ro \
@@ -31,12 +34,16 @@ ARG RUNTIME_IMAGE=alpine:3.22
 # Builder
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS builder
-WORKDIR /src
+WORKDIR /src/apps/gatekeeper
 
 # Dependencies first, so a source edit does not re-download the module graph.
+# The replaced module's go.mod has to be here already or the graph cannot be
+# resolved; its sources come with the rest, below.
 COPY apps/gatekeeper/go.mod apps/gatekeeper/go.sum ./
+COPY libs/swarm-evidence-go/go.mod libs/swarm-evidence-go/go.sum /src/libs/swarm-evidence-go/
 RUN go mod download
 
+COPY libs/swarm-evidence-go/ /src/libs/swarm-evidence-go/
 COPY apps/gatekeeper/ ./
 
 # The version metadata `gatekeeper version` and the dashboard report. Passed in

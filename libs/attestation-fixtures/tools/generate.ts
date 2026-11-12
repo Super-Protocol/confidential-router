@@ -958,7 +958,7 @@ async function main(): Promise<void> {
   writeJson(join(VECTORS_DIR, 'manifest.json'), {
     version: '1',
     description:
-      'Conformance vectors for the /.well-known/swarm-evidence verifier. Every implementation (TypeScript libs/attestation, Go apps/gatekeeper/pkg/attestation) must reproduce every verdict.',
+      'Conformance vectors for the /.well-known/swarm-evidence verifier. Every implementation (TypeScript libs/attestation, Go libs/swarm-evidence-go/attestation) must reproduce every verdict.',
     generator: 'libs/attestation-fixtures/tools/generate.ts',
     referenceNow: REFERENCE_NOW,
     rootsFile: 'roots.json',

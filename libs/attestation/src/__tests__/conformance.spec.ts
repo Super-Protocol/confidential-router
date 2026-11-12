@@ -1,7 +1,7 @@
 /**
  * The conformance suite: every vector in `@confidential-router/attestation-fixtures`
  * is replayed through `verifyHostname`. The Go verifier in
- * `apps/gatekeeper/pkg/attestation` is held to the same vectors, so a change here
+ * `libs/swarm-evidence-go/attestation` is held to the same vectors, so a change here
  * that is not a change to the fixtures means the two implementations have drifted.
  */
 import {

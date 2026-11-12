@@ -11,7 +11,8 @@
       "inputs": [
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
-        "{projectRoot}/go.sum"
+        "{projectRoot}/go.sum",
+        "swarmEvidenceGo"
       ],
       "outputs": ["{projectRoot}/bin"],
       "options": {
@@ -25,7 +26,8 @@
       "inputs": [
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
-        "{projectRoot}/go.sum"
+        "{projectRoot}/go.sum",
+        "swarmEvidenceGo"
       ],
       "outputs": ["{projectRoot}/bin-teststand"],
       "options": {
@@ -44,7 +46,8 @@
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
         "{projectRoot}/go.sum",
-        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*"
+        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*",
+        "swarmEvidenceGo"
       ],
       "options": {
         "command": "go test ./...",
@@ -73,7 +76,8 @@
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
         "{projectRoot}/go.sum",
-        "{projectRoot}/.golangci.yml"
+        "{projectRoot}/.golangci.yml",
+        "swarmEvidenceGo"
       ],
       "options": {
         "commands": ["go vet ./...", "golangci-lint run"],
@@ -106,5 +110,8 @@
       }
     }
   },
-  "implicitDependencies": ["@confidential-router/attestation-fixtures"]
+  "implicitDependencies": [
+    "@confidential-router/attestation-fixtures",
+    "swarm-evidence-go"
+  ]
 }

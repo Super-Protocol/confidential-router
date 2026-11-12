@@ -204,7 +204,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Resolve the version
         id: version
@@ -376,7 +378,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Has the branch moved since the last nightly?
         id: moved
@@ -460,8 +464,10 @@ jobs:
       MAX_DRIFT_DAYS: '3'
       # Everything a released artifact is built from. `tools/installer` is in
       # the list because the install scripts are published as release assets, so
-      # a fix to them is only live once a release carries it (SUP-295).
-      RELEASED_PATHS: apps/gatekeeper tools/installer gatekeeper.dockerfile
+      # a fix to them is only live once a release carries it (SUP-295);
+      # `libs/swarm-evidence-go` because the whole trust decision the binary
+      # makes is compiled out of it (SUP-647).
+      RELEASED_PATHS: apps/gatekeeper libs/swarm-evidence-go tools/installer gatekeeper.dockerfile
       TITLE: 'Gatekeeper `releases/latest` is behind `main`'
       # Backtick-free, because the exact title is matched in jq afterwards and
       # GitHub's title search does not tokenise punctuation the way a literal

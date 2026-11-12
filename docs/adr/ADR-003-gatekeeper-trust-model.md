@@ -23,7 +23,7 @@ fetch bundle ─▶ cert chain leaf→root ─▶ root ∈ trustedRoots ─▶ J
                                         └─ or: the root's own TEE evidence proves it is a Swarm root (§2a)
 ```
 
-- Stages 1–6 are the verifier (`pkg/attestation`, byte-for-byte the algorithm of swarm-cloud
+- Stages 1–6 are the verifier (`libs/swarm-evidence-go/attestation`, byte-for-byte the algorithm of swarm-cloud
   `libs/swarm-attestation/src/verify.ts`, proven by the shared conformance fixtures). Any failure is a
   **deny** with the stage name; Rego is never evaluated on unverified evidence.
 - Channel binding is always **observed**: the gatekeeper compares `payload.certFingerprint` with the
@@ -51,7 +51,7 @@ is a Super Swarm root**.
 A Super Swarm Root CA runs inside an SEV-SNP or TDX VM built by `Super-Protocol/sp-vm`, and its X.509
 carries what that VM attested: the challenge type at OID `1.3.6.1.3.8888.1.1`, the network type at
 `1.3.6.1.3.8888.4`, and the serialised `TeeEvidence` at `0.6.9.42.840.113741.1337.6`. The check
-(`pkg/attestation/attestedroot`) is the one `tee-pki`'s `root-certificate-verifier` and the browser panel
+(`libs/swarm-evidence-go/attestation/attestedroot`) is the one `tee-pki`'s `root-certificate-verifier` and the browser panel
 run, in the same order:
 
 1. **hardware report** — SEV-SNP via `go-sev-guest` (ARK/ASK/VCEK from the evidence, chained to AMD's

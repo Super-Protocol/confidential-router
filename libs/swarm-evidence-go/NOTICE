@@ -1,0 +1,33 @@
+swarm-evidence-go
+Copyright 2026 Super Protocol
+
+This product includes software developed at Super Protocol
+(https://superprotocol.com/).
+
+Licensed under the Apache License, Version 2.0; see LICENSE. The copies of
+LICENSE and NOTICE in this directory are deliberate: a Go module is published as
+the zip of its own directory, so a copy at the repository root would not travel
+with the module a relying party imports.
+
+Ported and vendored components:
+
+  * attestation/
+      ported from Super-Protocol/swarm-cloud `libs/swarm-attestation`, which is
+      licensed under the Business Source License 1.1. The port under the Apache
+      License 2.0 was explicitly authorised by the copyright holder. It is the
+      verifier of the `/.well-known/swarm-evidence` contract: certificate chain,
+      trusted-root match, JWS, freshness and channel binding.
+
+  * attestation/attestedroot/internal/azurecvm/
+      a verbatim copy of Super-Protocol/sp-nodejs-addons
+      `attestation-wasm/go/azurecvm` — the Azure confidential-VM verifier the
+      browser extension's WebAssembly build runs. Kept byte-identical to
+      upstream so that both derive the same mrEnclave from the same root; see
+      that directory's README.
+
+  * attestation/attestedroot/internal/snpmeasure/
+      the SEV-SNP launch-digest calculation, ported from Super-Protocol/sp-sev
+      `snp_calc_launch_digest_with_hashes_from_bytes`.
+
+The repository's own NOTICE records every other port in
+Super-Protocol/confidential-router.

@@ -73,14 +73,15 @@ jobs:
           echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
           echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
-      # `gatekeeper` is excluded here and owned by the `go` job below, which has
-      # the Go toolchain and golangci-lint installed.
+      # The two Go projects — `gatekeeper` and the `swarm-evidence-go` module it
+      # is built out of — are excluded here and owned by the `go` job below,
+      # which has the Go toolchain and golangci-lint installed.
       - name: Lint, typecheck, build & test
         run: |
           pnpm nx affected -t lint typecheck build test \
             --base="${{ steps.nx-shas.outputs.base }}" \
             --head="${{ steps.nx-shas.outputs.head }}" \
-            --exclude=gatekeeper \
+            --exclude=gatekeeper,swarm-evidence-go \
             --parallel=3 \
             --outputStyle=static
 
@@ -209,7 +210,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -284,7 +287,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

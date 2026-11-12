@@ -55,7 +55,7 @@ export interface SidecarReport {
    * be read rather than inferred: a dial, handshake or read failure sets it,
    * while a non-2xx answer to the bundle fetch, an over-sized bundle and a
    * hostname the gatekeeper refuses are all stage `fetch` with this unset
-   * (`pkg/attestation/verify.go`). Those are an upstream answering badly, and
+   * (`libs/swarm-evidence-go/attestation/verify.go`). Those are an upstream answering badly, and
    * calling them unreachable would send an operator to look at a cloud that is
    * up.
    *

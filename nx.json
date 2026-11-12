@@ -16,6 +16,12 @@
       "!{projectRoot}/vitest.config.mts",
       "!{projectRoot}/src/test-setup.[jt]s"
     ],
+    "swarmEvidenceGo": [
+      "{workspaceRoot}/libs/swarm-evidence-go/**/*.go",
+      "{workspaceRoot}/libs/swarm-evidence-go/**/*.json",
+      "{workspaceRoot}/libs/swarm-evidence-go/go.mod",
+      "{workspaceRoot}/libs/swarm-evidence-go/go.sum"
+    ],
     "sharedGlobals": [
       "{workspaceRoot}/.github/workflows/pull-request.yml",
       "{workspaceRoot}/biome.json",

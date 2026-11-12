@@ -9,7 +9,7 @@
  * host can only withhold an answer, which fails closed.
  *
  * It is the same key, the same probe order and the same signature scheme as the
- * gatekeeper's `apps/gatekeeper/pkg/attestation/attestedroot/registry.go`, so the
+ * gatekeeper's `libs/swarm-evidence-go/attestation/attestedroot/registry.go`, so the
  * page and the Go verifier accept exactly the same set of images. Keep them in
  * step: a divergence here would let the console show a green tier the gatekeeper
  * would refuse.
