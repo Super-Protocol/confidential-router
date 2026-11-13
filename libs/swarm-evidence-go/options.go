@@ -14,10 +14,29 @@ type Options struct {
 	// Subject is what the evidence must be about: the hostname an evidence
 	// bundle is published for.
 	//
-	// It is required. An appraisal that did not know what it was looking at
-	// could report a sound chain and a verified quote belonging to some other
-	// endpoint, which is the substitution the claim set exists to rule out.
+	// It is required for the bundle form. An appraisal that did not know what
+	// it was looking at could report a sound chain and a verified quote
+	// belonging to some other endpoint, which is the substitution the claim
+	// set exists to rule out. The composite form answers the same question
+	// with RequestSubject and RequestTarget instead, because what it is about
+	// is a credential request rather than a served hostname.
 	Subject string
+
+	// RequestTarget and RequestSubject are the other two values the composite
+	// form's binding digest commits to, beside FreshnessInput.
+	//
+	// RequestTarget is the prepared TACRA Target octets; RequestSubject is the
+	// retrieval subject — the DER CertificationRequest for enrolment, the DER
+	// SubjectPublicKeyInfo of CEKpub for retrieval. Both are supplied
+	// **verbatim**, as the octets the attester was given: this module never
+	// re-prepares a Target and never re-encodes a subject, because a verifier
+	// that did would compute a digest no conformant attester produces.
+	//
+	// Both are required for the composite form, together with FreshnessInput.
+	// An appraisal that did not hold the request values could report a
+	// verified quote and a locked pod belonging to somebody else's request.
+	RequestTarget  []byte
+	RequestSubject []byte
 
 	// PKIRoots are the Super Swarm PKI roots the relying party pinned. The
 	// chain must terminate at one of them, matched by the SHA-256 of its DER;
@@ -32,9 +51,16 @@ type Options struct {
 	// besides the ones Super Protocol signed — the CoRIM of SUP-640.
 	ReferenceValues ReferenceValues
 
-	// FreshnessInput is the nonce the attester was challenged with. It is
-	// echoed into the claim set verbatim and, once the composite form carries a
-	// NodeRequestEnvelope, is what BindingOK is computed against.
+	// FreshnessInput is the freshness element the attester was challenged
+	// with, verbatim: the 32-octet Handle for the TACRA Vault profile's
+	// `present-nonce`, the 8-octet big-endian timestamp for
+	// `absent-timestamp`. It is echoed into the claim set and is the first of
+	// the three values the composite form's binding digest commits to.
+	//
+	// Its size is the Freshness Kind's and is not this module's to fix, so no
+	// particular length is required; what is fixed is the size of the quote
+	// field the resulting digest goes into, which selects the hash
+	// ([BindingDigest]).
 	FreshnessInput []byte
 
 	// QuoteAppraiser appraises the hardware quote. Nil selects
@@ -70,6 +96,14 @@ type ReferenceValues struct {
 	// MrEnclaves are normalised image identities, in any spelling
 	// [attestedroot.ParseMeasurement] accepts.
 	MrEnclaves []string
+}
+
+// appraiser is the configured quote appraiser, or the built-in one.
+func (o Options) appraiser() QuoteAppraiser {
+	if o.QuoteAppraiser != nil {
+		return o.QuoteAppraiser
+	}
+	return &BuiltinQuoteAppraiser{ReferenceValues: o.ReferenceValues, Now: o.now}
 }
 
 func (o Options) now() time.Time {

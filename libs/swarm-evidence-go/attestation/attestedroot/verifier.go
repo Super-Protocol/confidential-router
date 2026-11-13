@@ -133,9 +133,54 @@ func (v *Verifier) verify(ctx context.Context, cert *x509.Certificate) *Result {
 	out.logf("root certificate carries TEE evidence (%d bytes), network type %q",
 		len(ext.Evidence), orUnset(string(ext.NetworkType)))
 
-	evidence, err := ParseEvidence(ext.Evidence)
+	spki := ext.SPKIDigest
+	v.appraise(ctx, ext.Evidence, &spki, out)
+	if out.KeyBinding {
+		out.logf("certificate public key SHA-256 %s matches the report data", out.SPKIDigestHex())
+	}
+	return out
+}
+
+// VerifyQuote appraises a hardware quote that stands on its own, rather than
+// one a certificate carries: the composite form's element 1, whose
+// guest-chosen field holds the relying party's own binding digest instead of a
+// certificate key hash (SUP-680).
+//
+// Everything the certificate path checks about the hardware is checked here
+// too — the vendor chain, the measurement and who vouches for it. The one step
+// that is absent is the key binding, because there is no key to bind to: what
+// the quote answers for is supplied by the caller and compared against
+// [Result.ReportData], which this reports per platform.
+//
+// It never returns an error for a quote that simply does not appraise; that is
+// a [Result] with Attested false and a Reason, as on the certificate path.
+func (v *Verifier) VerifyQuote(ctx context.Context, serialized []byte) (*Result, error) {
+	if len(serialized) == 0 {
+		return nil, errors.New("attestedroot: no evidence to verify")
+	}
+
+	key := "quote:" + string(serialized)
+	if cached, ok := v.cached(key); ok {
+		return cached, nil
+	}
+	out := &Result{}
+	v.appraise(ctx, serialized, nil, out)
+	v.store(key, out)
+	return out, nil
+}
+
+// appraise runs the hardware half shared by both entry points: parse the
+// serialised TeeEvidence, verify it on its platform's branch, and ask who
+// vouches for the measurement. A nil spki skips the key-binding step, which is
+// the only difference between a quote carried by a certificate and one that
+// stands alone.
+//
+// Everything it learns is recorded on out, including why it stopped.
+func (v *Verifier) appraise(ctx context.Context, serialized []byte, spki *[32]byte, out *Result) {
+	evidence, err := ParseEvidence(serialized)
 	if err != nil {
-		return out.deny("%v", err)
+		out.deny("%v", err)
+		return
 	}
 	out.EvidenceType = evidence.Type
 	out.EvidenceTypeName = evidence.Type.String()
@@ -143,26 +188,24 @@ func (v *Verifier) verify(ctx context.Context, cert *x509.Certificate) *Result {
 
 	switch {
 	case evidence.SevSnp != nil:
-		err = v.verifySevSnp(ctx, evidence.SevSnp, ext, out)
+		err = v.verifySevSnp(ctx, evidence.SevSnp, spki, out)
 	case evidence.Tdx != nil:
-		err = v.verifyTdx(evidence.Tdx, ext, out)
+		err = v.verifyTdx(evidence.Tdx, spki, out)
 	case evidence.Azure != nil:
-		err = v.verifyAzure(evidence.Azure, evidence.Type, ext, out)
+		err = v.verifyAzure(evidence.Azure, evidence.Type, spki, out)
 	default:
 		err = fmt.Errorf("evidence type %s is not supported by this build", evidence.Type)
 	}
 	if err != nil {
-		return out.deny("%v", err)
+		out.deny("%v", err)
+		return
 	}
 	out.logf("hardware report verified; measurement %s", out.MeasurementHex())
-	out.logf("certificate public key SHA-256 %s matches the report data", out.SPKIDigestHex())
 
 	if !v.AdmitMeasurement(ctx, out, evidence.Type) {
-		return out
+		return
 	}
-
 	out.Attested = true
-	return out
 }
 
 func (r *Result) deny(format string, args ...any) *Result {

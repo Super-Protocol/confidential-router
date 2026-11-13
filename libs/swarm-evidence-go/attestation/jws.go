@@ -43,6 +43,18 @@ func jwsErrf(format string, args ...any) error { return &jwsError{msg: fmt.Sprin
 // rejected later by policy, so the two implementations never disagree on a
 // verdict.
 func verifyJWS(jws string, leaf *certparse.Certificate) (Payload, error) {
+	payloadBytes, err := verifyCompactJWS(jws, leaf)
+	if err != nil {
+		return nil, err
+	}
+	return parsePayload(payloadBytes)
+}
+
+// verifyCompactJWS checks a compact JWS's signature under the leaf's key and
+// returns the payload octets. It knows nothing about what the payload is: the
+// published bundle, the workload attestation statement and the node request
+// envelope are all signed this way and none of their bodies resembles another.
+func verifyCompactJWS(jws string, leaf *certparse.Certificate) ([]byte, error) {
 	segments := strings.Split(jws, ".")
 	if len(segments) != 3 {
 		return nil, jwsErrf("compact JWS must have exactly 3 segments")
@@ -88,7 +100,7 @@ func verifyJWS(jws string, leaf *certparse.Certificate) (Payload, error) {
 		}
 	}
 
-	return parsePayload(payloadBytes)
+	return payloadBytes, nil
 }
 
 func verifyRS256(signingInput, signature []byte, leaf *certparse.Certificate) error {

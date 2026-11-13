@@ -40,9 +40,13 @@ type fixture struct {
 	root, inter, leaf *testca.Cert
 	k1Root, k1Leaf    *testca.Cert
 	stray             *testca.Cert
-	freshness         []byte
-	appraisal         *swarmevidence.QuoteAppraisal
-	now               time.Time
+	// node and signer are the composite form's two signers: the node's own
+	// PKI certificate and the per-leader statement signer (SUP-636). foreign
+	// is a node certificate of another cloud, under a root nobody pinned.
+	node, signer, foreign *testca.Cert
+	freshness             []byte
+	appraisal             *swarmevidence.QuoteAppraisal
+	now                   time.Time
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -80,6 +84,11 @@ func newFixture(t *testing.T) *fixture {
 	f.k1Leaf = issue(t, ee(testSubject), testca.Secp256k1, f.k1Root)
 
 	f.stray = issue(t, ee(testSubject), testca.RSA, issue(t, ca("Some Other Cloud Root"), testca.RSA, nil))
+
+	f.node = issue(t, ee("node-01.swarm-cloud-test"), testca.RSA, f.inter)
+	f.signer = issue(t, ee("leader.swarm-cloud-test"), testca.RSA, f.inter)
+	f.foreign = issue(t, ee("node-01.other-cloud"), testca.RSA,
+		issue(t, ca("Some Other Cloud Root"), testca.RSA, nil))
 	return f
 }
 
@@ -161,8 +170,10 @@ func (f *fixture) bundleFrom(
 
 // stubAppraiser stands in for the hardware half.
 type stubAppraiser struct {
-	appraisal *swarmevidence.QuoteAppraisal
-	err       error
+	appraisal      *swarmevidence.QuoteAppraisal
+	err            error
+	quoteAppraisal *swarmevidence.QuoteAppraisal
+	quoteErr       error
 }
 
 func (s *stubAppraiser) Name() string { return "stub" }

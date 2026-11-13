@@ -9,10 +9,11 @@
 // [AppraiseComposite], and so does the gatekeeper. The module is standalone and
 // Apache-2.0 so a relying party can run it in production without the router.
 //
-//	claims, err := swarmevidence.AppraiseComposite(ctx, blob, swarmevidence.Options{
-//	    Subject:        "llama-33-70b.tee.swarm.cloud",
+//	claims, err := swarmevidence.AppraiseComposite(ctx, collection, swarmevidence.Options{
 //	    PKIRoots:       []attestation.TrustedRoot{{Name: "swarm-cloud-prod", PEM: rootPEM}},
-//	    FreshnessInput: nonce,
+//	    FreshnessInput: handle,
+//	    RequestTarget:  target,
+//	    RequestSubject: cekpub,
 //	})
 //	var denial *swarmevidence.Denial
 //	if errors.As(err, &denial) {
@@ -48,12 +49,24 @@
 //     libs/attestation-fixtures, which are the contract every implementation of
 //     this appraisal must satisfy.
 //
-// # Status
+// # The two forms
 //
-// The bundle form of the evidence is appraised today. The composite form — a
-// hardware quote beside a node-signed NodeRequestEnvelope and a control-plane
-// statement — is refused at the blob stage until SUP-638 settles its encoding
-// and SUP-636 the statement; the claims it will fill in (BindingOK, EnvelopeOK,
-// the pod claims) are declared here and in the schema already, so a policy can
-// be written against the whole of v1 before the second half lands.
+// The **composite** form is a RATS Conceptual Message Wrapper collection
+// holding the hardware quote, the PKI membership chain, the leader's workload
+// attestation statement and the node's request envelope, as the TACRA Vault
+// protocol profile fixes it. It is what a credential request presents, and the
+// form the request binding, the envelope and the pod claims come from. Both
+// its serialisations are read — the profile's own and the standard CMW JSON
+// wrapper — because the relying party's single Verifier is the relying
+// party's choice.
+//
+// The **evidence bundle** form is the /.well-known/swarm-evidence contract the
+// fleet publishes about a served hostname.
+//
+// Which claims each establishes differs, and the claim set says so by leaving
+// the others out: a bundle carries no request binding and a collection carries
+// no channel binding.
+//
+// README.md walks both forms step by step, and DENIAL-STAGES.md is the
+// contract for the stage a refusal names.
 package swarmevidence

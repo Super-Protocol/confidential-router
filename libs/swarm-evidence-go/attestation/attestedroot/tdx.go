@@ -30,7 +30,7 @@ var normalizedRTMR0Events = map[string]bool{
 }
 
 // verifyTdx runs the hardware half of an Intel TDX attested root.
-func (v *Verifier) verifyTdx(ev *TdxEvidence, ext *RootExtensions, out *Result) error {
+func (v *Verifier) verifyTdx(ev *TdxEvidence, spki *[32]byte, out *Result) error {
 	// Quote integrity first, and offline: the signature and the Intel chain.
 	if err := v.verifyTdxQuote(ev.Quote, out); err != nil {
 		return err
@@ -42,10 +42,13 @@ func (v *Verifier) verifyTdx(ev *TdxEvidence, ext *RootExtensions, out *Result) 
 	}
 	out.RawMeasurements = tdRegisters(body)
 	out.ReportData = body.GetReportData()
-	out.KeyBinding = BindsPublicKey(out.ReportData, ext.SPKIDigest)
-	if !out.KeyBinding {
-		return fmt.Errorf(
-			"the quote's reportData does not commit to this certificate's public key (SHA-256 %x)", ext.SPKIDigest)
+	out.ReportDataSource = ReportDataQuote
+	if spki != nil {
+		out.KeyBinding = BindsPublicKey(out.ReportData, *spki)
+		if !out.KeyBinding {
+			return fmt.Errorf(
+				"the quote's reportData does not commit to this certificate's public key (SHA-256 %x)", *spki)
+		}
 	}
 
 	measurement, err := tdxMeasurement(body, ev.EventLog)

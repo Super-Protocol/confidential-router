@@ -199,6 +199,10 @@ func TestSchemaEnumsMatchConstants(t *testing.T) {
 			string(swarmevidence.BindingObserved),
 			string(swarmevidence.BindingProducerAsserted),
 		}},
+		{[]string{"network_type"}, []string{
+			string(swarmevidence.NetworkTrusted),
+			string(swarmevidence.NetworkUntrusted),
+		}},
 		{[]string{"mrenclave_source"}, []string{
 			string(swarmevidence.SourceRegistry),
 			string(swarmevidence.SourceReferenceValues),

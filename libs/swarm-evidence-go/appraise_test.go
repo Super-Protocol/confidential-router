@@ -123,7 +123,7 @@ func TestAppraisedClaimsAreAllDeclared(t *testing.T) {
 	}
 }
 
-func TestAppraiseCompositeDenials(t *testing.T) {
+func TestAppraiseBundleDenials(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
@@ -133,9 +133,9 @@ func TestAppraiseCompositeDenials(t *testing.T) {
 		blob   func(t *testing.T, f *fixture) []byte
 		tweak  func(f *fixture, o *swarmevidence.Options)
 	}{{
-		name:   "the composite form is not implemented yet",
+		name:   "a blob that is neither an evidence collection nor a bundle",
 		stage:  swarmevidence.StageBlob,
-		reason: "SUP-638",
+		reason: "neither a Super Swarm Evidence collection",
 		blob: func(*testing.T, *fixture) []byte {
 			return []byte(`{"version":"1","kind":"SuperSwarmEvidence","quote":"..."}`)
 		},
@@ -154,15 +154,9 @@ func TestAppraiseCompositeDenials(t *testing.T) {
 	}, {
 		name:   "no subject to appraise against",
 		stage:  swarmevidence.StageOptions,
-		reason: "Options.Subject is required",
+		reason: "Options.Subject is required for the evidence bundle form",
 		blob:   func(t *testing.T, f *fixture) []byte { return f.bundle(t, nil) },
 		tweak:  func(_ *fixture, o *swarmevidence.Options) { o.Subject = "" },
-	}, {
-		name:   "a freshness input the attester could never have bound",
-		stage:  swarmevidence.StageOptions,
-		reason: "expected 64",
-		blob:   func(t *testing.T, f *fixture) []byte { return f.bundle(t, nil) },
-		tweak:  func(_ *fixture, o *swarmevidence.Options) { o.FreshnessInput = []byte("too short") },
 	}, {
 		name:   "a root the relying party did not pin",
 		stage:  swarmevidence.StagePKIChain,

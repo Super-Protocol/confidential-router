@@ -141,7 +141,7 @@ func TestAppraisalFromDrawsTheAnswerFailureLine(t *testing.T) {
 	}} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			appraisal, err := appraisalFrom(c.result())
+			appraisal, err := appraisalFrom(c.result(), true)
 
 			if c.wantErr != "" {
 				if err == nil {

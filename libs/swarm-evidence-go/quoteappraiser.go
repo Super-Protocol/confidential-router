@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -35,7 +36,37 @@ type QuoteAppraiser interface {
 	// decide on, such as an image nothing vouches for, is a populated
 	// QuoteAppraisal with MrEnclaveApproved false.
 	AppraiseRootQuote(ctx context.Context, cert *x509.Certificate) (*QuoteAppraisal, error)
+
+	// AppraiseQuote appraises a quote that stands on its own — the composite
+	// form's element 1, taken per request, whose guest-chosen field carries
+	// the relying party's binding digest instead of a certificate key hash.
+	//
+	// The same rule about errors applies. In addition the appraisal MUST
+	// report BindingData and BindingDataSource: the field the digest is
+	// compared against is not the same one on every platform, and an
+	// implementation that reported the Azure paravisor's REPORT_DATA as if it
+	// were guest-chosen would have the relying party compare against a value
+	// no attester can control. Reporting neither denies; reporting the wrong
+	// one is the failure this split exists to make impossible to write by
+	// accident.
+	AppraiseQuote(ctx context.Context, quote Quote) (*QuoteAppraisal, error)
 }
+
+// BindingDataSource names which of a platform's fields an appraiser read the
+// guest-chosen 64 octets from.
+type BindingDataSource string
+
+// The two places a guest-chosen field lives.
+const (
+	// BindingFromReportData is the quote's own REPORT_DATA / REPORTDATA, on
+	// the bare-metal and GCP branches.
+	BindingFromReportData BindingDataSource = "report-data"
+	// BindingFromHCLUserData is the HCL report's user-data, on both Azure
+	// branches: there the hardware report data is the paravisor's
+	// SHA-256(runtime data JSON) ‖ 0³² and is not guest-chosen at all
+	// (sp-vm/docs/08-azure-attestation.md).
+	BindingFromHCLUserData BindingDataSource = "hcl-user-data"
+)
 
 // QuoteAppraisal is what a [QuoteAppraiser] established about one attester.
 type QuoteAppraisal struct {
@@ -44,10 +75,18 @@ type QuoteAppraisal struct {
 	TCBStatus         TCBStatus
 	CollateralChecked bool
 	// KeyBinding is whether the quote's report data commits to the root
-	// certificate's SubjectPublicKeyInfo.
+	// certificate's SubjectPublicKeyInfo. It is meaningless for a standalone
+	// quote, which commits to a request rather than to a key.
 	KeyBinding bool
 	// NetworkType is what the root declares about its own network.
-	NetworkType string
+	NetworkType NetworkType
+
+	// BindingData is the guest-chosen field the relying party's own binding
+	// digest is compared against, and BindingDataSource says which field that
+	// is. Both are populated by AppraiseQuote and left empty by
+	// AppraiseRootQuote, whose binding is to a key rather than to a request.
+	BindingData       []byte
+	BindingDataSource BindingDataSource
 
 	Measurements     Measurements
 	PlatformSecurity PlatformSecurity
@@ -119,7 +158,28 @@ func (a *BuiltinQuoteAppraiser) AppraiseRootQuote(
 	if err != nil {
 		return nil, err
 	}
-	return appraisalFrom(result)
+	return appraisalFrom(result, true)
+}
+
+// AppraiseQuote implements [QuoteAppraiser].
+func (a *BuiltinQuoteAppraiser) AppraiseQuote(
+	ctx context.Context, quote Quote,
+) (*QuoteAppraisal, error) {
+	evidence, err := quote.Evidence()
+	if err != nil {
+		return nil, fmt.Errorf("the quote's evidence is not base64: %w", err)
+	}
+	result, err := a.inner().VerifyQuote(ctx, evidence)
+	if err != nil {
+		return nil, err
+	}
+	appraisal, err := appraisalFrom(result, false)
+	if err != nil {
+		return nil, err
+	}
+	appraisal.BindingData = result.ReportData
+	appraisal.BindingDataSource = bindingDataSourceOf(result.ReportDataSource)
+	return appraisal, nil
 }
 
 // appraisalFrom turns an attested-root result into a quote appraisal, and
@@ -131,7 +191,7 @@ func (a *BuiltinQuoteAppraiser) AppraiseRootQuote(
 // relying party's call. A registry that could not be consulted is a failure:
 // admitting the root then would hand anyone who can cut off the registry the
 // power to get an unvouched-for image accepted.
-func appraisalFrom(result *attestedroot.Result) (*QuoteAppraisal, error) {
+func appraisalFrom(result *attestedroot.Result, requireKeyBinding bool) (*QuoteAppraisal, error) {
 	if result == nil {
 		return nil, errors.New("the quote appraiser returned no result")
 	}
@@ -150,7 +210,7 @@ func appraisalFrom(result *attestedroot.Result) (*QuoteAppraisal, error) {
 		TCBStatus:         tcbStatusOf(result),
 		CollateralChecked: result.RevocationChecked,
 		KeyBinding:        result.KeyBinding,
-		NetworkType:       string(result.NetworkType),
+		NetworkType:       networkTypeOf(result.NetworkType),
 		Measurements:      measurementsOf(result.RawMeasurements),
 		PlatformSecurity: PlatformSecurity{
 			VMPL:             result.SecurityFields.VMPL,
@@ -169,7 +229,7 @@ func appraisalFrom(result *attestedroot.Result) (*QuoteAppraisal, error) {
 	switch {
 	case !result.ReportIntegrity:
 		return nil, errors.New("the hardware quote did not verify: " + result.Reason)
-	case !result.KeyBinding:
+	case requireKeyBinding && !result.KeyBinding:
 		return nil, errors.New("the quote does not commit to the root certificate's public key: " + result.Reason)
 	case out.MrEnclave == "":
 		return nil, errors.New("no image identity could be derived: " + result.Reason)
@@ -225,6 +285,22 @@ func sourceOf(source attestedroot.MeasurementSource) MrEnclaveSource {
 		return SourceRegistry
 	}
 	return SourceReferenceValues
+}
+
+// networkTypeOf publishes the root's declared network class by an explicit
+// switch rather than a string conversion, for the same reason
+// channelBindingOf does: the claim set publishes a closed set, and a value the
+// schema does not list would make a conforming validator reject our own
+// output. A root that declares nothing reports nothing.
+func networkTypeOf(network attestedroot.NetworkType) NetworkType {
+	switch network {
+	case attestedroot.NetworkTrusted:
+		return NetworkTrusted
+	case attestedroot.NetworkUntrusted:
+		return NetworkUntrusted
+	default:
+		return ""
+	}
 }
 
 func measurementsOf(raw attestedroot.RawMeasurements) Measurements {

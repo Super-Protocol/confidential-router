@@ -50,6 +50,24 @@ type RawMeasurements struct {
 	LaunchDigest string `json:"launchDigest,omitempty"`
 }
 
+// ReportDataSource names the field a [Result.ReportData] was read from. It
+// matters to a relying party that recomputes a binding digest: on the Azure
+// nested form the hardware REPORT_DATA is the paravisor's
+// SHA-256(runtime data JSON) ‖ 0³² and carries nothing the guest chose, so a
+// verifier that read it there would compare against a value no attester can
+// control.
+type ReportDataSource string
+
+// The two places a guest-chosen 64-byte field lives.
+const (
+	// ReportDataQuote is the quote's own REPORT_DATA / REPORTDATA field, on
+	// the bare-metal and GCP branches.
+	ReportDataQuote ReportDataSource = "report-data"
+	// ReportDataHCLUserData is the HCL report's user-data, on both Azure
+	// branches (sp-vm/docs/08-azure-attestation.md).
+	ReportDataHCLUserData ReportDataSource = "hcl-user-data"
+)
+
 // Result is everything one attested-root check learned. It is populated as far
 // as the check got, so a failed verdict still carries the evidence that
 // explains it — a report whose measurement is sound but absent from the
@@ -84,8 +102,12 @@ type Result struct {
 	// certificate's public key. Without it the attestation is about some VM,
 	// not about this CA.
 	KeyBinding bool `json:"keyBinding"`
-	// ReportData is the raw 64-byte field, for an operator comparing by eye.
-	ReportData []byte `json:"-"`
+	// ReportData is the raw 64-byte guest-chosen field, for an operator
+	// comparing by eye and for a relying party comparing its own binding
+	// digest against it. ReportDataSource names which field it came from,
+	// which is not the same one on every platform.
+	ReportData       []byte           `json:"-"`
+	ReportDataSource ReportDataSource `json:"reportDataSource,omitempty"`
 
 	// SecurityFields are the report's policy and TCB fields.
 	SecurityFields SecurityFields `json:"security"`
