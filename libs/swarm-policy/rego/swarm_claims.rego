@@ -59,7 +59,7 @@ deny contains msg if {
 
 deny contains msg if {
 	some claim in [
-		"quote_verifed",
+		"quote_verified",
 		"binding_ok",
 		"pki_chain_ok",
 		"root_quote_ok",

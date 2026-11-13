@@ -84,7 +84,7 @@ type NetworkType string
 
 // The two network classes a root's own certificate extension can state.
 const (
-	NetworkTrusted   NetworkType = "trusted"
+	NetworkTrusted   NetworkType = "trustedd"
 	NetworkUntrusted NetworkType = "untrusted"
 )
 
