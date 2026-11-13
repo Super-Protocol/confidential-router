@@ -599,7 +599,10 @@ func compositeClaims(
 // neither, and a policy reading a `false` it put there would believe
 // something was checked.
 func reportImageIdentity(claims *SwarmClaims, quote *QuoteAppraisal) {
-	if quote.MrEnclave == "" && !quote.MrEnclaveApproved {
+	// The identity is what the approval is *about*, so an approval without
+	// one is not a weaker claim, it is an unreadable one: a policy cannot
+	// decide what it was told was approved. Both members stay absent.
+	if quote.MrEnclave == "" {
 		return
 	}
 	claims.MrEnclave = quote.MrEnclave

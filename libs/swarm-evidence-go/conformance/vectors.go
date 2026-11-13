@@ -64,6 +64,24 @@ type AppraiserProfile struct {
 	OutsideCoverage *CoverageRefusal `json:"outsideCoverage,omitempty"`
 }
 
+// Covers is whether this profile appraises an attester platform.
+//
+// A profile that lists none covers none. The empty list is not "everything":
+// the generator reads the same answer to decide whether to record a token at
+// all, and an appraiser that accepted a platform no token was recorded for
+// would refuse with a message about a missing fixture rather than about
+// coverage. One definition, read by both, is what keeps the two from
+// disagreeing — [AppraiserProfile.Platforms] is therefore required on an
+// `eat` profile, and [NewAppraiser] refuses one without it.
+func (p AppraiserProfile) Covers(platform string) bool {
+	for _, covered := range p.Platforms {
+		if covered == platform {
+			return true
+		}
+	}
+	return false
+}
+
 // CoverageRefusal is what an appraiser answers for evidence it structurally
 // cannot appraise. It is a typed denial, never a partial verdict.
 type CoverageRefusal struct {

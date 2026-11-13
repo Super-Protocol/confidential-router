@@ -172,12 +172,12 @@ func (m *material) recordTokens(
 		// answer a Verifier gives whatever it covers.
 		var tokens conformance.RecordedTokens
 		var err error
-		if root.Error != "" || covers(profile, string(root.Platform)) {
+		if root.Error != "" || profile.Covers(string(root.Platform)) {
 			if tokens.Root, err = mintToken(profile, key, root); err != nil {
 				return nil, err
 			}
 		}
-		if quote.Error != "" || covers(profile, string(quote.Platform)) {
+		if quote.Error != "" || profile.Covers(string(quote.Platform)) {
 			if tokens.Quote, err = mintToken(profile, key, quote); err != nil {
 				return nil, err
 			}
@@ -185,15 +185,6 @@ func (m *material) recordTokens(
 		out[profile.Name] = tokens
 	}
 	return out, nil
-}
-
-func covers(profile conformance.AppraiserProfile, platform string) bool {
-	for _, covered := range profile.Platforms {
-		if covered == platform {
-			return true
-		}
-	}
-	return false
 }
 
 // mintToken writes one recorded appraisal in one profile's spelling and signs

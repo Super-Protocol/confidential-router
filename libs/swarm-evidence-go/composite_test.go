@@ -552,33 +552,47 @@ func TestCompositeGPUAttestedComesFromTheEnvelopeOnly(t *testing.T) {
 // cannot derive one.
 //
 // A `mrenclave_approved: false` there would tell a policy that a set of
-// reference values was consulted, so neither claim may appear.
+// reference values was consulted, so neither claim may appear — and neither
+// may an approval with nothing to approve, which a policy cannot read.
 func TestCompositeWithoutImageIdentityReportsNeitherClaim(t *testing.T) {
 	t.Parallel()
-	c := newComposite(t)
-	options := c.options()
-	appraisal := quoteAppraisal(c.bindingData, c.bindingSource)
-	appraisal.MrEnclave = ""
-	appraisal.MrEnclaveApproved = false
-	appraisal.MrEnclaveSource = ""
-	appraisal.SpvmBuild = ""
-	options.QuoteAppraiser = &stubAppraiser{appraisal: c.f.appraisal, quoteAppraisal: appraisal}
 
-	claims, err := swarmevidence.AppraiseComposite(context.Background(), c.blob(t), options)
-	if err != nil {
-		t.Fatalf("appraise: %v", err)
-	}
-	if claims.MrEnclaveApproved != nil {
-		t.Errorf("mrenclave_approved = %v, want absent: no appraiser derived an image identity",
-			*claims.MrEnclaveApproved)
-	}
-	if claims.MrEnclave != "" || claims.MrEnclaveSource != "" {
-		t.Errorf("mrenclave = %q / source %q, want neither", claims.MrEnclave, claims.MrEnclaveSource)
-	}
-	// The rest of the appraisal is unaffected: the hardware held up and the
-	// pod claims are the statement's.
-	if claims.QuoteVerified == nil || !*claims.QuoteVerified || claims.PodUID != "pod-7f3a" {
-		t.Error("the rest of the claim set did not survive an appraisal without an image identity")
+	for _, tc := range []struct {
+		name     string
+		approved bool
+	}{
+		{name: "an appraiser that derived no image identity"},
+		{name: "an approval with no identity to approve", approved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newComposite(t)
+			options := c.options()
+			appraisal := quoteAppraisal(c.bindingData, c.bindingSource)
+			appraisal.MrEnclave = ""
+			appraisal.MrEnclaveApproved = tc.approved
+			appraisal.MrEnclaveSource = ""
+			appraisal.SpvmBuild = ""
+			options.QuoteAppraiser = &stubAppraiser{appraisal: c.f.appraisal, quoteAppraisal: appraisal}
+
+			claims, err := swarmevidence.AppraiseComposite(context.Background(), c.blob(t), options)
+			if err != nil {
+				t.Fatalf("appraise: %v", err)
+			}
+			if claims.MrEnclaveApproved != nil {
+				t.Errorf("mrenclave_approved = %v, want absent: nothing established an image identity",
+					*claims.MrEnclaveApproved)
+			}
+			if claims.MrEnclave != "" || claims.MrEnclaveSource != "" {
+				t.Errorf("mrenclave = %q / source %q, want neither",
+					claims.MrEnclave, claims.MrEnclaveSource)
+			}
+			// The rest of the appraisal is unaffected: the hardware held up
+			// and the pod claims are the statement's.
+			if claims.QuoteVerified == nil || !*claims.QuoteVerified || claims.PodUID != "pod-7f3a" {
+				t.Error("the rest of the claim set did not survive an appraisal without an image identity")
+			}
+		})
 	}
 }
 

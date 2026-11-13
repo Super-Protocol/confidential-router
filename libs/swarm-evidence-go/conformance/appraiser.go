@@ -47,6 +47,13 @@ func NewAppraiser(profile AppraiserProfile, file AppraisalFile, now time.Time) (
 		if profile.VerificationKey == nil {
 			return nil, fmt.Errorf("profile %q has no verification key", profile.Name)
 		}
+		if len(profile.Platforms) == 0 {
+			// Coverage is not optional: it is what a case's expectation is
+			// written against, and a profile that declared none would be
+			// read as "covers nothing" by the generator and as "covers
+			// everything" by any appraiser that defaulted the other way.
+			return nil, fmt.Errorf("profile %q declares no platforms", profile.Name)
+		}
 		key, err := parseRSAPublicKey(profile.VerificationKey.PEM)
 		if err != nil {
 			return nil, fmt.Errorf("profile %q verification key: %w", profile.Name, err)
@@ -148,25 +155,13 @@ func (a *eatAppraiser) appraise(token string) (*swarmevidence.QuoteAppraisal, er
 	if err != nil {
 		return nil, err
 	}
-	if !a.covers(string(recorded.Platform)) {
+	if !a.profile.Covers(string(recorded.Platform)) {
 		// A token for a platform the profile does not cover is a
 		// configuration mistake rather than evidence: refuse it here instead
 		// of reporting claims nobody appraised.
 		return nil, fmt.Errorf("%s does not appraise %s quotes", a.profile.Name, recorded.Platform)
 	}
 	return appraisal, nil
-}
-
-func (a *eatAppraiser) covers(platform string) bool {
-	if len(a.profile.Platforms) == 0 {
-		return true
-	}
-	for _, covered := range a.profile.Platforms {
-		if covered == platform {
-			return true
-		}
-	}
-	return false
 }
 
 // verify checks the token the way the adapter is configured to: the format,

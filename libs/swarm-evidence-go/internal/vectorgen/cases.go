@@ -554,10 +554,11 @@ func (m *material) expectation(spec caseSpec, in expectationInputs) (conformance
 		claims["platform_security"] = security
 	}
 
-	// An image identity is reported only when something established one. A
+	// An image identity is reported only when the appraiser derived one. A
 	// quote-only Verifier cannot, and `mrenclave_approved: false` would tell
-	// a policy that a registry answered.
-	if in.quote.MrEnclave != "" || in.quote.MrEnclaveApproved {
+	// a policy that a set of reference values answered; an approval with no
+	// identity is unreadable and is left out for the same reason.
+	if in.quote.MrEnclave != "" {
 		claims["mrenclave"] = in.quote.MrEnclave
 		claims["mrenclave_approved"] = in.quote.MrEnclaveApproved
 		if in.quote.MrEnclaveSource != "" {
@@ -606,7 +607,7 @@ func (m *material) expectation(spec caseSpec, in expectationInputs) (conformance
 		if profile.Kind != "eat" || profile.OutsideCoverage == nil {
 			continue
 		}
-		if covers(profile, string(in.root.Platform)) && covers(profile, string(in.quote.Platform)) {
+		if profile.Covers(string(in.root.Platform)) && profile.Covers(string(in.quote.Platform)) {
 			continue
 		}
 		if expect.Appraisers == nil {
@@ -703,32 +704,39 @@ func recordedRoot(platform swarmevidence.Platform) conformance.RecordedAppraisal
 // reports. Which members are populated is the platform's, which is why a
 // policy reads `platform` before any of them.
 func platformFacts(platform swarmevidence.Platform) (swarmevidence.Measurements, swarmevidence.PlatformSecurity) {
-	switch platform {
-	case swarmevidence.PlatformSNPQemu, swarmevidence.PlatformSNPAzure:
-		return swarmevidence.Measurements{
-				LaunchDigest: hexFill("1d", 48),
-			}, swarmevidence.PlatformSecurity{
-				VMPL:             0,
-				DebugAllowed:     false,
-				CiphertextHiding: true,
-				PageSwapDisabled: true,
-				SnpFirmwareTCB:   23,
-				ReportVersion:    3,
-				CPUGeneration:    "Genoa",
-			}
-	default:
-		return swarmevidence.Measurements{
-				TDAttributes: "0000001000000000",
-				MRTD:         hexFill("4d", 48),
-				RTMR0:        hexFill("r0", 48),
-				RTMR1:        hexFill("r1", 48),
-				RTMR2:        hexFill("r2", 48),
-				RTMR3:        hexFill("r3", 48),
-			}, swarmevidence.PlatformSecurity{
-				ReportVersion: 4,
-				CPUGeneration: "Emerald Rapids",
-			}
+	// Assigned to locals rather than returned as two composite literals: the
+	// two are indented differently by different releases of gofmt, so the
+	// literal form makes the file's formatting depend on which Go a
+	// contributor happens to have.
+	if platform == swarmevidence.PlatformSNPQemu || platform == swarmevidence.PlatformSNPAzure {
+		measurements := swarmevidence.Measurements{
+			LaunchDigest: hexFill("1d", 48),
+		}
+		security := swarmevidence.PlatformSecurity{
+			VMPL:             0,
+			DebugAllowed:     false,
+			CiphertextHiding: true,
+			PageSwapDisabled: true,
+			SnpFirmwareTCB:   23,
+			ReportVersion:    3,
+			CPUGeneration:    "Genoa",
+		}
+		return measurements, security
 	}
+
+	measurements := swarmevidence.Measurements{
+		TDAttributes: "0000001000000000",
+		MRTD:         hexFill("4d", 48),
+		RTMR0:        hexFill("r0", 48),
+		RTMR1:        hexFill("r1", 48),
+		RTMR2:        hexFill("r2", 48),
+		RTMR3:        hexFill("r3", 48),
+	}
+	security := swarmevidence.PlatformSecurity{
+		ReportVersion: 4,
+		CPUGeneration: "Emerald Rapids",
+	}
+	return measurements, security
 }
 
 // challengeTypeOf is the quote element's own `type`: the platform's
