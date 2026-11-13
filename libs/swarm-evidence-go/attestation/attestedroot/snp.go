@@ -32,17 +32,20 @@ const (
 //
 // Everything that can be decided offline is decided before anything is
 // fetched, so a root that fails on its own evidence never causes a download.
-func (v *Verifier) verifySevSnp(ctx context.Context, ev *SevSnpEvidence, ext *RootExtensions, out *Result) error {
+func (v *Verifier) verifySevSnp(ctx context.Context, ev *SevSnpEvidence, spki *[32]byte, out *Result) error {
 	out.Build = ev.Build
 	report, err := v.verifySnpReport(ev.RawReport, ev.Certs, out)
 	if err != nil {
 		return err
 	}
 	out.ReportData = report.GetReportData()
-	out.KeyBinding = BindsPublicKey(out.ReportData, ext.SPKIDigest)
-	if !out.KeyBinding {
-		return fmt.Errorf(
-			"the report's reportData does not commit to this certificate's public key (SHA-256 %x)", ext.SPKIDigest)
+	out.ReportDataSource = ReportDataQuote
+	if spki != nil {
+		out.KeyBinding = BindsPublicKey(out.ReportData, *spki)
+		if !out.KeyBinding {
+			return fmt.Errorf(
+				"the report's reportData does not commit to this certificate's public key (SHA-256 %x)", *spki)
+		}
 	}
 
 	measurement, err := v.snpMeasurement(ctx, ev, report)

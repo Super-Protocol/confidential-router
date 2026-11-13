@@ -76,6 +76,18 @@ const (
 	BindingProducerAsserted ChannelBinding = "producer-asserted"
 )
 
+// NetworkType is which Super Protocol network a PKI root declares it belongs
+// to. It is reported and never enforced: the live Swarm stand's root declares
+// "untrusted", and a verifier that refused it would look exactly like a broken
+// one.
+type NetworkType string
+
+// The two network classes a root's own certificate extension can state.
+const (
+	NetworkTrusted   NetworkType = "trusted"
+	NetworkUntrusted NetworkType = "untrusted"
+)
+
 // Measurements are the raw hardware registers an appraisal read, hex-encoded
 // exactly as the quote carries them.
 //
@@ -144,8 +156,13 @@ type SwarmClaims struct {
 	// SchemaVersion is [ClaimsVersion].
 	SchemaVersion string `json:"schema_version"`
 
-	// FreshnessInput is the nonce the appraisal was asked to bind, 64 bytes of
-	// hex, reported verbatim.
+	// FreshnessInput is the freshness element the appraisal was asked to
+	// bind, hex, reported verbatim.
+	//
+	// Its size is the Freshness Kind's, not this module's: 32 octets for the
+	// TACRA Vault profile's `present-nonce` Handle, 8 for its
+	// `absent-timestamp`. What is fixed at 64 octets is the quote field the
+	// binding digest goes into, which is a different value.
 	//
 	// It is an echo of the input, never a verified claim: what proves the
 	// attester saw it is BindingOK. Reporting it regardless — including on a
@@ -153,10 +170,10 @@ type SwarmClaims struct {
 	// it issued.
 	FreshnessInput string `json:"freshness_input,omitempty"`
 
-	// BindingOK is whether the quote's report data commits to
+	// BindingOK is whether the quote's guest-chosen field commits to
 	// SHA-512(len32‖freshness‖len32‖target‖len32‖subject), and so whether this
-	// quote answers this request. Absent until the composite form carries the
-	// NodeRequestEnvelope it is computed from (SUP-637, SUP-638).
+	// quote answers this request. Absent for the bundle form, which is about a
+	// served hostname and binds no request.
 	BindingOK *bool `json:"binding_ok,omitempty"`
 	// BindingSubjectDigest is SHA-256 of the request subject the binding
 	// covers.
@@ -207,7 +224,7 @@ type SwarmClaims struct {
 	// NetworkType is what the root says about its own network, "trusted" or
 	// "untrusted". Reported, never enforced: the live Swarm stand's root
 	// declares "untrusted".
-	NetworkType string `json:"network_type,omitempty"`
+	NetworkType NetworkType `json:"network_type,omitempty"`
 
 	// EvidenceDigest is the digest of the canonical deployment snapshot a user
 	// pins, for evidence that carries one.
@@ -215,7 +232,9 @@ type SwarmClaims struct {
 
 	// StatementSignerFingerprint and StatementOK describe the control-plane
 	// statement's signature, chained to the pinned root through the per-leader
-	// signer (SUP-636).
+	// signer (SUP-636). StatementOK says the leader signed it; what says the
+	// statement is about the request being appraised is EnvelopeOK, which is
+	// why no statement is appraised without one — see the pod claims below.
 	StatementSignerFingerprint string `json:"statement_signer_fingerprint,omitempty"`
 	StatementOK                *bool  `json:"statement_ok,omitempty"`
 
@@ -229,6 +248,18 @@ type SwarmClaims struct {
 	GPUAttested         *bool  `json:"gpu_attested,omitempty"`
 
 	// The statement's claims about the workload (SUP-634, SUP-636).
+	//
+	// They are what the leader signed, and StatementOK is what makes them
+	// readable. What makes them *this request's* is the node's envelope: a
+	// statement is a public document, and anyone who has seen one can present
+	// it beside a quote of their own — the draft's attester substitution.
+	//
+	// So the core never emits them on their own: **a pod claim is only ever
+	// reported beside EnvelopeOK true**, because a collection carrying a
+	// statement and no envelope is refused at the envelope stage. StatementOK
+	// and EnvelopeOK stay separate claims — they answer different questions,
+	// and a policy may want to read either — but neither of them being absent
+	// can leave a policy reading pod facts that nothing binds to its request.
 	PodUID         string   `json:"pod_uid,omitempty"`
 	Namespace      string   `json:"namespace,omitempty"`
 	ClusterSpaceID string   `json:"cluster_space_id,omitempty"`

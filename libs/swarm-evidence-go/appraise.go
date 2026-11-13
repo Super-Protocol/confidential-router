@@ -9,11 +9,6 @@ import (
 	"github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go/attestation"
 )
 
-// freshnessInputBytes is the length of the challenge an attester binds. The
-// draft fixes it at 64 bytes, which is also the whole of a quote's report-data
-// field, so nothing else can share that space (SUP-637).
-const freshnessInputBytes = 64
-
 // AppraiseComposite verifies a Super Swarm Evidence blob offline and returns
 // the normative claim set, or a typed denial naming the stage that refused.
 //
@@ -21,57 +16,47 @@ const freshnessInputBytes = 64
 // carries it too, so a caller may branch on either. A refused appraisal never
 // returns a partial claim set — see [SwarmClaims].
 //
-// # What it reads today
+// # The two forms it reads
 //
-// The evidence bundle of the /.well-known/swarm-evidence contract: a certificate
-// chain, a JWS over a deployment or control-plane statement, and the TEE
-// evidence the chain's root carries. That is the form the fleet publishes and
-// the form the shared conformance vectors pin.
+// The **composite** form: a RATS Conceptual Message Wrapper collection
+// carrying the hardware quote, the PKI membership chain, the leader's workload
+// attestation statement and the node's request envelope, as the TACRA Vault
+// protocol profile fixes it (SUP-638). This is the form a credential request
+// presents, and the one whose binding, envelope and pod claims this module
+// exists for. Both serialisations of that collection are read — the profile's
+// own and the standard CMW JSON wrapper — because the relying party's single
+// Verifier is chosen by the relying party, and a collection carrying the same
+// parts must appraise the same whoever produced or forwarded it.
 //
-// The *composite* form — a hardware quote beside a NodeRequestEnvelope and a
-// control-plane statement, bound together by the report-data digest of SUP-637 —
-// is refused at the blob stage until SUP-638 fixes its encoding and SUP-636 the
-// statement and the node-local quote interface. A partial verdict over a shape
-// whose binding rules are not settled would be worse than a denial: it would
-// read as an appraisal.
+// The **evidence bundle** form of the /.well-known/swarm-evidence contract: a
+// certificate chain, a JWS over a deployment or control-plane statement, and
+// the TEE evidence the chain's root carries. That is what the fleet publishes
+// about a served hostname, and what the shared conformance vectors pin.
+//
+// Which claims each form establishes differs, and the claim set says so by
+// leaving the others out: a bundle is about a hostname and carries no request
+// binding, a collection is about one credential request and carries no channel
+// binding. An absent claim was not established.
 func AppraiseComposite(ctx context.Context, blob []byte, opts Options) (SwarmClaims, error) {
-	freshness, denial := freshnessOf(opts)
-	if denial != nil {
-		return deny("", denial)
+	freshness := hex.EncodeToString(opts.FreshnessInput)
+
+	if looksLikeCollection(blob) {
+		return appraiseCollection(ctx, blob, opts, freshness)
+	}
+	if denial := rejectUnreadableForm(blob); denial != nil {
+		return deny(freshness, denial)
 	}
 	if opts.Subject == "" {
 		return deny(freshness, denyf(StageOptions,
-			"Options.Subject is required: an appraisal that does not know what the evidence "+
-				"is supposed to be about cannot rule out evidence about something else"))
-	}
-
-	if denial := rejectUnreadableForm(blob); denial != nil {
-		return deny(freshness, denial)
+			"Options.Subject is required for the evidence bundle form: an appraisal that does not "+
+				"know what the evidence is supposed to be about cannot rule out evidence about "+
+				"something else"))
 	}
 	return appraiseBundle(ctx, blob, opts, freshness)
 }
 
-// freshnessOf renders the challenge the claim set echoes. A wrong-sized nonce is
-// a caller mistake worth refusing rather than padding: the attester binds
-// exactly 64 bytes, so anything else could never have been bound.
-func freshnessOf(opts Options) (string, *Denial) {
-	if len(opts.FreshnessInput) == 0 {
-		return "", nil
-	}
-	if len(opts.FreshnessInput) != freshnessInputBytes {
-		return "", denyf(StageOptions, "Options.FreshnessInput is %d bytes, expected %d",
-			len(opts.FreshnessInput), freshnessInputBytes)
-	}
-	return hex.EncodeToString(opts.FreshnessInput), nil
-}
-
-// rejectUnreadableForm refuses a blob that is not an evidence bundle, before the
-// pipeline gets a chance to report it as a malformed one.
-//
-// Anything that is not a readable bundle is reported as the composite form
-// rather than as garbage: the composite encoding is not settled (SUP-638), so
-// this module cannot tell a draft composite blob from a malformed bundle, and
-// guessing "malformed" would send a caller looking for a bug in their producer.
+// rejectUnreadableForm refuses a blob that is neither of the two forms, before
+// the bundle pipeline gets a chance to report it as a malformed bundle.
 func rejectUnreadableForm(blob []byte) *Denial {
 	var envelope struct {
 		Version string                   `json:"version"`
@@ -90,10 +75,9 @@ func rejectUnreadableForm(blob []byte) *Denial {
 		return nil
 	default:
 		return denyf(StageBlob,
-			"this build appraises the /.well-known/swarm-evidence bundle form only; the composite "+
-				"Super Swarm Evidence form (quote, NodeRequestEnvelope and control-plane statement) "+
-				"is not implemented yet — see SUP-636 and SUP-638 — and %q is not a bundle kind",
-			string(envelope.Kind))
+			"the blob is neither a Super Swarm Evidence collection (no %q or %q member) nor a "+
+				"/.well-known/swarm-evidence bundle, and %q is not a bundle kind",
+			"collection", "__cmwc_t", string(envelope.Kind))
 	}
 }
 
@@ -116,10 +100,7 @@ func appraiseBundle(ctx context.Context, blob []byte, opts Options, freshness st
 		return deny(freshness, denyf(denialStageOf(verdict.Stage), "%s", verdict.Reason))
 	}
 
-	appraiser := opts.QuoteAppraiser
-	if appraiser == nil {
-		appraiser = &BuiltinQuoteAppraiser{ReferenceValues: opts.ReferenceValues, Now: opts.now}
-	}
+	appraiser := opts.appraiser()
 	appraisal, denial := appraiseRoot(ctx, verdict.Chain, appraiser)
 	if denial != nil {
 		return deny(freshness, denial)

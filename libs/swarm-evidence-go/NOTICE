@@ -25,6 +25,16 @@ Ported and vendored components:
       upstream so that both derive the same mrEnclave from the same root; see
       that directory's README.
 
+  * statement.go
+      the `WorkloadAttestationStatement` and `NodeRequestEnvelope v1` wire
+      types, declared against Super-Protocol/swarm-cloud
+      `libs/deployment-evidence-canonical` and `libs/swarm-attestation`, which
+      are licensed under the Business Source License 1.1. Same explicit
+      authorisation as `attestation/` above. They are the producer's contract
+      and are restated here rather than imported, because a Go verifier cannot
+      import a TypeScript producer; the shared TACRA fixtures are what keep the
+      two in agreement.
+
   * attestation/attestedroot/internal/snpmeasure/
       the SEV-SNP launch-digest calculation, ported from Super-Protocol/sp-sev
       `snp_calc_launch_digest_with_hashes_from_bytes`.

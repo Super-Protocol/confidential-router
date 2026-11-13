@@ -30,7 +30,7 @@ import (
 // Microsoft Azure Attestation, which the browser extension additionally asks,
 // is an online service and is not consulted: this check stays offline, the
 // same rule the QEMU branches follow for collateral.
-func (v *Verifier) verifyAzure(ev *AzureEvidence, kind EvidenceType, ext *RootExtensions, out *Result) error {
+func (v *Verifier) verifyAzure(ev *AzureEvidence, kind EvidenceType, spki *[32]byte, out *Result) error {
 	platform := azurecvm.PlatformSNP
 	if kind == EvidenceTdxAzure {
 		platform = azurecvm.PlatformTDX
@@ -71,13 +71,19 @@ func (v *Verifier) verifyAzure(ev *AzureEvidence, kind EvidenceType, ext *RootEx
 		out.RawMeasurements = tdRegisters(body)
 	}
 
-	// The CA's key is bound through the HCL user-data, which both the hardware
-	// report (via the runtime data hash) and the vTPM quote commit to.
+	// The guest-chosen field on Azure is the HCL user-data, which both the
+	// hardware report (via the runtime data hash) and the vTPM quote commit
+	// to. The raw REPORT_DATA is SHA-256(runtime data JSON) ‖ 0³² and is the
+	// paravisor's, not the guest's, so neither a certificate key hash nor a
+	// TACRA binding digest is ever read from it.
 	out.ReportData = cvm.ReportData
-	out.KeyBinding = BindsPublicKey(out.ReportData, ext.SPKIDigest)
-	if !out.KeyBinding {
-		return fmt.Errorf(
-			"the HCL report's user-data does not commit to this certificate's public key (SHA-256 %x)", ext.SPKIDigest)
+	out.ReportDataSource = ReportDataHCLUserData
+	if spki != nil {
+		out.KeyBinding = BindsPublicKey(out.ReportData, *spki)
+		if !out.KeyBinding {
+			return fmt.Errorf(
+				"the HCL report's user-data does not commit to this certificate's public key (SHA-256 %x)", *spki)
+		}
 	}
 
 	out.Measurement = cvm.MrEnclave

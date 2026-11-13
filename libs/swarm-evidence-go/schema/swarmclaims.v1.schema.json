@@ -13,9 +13,9 @@
     },
 
     "freshness_input": {
-      "description": "The nonce the appraisal was asked to bind, reported verbatim. It is an echo of the input, never a verified claim: what proves the attester saw it is `binding_ok`.",
+      "description": "The freshness element the appraisal was asked to bind, hex, reported verbatim. Its size is the Freshness Kind's and is not fixed here - 32 octets for the TACRA Vault profile's `present-nonce` Handle, 8 for its `absent-timestamp`. What is fixed at 64 octets is the quote field the binding digest goes into, which is a different value. It is an echo of the input, never a verified claim: what proves the attester saw it is `binding_ok`.",
       "type": "string",
-      "pattern": "^[0-9a-f]{128}$"
+      "pattern": "^([0-9a-f]{2})+$"
     },
     "binding_ok": {
       "description": "Whether the quote's report data commits to SHA-512(len32 || freshness || len32 || target || len32 || subject), and so whether this quote answers this request. Absent until the composite form carries the NodeRequestEnvelope it is computed from.",

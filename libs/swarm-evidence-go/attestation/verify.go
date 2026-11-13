@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -250,6 +251,22 @@ func parseBundle(document []byte, expectedHostname string) (*Bundle, Result) {
 		}
 	}
 	return bundle, Result{}
+}
+
+// MatchTrustedRoot finds the pinned root a validated chain terminated at, by
+// the SHA-256 of its DER. An empty store matches nothing, which is legal and
+// denies everything: the relying party chose the anchor, and Swarm Cloud roots
+// are not publicly trusted, so there is no store to fall back to.
+//
+// Exported because the composite form matches its membership chain by exactly
+// this rule, and a second implementation of it would be a second answer to
+// "did the user trust this cloud?".
+func MatchTrustedRoot(rootFingerprint string, trustedRoots []TrustedRoot) (*MatchedRoot, error) {
+	matched, result := matchTrustedRoot(rootFingerprint, trustedRoots)
+	if matched == nil {
+		return nil, fmt.Errorf("%s", result.Reason)
+	}
+	return matched, nil
 }
 
 func matchTrustedRoot(rootFingerprint string, trustedRoots []TrustedRoot) (*MatchedRoot, Result) {
