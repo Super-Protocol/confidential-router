@@ -64,6 +64,7 @@ falling through to its default.
 | path | what it is |
 | --- | --- |
 | `claims.go`, `schema/` | `SwarmClaims` v1 and its JSON Schema. |
+| `schema/swarmclaims.v1.md` | the claim reference: every claim, what it asserts and what it does not. |
 | `options.go` | pinned PKI roots, reference values, the request values, the appraiser. |
 | `appraise.go` | `AppraiseComposite`, form selection, and the pipeline-stage mapping. |
 | `cmw.go` | the CMW collection parser, in both serialisations. |
