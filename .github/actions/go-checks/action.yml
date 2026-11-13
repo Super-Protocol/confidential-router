@@ -40,6 +40,28 @@ runs:
         go vet ./...
         go test -race -count=1 ./...
 
+    # The composite conformance vectors are generated, and their expectations
+    # are declared in the generator rather than computed from the verifier.
+    # Regenerating them must therefore be a no-op: a diff here means the corpus
+    # on disk is not the one the generator describes, which is how a
+    # hand-edited expectation — an expectation fitted to the code — would slip
+    # in unnoticed.
+    - name: Composite conformance vectors are up to date
+      shell: bash
+      working-directory: libs/swarm-evidence-go
+      # `git status --porcelain` rather than `git diff --exit-code`: a case
+      # that was added but never committed is an untracked file, which a diff
+      # does not see.
+      run: |
+        go run ./internal/vectorgen
+        status=$(git status --porcelain -- ../attestation-fixtures/vectors/composite)
+        if [ -n "$status" ]; then
+          echo "$status"
+          git diff -- ../attestation-fixtures/vectors/composite
+          echo "::error::regenerating the composite vectors was not a no-op"
+          exit 1
+        fi
+
     - name: go vet
       shell: bash
       working-directory: apps/gatekeeper

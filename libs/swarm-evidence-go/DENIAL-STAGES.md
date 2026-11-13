@@ -25,7 +25,12 @@ Two stages are deliberately **not** in the set, and both are claims instead:
 
 - An image nothing vouches for is `mrenclave_approved: false`, not a denial.
   Whether to accept an unsigned build is the relying party's policy, and a
-  denial would make the reference-value mechanism unreachable.
+  denial would make the reference-value mechanism unreachable. An appraiser
+  that derived **no** image identity at all — which is every quote-only
+  Verifier, since mrEnclave needs the RTMR0 event log replayed and normalised
+  — reports neither claim: `false` would say a set of reference values was
+  consulted. The identity is what the approval is about, so an approval with
+  no identity beside it is left out too.
 - A `network_type` the relying party dislikes is a reported claim. The live
   Swarm stand's root declares `untrusted`.
 

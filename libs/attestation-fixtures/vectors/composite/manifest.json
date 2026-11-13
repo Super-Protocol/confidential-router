@@ -1,0 +1,1577 @@
+{
+  "version": "1",
+  "description": "Composite Super Swarm Evidence conformance vectors: a CMW collection per case, the recorded quote appraisal it is appraised against, and the SwarmClaims document every appraisal path must produce. Every case is replayed through every appraiser profile.",
+  "generator": "libs/swarm-evidence-go/internal/vectorgen",
+  "referenceNow": "2026-01-15T12:00:00.000Z",
+  "rootsFile": "composite/roots.json",
+  "appraisers": [
+    {
+      "name": "recorded-offline",
+      "description": "The quote appraisal as the fixture records it, in the claim set's own spelling. It stands for the built-in offline appraiser: no fixture can carry a hardware signature over a request this repository invented, so the corpus holds the quote appraisal fixed and pins everything downstream of it.",
+      "kind": "recorded",
+      "platforms": [
+        "tdx-qemu",
+        "tdx-gcp",
+        "tdx-azure",
+        "snp-qemu",
+        "snp-azure"
+      ]
+    },
+    {
+      "name": "ita-stand-in",
+      "description": "The stand-in Verifier on the demonstration stand, consumed as an EAT. Flat claim names, hex octets, Intel TEEs on bare metal and GCP only — outside that it returns a typed denial rather than a partial verdict.",
+      "kind": "eat",
+      "tokenFormat": "jwt",
+      "issuer": "https://portal.trustauthority.intel.com",
+      "verificationKey": {
+        "kid": "ita-stand-in-1",
+        "pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkZahkckeRvPTxIoCcHa\nq9CueFSScD0gPfgm5IxOA/veUluAL+7BW9Qe25HThyYHs3XQOTWjfzSLLUUnPbQz\nXmFa3opp5oVHGFb8F9ymf+Tei248tQFaN2rpzpAWq8mvn7wiqt+A/7sPQ4yRIPvo\nQ6Jt3xzVzPxliyJGI7ca9qk/6zZqPkjRm0xiLd2ALNEiAhmCMA2n/4POceT+XzFD\n8XPBcF/dSnmXtczA/xD5AYzvMoaIfn2xZHB9o8MMvKBPMzUqcJ6dq/TB9qV2FHTo\nTjsTpdZ6ssSYmKqrBIEMqCPo9w25/oOCbgP5o7ucpHBi/4Rl9YjycMlVsPpz9XAs\nmwIDAQAB\n-----END PUBLIC KEY-----\n"
+      },
+      "octetEncoding": "hex",
+      "claimNames": {
+        "binding_data": "attester_held_data",
+        "binding_data_source": "attester_held_data_source",
+        "ciphertext_hiding": "snp_ciphertext_hiding",
+        "collateral_checked": "attester_collateral_checked",
+        "cpu_generation": "cpu_generation",
+        "debug_allowed": "snp_debug_allowed",
+        "error": "appraisal_error",
+        "key_binding": "attester_held_data_binds_key",
+        "launch_digest": "snp_measurement",
+        "mrenclave": "sp_mrenclave",
+        "mrenclave_approved": "sp_mrenclave_approved",
+        "mrenclave_source": "sp_mrenclave_source",
+        "mrtd": "tdx_mrtd",
+        "network_type": "sp_network_type",
+        "page_swap_disabled": "snp_page_swap_disabled",
+        "platform": "attester_type",
+        "quote_verified": "attester_evidence_verified",
+        "report_version": "report_version",
+        "rtmr0": "tdx_rtmr0",
+        "rtmr1": "tdx_rtmr1",
+        "rtmr2": "tdx_rtmr2",
+        "rtmr3": "tdx_rtmr3",
+        "snp_firmware_tcb": "snp_firmware_tcb",
+        "spvm_build": "sp_vm_build",
+        "tcb_status": "attester_tcb_status",
+        "tdattributes": "tdx_tdattributes",
+        "vmpl": "snp_vmpl"
+      },
+      "platforms": [
+        "tdx-qemu",
+        "tdx-gcp"
+      ],
+      "outsideCoverage": {
+        "stage": "root-quote",
+        "reason": "ita-stand-in appraises Intel TDX quotes on bare metal and GCP only, and this evidence is outside that coverage"
+      }
+    },
+    {
+      "name": "second-verifier",
+      "description": "A second EAT-emitting Verifier, with different claim names, nested claims, base64url octets, a different issuer and a different signing key. Nothing about it is named in any implementation: it is configuration, and it must appraise this corpus into the same claim sets as the other two profiles.",
+      "kind": "eat",
+      "tokenFormat": "jwt",
+      "issuer": "https://verifier.bank.example/eat",
+      "verificationKey": {
+        "kid": "bank-verifier-2026",
+        "pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAytnW7J6QetwG+49NFFYI\nJi2cE8Al+4pDkb1s1aO6cffDcV//ixALPV6RX3ghTzNgtxNkFZ4jEvsFctoYp1rG\n+gJjJJ7ulA7ZUtlu+bk2+UJr7/NnKJ88wH2afLTni/B2/G+OK8Mdj6Eh6PPqgMOQ\n2KgjvKlHtG56rDAipuAruqu4Oinr3+7u8YpDzYUV/M1MWyAN96/ykmkv4bW1FVjO\nvyM/QchSK6ZodrwD/Xz73ylvNrPSGnxtDa9dMMFN0kUb+e4TzMFZZpiCrvf3yXFf\n88jTEHQILM/YvWIB4yWHd/bqWKdX0PhQj1jlMio7Dt/2Xl3TwVg600S7q36Lpou0\n6QIDAQAB\n-----END PUBLIC KEY-----\n"
+      },
+      "octetEncoding": "base64url",
+      "claimNames": {
+        "binding_data": "appraisal.binding.held_data",
+        "binding_data_source": "appraisal.binding.source",
+        "ciphertext_hiding": "appraisal.platform.ciphertext_hiding",
+        "collateral_checked": "appraisal.tee.collateral_checked",
+        "cpu_generation": "appraisal.platform.cpu",
+        "debug_allowed": "appraisal.platform.debug",
+        "error": "appraisal.error",
+        "key_binding": "appraisal.binding.commits_to_key",
+        "launch_digest": "appraisal.measurement.launch_digest",
+        "mrenclave": "appraisal.image.identity",
+        "mrenclave_approved": "appraisal.image.approved",
+        "mrenclave_source": "appraisal.image.source",
+        "mrtd": "appraisal.measurement.mrtd",
+        "network_type": "appraisal.pki.network",
+        "page_swap_disabled": "appraisal.platform.page_swap_disabled",
+        "platform": "appraisal.tee.kind",
+        "quote_verified": "appraisal.tee.verified",
+        "report_version": "appraisal.platform.report_version",
+        "rtmr0": "appraisal.measurement.rtmr.0",
+        "rtmr1": "appraisal.measurement.rtmr.1",
+        "rtmr2": "appraisal.measurement.rtmr.2",
+        "rtmr3": "appraisal.measurement.rtmr.3",
+        "snp_firmware_tcb": "appraisal.platform.firmware_tcb",
+        "spvm_build": "appraisal.image.build",
+        "tcb_status": "appraisal.tee.tcb",
+        "tdattributes": "appraisal.measurement.td_attributes",
+        "vmpl": "appraisal.platform.vmpl"
+      },
+      "platforms": [
+        "tdx-qemu",
+        "tdx-gcp",
+        "tdx-azure",
+        "snp-qemu",
+        "snp-azure"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "composite-full-tdx-qemu",
+      "description": "The form this module exists for: a bare-metal TDX quote bound to one credential request, the node's envelope, and the leader's statement about the pod that asked.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-full-tdx-qemu.json",
+      "appraisalFile": "composite/appraisals/composite-full-tdx-qemu.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-full-tdx-gcp",
+      "description": "The same collection on GCP TDX — the other platform a quote-only Verifier covers.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-full-tdx-gcp.json",
+      "appraisalFile": "composite/appraisals/composite-full-tdx-gcp.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-gcp",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-full-tdx-azure",
+      "description": "Azure TDX: the binding lives in the 64-octet HCL user-data, because the hardware REPORT_DATA there is the paravisor's SHA-256(runtime data JSON) ‖ 0³² and is not guest-chosen. Outside the stand-in Verifier's coverage.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-full-tdx-azure.json",
+      "appraisalFile": "composite/appraisals/composite-full-tdx-azure.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-azure",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        },
+        "appraisers": {
+          "ita-stand-in": {
+            "ok": false,
+            "stage": "root-quote",
+            "reasonContains": "outside that coverage",
+            "claims": {
+              "denial": {
+                "stage": "root-quote"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "composite-full-snp-qemu",
+      "description": "Bare-metal SEV-SNP: the image identity comes from the report's MEASUREMENT rather than from TDX registers. A Verifier that appraises Intel TEEs only has no stage 1 for it at all.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-full-snp-qemu.json",
+      "appraisalFile": "composite/appraisals/composite-full-snp-qemu.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "snp-qemu",
+          "platform_security": {
+            "ciphertext_hiding": true,
+            "cpu_generation": "Genoa",
+            "debug_allowed": false,
+            "page_swap_disabled": true,
+            "report_version": 3,
+            "snp_firmware_tcb": 23,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        },
+        "appraisers": {
+          "ita-stand-in": {
+            "ok": false,
+            "stage": "root-quote",
+            "reasonContains": "outside that coverage",
+            "claims": {
+              "denial": {
+                "stage": "root-quote"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "composite-full-snp-azure",
+      "description": "Azure SEV-SNP: the HCL user-data binding again, on the other vendor's branch.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-full-snp-azure.json",
+      "appraisalFile": "composite/appraisals/composite-full-snp-azure.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "snp-azure",
+          "platform_security": {
+            "ciphertext_hiding": true,
+            "cpu_generation": "Genoa",
+            "debug_allowed": false,
+            "page_swap_disabled": true,
+            "report_version": 3,
+            "snp_firmware_tcb": 23,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        },
+        "appraisers": {
+          "ita-stand-in": {
+            "ok": false,
+            "stage": "root-quote",
+            "reasonContains": "outside that coverage",
+            "claims": {
+              "denial": {
+                "stage": "root-quote"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "composite-snp-attested-root",
+      "description": "A membership root whose own TEE evidence is SEV-SNP, beside a TDX per-request quote. The stand-in Verifier covers the quote and not the root, and a path that cannot appraise the root must deny rather than report an unanchored chain.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-snp-attested-root.json",
+      "appraisalFile": "composite/appraisals/composite-snp-attested-root.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        },
+        "appraisers": {
+          "ita-stand-in": {
+            "ok": false,
+            "stage": "root-quote",
+            "reasonContains": "outside that coverage",
+            "claims": {
+              "denial": {
+                "stage": "root-quote"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "composite-minimal",
+      "description": "The two REQUIRED elements alone. No statement and no envelope, so no pod claim is reported — an absent claim was not established.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-minimal.json",
+      "appraisalFile": "composite/appraisals/composite-minimal.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "collateral_checked": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "network_type": "untrusted",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-envelope-without-statement",
+      "description": "An envelope with nothing to pair: the node vouches that this quote answers this request, and no leader statement is carried, so `envelope_ok` is reported and the pod claims are not.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-envelope-without-statement.json",
+      "appraisalFile": "composite/appraisals/composite-envelope-without-statement.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-gpu-attested",
+      "description": "The envelope carries a GPU attestation token hash, which is the only thing that can set `gpu_attested`: the binding digest owns all 64 octets of the guest-chosen field, so a token hash cannot ride in the quote beside it.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-gpu-attested.json",
+      "appraisalFile": "composite/appraisals/composite-gpu-attested.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": true,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-standard-cmw-wrapper",
+      "description": "The same parts under the CMW JSON collection of draft-ietf-rats-msg-wrap. The relying party runs one Verifier of its own choosing, and a collection carrying the same parts must appraise into the same claims whoever forwarded it.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-standard-cmw-wrapper.json",
+      "appraisalFile": "composite/appraisals/composite-standard-cmw-wrapper.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-unlocked-cluster-space",
+      "description": "The cluster space is not locked. That is a claim and not a denial: whether an unlocked space may receive a credential is the relying party's policy, and deciding it here would make the verdict unarguable.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-unlocked-cluster-space.json",
+      "appraisalFile": "composite/appraisals/composite-unlocked-cluster-space.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": false,
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-pss-privileged",
+      "description": "The pod runs under the `privileged` Pod Security Standard. Reported, never judged — the five predicates live in the bank's policy module.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-pss-privileged.json",
+      "appraisalFile": "composite/appraisals/composite-pss-privileged.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "privileged",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-mrenclave-unapproved",
+      "description": "The registry answered, and the answer was `not one of ours`. `mrenclave_approved: false` is a statement a policy decides on, spelled differently from a claim nobody looked at.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-mrenclave-unapproved.json",
+      "appraisalFile": "composite/appraisals/composite-mrenclave-unapproved.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": false,
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-mrenclave-from-reference-values",
+      "description": "The image is admitted by the relying party's own reference values rather than by a Super Protocol signature. It proves strictly less, and `mrenclave_source` is what says so.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z",
+        "referenceValues": [
+          "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+        ]
+      },
+      "evidenceFile": "composite/collections/composite-mrenclave-from-reference-values.json",
+      "appraisalFile": "composite/appraisals/composite-mrenclave-from-reference-values.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave_approved": true,
+          "mrenclave_source": "reference-values",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "spvm_build": "build-448-release",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-quote-only-verifier-no-image-identity",
+      "description": "A Verifier that appraises the quote and nothing else: it reports the registers and no image identity, because mrEnclave needs the RTMR0 event log replayed and normalised. Neither `mrenclave` nor `mrenclave_approved` may then appear — a policy reading `mrenclave_approved: false` would believe something was checked.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-quote-only-verifier-no-image-identity.json",
+      "appraisalFile": "composite/appraisals/composite-quote-only-verifier-no-image-identity.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "platform_security": {
+            "ciphertext_hiding": false,
+            "cpu_generation": "Emerald Rapids",
+            "debug_allowed": false,
+            "page_swap_disabled": false,
+            "report_version": 4,
+            "snp_firmware_tcb": 0,
+            "vmpl": 0
+          },
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "statement_ok": true,
+          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-wrong-target",
+      "description": "The quote commits to another Target: the attester answered a different request, and nothing paired with it is relevant.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-wrong-target.json",
+      "appraisalFile": "composite/appraisals/composite-deny-wrong-target.json",
+      "expect": {
+        "ok": false,
+        "stage": "binding",
+        "reasonContains": "does not answer this request",
+        "claims": {
+          "denial": {
+            "stage": "binding"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-replayed-nonce",
+      "description": "The quote commits to an earlier challenge's freshness element. A replayed quote is a quote about some other moment.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-replayed-nonce.json",
+      "appraisalFile": "composite/appraisals/composite-deny-replayed-nonce.json",
+      "expect": {
+        "ok": false,
+        "stage": "binding",
+        "reasonContains": "does not answer this request",
+        "claims": {
+          "denial": {
+            "stage": "binding"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-modified-cekpub",
+      "description": "CEKpub was modified in flight: the quote commits to the key the attester was given, the relying party holds another, and the binding digest is what notices.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-modified-cekpub.json",
+      "appraisalFile": "composite/appraisals/composite-deny-modified-cekpub.json",
+      "expect": {
+        "ok": false,
+        "stage": "binding",
+        "reasonContains": "does not answer this request",
+        "claims": {
+          "denial": {
+            "stage": "binding"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-binding-source-unreported",
+      "description": "An appraiser that reads the guest-chosen field and will not say which field it read. On the Azure nested form the raw REPORT_DATA is the paravisor's, so a comparison against an unnamed field proves nothing.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-binding-source-unreported.json",
+      "appraisalFile": "composite/appraisals/composite-deny-binding-source-unreported.json",
+      "expect": {
+        "ok": false,
+        "stage": "binding",
+        "reasonContains": "did not say which field",
+        "claims": {
+          "denial": {
+            "stage": "binding"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-envelope-foreign-subject",
+      "description": "The envelope's `subject_hash` is some other public key's: the node vouched for a request that is not this one.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-envelope-foreign-subject.json",
+      "appraisalFile": "composite/appraisals/composite-deny-envelope-foreign-subject.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "subject_hash",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-envelope-replayed-nonce",
+      "description": "The envelope answers an earlier challenge, while the quote answers this one.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-envelope-replayed-nonce.json",
+      "appraisalFile": "composite/appraisals/composite-deny-envelope-replayed-nonce.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "answers some other challenge",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-envelope-foreign-target",
+      "description": "The envelope names another Vault target than the one being appraised — the draft's foreign additional-authenticated-data case, in this profile's spelling.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-envelope-foreign-target.json",
+      "appraisalFile": "composite/appraisals/composite-deny-envelope-foreign-target.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "envelope target",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-envelope-foreign-node-certificate",
+      "description": "The envelope is signed by a node certificate of another cloud, under a root nobody pinned, and the membership element does not carry it.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-envelope-foreign-node-certificate.json",
+      "appraisalFile": "composite/appraisals/composite-deny-envelope-foreign-node-certificate.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "does not carry",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-statement-of-another-pod",
+      "description": "The attester substitution the envelope exists to catch: a sound statement about a locked neighbour, attached to a quote taken over this requester's own key. Every other check passes, and only the envelope's `statement_hash` contradicts the pairing.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-statement-of-another-pod.json",
+      "appraisalFile": "composite/appraisals/composite-deny-statement-of-another-pod.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "statement_hash",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-substituted-statement-signer",
+      "description": "The statement is signed outside the pinned PKI. A leader's signature is only worth the chain behind it.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-substituted-statement-signer.json",
+      "appraisalFile": "composite/appraisals/composite-deny-substituted-statement-signer.json",
+      "expect": {
+        "ok": false,
+        "stage": "statement",
+        "reasonContains": "chains to a pinned root",
+        "claims": {
+          "denial": {
+            "stage": "statement"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-chain-to-another-pki-root",
+      "description": "The membership chain validates — to a root of another cloud. The relying party pinned one anchor, and the system trust store is never consulted.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-chain-to-another-pki-root.json",
+      "appraisalFile": "composite/appraisals/composite-deny-chain-to-another-pki-root.json",
+      "expect": {
+        "ok": false,
+        "stage": "pki-chain",
+        "reasonContains": "not in trusted store",
+        "claims": {
+          "denial": {
+            "stage": "pki-chain"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-statement-without-envelope",
+      "description": "A statement with no envelope binding it to this request. It is the substitution shape itself, and not one of the three collections the profile pins.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-statement-without-envelope.json",
+      "appraisalFile": "composite/appraisals/composite-deny-statement-without-envelope.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "carries a statement and no envelope binding it to this request",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-gpu-token-with-invalid-envelope",
+      "description": "A GPU token hash inside an envelope the named certificate did not sign. The appraisal denies, so `gpu_attested` is never set — a token hash beside an envelope that did not verify vouches for nothing.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-gpu-token-with-invalid-envelope.json",
+      "appraisalFile": "composite/appraisals/composite-deny-gpu-token-with-invalid-envelope.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "signature",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-event-log-does-not-replay",
+      "description": "The RTMR0 event log the collection carries does not replay to the quote's RTMR0, so no image identity can be derived from it. The appraiser reports a failure to reach an answer, which is a denial and not an unapproved image.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z"
+      },
+      "evidenceFile": "composite/collections/composite-deny-event-log-does-not-replay.json",
+      "appraisalFile": "composite/appraisals/composite-deny-event-log-does-not-replay.json",
+      "expect": {
+        "ok": false,
+        "stage": "root-quote",
+        "reasonContains": "event log does not replay",
+        "claims": {
+          "denial": {
+            "stage": "root-quote"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    },
+    {
+      "id": "composite-deny-stale-evidence",
+      "description": "The signed objects are older than the relying party accepts. Both carry an `issued_at`, and the envelope is the one checked first, so that is where the window the caller configured refuses.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z",
+        "maxEvidenceAge": 60000
+      },
+      "evidenceFile": "composite/collections/composite-deny-stale-evidence.json",
+      "appraisalFile": "composite/appraisals/composite-deny-stale-evidence.json",
+      "expect": {
+        "ok": false,
+        "stage": "envelope",
+        "reasonContains": "exceeds the",
+        "claims": {
+          "denial": {
+            "stage": "envelope"
+          },
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "schema_version": "1"
+        }
+      }
+    }
+  ]
+}

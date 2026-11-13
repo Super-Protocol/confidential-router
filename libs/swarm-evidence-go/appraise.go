@@ -118,9 +118,6 @@ func appraiseBundle(ctx context.Context, blob []byte, opts Options, freshness st
 		CollateralChecked: boolOf(appraisal.CollateralChecked),
 		Measurements:      appraisal.Measurements,
 		PlatformSecurity:  appraisal.PlatformSecurity,
-		MrEnclave:         appraisal.MrEnclave,
-		MrEnclaveApproved: boolOf(appraisal.MrEnclaveApproved),
-		MrEnclaveSource:   appraisal.MrEnclaveSource,
 		SpvmBuild:         appraisal.SpvmBuild,
 
 		PKIRootFingerprint: verdict.MatchedRoot.Fingerprint,
@@ -135,6 +132,7 @@ func appraiseBundle(ctx context.Context, blob []byte, opts Options, freshness st
 		StatementSignerFingerprint: verdict.Chain.LeafFingerprint,
 		StatementOK:                boolOf(true),
 	}
+	reportImageIdentity(&claims, appraisal)
 	if payload, ok := verdict.Deployment(); ok {
 		claims.EvidenceDigest = payload.EvidenceDigest
 	}

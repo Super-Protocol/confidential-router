@@ -313,7 +313,18 @@ type caseFile struct {
 		RootCaTeeQuote json.RawMessage `json:"rootCaTeeQuote"`
 		Stage          string          `json:"stage"`
 		ReasonContains string          `json:"reasonContains"`
+		// Claims is what the claim core must produce for this case, which is
+		// a different assertion from the verdict beside it — see [RunClaims].
+		Claims *claimsExpectFile `json:"claims"`
 	} `json:"expect"`
+}
+
+// claimsExpectFile is a case's `expect.claims`.
+type claimsExpectFile struct {
+	OK             bool           `json:"ok"`
+	Stage          string         `json:"stage"`
+	ReasonContains string         `json:"reasonContains"`
+	Document       map[string]any `json:"document"`
 }
 
 type rootsFile struct {

@@ -44,6 +44,14 @@
         "parallel": false
       }
     },
+    "generate-vectors": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "go run ./internal/vectorgen",
+        "cwd": "libs/swarm-evidence-go"
+      }
+    },
     "tidy": {
       "executor": "nx:run-commands",
       "cache": false,

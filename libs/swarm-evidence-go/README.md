@@ -74,7 +74,8 @@ falling through to its default.
 | `DENIAL-STAGES.md` | what each `denial.stage` means, and the lossy pipeline mapping. |
 | `attestation/` | the `/.well-known/swarm-evidence` pipeline (its own README). |
 | `attestation/attestedroot/` | is this certificate authority a Super Swarm one, decided from hardware. |
-| `conformance/` | the harness that replays the shared vectors against any implementation. |
+| `conformance/` | the harness that replays the shared vectors against any implementation — verdicts, claim sets, and the composite corpus through every appraiser profile. |
+| `internal/vectorgen` | the generator of the composite corpus in `libs/attestation-fixtures/vectors/composite`. |
 
 ## What is appraised
 
@@ -168,6 +169,45 @@ claim was not established.
 - Raw `rtmr0` is not usable as a reference value: it accumulates boot events.
   Reference values are `{tdattributes, mrtd, rtmr1, rtmr2, rtmr3}`, and the
   normalised value is `mrenclave`.
+
+## The vectors are the contract
+
+Two corpora in `libs/attestation-fixtures/vectors` decide what this module
+must establish, and both are replayed from here:
+
+| corpus | what it pins | harness |
+| --- | --- | --- |
+| `manifest.json` | the `/.well-known/swarm-evidence` bundle form: a verdict **and** a `SwarmClaims` document per case | `conformance.Run`, `conformance.RunClaims` |
+| `composite/manifest.json` | the composite form: a `SwarmClaims` document per case, replayed through every appraiser profile | `conformance.RunComposite` |
+
+Three things follow from pinning the whole claim set rather than a verdict:
+
+- **A path that disagrees on one field fails.** Two implementations that
+  agreed on "appraisable" and disagreed on `locked` would both pass a
+  verdict-shaped corpus and hand a bank's policy two different answers.
+- **The appraiser is configuration.** The composite corpus declares two
+  EAT-emitting profiles whose claim names, octet encodings, issuers and
+  signing keys all differ, and both must produce the claim set the recorded
+  offline appraisal produces — the only claim allowed to differ is
+  `quote_appraiser`, which names the appraiser. Nothing in this module names
+  either profile.
+- **Coverage is asserted, not described.** A profile that cannot appraise a
+  case's platform returns a typed denial, and the case says so. That is how
+  "the stand-in Verifier covers bare-metal and GCP TDX" stops being a footnote.
+
+What the corpus does not cover is the vendor signature itself: no fixture can
+carry a TDX or SEV-SNP signature over a request this repository invented, so
+the quote appraisal is recorded and everything downstream of it is pinned.
+That half is covered against real recorded evidence in
+`attestation/attestedroot`.
+
+```bash
+pnpm nx run swarm-evidence-go:generate-vectors   # regenerate the composite corpus
+```
+
+Regenerating must be a no-op; CI fails on a diff. Adding a case, and
+recording a token from a real Verifier, are documented in
+`libs/attestation-fixtures/README.md`.
 
 ## Versioning and release tags
 

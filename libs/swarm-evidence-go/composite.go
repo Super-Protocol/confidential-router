@@ -553,9 +553,6 @@ func compositeClaims(
 		CollateralChecked: boolOf(quote.CollateralChecked),
 		Measurements:      quote.Measurements,
 		PlatformSecurity:  quote.PlatformSecurity,
-		MrEnclave:         quote.MrEnclave,
-		MrEnclaveApproved: boolOf(quote.MrEnclaveApproved),
-		MrEnclaveSource:   quote.MrEnclaveSource,
 		SpvmBuild:         quote.SpvmBuild,
 
 		PKIRootFingerprint: matchedRoot.Fingerprint,
@@ -565,6 +562,7 @@ func compositeClaims(
 		// the profile puts it: the membership chain, not the per-request quote.
 		NetworkType: root.NetworkType,
 	}
+	reportImageIdentity(&claims, quote)
 
 	if envelope != nil {
 		claims.EnvelopeOK = boolOf(true)
@@ -588,6 +586,28 @@ func compositeClaims(
 		claims.PSSEnforce = derefString(pod.PodSecurity.Enforce)
 	}
 	return claims
+}
+
+// reportImageIdentity publishes the image identity, and publishes nothing
+// when the appraiser established none.
+//
+// The distinction is the claim set's central rule applied to the one claim
+// where getting it wrong is dangerous. `mrenclave_approved: false` means a
+// reference-value set was consulted and did not list this image; an appraiser
+// that never derived an identity — which is every quote-only Verifier, since
+// mrEnclave needs the RTMR0 event log replayed and normalised — establishes
+// neither, and a policy reading a `false` it put there would believe
+// something was checked.
+func reportImageIdentity(claims *SwarmClaims, quote *QuoteAppraisal) {
+	// The identity is what the approval is *about*, so an approval without
+	// one is not a weaker claim, it is an unreadable one: a policy cannot
+	// decide what it was told was approved. Both members stay absent.
+	if quote.MrEnclave == "" {
+		return
+	}
+	claims.MrEnclave = quote.MrEnclave
+	claims.MrEnclaveApproved = boolOf(quote.MrEnclaveApproved)
+	claims.MrEnclaveSource = quote.MrEnclaveSource
 }
 
 // imageDigestsOf collects the digests the statement resolved, from the
