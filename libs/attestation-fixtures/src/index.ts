@@ -249,13 +249,37 @@ export interface EatKey {
 }
 
 /**
+ * Where one Verifier's token carries the values a delegated appraisal needs,
+ * and how that Verifier spells them.
+ *
+ * A claim path is a sequence of JSON member names rather than a dotted
+ * string, because claim names contain dots: a Veraison EAR nests its evidence
+ * inside a member called `ear.veraison.annotated-evidence`.
+ */
+export interface ClaimMapping {
+  tdattributes: string[];
+  mrtd: string[];
+  rtmr0: string[];
+  rtmr1: string[];
+  rtmr2: string[];
+  rtmr3: string[];
+  seamsvn?: string[];
+  tcb_status?: string[];
+  binding_data?: string[];
+  encoding?: 'hex' | 'base64' | 'base64url';
+  binding_data_encoding?: 'hex' | 'base64' | 'base64url';
+}
+
+/**
  * One quote appraiser the corpus is replayed through.
  *
  * Everything that distinguishes one Verifier from another is here and nothing
- * is in code: the token format, the issuer, the key, the claim names and the
- * octet encoding. Two profiles that differ in all of them must appraise the
- * corpus into the same claim sets — which is what "the Verifier is swappable
- * by configuration" means, stated as data.
+ * is in code: the token format, the issuer, the key and the claim mapping.
+ * Two profiles that differ in all of them must appraise the corpus into the
+ * same claim sets — which is what "the Verifier is swappable by
+ * configuration" means, stated as data. An `eat` profile configures the
+ * production delegated appraiser, so what the corpus exercises is the adapter
+ * a relying party runs.
  */
 export interface AppraiserProfile {
   name: string;
@@ -264,8 +288,7 @@ export interface AppraiserProfile {
   tokenFormat?: 'jwt';
   issuer?: string;
   verificationKey?: EatKey;
-  octetEncoding?: 'hex' | 'base64url';
-  claimNames?: Record<string, string>;
+  claimMapping?: ClaimMapping;
   /** The attester platforms this appraiser covers. */
   platforms?: SwarmPlatform[];
   /** What it answers for evidence outside that coverage. */
@@ -285,6 +308,12 @@ export interface CompositeRequest {
   maxEvidenceAge?: number;
   /** Image identities the relying party accepts besides the registry's. */
   referenceValues?: string[];
+  /**
+   * Image identities Super Protocol's signed-measurement registry vouches
+   * for. An appraiser that derives the identity itself has to ask who vouches
+   * for it, so the case answers rather than the appraiser assuming.
+   */
+  registrySignedMeasurements?: string[];
 }
 
 export interface CompositeExpectation {
@@ -293,6 +322,8 @@ export interface CompositeExpectation {
   reasonContains?: string;
   /** The whole `SwarmClaims` document, compared member by member. */
   claims: Record<string, unknown>;
+  /** Why a per-profile override differs. Documentation, never asserted. */
+  note?: string;
   /** Overrides for the named appraiser profiles; absent means "the same". */
   appraisers?: Record<string, CompositeExpectation>;
 }
@@ -343,8 +374,17 @@ export interface CompositeAppraisalFile {
   description: string;
   root: RecordedAppraisal;
   quote: RecordedAppraisal;
-  /** Per appraiser profile, the same two appraisals as signed tokens. */
-  eat?: Record<string, { root: string; quote: string }>;
+  /**
+   * Per appraiser profile, that Verifier's own answer about this case's
+   * quote, keyed by the lowercase hex SHA-256 of the serialised TeeEvidence
+   * it appraises. An empty map is a coverage limit: the delegated path denies
+   * before it asks a Verifier anything.
+   *
+   * Only the per-request quote is recorded. The membership root's embedded
+   * quote is appraised offline on the delegated path too — it is part of the
+   * Super Swarm chain rather than of the credential request.
+   */
+  eat?: Record<string, { tokens: Record<string, string> }>;
 }
 
 /** The recorded root-quote appraisal the bundle corpus's `claims` are written against. */

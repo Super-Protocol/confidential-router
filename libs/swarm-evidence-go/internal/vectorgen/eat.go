@@ -9,9 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
+	swarmevidence "github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go"
 	"github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go/conformance"
 	"github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go/internal/testca"
 )
@@ -24,87 +24,93 @@ import (
 // because that difference is the evidence for the swap acceptance. Two
 // profiles that shared a spelling would prove only that the same decoder runs
 // twice.
+//
+// Neither is named after a real Verifier, and that is a rule rather than a
+// preference: these tokens are this repository's invention, and a profile
+// carrying a vendor's name would publish claim names that vendor does not
+// emit. The adapter's configuration for a real Verifier lives beside the
+// adapter — see [swarmevidence.ITAClaimMapping], written against Intel's
+// published token reference.
 const (
-	profileRecorded       = "recorded-offline"
-	profileITA            = "ita-stand-in"
-	profileSecondVerifier = "second-verifier"
+	profileRecorded  = "recorded-offline"
+	profileVerifierA = "verifier-a"
+	profileVerifierB = "verifier-b"
 )
 
-// itaClaimNames is the flat, Intel-flavoured spelling: a quote-shaped result
-// with one claim per measurement register.
-var itaClaimNames = map[string]string{
-	"error":               "appraisal_error",
-	"platform":            "attester_type",
-	"quote_verified":      "attester_evidence_verified",
-	"tcb_status":          "attester_tcb_status",
-	"collateral_checked":  "attester_collateral_checked",
-	"key_binding":         "attester_held_data_binds_key",
-	"network_type":        "sp_network_type",
-	"binding_data":        "attester_held_data",
-	"binding_data_source": "attester_held_data_source",
-	"tdattributes":        "tdx_tdattributes",
-	"mrtd":                "tdx_mrtd",
-	"rtmr0":               "tdx_rtmr0",
-	"rtmr1":               "tdx_rtmr1",
-	"rtmr2":               "tdx_rtmr2",
-	"rtmr3":               "tdx_rtmr3",
-	"launch_digest":       "snp_measurement",
-	"vmpl":                "snp_vmpl",
-	"debug_allowed":       "snp_debug_allowed",
-	"ciphertext_hiding":   "snp_ciphertext_hiding",
-	"page_swap_disabled":  "snp_page_swap_disabled",
-	"snp_firmware_tcb":    "snp_firmware_tcb",
-	"report_version":      "report_version",
-	"cpu_generation":      "cpu_generation",
-	"mrenclave":           "sp_mrenclave",
-	"mrenclave_approved":  "sp_mrenclave_approved",
-	"mrenclave_source":    "sp_mrenclave_source",
-	"spvm_build":          "sp_vm_build",
+// verifierAMapping is a flat spelling with hex octets: one claim per
+// measurement register, at the top level of the token.
+func verifierAMapping() swarmevidence.ClaimMapping {
+	return swarmevidence.ClaimMapping{
+		TDAttributes:        swarmevidence.ClaimPath{"td_attributes"},
+		MRTD:                swarmevidence.ClaimPath{"mrtd"},
+		RTMR0:               swarmevidence.ClaimPath{"rtmr0"},
+		RTMR1:               swarmevidence.ClaimPath{"rtmr1"},
+		RTMR2:               swarmevidence.ClaimPath{"rtmr2"},
+		RTMR3:               swarmevidence.ClaimPath{"rtmr3"},
+		SeamSVN:             swarmevidence.ClaimPath{"seam_svn"},
+		TCBStatus:           swarmevidence.ClaimPath{"tcb_status"},
+		BindingData:         swarmevidence.ClaimPath{"report_data"},
+		Encoding:            swarmevidence.EncodingHex,
+		BindingDataEncoding: swarmevidence.EncodingHex,
+	}
 }
 
-// secondVerifierClaimNames is a nested spelling under different names, the
-// shape a Verifier that groups its findings would emit.
-var secondVerifierClaimNames = map[string]string{
-	"error":               "appraisal.error",
-	"platform":            "appraisal.tee.kind",
-	"quote_verified":      "appraisal.tee.verified",
-	"tcb_status":          "appraisal.tee.tcb",
-	"collateral_checked":  "appraisal.tee.collateral_checked",
-	"key_binding":         "appraisal.binding.commits_to_key",
-	"network_type":        "appraisal.pki.network",
-	"binding_data":        "appraisal.binding.held_data",
-	"binding_data_source": "appraisal.binding.source",
-	"tdattributes":        "appraisal.measurement.td_attributes",
-	"mrtd":                "appraisal.measurement.mrtd",
-	"rtmr0":               "appraisal.measurement.rtmr.0",
-	"rtmr1":               "appraisal.measurement.rtmr.1",
-	"rtmr2":               "appraisal.measurement.rtmr.2",
-	"rtmr3":               "appraisal.measurement.rtmr.3",
-	"launch_digest":       "appraisal.measurement.launch_digest",
-	"vmpl":                "appraisal.platform.vmpl",
-	"debug_allowed":       "appraisal.platform.debug",
-	"ciphertext_hiding":   "appraisal.platform.ciphertext_hiding",
-	"page_swap_disabled":  "appraisal.platform.page_swap_disabled",
-	"snp_firmware_tcb":    "appraisal.platform.firmware_tcb",
-	"report_version":      "appraisal.platform.report_version",
-	"cpu_generation":      "appraisal.platform.cpu",
-	"mrenclave":           "appraisal.image.identity",
-	"mrenclave_approved":  "appraisal.image.approved",
-	"mrenclave_source":    "appraisal.image.source",
-	"spvm_build":          "appraisal.image.build",
+// verifierBMapping is the shape a Verifier that groups its findings emits:
+// nested claims, one of whose member names contains dots — which is why a
+// claim path is a sequence of member names and not a dotted string — base64url
+// registers, and a report data spelled in standard base64 rather than in the
+// registers' own encoding.
+func verifierBMapping() swarmevidence.ClaimMapping {
+	const annotated = "ear.veraison.annotated-evidence"
+	return swarmevidence.ClaimMapping{
+		TDAttributes:        swarmevidence.ClaimPath{annotated, "tdx", "attributes"},
+		MRTD:                swarmevidence.ClaimPath{annotated, "tdx", "measurement"},
+		RTMR0:               swarmevidence.ClaimPath{annotated, "tdx", "rtmr", "0"},
+		RTMR1:               swarmevidence.ClaimPath{annotated, "tdx", "rtmr", "1"},
+		RTMR2:               swarmevidence.ClaimPath{annotated, "tdx", "rtmr", "2"},
+		RTMR3:               swarmevidence.ClaimPath{annotated, "tdx", "rtmr", "3"},
+		TCBStatus:           swarmevidence.ClaimPath{"ear.status"},
+		BindingData:         swarmevidence.ClaimPath{annotated, "tdx", "held_data"},
+		Encoding:            swarmevidence.EncodingBase64URL,
+		BindingDataEncoding: swarmevidence.EncodingBase64,
+	}
 }
 
-// tdxOnly is the honest coverage of a Verifier that appraises Intel TEEs:
-// SEV-SNP has no stage 1 at all, and on either Azure branch the hardware
-// registers describe Microsoft's paravisor rather than our image.
-var tdxOnly = []string{"tdx-qemu", "tdx-gcp"}
+// delegatedCoverage is what the delegated path appraises, and it is the
+// production coverage rather than a profile's own invention: everything else
+// is denied at the `coverage` stage with the reason that platform fails for
+// (see DelegatedQuoteAppraiser.AppraiseQuote). A profile that claimed more
+// would be contradicted by the first case that used it.
+var delegatedCoverage = []string{
+	string(swarmevidence.PlatformTDXQemu), string(swarmevidence.PlatformTDXGCP),
+}
+
+// allPlatforms is the offline appraiser's coverage: the whole fleet.
+var allPlatforms = []string{
+	string(swarmevidence.PlatformTDXQemu), string(swarmevidence.PlatformTDXGCP),
+	string(swarmevidence.PlatformTDXAzure),
+	string(swarmevidence.PlatformSNPQemu), string(swarmevidence.PlatformSNPAzure),
+}
+
+// outsideCoverage is the refusal both delegated profiles answer with for a
+// platform the delegated path does not cover. The stage is `coverage` and not
+// `root-quote`: it says nothing about the evidence, and what clears it is a
+// different appraiser rather than a different attester (DENIAL-STAGES.md).
+func outsideCoverage() *conformance.CoverageRefusal {
+	return &conformance.CoverageRefusal{
+		Stage: string(swarmevidence.StageCoverage),
+		Reason: "the attester's platform is outside the delegated path's coverage: a quote-only " +
+			"Verifier reports no image identity for it, and this corpus records a typed denial " +
+			"rather than a partial verdict",
+	}
+}
 
 func (m *material) profiles() ([]conformance.AppraiserProfile, error) {
-	itaPEM, err := publicKeyPEM(m.itaKey)
+	keyA, err := publicKeyPEM(m.verifierAKey)
 	if err != nil {
 		return nil, err
 	}
-	secondPEM, err := publicKeyPEM(m.secondVerifierKey)
+	keyB, err := publicKeyPEM(m.verifierBKey)
 	if err != nil {
 		return nil, err
 	}
@@ -116,83 +122,89 @@ func (m *material) profiles() ([]conformance.AppraiserProfile, error) {
 			"It stands for the built-in offline appraiser: no fixture can carry a hardware signature " +
 			"over a request this repository invented, so the corpus holds the quote appraisal fixed " +
 			"and pins everything downstream of it.",
-		Platforms: []string{"tdx-qemu", "tdx-gcp", "tdx-azure", "snp-qemu", "snp-azure"},
+		Platforms: allPlatforms,
 	}, {
-		Name: profileITA,
+		Name: profileVerifierA,
 		Kind: "eat",
-		Description: "The stand-in Verifier on the demonstration stand, consumed as an EAT. Flat " +
-			"claim names, hex octets, Intel TEEs on bare metal and GCP only — outside that it " +
-			"returns a typed denial rather than a partial verdict.",
-		TokenFormat:     "jwt",
-		Issuer:          "https://portal.trustauthority.intel.com",
-		VerificationKey: &conformance.EATKey{KID: "ita-stand-in-1", PEM: itaPEM},
-		OctetEncoding:   "hex",
-		ClaimNames:      itaClaimNames,
-		Platforms:       tdxOnly,
-		OutsideCoverage: &conformance.CoverageRefusal{
-			Stage: "root-quote",
-			Reason: "ita-stand-in appraises Intel TDX quotes on bare metal and GCP only, and this " +
-				"evidence is outside that coverage",
-		},
+		Description: "A Verifier consumed as an EAT, through the production delegated appraiser: " +
+			"flat claim names, hex octets, its own issuer and signing key. It appraises the quote's " +
+			"signature and reports the registers; the image identity is derived locally from the " +
+			"RTMR0 event list, which no quote-only Verifier consumes.",
+		TokenFormat:     string(swarmevidence.TokenJWT),
+		Issuer:          "https://verifier-a.example/attestation",
+		VerificationKey: &conformance.EATKey{KID: "verifier-a-2026", PEM: keyA},
+		ClaimMapping:    verifierAMapping(),
+		Platforms:       delegatedCoverage,
+		OutsideCoverage: outsideCoverage(),
 	}, {
-		Name: profileSecondVerifier,
+		Name: profileVerifierB,
 		Kind: "eat",
-		Description: "A second EAT-emitting Verifier, with different claim names, nested claims, " +
-			"base64url octets, a different issuer and a different signing key. Nothing about it is " +
-			"named in any implementation: it is configuration, and it must appraise this corpus " +
-			"into the same claim sets as the other two profiles.",
-		TokenFormat:     "jwt",
+		Description: "A second EAT-emitting Verifier, with nested claim names that share none of " +
+			"the first's, base64url registers, a base64 report data, a different issuer and a " +
+			"different signing key. Nothing about it is named in any implementation: it is " +
+			"configuration, and it must appraise this corpus into the same claim sets as the other " +
+			"two profiles.",
+		TokenFormat:     string(swarmevidence.TokenJWT),
 		Issuer:          "https://verifier.bank.example/eat",
-		VerificationKey: &conformance.EATKey{KID: "bank-verifier-2026", PEM: secondPEM},
-		OctetEncoding:   "base64url",
-		ClaimNames:      secondVerifierClaimNames,
-		Platforms:       []string{"tdx-qemu", "tdx-gcp", "tdx-azure", "snp-qemu", "snp-azure"},
+		VerificationKey: &conformance.EATKey{KID: "bank-verifier-2026", PEM: keyB},
+		ClaimMapping:    verifierBMapping(),
+		Platforms:       delegatedCoverage,
+		OutsideCoverage: outsideCoverage(),
 	}}, nil
 }
 
-// recordTokens re-encodes a case's two recorded appraisals as a token per
-// profile. A profile that does not cover an appraisal's platform records an
-// empty token for it, which is how the corpus states a coverage limit: the
-// appraiser then refuses, and the case says what the refusal must be.
+// recordTokens records what each Verifier answered about this case's quote.
+//
+// A profile that does not cover the quote's platform records no token at all,
+// which is how the corpus states a coverage limit: the delegated appraiser
+// denies at `coverage` before it asks a Verifier anything, so a token for
+// that case would be a fixture nothing reads.
 func (m *material) recordTokens(
-	profiles []conformance.AppraiserProfile, root, quote conformance.RecordedAppraisal,
+	profiles []conformance.AppraiserProfile, quote *tdxQuote, tcbStatus swarmevidence.TCBStatus,
 ) (map[string]conformance.RecordedTokens, error) {
 	out := map[string]conformance.RecordedTokens{}
 	for _, profile := range profiles {
 		if profile.Kind != "eat" {
 			continue
 		}
-		key := m.itaKey
-		if profile.Name == profileSecondVerifier {
-			key = m.secondVerifierKey
-		}
-
-		// An appraisal that is itself a refusal carries no platform, and
-		// every profile records it: "I could not reach an answer" is an
-		// answer a Verifier gives whatever it covers.
-		var tokens conformance.RecordedTokens
-		var err error
-		if root.Error != "" || profile.Covers(string(root.Platform)) {
-			if tokens.Root, err = mintToken(profile, key, root); err != nil {
+		tokens := conformance.RecordedTokens{Tokens: map[string]string{}}
+		if quote != nil && profile.Covers(string(quote.platform)) {
+			evidence, err := quote.evidence()
+			if err != nil {
 				return nil, err
 			}
-		}
-		if quote.Error != "" || profile.Covers(string(quote.Platform)) {
-			if tokens.Quote, err = mintToken(profile, key, quote); err != nil {
+			token, err := mintToken(profile, m.signingKey(profile.Name), quote, tcbStatus)
+			if err != nil {
 				return nil, err
 			}
+			digest := sha256.Sum256(evidence)
+			tokens.Tokens[hexOf(digest[:])] = token
 		}
 		out[profile.Name] = tokens
 	}
 	return out, nil
 }
 
-// mintToken writes one recorded appraisal in one profile's spelling and signs
-// it. What is recorded is the EAT shape the adapter consumes, not any one
-// Verifier's wire format: the stand-in may be replaced, and a corpus written
-// against its wire format would have to be rebuilt when it is.
+func (m *material) signingKey(profile string) *testca.Key {
+	if profile == profileVerifierB {
+		return m.verifierBKey
+	}
+	return m.verifierAKey
+}
+
+// mintToken writes one Verifier's answer about one quote, in that Verifier's
+// spelling, and signs it.
+//
+// What a Verifier reports is what a Verifier can report: the registers it read
+// out of the quote it appraised, the TCB verdict it reached, and the report
+// data it saw. Nothing about the image — `mrenclave`, whether anybody vouches
+// for it, which sp-vm release it is — is in a token, because a quote-only
+// Verifier does not know any of it: the RTMR0 event list it never consumed is
+// what the identity is derived from. A corpus whose tokens carried the
+// finished answer would be a corpus the delegated appraiser could not be run
+// against.
 func mintToken(
-	profile conformance.AppraiserProfile, key *testca.Key, appraisal conformance.RecordedAppraisal,
+	profile conformance.AppraiserProfile, key *testca.Key, quote *tdxQuote, tcbStatus swarmevidence.TCBStatus,
 ) (string, error) {
 	claims := map[string]any{
 		"iss": profile.Issuer,
@@ -200,79 +212,73 @@ func mintToken(
 		"nbf": tokenInstant(issuedAt),
 		"exp": tokenInstant(notAfter),
 	}
+	mapping := profile.ClaimMapping
 
-	put := func(field string, value any) {
-		path, ok := profile.ClaimNames[field]
-		if !ok {
-			return
-		}
-		if text, isText := value.(string); isText && text == "" {
+	put := func(path swarmevidence.ClaimPath, value any) {
+		if len(path) == 0 {
 			return
 		}
 		setClaim(claims, path, value)
 	}
-	putOctets := func(field, hexValue string) error {
-		if hexValue == "" {
+	putOctets := func(path swarmevidence.ClaimPath, encoding swarmevidence.ClaimEncoding, hexValue string) error {
+		if len(path) == 0 || hexValue == "" {
 			return nil
 		}
 		octets, err := hex.DecodeString(hexValue)
 		if err != nil {
-			return fmt.Errorf("%s is not hex: %w", field, err)
+			return fmt.Errorf("%s is not hex: %w", path, err)
 		}
-		switch profile.OctetEncoding {
-		case "base64url":
-			put(field, base64.RawURLEncoding.EncodeToString(octets))
+		switch encoding {
+		case swarmevidence.EncodingBase64:
+			put(path, base64.StdEncoding.EncodeToString(octets))
+		case swarmevidence.EncodingBase64URL:
+			put(path, base64.RawURLEncoding.EncodeToString(octets))
 		default:
-			put(field, hexValue)
+			put(path, hexValue)
 		}
 		return nil
 	}
 
-	if appraisal.Error != "" {
-		put("error", appraisal.Error)
-		return signToken(profile, key, claims)
-	}
-
-	put("platform", string(appraisal.Platform))
-	put("quote_verified", appraisal.QuoteVerified)
-	put("tcb_status", string(appraisal.TCBStatus))
-	put("collateral_checked", appraisal.CollateralChecked)
-	put("key_binding", appraisal.KeyBinding)
-	put("network_type", string(appraisal.NetworkType))
-	put("binding_data_source", string(appraisal.BindingDataSource))
-	put("vmpl", appraisal.PlatformSecurity.VMPL)
-	put("debug_allowed", appraisal.PlatformSecurity.DebugAllowed)
-	put("ciphertext_hiding", appraisal.PlatformSecurity.CiphertextHiding)
-	put("page_swap_disabled", appraisal.PlatformSecurity.PageSwapDisabled)
-	put("snp_firmware_tcb", appraisal.PlatformSecurity.SnpFirmwareTCB)
-	put("report_version", appraisal.PlatformSecurity.ReportVersion)
-	put("cpu_generation", appraisal.PlatformSecurity.CPUGeneration)
-	put("mrenclave_approved", appraisal.MrEnclaveApproved)
-	put("mrenclave_source", string(appraisal.MrEnclaveSource))
-	put("spvm_build", appraisal.SpvmBuild)
-
-	for field, value := range map[string]string{
-		"binding_data":  appraisal.BindingData,
-		"mrenclave":     appraisal.MrEnclave,
-		"tdattributes":  appraisal.Measurements.TDAttributes,
-		"mrtd":          appraisal.Measurements.MRTD,
-		"rtmr0":         appraisal.Measurements.RTMR0,
-		"rtmr1":         appraisal.Measurements.RTMR1,
-		"rtmr2":         appraisal.Measurements.RTMR2,
-		"rtmr3":         appraisal.Measurements.RTMR3,
-		"launch_digest": appraisal.Measurements.LaunchDigest,
+	for _, register := range []struct {
+		path  swarmevidence.ClaimPath
+		value string
+	}{
+		{mapping.TDAttributes, quote.tdAttributes},
+		{mapping.MRTD, quote.mrtd},
+		{mapping.RTMR0, quote.rtmr0},
+		{mapping.RTMR1, quote.rtmr1},
+		{mapping.RTMR2, quote.rtmr2},
+		{mapping.RTMR3, quote.rtmr3},
 	} {
-		if err := putOctets(field, value); err != nil {
+		if err := putOctets(register.path, mapping.Encoding, register.value); err != nil {
 			return "", err
 		}
 	}
+	bindingEncoding := mapping.BindingDataEncoding
+	if bindingEncoding == "" {
+		bindingEncoding = mapping.Encoding
+	}
+	if err := putOctets(mapping.BindingData, bindingEncoding, quote.reportData); err != nil {
+		return "", err
+	}
+	put(mapping.TCBStatus, string(tcbStatus))
+	// The SEAM security version is reported beside the quote's own
+	// TEE_TCB_SVN and never enforced, so one profile maps it and the other
+	// does not: it is optional configuration, and the corpus says so by
+	// exercising both.
+	put(mapping.SeamSVN, seamSVN)
+
 	return signToken(profile, key, claims)
 }
 
-func setClaim(claims map[string]any, path string, value any) {
-	segments := strings.Split(path, ".")
+// seamSVN is the TDX module security version the Verifier reports. It matches
+// the first octet of the fixtures' TEE_TCB_SVN, which is what a reader
+// comparing the two is checking.
+const seamSVN = 5
+
+func setClaim(claims map[string]any, path swarmevidence.ClaimPath, value any) {
 	current := claims
-	for _, segment := range segments[:len(segments)-1] {
+	for _, segment := range path[:len(path)-1] {
 		nested, ok := current[segment].(map[string]any)
 		if !ok {
 			nested = map[string]any{}
@@ -280,13 +286,15 @@ func setClaim(claims map[string]any, path string, value any) {
 		}
 		current = nested
 	}
-	current[segments[len(segments)-1]] = value
+	current[path[len(path)-1]] = value
 }
 
 // signToken produces the compact JWS. RS256 is deterministic — PKCS#1 v1.5 is
 // a function of the message and the key — so re-running the generator
 // produces the same token, which is what makes a diff in the corpus mean a
-// change to the contract.
+// change to the contract. Both profiles sign with it for that reason and not
+// because the adapter requires it: PS* and ES* are randomised, and a corpus
+// signed with one of them could not be regenerated as a no-op.
 func signToken(profile conformance.AppraiserProfile, key *testca.Key, claims map[string]any) (string, error) {
 	header, err := json.Marshal(map[string]string{
 		"alg": "RS256", "typ": "JWT", "kid": profile.VerificationKey.KID,

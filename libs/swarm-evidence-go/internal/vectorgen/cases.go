@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -44,10 +45,29 @@ type caseSpec struct {
 	referenceValues            []string
 	maxEvidenceAge             *int64
 
-	// The recorded appraisal.
+	// The quote, and the appraisal of it.
 	bindingOver *bindingInputs // what the quote actually committed to, when not this request
-	quoteTweak  func(a *conformance.RecordedAppraisal)
-	rootTweak   func(a *conformance.RecordedAppraisal)
+	// eventLogDoesNotReplay gives the quote an RTMR0 the event list beside it
+	// cannot explain, which is what makes the image identity underivable.
+	eventLogDoesNotReplay bool
+	// imageUnsigned is a case whose image identity the signed-measurement
+	// registry does not vouch for.
+	imageUnsigned bool
+	quoteTweak    func(a *conformance.RecordedAppraisal)
+	rootTweak     func(a *conformance.RecordedAppraisal)
+
+	// recordedOnlyTweak changes what the *recorded* profile's appraiser
+	// answers and leaves the delegated profiles reading the quote itself.
+	//
+	// It is for the two cases that are about an appraiser's own contract
+	// rather than about the evidence: an appraiser that reports no image
+	// identity, and one that will not name the field it read the binding
+	// digest from. A production DelegatedQuoteAppraiser can be neither — it
+	// derives the identity locally and reads the field out of the quote — so
+	// it reaches the sound answer, and recordedOnlyNote is what the override
+	// says.
+	recordedOnlyTweak func(a *conformance.RecordedAppraisal)
+	recordedOnlyNote  string
 
 	// The verdict, when the case is not appraisable.
 	denyStage  string
@@ -74,13 +94,13 @@ func cases() []caseSpec {
 		id: "composite-full-tdx-azure",
 		description: "Azure TDX: the binding lives in the 64-octet HCL user-data, because the hardware " +
 			"REPORT_DATA there is the paravisor's SHA-256(runtime data JSON) ‖ 0³² and is not " +
-			"guest-chosen. Outside the stand-in Verifier's coverage.",
+			"guest-chosen. Outside the delegated path's coverage.",
 		platform: swarmevidence.PlatformTDXAzure,
 	}, {
 		id: "composite-full-snp-qemu",
-		description: "Bare-metal SEV-SNP: the image identity comes from the report's MEASUREMENT " +
-			"rather than from TDX registers. A Verifier that appraises Intel TEEs only has no stage 1 " +
-			"for it at all.",
+		description: "Bare-metal SEV-SNP: the image identity is rebuilt from the published firmware " +
+			"of the build the VM booted, which no quote-only Verifier reports. The delegated path " +
+			"denies at `coverage`, which says nothing about the evidence.",
 		platform: swarmevidence.PlatformSNPQemu,
 	}, {
 		id:          "composite-full-snp-azure",
@@ -89,8 +109,9 @@ func cases() []caseSpec {
 	}, {
 		id: "composite-snp-attested-root",
 		description: "A membership root whose own TEE evidence is SEV-SNP, beside a TDX per-request " +
-			"quote. The stand-in Verifier covers the quote and not the root, and a path that cannot " +
-			"appraise the root must deny rather than report an unanchored chain.",
+			"quote. The delegated path delegates the per-request quote and appraises the membership " +
+			"root offline — the root's quote is part of the Super Swarm chain, not of the request — " +
+			"so a root the relying party's Verifier could not appraise changes nothing.",
 		platform:     swarmevidence.PlatformTDXQemu,
 		rootPlatform: swarmevidence.PlatformSNPQemu,
 	}, {
@@ -150,7 +171,8 @@ func cases() []caseSpec {
 		description: "The registry answered, and the answer was `not one of ours`. " +
 			"`mrenclave_approved: false` is a statement a policy decides on, spelled differently " +
 			"from a claim nobody looked at.",
-		platform: swarmevidence.PlatformTDXQemu,
+		platform:      swarmevidence.PlatformTDXQemu,
+		imageUnsigned: true,
 		quoteTweak: func(a *conformance.RecordedAppraisal) {
 			a.MrEnclaveApproved = false
 			a.MrEnclaveSource = ""
@@ -161,23 +183,28 @@ func cases() []caseSpec {
 			"by a Super Protocol signature. It proves strictly less, and `mrenclave_source` is what " +
 			"says so.",
 		platform:        swarmevidence.PlatformTDXQemu,
-		referenceValues: []string{imageIdentity},
+		imageUnsigned:   true,
+		referenceValues: []string{tdxImageIdentity},
 		quoteTweak: func(a *conformance.RecordedAppraisal) {
 			a.MrEnclaveSource = swarmevidence.SourceReferenceValues
 		},
 	}, {
 		id: "composite-quote-only-verifier-no-image-identity",
-		description: "A Verifier that appraises the quote and nothing else: it reports the registers " +
-			"and no image identity, because mrEnclave needs the RTMR0 event log replayed and " +
-			"normalised. Neither `mrenclave` nor `mrenclave_approved` may then appear — a policy " +
-			"reading `mrenclave_approved: false` would believe something was checked.",
+		description: "An appraiser that appraises the quote and nothing else: it reports the " +
+			"registers and no image identity, because mrEnclave needs the RTMR0 event log replayed " +
+			"and normalised. Neither `mrenclave` nor `mrenclave_approved` may then appear — a policy " +
+			"reading `mrenclave_approved: false` would believe something was checked. The delegated " +
+			"profiles are the other half of the same point: handed the same quote, they replay the " +
+			"event list themselves and do report an identity.",
 		platform: swarmevidence.PlatformTDXQemu,
-		quoteTweak: func(a *conformance.RecordedAppraisal) {
+		recordedOnlyTweak: func(a *conformance.RecordedAppraisal) {
 			a.MrEnclave = ""
 			a.MrEnclaveApproved = false
 			a.MrEnclaveSource = ""
 			a.SpvmBuild = ""
 		},
+		recordedOnlyNote: "the delegated path derives the image identity from the quote's own RTMR0 " +
+			"event list, so it reports one where a quote-only appraiser cannot",
 	}, {
 		id: "composite-deny-wrong-target",
 		description: "The quote commits to another Target: the attester answered a different request, " +
@@ -211,9 +238,11 @@ func cases() []caseSpec {
 			"read. On the Azure nested form the raw REPORT_DATA is the paravisor's, so a comparison " +
 			"against an unnamed field proves nothing.",
 		platform: swarmevidence.PlatformTDXQemu,
-		quoteTweak: func(a *conformance.RecordedAppraisal) {
+		recordedOnlyTweak: func(a *conformance.RecordedAppraisal) {
 			a.BindingDataSource = ""
 		},
+		recordedOnlyNote: "the delegated path reads the guest-chosen field out of the quote itself " +
+			"and always names which field that was, so it cannot be the appraiser this case is about",
 		denyStage:  "binding",
 		denyReason: "did not say which field",
 	}, {
@@ -310,18 +339,14 @@ func cases() []caseSpec {
 		denyReason: "signature",
 	}, {
 		id: "composite-deny-event-log-does-not-replay",
-		description: "The RTMR0 event log the collection carries does not replay to the quote's " +
+		description: "The RTMR0 event list the quote carries does not replay to the quote's own " +
 			"RTMR0, so no image identity can be derived from it. The appraiser reports a failure to " +
-			"reach an answer, which is a denial and not an unapproved image.",
-		platform: swarmevidence.PlatformTDXQemu,
-		quoteTweak: func(a *conformance.RecordedAppraisal) {
-			*a = conformance.RecordedAppraisal{
-				Error: "the RTMR0 event log does not replay to the quote's RTMR0: " +
-					"replayed 9e1f…, the quote carries " + hexFill("r0", 48),
-			}
-		},
-		denyStage:  "root-quote",
-		denyReason: "event log does not replay",
+			"reach an answer, which is a denial and not an unapproved image — and both paths reach " +
+			"it from the evidence rather than from a recorded verdict.",
+		platform:              swarmevidence.PlatformTDXQemu,
+		eventLogDoesNotReplay: true,
+		denyStage:             "root-quote",
+		denyReason:            "replays to",
 	}, {
 		id: "composite-deny-stale-evidence",
 		description: "The signed objects are older than the relying party accepts. Both carry an " +
@@ -334,8 +359,79 @@ func cases() []caseSpec {
 	}}
 }
 
-// imageIdentity is the normalised image identity every case's quote reports.
+// imageIdentity is the image identity the SEV-SNP and Azure cases record. On
+// those branches it is rebuilt from published firmware or read out of the
+// vTPM, and no fixture here does either, so it is declared.
 var imageIdentity = hexFill("5c", 32)
+
+// tdxImageIdentity is what the TDX cases' quotes actually normalise to.
+//
+// Every TDX case carries the same registers and the same RTMR0 event list, so
+// one value is what the signed-measurement registry and the relying party's
+// own reference values are about. It is computed from the quote rather than
+// declared beside it, because the delegated path derives it from the same
+// quote: a declared one would let the formula, the event replay or the claim
+// mapping change without a vector noticing.
+var tdxImageIdentity = mustTDXImageIdentity()
+
+func mustTDXImageIdentity() string {
+	quote, err := newTDXQuote(swarmevidence.PlatformTDXQemu, make([]byte, bindingDigestOctets), false)
+	if err != nil {
+		panic("vectorgen: building the canonical TDX quote: " + err.Error())
+	}
+	identity, err := quote.mrEnclave()
+	if err != nil {
+		panic("vectorgen: deriving the canonical image identity: " + err.Error())
+	}
+	return identity
+}
+
+// bindingDigestOctets is the size of the guest-chosen field the binding
+// digest fills on the TDX branches.
+const bindingDigestOctets = 64
+
+// buildQuote assembles the quote one case presents, and the serialised
+// TeeEvidence its quote element carries.
+//
+// The TDX branches carry a real message: the registers, the event list that
+// explains RTMR0 and the guest-chosen field holding this request's binding
+// digest, all of which a delegated appraisal reads out of the quote in hand.
+// The others carry the smallest well-formed message of their branch — there
+// is nothing on them for a quote-only Verifier to read, and the refusal the
+// corpus records must come from the platform rather than from evidence that
+// failed to parse.
+func buildQuote(spec caseSpec, reportData []byte) (*tdxQuote, []byte, error) {
+	if !isTDX(spec.platform) {
+		return nil, nonTDXEvidence(spec.platform), nil
+	}
+	quote, err := newTDXQuote(spec.platform, reportData, spec.eventLogDoesNotReplay)
+	if err != nil {
+		return nil, nil, err
+	}
+	evidence, err := quote.evidence()
+	if err != nil {
+		return nil, nil, err
+	}
+	return quote, evidence, nil
+}
+
+func isTDX(platform swarmevidence.Platform) bool {
+	return platform == swarmevidence.PlatformTDXQemu || platform == swarmevidence.PlatformTDXGCP
+}
+
+// registrySigned is the relying party's view of the signed-measurement
+// registry: the image identities Super Protocol vouches for.
+//
+// It is part of the case rather than of the appraiser because an appraiser
+// that derives the image identity itself must then ask who vouches for it,
+// and the two paths must be asked the same question. A case whose image
+// nobody signed declares none.
+func registrySigned(spec caseSpec, appraisal conformance.RecordedAppraisal) []string {
+	if spec.imageUnsigned || appraisal.MrEnclave == "" {
+		return nil
+	}
+	return []string{appraisal.MrEnclave}
+}
 
 // builtCase is everything one case contributes to the corpus.
 type builtCase struct {
@@ -348,6 +444,21 @@ func (m *material) build(spec caseSpec, profiles []conformance.AppraiserProfile)
 	freshness := orBytes(spec.freshness, requestFreshness)
 	target := orBytes(spec.target, requestTarget)
 	subject := orBytes(spec.subject, requestSubject)
+
+	// The quote the collection carries, and what it commits to. It is built
+	// first because the appraisal below is read out of it rather than
+	// declared beside it: the registers, the event list and the guest-chosen
+	// field are the quote's, so a case cannot record an appraisal of a quote
+	// it did not present.
+	binding := bindingInputs{freshness, target, subject}
+	if spec.bindingOver != nil {
+		binding = *spec.bindingOver
+	}
+	bound := bindingDigest(binding.freshness, binding.target, binding.subject)
+	quote, evidence, err := buildQuote(spec, bound)
+	if err != nil {
+		return nil, err
+	}
 
 	// The statement the node saw, which the envelope binds.
 	statement := baseStatement()
@@ -396,7 +507,7 @@ func (m *material) build(spec caseSpec, profiles []conformance.AppraiserProfile)
 	}
 
 	built := collection{
-		quote:      baseQuote(challengeTypeOf(spec)),
+		quote:      baseQuote(challengeTypeOf(spec), evidence),
 		membership: m.membershipOf(spec),
 		standard:   spec.standardWrapper,
 	}
@@ -415,15 +526,20 @@ func (m *material) build(spec caseSpec, profiles []conformance.AppraiserProfile)
 		return nil, err
 	}
 
-	// The recorded appraisal: what the quote committed to, and what an
-	// appraiser establishes about it.
-	binding := bindingInputs{freshness, target, subject}
-	if spec.bindingOver != nil {
-		binding = *spec.bindingOver
+	// The appraisal of that quote. Two viewpoints come out of it: what the
+	// delegated profiles establish, which is everything the quote itself
+	// carries, and what the recorded profile's appraiser answered — the same
+	// thing, unless the case is about an appraiser that answers less.
+	delegatedAppraisal, err := recordedQuote(spec, quote, bound)
+	if err != nil {
+		return nil, err
 	}
-	quoteAppraisal := recordedQuote(spec.platform, bindingDigest(binding.freshness, binding.target, binding.subject))
 	if spec.quoteTweak != nil {
-		spec.quoteTweak(&quoteAppraisal)
+		spec.quoteTweak(&delegatedAppraisal)
+	}
+	quoteAppraisal := delegatedAppraisal
+	if spec.recordedOnlyTweak != nil {
+		spec.recordedOnlyTweak(&quoteAppraisal)
 	}
 	rootPlatform := spec.rootPlatform
 	if rootPlatform == "" {
@@ -433,7 +549,14 @@ func (m *material) build(spec caseSpec, profiles []conformance.AppraiserProfile)
 	if spec.rootTweak != nil {
 		spec.rootTweak(&rootAppraisal)
 	}
-	tokens, err := m.recordTokens(profiles, rootAppraisal, quoteAppraisal)
+	// A Verifier that appraised the quote reports a TCB verdict whatever the
+	// local steps that follow conclude, so a case whose appraisal is itself a
+	// refusal still records the verdict the token carried.
+	tokenTCBStatus := delegatedAppraisal.TCBStatus
+	if tokenTCBStatus == "" {
+		tokenTCBStatus = swarmevidence.TCBOK
+	}
+	tokens, err := m.recordTokens(profiles, quote, tokenTCBStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -446,6 +569,7 @@ func (m *material) build(spec caseSpec, profiles []conformance.AppraiserProfile)
 		freshness:    freshness,
 		subject:      subject,
 		quote:        quoteAppraisal,
+		delegated:    delegatedAppraisal,
 		root:         rootAppraisal,
 		statement:    carried,
 		envelope:     envelope,
@@ -472,13 +596,14 @@ func (m *material) build(spec caseSpec, profiles []conformance.AppraiserProfile)
 			ID:          spec.id,
 			Description: spec.description,
 			Request: conformance.CompositeRequest{
-				FreshnessInput:  hexOf(freshness),
-				Target:          b64(target),
-				Subject:         b64(subject),
-				TrustedRoots:    trustedRoots,
-				Now:             referenceNow,
-				MaxEvidenceAge:  spec.maxEvidenceAge,
-				ReferenceValues: spec.referenceValues,
+				FreshnessInput:             hexOf(freshness),
+				Target:                     b64(target),
+				Subject:                    b64(subject),
+				TrustedRoots:               trustedRoots,
+				Now:                        referenceNow,
+				MaxEvidenceAge:             spec.maxEvidenceAge,
+				ReferenceValues:            spec.referenceValues,
+				RegistrySignedMeasurements: registrySigned(spec, delegatedAppraisal),
 			},
 			EvidenceFile:  "composite/collections/" + spec.id + ".json",
 			AppraisalFile: "composite/appraisals/" + spec.id + ".json",
@@ -497,60 +622,133 @@ func (m *material) membershipOf(spec caseSpec) []*testca.Cert {
 // expectationInputs is everything the declared claim set is assembled from.
 type expectationInputs struct {
 	freshness, subject []byte
-	quote, root        conformance.RecordedAppraisal
-	statement          map[string]any
-	envelope           map[string]any
-	signer, node       *testca.Cert
-	profiles           []conformance.AppraiserProfile
-	hasStatement       bool
-	hasEnvelope        bool
+	// quote is what the recorded profile's appraiser answered, and delegated
+	// what the quote itself establishes. They differ only for the two cases
+	// that are about an appraiser's own contract.
+	quote, delegated conformance.RecordedAppraisal
+	root             conformance.RecordedAppraisal
+	statement        map[string]any
+	envelope         map[string]any
+	signer, node     *testca.Cert
+	profiles         []conformance.AppraiserProfile
+	hasStatement     bool
+	hasEnvelope      bool
 }
 
 // expectation writes what the profile says this evidence establishes.
 //
-// It is assembled from the case's own declarations — the appraisal it
-// records, the certificates it chains through, the statement it carries — and
-// never from the verifier: a corpus whose expectations came out of the code
-// under test would pass by construction.
+// It is assembled from the case's own declarations — the quote it presents,
+// the certificates it chains through, the statement it carries — and never
+// from the verifier: a corpus whose expectations came out of the code under
+// test would pass by construction.
 func (m *material) expectation(spec caseSpec, in expectationInputs) (conformance.CompositeExpect, error) {
-	if spec.denyStage != "" {
-		return conformance.CompositeExpect{
-			OK:             false,
-			Stage:          spec.denyStage,
-			ReasonContains: spec.denyReason,
-			Claims:         denialClaims(in.freshness, spec.denyStage),
-		}, nil
+	expect := conformance.CompositeExpect{
+		OK:             false,
+		Stage:          spec.denyStage,
+		ReasonContains: spec.denyReason,
+		Claims:         denialClaims(in.freshness, spec.denyStage),
+	}
+	if spec.denyStage == "" {
+		claims, err := m.soundClaims(in, in.quote)
+		if err != nil {
+			return conformance.CompositeExpect{}, err
+		}
+		expect = conformance.CompositeExpect{OK: true, Claims: claims}
 	}
 
+	// Where a delegated profile reaches another answer, the override says
+	// which and why. There are exactly two reasons, and both are properties
+	// of the delegated path rather than of this case: a platform it does not
+	// cover, and an appraiser contract it cannot have.
+	for _, profile := range in.profiles {
+		if profile.Kind != "eat" {
+			continue
+		}
+		override, err := m.delegatedExpectation(spec, in, profile)
+		if err != nil {
+			return conformance.CompositeExpect{}, err
+		}
+		if override == nil {
+			continue
+		}
+		if expect.Appraisers == nil {
+			expect.Appraisers = map[string]*conformance.CompositeExpect{}
+		}
+		expect.Appraisers[profile.Name] = override
+	}
+	return expect, nil
+}
+
+// delegatedExpectation is one delegated profile's override, or nil when it
+// must reach exactly the expectation beside it — which is the whole point of
+// the corpus and is therefore the common case.
+func (m *material) delegatedExpectation(
+	spec caseSpec, in expectationInputs, profile conformance.AppraiserProfile,
+) (*conformance.CompositeExpect, error) {
+	if !profile.Covers(string(spec.platform)) {
+		if profile.OutsideCoverage == nil {
+			return nil, fmt.Errorf("profile %q does not cover %s and declares no refusal for it",
+				profile.Name, spec.platform)
+		}
+		// The platform, not the evidence: `coverage` is the one stage that
+		// says nothing about the attester, and what clears it is a different
+		// appraiser (DENIAL-STAGES.md).
+		return &conformance.CompositeExpect{
+			OK:             false,
+			Stage:          profile.OutsideCoverage.Stage,
+			ReasonContains: "outside the delegated path's coverage",
+			Claims:         denialClaims(in.freshness, profile.OutsideCoverage.Stage),
+			Note:           profile.OutsideCoverage.Reason,
+		}, nil
+	}
+	if spec.recordedOnlyTweak == nil {
+		return nil, nil
+	}
+	claims, err := m.soundClaims(in, in.delegated)
+	if err != nil {
+		return nil, err
+	}
+	return &conformance.CompositeExpect{OK: true, Claims: claims, Note: spec.recordedOnlyNote}, nil
+}
+
+// soundClaims is the claim set one quote appraisal establishes about this
+// case's evidence.
+func (m *material) soundClaims(
+	in expectationInputs, quote conformance.RecordedAppraisal,
+) (map[string]any, error) {
 	claims := map[string]any{
 		"schema_version":         swarmevidence.ClaimsVersion,
 		"freshness_input":        hexOf(in.freshness),
 		"binding_ok":             true,
 		"binding_subject_digest": hexOf(sha256Of(in.subject)),
 
-		"platform":           string(in.quote.Platform),
-		"quote_verified":     in.quote.QuoteVerified,
+		"platform":           string(quote.Platform),
+		"quote_verified":     quote.QuoteVerified,
 		"quote_appraiser":    conformance.AppraiserPlaceholder,
-		"tcb_status":         string(in.quote.TCBStatus),
-		"collateral_checked": in.quote.CollateralChecked,
+		"tcb_status":         string(quote.TCBStatus),
+		"collateral_checked": quote.CollateralChecked,
 
 		"pki_root_fingerprint": m.root.Fingerprint(),
 		"pki_chain_ok":         true,
 		"root_quote_ok":        in.root.QuoteVerified && in.root.KeyBinding,
 		"network_type":         string(in.root.NetworkType),
 	}
-	measurements, err := document(in.quote.Measurements)
+	measurements, err := document(quote.Measurements)
 	if err != nil {
-		return conformance.CompositeExpect{}, err
+		return nil, err
 	}
 	if len(measurements) > 0 {
 		claims["measurements"] = measurements
 	}
-	security, err := document(in.quote.PlatformSecurity)
-	if err != nil {
-		return conformance.CompositeExpect{}, err
-	}
-	if len(security) > 0 {
+	// The claim set omits platform_security when the appraiser populated
+	// none of it, and every member of it has a meaningful zero — a VMPL of 0
+	// is the privileged level — so the test is the whole structure rather
+	// than the encoded document.
+	if quote.PlatformSecurity != (swarmevidence.PlatformSecurity{}) {
+		security, err := document(quote.PlatformSecurity)
+		if err != nil {
+			return nil, err
+		}
 		claims["platform_security"] = security
 	}
 
@@ -558,15 +756,15 @@ func (m *material) expectation(spec caseSpec, in expectationInputs) (conformance
 	// quote-only Verifier cannot, and `mrenclave_approved: false` would tell
 	// a policy that a set of reference values answered; an approval with no
 	// identity is unreadable and is left out for the same reason.
-	if in.quote.MrEnclave != "" {
-		claims["mrenclave"] = in.quote.MrEnclave
-		claims["mrenclave_approved"] = in.quote.MrEnclaveApproved
-		if in.quote.MrEnclaveSource != "" {
-			claims["mrenclave_source"] = string(in.quote.MrEnclaveSource)
+	if quote.MrEnclave != "" {
+		claims["mrenclave"] = quote.MrEnclave
+		claims["mrenclave_approved"] = quote.MrEnclaveApproved
+		if quote.MrEnclaveSource != "" {
+			claims["mrenclave_source"] = string(quote.MrEnclaveSource)
 		}
 	}
-	if in.quote.SpvmBuild != "" {
-		claims["spvm_build"] = in.quote.SpvmBuild
+	if quote.SpvmBuild != "" {
+		claims["spvm_build"] = quote.SpvmBuild
 	}
 
 	if in.hasEnvelope {
@@ -597,30 +795,7 @@ func (m *material) expectation(spec caseSpec, in expectationInputs) (conformance
 			claims["image_digests"] = digests
 		}
 	}
-
-	expect := conformance.CompositeExpect{OK: true, Claims: claims}
-
-	// A profile that does not cover this case's platforms refuses, and the
-	// refusal is part of the contract: the coverage difference between paths
-	// is asserted here rather than described in a document.
-	for _, profile := range in.profiles {
-		if profile.Kind != "eat" || profile.OutsideCoverage == nil {
-			continue
-		}
-		if profile.Covers(string(in.root.Platform)) && profile.Covers(string(in.quote.Platform)) {
-			continue
-		}
-		if expect.Appraisers == nil {
-			expect.Appraisers = map[string]*conformance.CompositeExpect{}
-		}
-		expect.Appraisers[profile.Name] = &conformance.CompositeExpect{
-			OK:             false,
-			Stage:          profile.OutsideCoverage.Stage,
-			ReasonContains: "outside that coverage",
-			Claims:         denialClaims(in.freshness, profile.OutsideCoverage.Stage),
-		}
-	}
-	return expect, nil
+	return claims, nil
 }
 
 // denialClaims is the only claim set a refused appraisal may produce: the
@@ -655,34 +830,74 @@ func imageDigestsOf(statement map[string]any) []string {
 	return slices.Compact(digests)
 }
 
-// recordedQuote is a per-request quote appraisal on one platform: the
-// registers that platform reports, and the guest-chosen field the binding
-// digest is compared against.
-func recordedQuote(platform swarmevidence.Platform, binding []byte) conformance.RecordedAppraisal {
+// recordedQuote is the per-request quote appraisal a case is appraised
+// against.
+//
+// On the TDX branches it is read out of the quote the case presents — the
+// registers it carries, the identity its event list normalises to, the
+// guest-chosen field it commits to — so the recorded profile and a delegated
+// one are answering about the same quote rather than about a quote and a
+// story told beside it. On the others it is declared: nothing here rebuilds a
+// SEV-SNP launch measurement from published firmware or reads an Azure vTPM.
+func recordedQuote(spec caseSpec, quote *tdxQuote, binding []byte) (conformance.RecordedAppraisal, error) {
 	appraisal := conformance.RecordedAppraisal{
-		Platform:          platform,
+		Platform:          spec.platform,
 		QuoteVerified:     true,
 		TCBStatus:         swarmevidence.TCBOK,
 		CollateralChecked: true,
 		BindingData:       hexOf(binding),
 		BindingDataSource: swarmevidence.BindingFromReportData,
-		MrEnclave:         imageIdentity,
 		MrEnclaveApproved: true,
 		MrEnclaveSource:   swarmevidence.SourceRegistry,
-		SpvmBuild:         "build-448-release",
 	}
-	if platform == swarmevidence.PlatformTDXAzure || platform == swarmevidence.PlatformSNPAzure {
+	if spec.platform == swarmevidence.PlatformTDXAzure || spec.platform == swarmevidence.PlatformSNPAzure {
 		// On the Azure nested form the hardware report data is the
 		// paravisor's, so the guest-chosen field is the HCL user-data.
 		appraisal.BindingDataSource = swarmevidence.BindingFromHCLUserData
 	}
-	appraisal.Measurements, appraisal.PlatformSecurity = platformFacts(platform)
-	return appraisal
+	if quote == nil {
+		appraisal.MrEnclave = imageIdentity
+		// Only the SEV-SNP evidence names the sp-vm release it booted, and
+		// only a verified AMD chain names a CPU line and a report version, so
+		// those three are recorded on these branches and nowhere else.
+		appraisal.SpvmBuild = "build-448-release"
+		appraisal.Measurements, appraisal.PlatformSecurity = platformFacts(spec.platform)
+		return appraisal, nil
+	}
+
+	if quote.eventLogDoesNotReplay {
+		// The appraiser could not reach an answer, which is the whole
+		// appraisal: a refusal is never a partial pass. The wording is the
+		// one a reader of this corpus will see from the delegated path, so
+		// the two profiles deny for the same stated reason.
+		replayed, err := replayRTMR(quote.eventLog, nil)
+		if err != nil {
+			return appraisal, err
+		}
+		return conformance.RecordedAppraisal{
+			Error: fmt.Sprintf("tdx evidence: the event list replays to %s, but the quote's RTMR0 is %s",
+				hexOf(replayed), quote.rtmr0),
+		}, nil
+	}
+
+	identity, err := quote.mrEnclave()
+	if err != nil {
+		return appraisal, err
+	}
+	appraisal.MrEnclave = identity
+	appraisal.Measurements = quote.measurements()
+	return appraisal, nil
 }
 
 // recordedRoot is the appraisal of the membership root's own TEE evidence:
 // the step that makes the attestation about this certificate authority rather
 // than about some VM.
+//
+// It stays recorded on every path. The membership root's quote is part of the
+// Super Swarm chain rather than of the credential request, so the delegated
+// appraiser hands it to the built-in offline appraiser too
+// (DelegatedQuoteAppraiser.RootAppraiser) and the corpus stands in for that
+// one appraiser once.
 func recordedRoot(platform swarmevidence.Platform) conformance.RecordedAppraisal {
 	appraisal := conformance.RecordedAppraisal{
 		Platform:          platform,
@@ -694,7 +909,9 @@ func recordedRoot(platform swarmevidence.Platform) conformance.RecordedAppraisal
 		MrEnclave:         hexFill("ca", 32),
 		MrEnclaveApproved: true,
 		MrEnclaveSource:   swarmevidence.SourceRegistry,
-		SpvmBuild:         "build-448-release",
+	}
+	if platform == swarmevidence.PlatformSNPQemu || platform == swarmevidence.PlatformSNPAzure {
+		appraisal.SpvmBuild = "build-448-release"
 	}
 	appraisal.Measurements, appraisal.PlatformSecurity = platformFacts(platform)
 	return appraisal
@@ -703,6 +920,11 @@ func recordedRoot(platform swarmevidence.Platform) conformance.RecordedAppraisal
 // platformFacts are the registers and the report fields each platform
 // reports. Which members are populated is the platform's, which is why a
 // policy reads `platform` before any of them.
+//
+// The TDX branches report no platform-security fields at all: the version and
+// the CPU line in that structure come from an AMD report and the VCEK chain
+// behind it, and a corpus that recorded them for a TD would be pinning
+// something no appraiser produces.
 func platformFacts(platform swarmevidence.Platform) (swarmevidence.Measurements, swarmevidence.PlatformSecurity) {
 	// Assigned to locals rather than returned as two composite literals: the
 	// two are indented differently by different releases of gofmt, so the
@@ -732,11 +954,7 @@ func platformFacts(platform swarmevidence.Platform) (swarmevidence.Measurements,
 		RTMR2:        hexFill("r2", 48),
 		RTMR3:        hexFill("r3", 48),
 	}
-	security := swarmevidence.PlatformSecurity{
-		ReportVersion: 4,
-		CPUGeneration: "Emerald Rapids",
-	}
-	return measurements, security
+	return measurements, swarmevidence.PlatformSecurity{}
 }
 
 // challengeTypeOf is the quote element's own `type`: the platform's

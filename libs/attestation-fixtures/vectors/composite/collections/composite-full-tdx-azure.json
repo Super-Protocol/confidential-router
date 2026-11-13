@@ -6,7 +6,7 @@
       "media_type": "application/vnd.super-protocol.swarm-quote+json",
       "type": "swarm-quote",
       "value": {
-        "evidenceBase64": "c2VyaWFsaXNlZCBUZWVFdmlkZW5jZSAodGR4LWF6dXJlKQ==",
+        "evidenceBase64": "Ig8KDWFuIEhDTCByZXBvcnQ=",
         "networkID": "swarm-cloud-conformance",
         "type": "tdx-azure"
       }
