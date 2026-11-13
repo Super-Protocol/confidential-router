@@ -331,8 +331,8 @@ The convention, for CTO sign-off before the first external consumer:
   the module's. A module release may fix a verification bug without touching
   the claim set, and a claim set version may only change with the schema.
   `v1.0.0` of the module will ship `schema_version: "1"`.
-- **A tag is cut from `main` only**, after the `Go checks (gatekeeper)` job is
-  green on it, and its message names the issue that justified it.
+- **A tag is cut from `main` only**, after the `Go checks` job is green on it,
+  and its message names the issue that justified it.
 - **The schema is the compatibility surface.** Adding an optional claim is a
   minor release; removing one, narrowing a pattern, or adding a value to a
   closed enum is a new `schema_version` and a major release, because a policy
@@ -346,9 +346,9 @@ pnpm nx run swarm-evidence-go:lint     # go vet ./... && golangci-lint run
 pnpm nx run swarm-evidence-go:tidy     # go mod tidy
 ```
 
-CI runs all of them in the `Go checks (gatekeeper)` job
-(`.github/actions/go-checks`), on the module and on the gatekeeper, in that
-order: a failure here explains a failure there.
+CI runs all of them in the `Go checks` job (`.github/actions/go-checks`), on
+this module, on `libs/swarm-policy` and on the gatekeeper, in that order: a
+failure here explains a failure there.
 
 `golangci-lint` must be a build whose own Go is at least this module's `go`
 directive; an older one refuses to load the config rather than running with

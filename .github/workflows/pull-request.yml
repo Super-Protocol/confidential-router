@@ -461,7 +461,7 @@ jobs:
           retention-days: 7
 
   go:
-    name: Go checks (gatekeeper)
+    name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
