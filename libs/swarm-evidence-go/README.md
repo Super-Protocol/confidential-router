@@ -71,6 +71,9 @@ falling through to its default.
 | `binding.go` | the TACRA binding preimage and its hash-by-field-size table. |
 | `statement.go` | the two signed objects, and the JCS digest both are named by. |
 | `quoteappraiser.go` | the `QuoteAppraiser` seam and the offline, built-in implementation. |
+| `delegated.go` | the EAT-consuming appraiser for a relying party's own Verifier, and its claim mapping. |
+| `eat.go` | authenticating an Attestation Results token: format, issuer, keys, algorithms. |
+| `tokensource.go` | how a token is obtained — a live Verifier over HTTP, or a recorded one. |
 | `DENIAL-STAGES.md` | what each `denial.stage` means, and the lossy pipeline mapping. |
 | `attestation/` | the `/.well-known/swarm-evidence` pipeline (its own README). |
 | `attestation/attestedroot/` | is this certificate authority a Super Swarm one, decided from hardware. |
@@ -157,6 +160,102 @@ root carries. That is what the fleet publishes about a served hostname and what
 the shared conformance vectors pin. It is about a hostname rather than a
 request, so it establishes `channel_binding` and no request binding — an absent
 claim was not established.
+
+## Delegating the quote to the relying party's own Verifier
+
+A bank runs **one** Verifier, bought or built, and will not deploy a second
+one for Super Swarm. `DelegatedQuoteAppraiser` is the seam for that: it hands
+the hardware quote to that Verifier, consumes the answer as an **EAT**, and
+completes the appraisal here.
+
+```go
+appraiser := &swarmevidence.DelegatedQuoteAppraiser{
+    AppraiserName: "intel-trust-authority",
+    Tokens: &swarmevidence.HTTPTokenSource{
+        URL:     "https://api.trustauthority.intel.com/appraise/v2/attest",
+        Headers: map[string]string{"x-api-key": apiKey},
+        Body:    map[string]string{"quote": "${quote_base64}"},
+    },
+    Token: swarmevidence.TokenVerification{
+        Issuer: "https://portal.trustauthority.intel.com",
+        Keys:   &swarmevidence.JWKSKeys{URL: "https://portal.trustauthority.intel.com/certs"},
+    },
+    Mapping: swarmevidence.ITAClaimMapping(),
+}
+```
+
+**Nothing in it names a Verifier.** There is no ITA type, no ITA branch and no
+ITA default: `ITAClaimMapping()` is one *value* of `ClaimMapping`, kept beside
+the others rather than privileged. What an EAT calls a TD's registers is not
+standardised — ITA emits `tdx_mrtd`, a Veraison EAR carries annotated evidence
+with dots inside the claim names, Azure MAA uses `x-ms-*` — so the claim
+paths, their encoding, the token format, the issuer and the verification keys
+are all configuration. `TestSwappingTheVerifierIsConfigurationOnly` replays the
+same quote through a second Verifier that reuses none of ITA's claim names,
+encoding, issuer, algorithm or signing key, and requires the same claims out.
+
+`ITAClaimMapping()` itself is written against Intel's published token
+reference and held to it by `TestITAClaimMappingFindsIntelsPublishedClaims`,
+which appraises a fixture built in the shape of Intel's sample. Three of those
+names are a plausible guess away from denying every live appraisal —
+`tdx_td_attributes` (not `tdx_tdattributes`), `attester_tcb_status` (not
+`tdx_tcb_status`) and `tdx_report_data` (not `attester_held_data`, which is
+the caller's own runtime data) — so the fixture carries the wrong-turn claims
+beside the right ones. What no fixture can establish is that Intel's
+documentation matches Intel's production tokens; only the live test against
+the tenant of SUP-642 does that. `testdata/delegated/README.md` is explicit
+about which is which.
+
+### What stays here, and why
+
+- **The binding digest.** The guest-chosen field is read out of the quote in
+  hand, never out of the token. A Verifier that does not surface report data
+  is therefore usable, and one that surfaces the wrong one cannot make a quote
+  answer a request it does not answer.
+- **The image identity.** `mrEnclave = SHA-256(TDATTRIBUTES ‖ MRTD ‖
+  normalizedRTMR0 ‖ RTMR1 ‖ RTMR2 ‖ RTMR3)` needs the RTMR0 event log, which
+  no quote-only Verifier consumes and which Rego cannot practically replay. A
+  Verifier's result alone is never sufficient evidence of image identity.
+- **Who vouches for it.** The signed-measurement registry and the relying
+  party's reference values are consulted through the same code the offline
+  path uses, so the two cannot drift in what they accept.
+- **The membership root's own quote**, which goes to `RootAppraiser` — the
+  built-in offline appraiser by default. The bank's Verifier appraises the
+  per-request quote; the root's quote is part of the membership chain, which
+  is Super Swarm-specific and therefore ours.
+
+### Binding the token to the quote
+
+Every register the mrEnclave formula consumes is read from the token *and*
+from the quote, and they must agree — a token appraising some other TD
+disagrees about at least one of them.
+
+That covers the registers and not the report data, so the report data is
+covered separately, by `TokenSource.SubmitsEvidence`. A source that submits
+these exact octets to the Verifier (`HTTPTokenSource`) binds the token
+structurally. A source that **relays** a token (`RecordedTokens`, or an
+attester carrying its own) does not, and the appraiser then requires
+`ClaimMapping.BindingData` to be configured and checks the token's report data
+against the quote's — because otherwise a holder of any genuine token could
+pair it with a quote blob carrying the same registers and a report data they
+chose.
+
+### Coverage
+
+The delegated path appraises `tdx-qemu` and `tdx-gcp`. Everything else is a
+`denial` at the **`coverage`** stage naming the limitation, never a partial
+verdict: a SEV-SNP launch measurement is rebuilt from published firmware
+rather than reported by a quote-only Verifier, and on either Azure branch the
+hardware measurement describes Microsoft's paravisor while the image identity
+lives in vTPM `PCR4`/`PCR9`. `coverage` is its own stage because it says
+nothing about the evidence — what clears it is a different appraiser, not a
+different node (`DENIAL-STAGES.md`).
+
+### The policy that goes with it
+
+`libs/swarm-policy` carries the OPA and Sentinel modules that decide over
+`SwarmClaims`. That is deliberately where all Super Swarm-specific appraisal
+lives, and it is what keeps the bank's single Verifier unmodified.
 
 ### Two limits worth knowing before writing a policy against `measurements`
 

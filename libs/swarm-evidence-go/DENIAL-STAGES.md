@@ -9,7 +9,7 @@ is closed by the JSON Schema and cannot grow afterwards without a new version.
 `TestDenialStagesAreDocumented` and `TestPipelineStageMappingIsPinned` hold the
 code to what is written here.
 
-## The seven stages
+## The eight stages
 
 | `stage` | What it means | Who fixes it |
 | --- | --- | --- |
@@ -17,9 +17,17 @@ code to what is written here.
 | `blob` | The evidence is not a shape this module reads: not JSON, neither a CMW collection nor a `/.well-known/swarm-evidence` bundle, a collection version this build does not implement, a REQUIRED element missing, an element whose declared media type contradicts its type identifier. | The producer, or a version negotiation. |
 | `pki-chain` | The certificate chain did not validate, or terminated at a root the relying party did not pin. | The producer, or the relying party's trust store. |
 | `root-quote` | The hardware quote could not be appraised: absent, unreadable, not signed by the vendor, an appraiser that could not reach an answer. Both the membership root's own quote and the composite form's per-request quote deny here. | Depends on the reason; a registry that could not be consulted is retryable, a bad vendor signature is not. |
+| `coverage` | The configured quote appraiser does not cover this attester's platform. The delegated appraiser (SUP-648) denies here for SEV-SNP, whose launch measurement is rebuilt from published firmware rather than reported by a quote-only Verifier, and for both Azure forms, where the hardware measurement is Microsoft's paravisor and the image identity lives in the vTPM. | The relying party, by configuring a different appraiser. It says nothing about the evidence. |
 | `binding` | The evidence does not answer the request it was presented for: a report-data digest that is not this request's, or a channel binding that does not hold. | The producer, or a substituted request. |
 | `envelope` | The node's `NodeRequestEnvelope` did not verify, or did not bind this request, this statement or this pod. | The producer, or an attester substitution. |
 | `statement` | The leader's statement did not verify, is stale, or its signed hash is not the hash of the statement beside it. | The producer. |
+
+`coverage` is the one stage that is not about the evidence at all, which is
+why it is not folded into `root-quote`: the attester may be impeccable, and
+what clears the refusal is a different appraiser rather than a different node.
+A relying party that could not tell the two apart would send an operator to
+investigate a healthy SEV-SNP host every time a bank's Intel-only Verifier met
+one.
 
 Two stages are deliberately **not** in the set, and both are claims instead:
 

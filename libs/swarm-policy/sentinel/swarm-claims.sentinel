@@ -1,0 +1,120 @@
+# The relying party's decision about one Super Swarm credential request, for a
+# Vault Enterprise deployment.
+#
+# It is the Sentinel twin of rego/swarm_claims.rego and takes the same
+# decision over the same document: a SwarmClaims v1 claim set, exactly as
+# `swarm-evidence-go` emits it. The two exist because Vault Community reaches
+# OPA and Vault Enterprise reaches Sentinel, and a bank should not have to
+# port a security decision to deploy it.
+#
+# `claims` is the claim set. The four parameters beside it are the bank's own
+# configuration; nothing Super Protocol ships decides any of them.
+#
+# Every claim is read through `claim()` with a default that denies. An absent
+# key in Sentinel is a runtime error, and a policy that errors on a claim the
+# appraisal did not establish would be indistinguishable from one that denies
+# for a reason nobody can read — so "not established" is given a value, and
+# that value never passes.
+
+import "types"
+
+param claims
+param approved_images default []
+param reference_builds default []
+param required_pss_enforce default "restricted"
+param required_network_type default "trusted"
+
+claim = func(name, fallback) {
+	if name in keys(claims) {
+		return claims[name]
+	}
+	return fallback
+}
+
+# --- the appraisal itself ---------------------------------------------------
+
+# A refusal is never a partial pass: a claim set carrying a denial carries no
+# other claim, so this comes before anything that reads one.
+appraisal_succeeded = rule {
+	claim("denial", null) is null
+}
+
+# A document of a version this policy was not written against is not a
+# document this policy may judge.
+schema_is_v1 = rule {
+	claim("schema_version", "") is "1"
+}
+
+# --- what must have been established ----------------------------------------
+#
+# The five predicates below are about the workload. These are about whether
+# there is a workload to speak of: an unverified quote, a quote that answers
+# somebody else's request, or a statement nothing binds to this request would
+# make every claim after them decoration.
+
+quote_verified = rule { claim("quote_verified", false) is true }
+
+request_bound = rule { claim("binding_ok", false) is true }
+
+chain_valid = rule { claim("pki_chain_ok", false) is true }
+
+root_attested = rule { claim("root_quote_ok", false) is true }
+
+request_envelope_valid = rule { claim("envelope_ok", false) is true }
+
+statement_signed = rule { claim("statement_ok", false) is true }
+
+image_vouched_for = rule { claim("mrenclave_approved", false) is true }
+
+# --- the five predicates ----------------------------------------------------
+
+# `image ∈ approved`. Every digest the statement resolved has to be one the
+# bank approved — containers and init containers alike. An empty set denies: a
+# statement that resolved no digest says nothing about what ran.
+#
+# The shape is checked before the contents, because `claim()` defaults only an
+# *absent* key. A claim set carrying an explicit `"image_digests": null` —
+# which this module's emitter never writes, but a hand-assembled or relayed
+# document can — would make `length()` raise instead of deny. Vault treats a
+# policy error as a refusal either way, but a refusal somebody can read beats
+# one they have to debug.
+images_approved = rule {
+	types.type_of(claim("image_digests", [])) is "list" and
+		length(claim("image_digests", [])) > 0 and
+		all claim("image_digests", []) as digest { digest in approved_images }
+}
+
+# `locked = true`. An unlocked cluster space can still take new workloads, so
+# what the statement says about this one stops being true the moment after it
+# was signed.
+space_locked = rule { claim("locked", false) is true }
+
+# `pss_enforce = restricted`.
+pod_security_restricted = rule { claim("pss_enforce", "") is required_pss_enforce }
+
+# `network_type = trusted`. The claim is the PKI root's own declaration. The
+# live demonstration stand's root declares "untrusted", which is why this is a
+# parameter and not a constant.
+network_is_trusted = rule { claim("network_type", "") is required_network_type }
+
+# `spvm_build ∈ reference values`. The build is producer-supplied and proves
+# nothing on its own — `mrenclave_approved` settles the image — but a VM
+# claiming a build nobody listed is one nobody has reviewed.
+build_is_a_reference_value = rule { claim("spvm_build", "") in reference_builds }
+
+main = rule {
+	appraisal_succeeded and
+		schema_is_v1 and
+		quote_verified and
+		request_bound and
+		chain_valid and
+		root_attested and
+		request_envelope_valid and
+		statement_signed and
+		image_vouched_for and
+		images_approved and
+		space_locked and
+		pod_security_restricted and
+		network_is_trusted and
+		build_is_a_reference_value
+}

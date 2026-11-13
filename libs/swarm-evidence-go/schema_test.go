@@ -212,6 +212,7 @@ func TestSchemaEnumsMatchConstants(t *testing.T) {
 			string(swarmevidence.StageBlob),
 			string(swarmevidence.StagePKIChain),
 			string(swarmevidence.StageRootQuote),
+			string(swarmevidence.StageCoverage),
 			string(swarmevidence.StageBinding),
 			string(swarmevidence.StageEnvelope),
 			string(swarmevidence.StageStatement),

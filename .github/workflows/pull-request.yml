@@ -73,15 +73,16 @@ jobs:
           echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
           echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
-      # The two Go projects — `gatekeeper` and the `swarm-evidence-go` module it
-      # is built out of — are excluded here and owned by the `go` job below,
-      # which has the Go toolchain and golangci-lint installed.
+      # The three Go projects — `gatekeeper`, the `swarm-evidence-go` module it
+      # is built out of, and the `swarm-policy` artefacts — are excluded here
+      # and owned by the `go` job below, which has the Go toolchain,
+      # golangci-lint and the Sentinel CLI installed.
       - name: Lint, typecheck, build & test
         run: |
           pnpm nx affected -t lint typecheck build test \
             --base="${{ steps.nx-shas.outputs.base }}" \
             --head="${{ steps.nx-shas.outputs.head }}" \
-            --exclude=gatekeeper,swarm-evidence-go \
+            --exclude=gatekeeper,swarm-evidence-go,swarm-policy \
             --parallel=3 \
             --outputStyle=static
 

@@ -1,0 +1,12 @@
+{
+  "swarm": {
+    "policy": {
+      "approved_images": [
+        "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      ],
+      "reference_builds": ["build-448-release"],
+      "required_pss_enforce": "restricted",
+      "required_network_type": "trusted"
+    }
+  }
+}

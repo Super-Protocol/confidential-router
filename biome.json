@@ -16,7 +16,7 @@
       "!**/__fixtures__",
       "!**/__snapshots__",
       "!libs/swarm-evidence-go/attestation/attestedroot/internal/azurecvm",
-      "!libs/swarm-evidence-go/attestation/attestedroot/testdata",
+      "!libs/swarm-evidence-go/**/testdata",
       "!**/coverage",
       "!**/test-output",
       "!**/playwright-report",

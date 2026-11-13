@@ -44,7 +44,7 @@ func TestDenialStagesAreDocumented(t *testing.T) {
 	t.Parallel()
 
 	for _, stage := range []DenialStage{
-		StageOptions, StageBlob, StagePKIChain, StageRootQuote,
+		StageOptions, StageBlob, StagePKIChain, StageRootQuote, StageCoverage,
 		StageBinding, StageEnvelope, StageStatement,
 	} {
 		if !strings.Contains(denialStagesDoc, "| `"+string(stage)+"` |") {

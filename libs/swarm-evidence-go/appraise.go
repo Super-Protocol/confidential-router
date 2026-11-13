@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 
 	"github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go/attestation"
 )
@@ -155,7 +156,7 @@ func appraiseRoot(
 
 	appraisal, err := appraiser.AppraiseRootQuote(ctx, cert)
 	if err != nil {
-		return nil, denyf(StageRootQuote, "%v", err)
+		return nil, appraiserDenial(err)
 	}
 	if appraisal == nil {
 		return nil, denyf(StageRootQuote, "the quote appraiser returned no appraisal")
@@ -201,4 +202,19 @@ func denialStageOf(stage attestation.Stage) DenialStage {
 	default:
 		return StageBlob
 	}
+}
+
+// appraiserDenial turns a quote appraiser's error into a denial.
+//
+// An appraiser may name its own stage by returning a [Denial]; that is how the
+// delegated appraiser reports a platform outside its coverage, which is a
+// different answer from "this quote did not appraise" and is the one a relying
+// party clears by configuring a different appraiser rather than by
+// investigating a node. Anything else is a quote that could not be appraised.
+func appraiserDenial(err error) *Denial {
+	var denial *Denial
+	if errors.As(err, &denial) {
+		return denial
+	}
+	return denyf(StageRootQuote, "%v", err)
 }

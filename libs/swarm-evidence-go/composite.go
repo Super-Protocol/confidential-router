@@ -226,7 +226,7 @@ func membershipChain(
 func appraiseQuote(ctx context.Context, quote Quote, appraiser QuoteAppraiser) (*QuoteAppraisal, *Denial) {
 	appraisal, err := appraiser.AppraiseQuote(ctx, quote)
 	if err != nil {
-		return nil, denyf(StageRootQuote, "%v", err)
+		return nil, appraiserDenial(err)
 	}
 	if appraisal == nil {
 		return nil, denyf(StageRootQuote, "the quote appraiser returned no appraisal")
