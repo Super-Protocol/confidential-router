@@ -133,6 +133,16 @@ What it establishes, and what each step would otherwise leave open:
    draft's attester substitution, and element 4 is the only thing that closes
    it.
 
+Three collections are legal and a fourth is not. Quote and membership alone
+establish no pod claims; an envelope with nothing to pair carries no
+`statement_hash` and says so; both together are the ordinary case. **A
+statement with no envelope is refused at the `envelope` stage** — it is the
+substitution shape itself. The consequence a policy author should hold on to:
+**a pod claim is only ever reported beside `envelope_ok: true`**. `statement_ok`
+and `envelope_ok` remain separate claims, because they answer different
+questions, but neither being absent can leave a policy reading pod facts that
+nothing binds to its request.
+
 `gpu_attested` comes from the envelope's `gpu_attestation_token_sha256` and
 never from the quote: the binding digest owns all 64 octets of the guest-chosen
 field, so there is no room beside it to commit to a GPU token. A token hash

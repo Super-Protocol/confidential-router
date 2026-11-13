@@ -232,9 +232,9 @@ type SwarmClaims struct {
 
 	// StatementSignerFingerprint and StatementOK describe the control-plane
 	// statement's signature, chained to the pinned root through the per-leader
-	// signer (SUP-636). StatementOK says the leader signed it; it does not say
-	// the statement is about the request being appraised — see the pod claims
-	// below.
+	// signer (SUP-636). StatementOK says the leader signed it; what says the
+	// statement is about the request being appraised is EnvelopeOK, which is
+	// why no statement is appraised without one — see the pod claims below.
 	StatementSignerFingerprint string `json:"statement_signer_fingerprint,omitempty"`
 	StatementOK                *bool  `json:"statement_ok,omitempty"`
 
@@ -250,14 +250,16 @@ type SwarmClaims struct {
 	// The statement's claims about the workload (SUP-634, SUP-636).
 	//
 	// They are what the leader signed, and StatementOK is what makes them
-	// readable. What makes them *this request's* is EnvelopeOK: a statement
-	// is a public document, and anyone who has seen one can present it beside
-	// a quote of their own. A policy that reads `locked` without also
-	// requiring EnvelopeOK has accepted the draft's attester substitution —
-	// a requester in an unlocked cluster space holding a locked neighbour's
-	// statement. The two claims are separate precisely so that gap is
-	// something a policy decides about rather than something this module
-	// decides for it.
+	// readable. What makes them *this request's* is the node's envelope: a
+	// statement is a public document, and anyone who has seen one can present
+	// it beside a quote of their own — the draft's attester substitution.
+	//
+	// So the core never emits them on their own: **a pod claim is only ever
+	// reported beside EnvelopeOK true**, because a collection carrying a
+	// statement and no envelope is refused at the envelope stage. StatementOK
+	// and EnvelopeOK stay separate claims — they answer different questions,
+	// and a policy may want to read either — but neither of them being absent
+	// can leave a policy reading pod facts that nothing binds to its request.
 	PodUID         string   `json:"pod_uid,omitempty"`
 	Namespace      string   `json:"namespace,omitempty"`
 	ClusterSpaceID string   `json:"cluster_space_id,omitempty"`

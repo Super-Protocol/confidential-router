@@ -102,6 +102,66 @@ func TestAppraiseCompositeCollection(t *testing.T) {
 	}
 }
 
+// TestAppraiseCompositeLegalCollections covers the two legal collections the
+// `full` case above does not: the profile pins exactly three, and the fourth
+// shape — a statement with no envelope — is refused in
+// TestAppraiseCollectionDenials.
+//
+// Both of these carry no pod claims, which is the invariant worth pinning: a
+// pod claim is only ever reported beside `envelope_ok` true.
+func TestAppraiseCompositeLegalCollections(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name         string
+		setup        func(*composite)
+		wantEnvelope bool
+	}{{
+		name:  "minimal — the two REQUIRED elements alone",
+		setup: func(c *composite) { c.omitStatement, c.omitEnvelope = true, true },
+	}, {
+		name:         "an envelope with no statement to pair",
+		setup:        func(c *composite) { c.omitStatement = true },
+		wantEnvelope: true,
+	}} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			composite := newComposite(t)
+			c.setup(composite)
+
+			claims, err := swarmevidence.AppraiseComposite(
+				context.Background(), composite.blob(t), composite.options())
+			if err != nil {
+				t.Fatalf("appraise: %v", err)
+			}
+			if claims.BindingOK == nil || !*claims.BindingOK {
+				t.Error("binding_ok is not set, but the quote answers this request")
+			}
+			if claims.StatementOK != nil {
+				t.Errorf("statement_ok = %v, want absent: the collection carries no statement",
+					*claims.StatementOK)
+			}
+			if gotEnvelope := claims.EnvelopeOK != nil; gotEnvelope != c.wantEnvelope {
+				t.Errorf("envelope_ok present = %v, want %v", gotEnvelope, c.wantEnvelope)
+			}
+			for name, got := range map[string]string{
+				"pod_uid":          claims.PodUID,
+				"namespace":        claims.Namespace,
+				"cluster_space_id": claims.ClusterSpaceID,
+				"locked_at":        claims.LockedAt,
+				"pss_enforce":      claims.PSSEnforce,
+			} {
+				if got != "" {
+					t.Errorf("%s = %q, want none: no statement established it", name, got)
+				}
+			}
+			if claims.Locked != nil || claims.ImageDigests != nil {
+				t.Error("a pod claim is set for a collection that carries no statement")
+			}
+		})
+	}
+}
+
 // TestAppraiseCompositeStandardWrapper is the Verifier-independence
 // acceptance: the same parts under the CMW JSON collection of
 // draft-ietf-rats-msg-wrap must appraise identically to the profile's own
@@ -308,6 +368,14 @@ func TestAppraiseCollectionDenials(t *testing.T) {
 		setup: func(_ *testing.T, c *composite) {
 			c.envelope["pod_uid"] = "pod-somebody-else"
 		},
+	}, {
+		name:  "a statement with no envelope to bind it",
+		stage: swarmevidence.StageEnvelope,
+		// The substitution shape itself, and not one of the three collections
+		// the profile pins: the statement is sound and nothing says the pod it
+		// describes is the pod that asked.
+		reason: "carries a statement and no envelope binding it to this request",
+		setup:  func(_ *testing.T, c *composite) { c.omitEnvelope = true },
 	}, {
 		name:   "an envelope that binds a statement the collection does not carry",
 		stage:  swarmevidence.StageEnvelope,

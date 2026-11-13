@@ -458,8 +458,23 @@ func verifyUnderPool(
 // replay it; a quote says "some measured VM asked for a credential over this
 // subject". Only the node can say that the pod which asked is the pod the
 // statement is about.
+//
+// Three collections are therefore legal, and a fourth is not. Quote and
+// membership alone establish no pod claims and are fine; an envelope with
+// nothing to pair is fine and says so by carrying no statement_hash; both
+// together are the ordinary case. A statement with **no** envelope is
+// refused: it is the substitution shape itself — anyone holding a locked
+// pod's published statement could present it beside a quote of their own —
+// and emitting the pod claims for it would hand a policy facts that nothing
+// ties to the request in hand (CTO, 2026-11-13).
 func checkEnvelopeStatementBinding(envelope *NodeRequestEnvelope, statement *verifiedStatement) *Denial {
 	if envelope == nil {
+		if statement != nil {
+			return denyf(StageEnvelope,
+				"the collection carries a statement and no envelope binding it to this request: a "+
+					"statement is a public document, and without the node's envelope nothing says "+
+					"the pod it describes is the pod that asked")
+		}
 		return nil
 	}
 	if statement == nil {
