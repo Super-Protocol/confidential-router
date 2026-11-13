@@ -214,6 +214,65 @@ func TestAReloadStopsWantingTheEndpointsItRetired(t *testing.T) {
 	}
 }
 
+// A reload that changes an endpoint's upstream retires the old object and
+// starts its replacement on the same address, in that order, within the same
+// call. Before SUP-704 `stop` returned while the socket was still open — it
+// shut the server down before the Serve goroutine had registered the listener
+// with it, so nothing closed it and the only close left was that goroutine's
+// own deferred one, whenever it got scheduled. The replacement then lost the
+// bind to its predecessor and stayed down with `cannot bind` on it, and the
+// same window is what made the retirement test above flake.
+func TestARetiredListenerHandsItsAddressOverAtOnce(t *testing.T) {
+	s, ep, listen := listeningSupervisor(t)
+
+	if err := s.Reload(t.Context(), &config.Config{Version: config.SchemaVersion}); err != nil {
+		t.Fatalf("reloading: %v", err)
+	}
+	// Taking the address is the assertion: a listener the retired endpoint
+	// still holds refuses this, and that is exactly what the replacement's bind
+	// would have met.
+	replacement, err := net.Listen("tcp", listen)
+	if err != nil {
+		t.Fatalf("binding %s once the endpoint was retired: %v", listen, err)
+	}
+	_ = replacement.Close()
+	if why := listenerFailure(ep); why != "" {
+		t.Errorf("the retired endpoint carries %q, want a clean stop", why)
+	}
+}
+
+// The same guarantee through the reload path that does the swap itself: the
+// endpoint keeps its name and its address, only the upstream moves, so the
+// replacement has to bind what the predecessor was holding a moment ago.
+func TestAReloadRebindsAChangedEndpointOnTheSameAddress(t *testing.T) {
+	s, _, listen := listeningSupervisor(t)
+
+	next := &config.Config{
+		Version: config.SchemaVersion,
+		Endpoints: []config.Endpoint{{
+			Name: "router", Listen: listen, Upstream: "https://replacement.example.test",
+		}},
+	}
+	if err := s.Reload(t.Context(), next); err != nil {
+		t.Fatalf("reloading: %v", err)
+	}
+	ep, err := s.endpoint("router")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ep.isRunning() {
+		t.Fatalf("the replacement is not running: %s", listenerFailure(ep))
+	}
+	if why := listenerFailure(ep); why != "" {
+		t.Fatalf("the replacement carries %q, want the address its predecessor released", why)
+	}
+	conn, err := net.DialTimeout("tcp", listen, time.Second)
+	if err != nil {
+		t.Fatalf("the replacement does not accept connections on %s: %v", listen, err)
+	}
+	_ = conn.Close()
+}
+
 func TestAnOperatorStartIsReportedEvenWhenItRepeats(t *testing.T) {
 	s, ep, listen := listeningSupervisor(t)
 	lines := bindFailureLines(t, s)
