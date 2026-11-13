@@ -77,7 +77,20 @@ deny contains msg if {
 # bank approved — containers and init containers alike, which is why the claim
 # is a set and this is `every` rather than `some`. An empty set denies: a
 # statement that resolved no digest says nothing about what ran.
+#
+# The shape is checked before the contents, because `object.get` defaults only
+# an *absent* member. A claim set carrying an explicit `"image_digests": null`
+# — which this module's emitter never writes, but a hand-assembled or relayed
+# document can — would make `count()` and `some … in` undefined, both rules
+# below fail, and the image predicate pass. A claim that is not a list of
+# digests is not a list of approved digests.
 deny contains msg if {
+	not is_array(image_digests)
+	msg := sprintf("image_digests is %v, which is not a list of image digests", [image_digests])
+}
+
+deny contains msg if {
+	is_array(image_digests)
 	count(image_digests) == 0
 	msg := "the statement resolved no image digests, so nothing says what the pod runs"
 }

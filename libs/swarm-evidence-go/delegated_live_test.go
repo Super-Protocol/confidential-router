@@ -37,12 +37,23 @@ const (
 //	SWARM_VERIFIER_QUOTE_FILE=./tdx-evidence.bin \
 //	go test -run TestLiveVerifierAppraisesARealQuote -v ./...
 //
-// What it proves that the recorded fixtures cannot: that the live endpoint
-// still takes the request body this module sends, that its key set still
-// authenticates its tokens, and that its claim names are still the ones
-// [swarmevidence.ITAClaimMapping] points at. What it does *not* prove is
-// anything about the appraisal logic — that is what the recorded vectors are
-// for, and they run on every pull request.
+// **This is the only check that ever confirms [swarmevidence.ITAClaimMapping]
+// against a real token.** The committed ITA fixture is reconstructed from
+// Intel's published sample
+// (https://docs.trustauthority.intel.com/main/articles/concept-attestation-tokens.html),
+// so it pins the mapping against Intel's *documentation* and cannot pin it
+// against Intel's production output. Three of those claim names are a
+// plausible guess away from denying every live appraisal —
+// `tdx_td_attributes`, `attester_tcb_status`, `tdx_report_data` — so run this
+// once against the tenant of SUP-642 before the demonstration stand depends
+// on it, and again whenever Intel revises its token version (the sample this
+// was written from is `ver: 2.0.0`).
+//
+// What it also proves that the fixtures cannot: that the live endpoint still
+// takes the request body this module sends, and that its key set still
+// authenticates its tokens. What it does *not* prove is anything about the
+// appraisal logic — that is what the committed vectors are for, and they run
+// on every pull request.
 //
 // For another Verifier, set SWARM_VERIFIER_NAME and supply its mapping in
 // SWARM_VERIFIER_MAPPING as the JSON form of [swarmevidence.ClaimMapping].

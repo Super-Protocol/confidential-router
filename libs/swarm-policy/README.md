@@ -75,6 +75,16 @@ claim through a helper with a denying default, and this is not a style choice:
 `test/swarm-claims/deny-an-absent-structural-claim.hcl` are the cases that fail
 when either is written the short way.
 
+An **explicit `null`** is the sibling trap, and the defaults do not catch it:
+`object.get` and `claim()` substitute only for a member that is *missing*. A
+document spelling `"image_digests": null` would make Rego's `count()` and
+`some … in` undefined — both image rules fail, and the predicate passes — and
+would make Sentinel's `length()` raise. Both modules therefore check the shape
+before the contents (`is_array`, `types.type_of(…) is "list"`), covered by
+`test_deny_an_explicit_null_image_digests` and
+`test/swarm-claims/deny-a-null-image-digests.hcl`. This module's emitter never
+writes that document, but a hand-assembled or relayed one can.
+
 ## Configuring it
 
 **OPA.** `input` is the claim set; the bank's settings are `data.swarm.policy`.

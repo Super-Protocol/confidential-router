@@ -157,6 +157,11 @@ func parsePublicKeyPEM(document string) (crypto.PublicKey, error) {
 // set changes on the order of months. A `kid` that is not in the cached set
 // forces one refetch — key rotation is the one case where the cache is wrong
 // and waiting for it to expire would deny every request in the meantime.
+//
+// That refetch is rate-limited by [JWKSKeys.MinRefetchInterval], because the
+// `kid` is attacker-chosen on any path where the attester carries its own
+// token: without a floor, a stream of invented key identifiers is one
+// outbound request each, pointed at the Verifier by whoever is being refused.
 type JWKSKeys struct {
 	// URL is the JWKS endpoint.
 	URL string
@@ -164,6 +169,10 @@ type JWKSKeys struct {
 	Client *http.Client
 	// CacheTTL overrides [DefaultJWKSCacheTTL]; negative disables caching.
 	CacheTTL time.Duration
+	// MinRefetchInterval is the floor between two fetches of the key set;
+	// zero means [DefaultJWKSMinRefetchInterval]. An unknown `kid` arriving
+	// inside the interval is refused from the cache rather than chased.
+	MinRefetchInterval time.Duration
 	// Now overrides the clock.
 	Now func() time.Time
 
@@ -171,10 +180,18 @@ type JWKSKeys struct {
 	keys    map[string][]crypto.PublicKey
 	all     []crypto.PublicKey
 	fetched time.Time
+	// attempted is when the endpoint was last *asked*, which is not the same
+	// as when it last answered: a failing endpoint must be rate-limited too.
+	attempted time.Time
 }
 
 // DefaultJWKSCacheTTL is how long a fetched key set is reused.
 const DefaultJWKSCacheTTL = time.Hour
+
+// DefaultJWKSMinRefetchInterval is the floor between two fetches of a key set.
+// Key rotation is an event of minutes at worst, and this bounds what an
+// unknown `kid` can cost.
+const DefaultJWKSMinRefetchInterval = time.Minute
 
 // maxJWKSBytes bounds the key-set document. A key set is a few kilobytes; an
 // unbounded read of an endpoint under someone else's control is not something
@@ -186,6 +203,10 @@ func (j *JWKSKeys) KeysFor(ctx context.Context, keyID string) ([]crypto.PublicKe
 	if keys, ok := j.cached(keyID); ok {
 		return keys, nil
 	}
+	if !j.mayRefetch() {
+		return nil, fmt.Errorf("the key set at %s carries no key for kid %q, and it was fetched "+
+			"less than %s ago", j.URL, keyID, j.minRefetchInterval())
+	}
 	if err := j.refresh(ctx); err != nil {
 		return nil, err
 	}
@@ -193,6 +214,27 @@ func (j *JWKSKeys) KeysFor(ctx context.Context, keyID string) ([]crypto.PublicKe
 		return keys, nil
 	}
 	return nil, fmt.Errorf("the key set at %s carries no key for kid %q", j.URL, keyID)
+}
+
+// mayRefetch records an attempt and reports whether it is allowed. The record
+// is taken whether or not the fetch goes on to succeed, so a Verifier that is
+// down cannot be hammered either.
+func (j *JWKSKeys) mayRefetch() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	now := j.clock()
+	if !j.attempted.IsZero() && now.Before(j.attempted.Add(j.minRefetchInterval())) {
+		return false
+	}
+	j.attempted = now
+	return true
+}
+
+func (j *JWKSKeys) minRefetchInterval() time.Duration {
+	if j.MinRefetchInterval == 0 {
+		return DefaultJWKSMinRefetchInterval
+	}
+	return j.MinRefetchInterval
 }
 
 func (j *JWKSKeys) cached(keyID string) ([]crypto.PublicKey, bool) {

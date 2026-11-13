@@ -191,9 +191,20 @@ standardised — ITA emits `tdx_mrtd`, a Veraison EAR carries annotated evidence
 with dots inside the claim names, Azure MAA uses `x-ms-*` — so the claim
 paths, their encoding, the token format, the issuer and the verification keys
 are all configuration. `TestSwappingTheVerifierIsConfigurationOnly` replays the
-same quote through a second recorded Verifier that reuses none of ITA's claim
-names, encoding, issuer, algorithm or signing key, and requires the same
-claims out.
+same quote through a second Verifier that reuses none of ITA's claim names,
+encoding, issuer, algorithm or signing key, and requires the same claims out.
+
+`ITAClaimMapping()` itself is written against Intel's published token
+reference and held to it by `TestITAClaimMappingFindsIntelsPublishedClaims`,
+which appraises a fixture built in the shape of Intel's sample. Three of those
+names are a plausible guess away from denying every live appraisal —
+`tdx_td_attributes` (not `tdx_tdattributes`), `attester_tcb_status` (not
+`tdx_tcb_status`) and `tdx_report_data` (not `attester_held_data`, which is
+the caller's own runtime data) — so the fixture carries the wrong-turn claims
+beside the right ones. What no fixture can establish is that Intel's
+documentation matches Intel's production tokens; only the live test against
+the tenant of SUP-642 does that. `testdata/delegated/README.md` is explicit
+about which is which.
 
 ### What stays here, and why
 

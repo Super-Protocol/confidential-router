@@ -1,9 +1,9 @@
-# golangci-lint v2 configuration for the swarm-evidence-go module. It is a copy
-# of apps/gatekeeper/.golangci.yml on purpose: the module is a separate Go
-# module with its own CI step, and the two must be held to the same rules or
-# code that moved between them would change what it is linted for.
+# golangci-lint v2 configuration for the swarm-policy module. It is a copy of
+# libs/swarm-evidence-go/.golangci.yml on purpose: each is a separate Go module
+# with its own CI step, and they must be held to the same rules or code that
+# moved between them would change what it is linted for.
 #
-# Run locally with `pnpm nx run swarm-evidence-go:lint`.
+# Run locally with `pnpm nx run swarm-policy:lint`.
 version: "2"
 
 run:

@@ -479,21 +479,45 @@ type ClaimMapping struct {
 //
 // It is a *value*, not a code path: nothing in this package treats it
 // specially, and a second Verifier is a second value of the same shape. It
-// lives here so the demo stand's configuration is reviewable beside the
-// claim names it depends on rather than buried in a deployment.
+// lives here so the demonstration stand's configuration is reviewable beside
+// the claim names it depends on rather than buried in a deployment.
+//
+// Written against Intel's published token reference,
+// https://docs.trustauthority.intel.com/main/articles/concept-attestation-tokens.html,
+// and three details of it are worth keeping in view because each is a
+// plausible guess away from denying every live appraisal:
+//
+//   - The attributes claim is `tdx_td_attributes`, not `tdx_tdattributes`.
+//   - The TCB verdict is `attester_tcb_status`, whose values are Intel's
+//     (`UpToDate`, `OutOfDate`, `SWHardeningNeeded`, …) and are reported
+//     verbatim as `tcb_status`.
+//   - The quote's REPORT_DATA is `tdx_report_data`. It is **not**
+//     `attester_held_data`, which carries the caller's own binary runtime or
+//     user data in base64 — comparing that against the quote's report data
+//     would deny a perfectly good token.
+//
+// Intel's sample token nests every TDX claim inside a `tdx` object, and that
+// is what the paths here assume; its policy-claims table spells the same
+// names flat. If a deployment's tokens turn out to be flat, that is one
+// configuration change — drop the leading segment — and no code change, which
+// is the property this type exists for.
+//
+// The register encoding is not stated in words anywhere in Intel's reference;
+// hex is read off the sample's byte counts, and a token that disagreed would
+// be refused by the cross-check against the quote rather than mis-appraised.
 func ITAClaimMapping() ClaimMapping {
 	return ClaimMapping{
-		TDAttributes:        ClaimPath{"tdx", "tdx_tdattributes"},
+		TDAttributes:        ClaimPath{"tdx", "tdx_td_attributes"},
 		MRTD:                ClaimPath{"tdx", "tdx_mrtd"},
 		RTMR0:               ClaimPath{"tdx", "tdx_rtmr0"},
 		RTMR1:               ClaimPath{"tdx", "tdx_rtmr1"},
 		RTMR2:               ClaimPath{"tdx", "tdx_rtmr2"},
 		RTMR3:               ClaimPath{"tdx", "tdx_rtmr3"},
 		SeamSVN:             ClaimPath{"tdx", "tdx_seamsvn"},
-		TCBStatus:           ClaimPath{"tdx", "tdx_tcb_status"},
-		BindingData:         ClaimPath{"tdx", "attester_held_data"},
+		TCBStatus:           ClaimPath{"tdx", "attester_tcb_status"},
+		BindingData:         ClaimPath{"tdx", "tdx_report_data"},
 		Encoding:            EncodingHex,
-		BindingDataEncoding: EncodingBase64URL,
+		BindingDataEncoding: EncodingHex,
 	}
 }
 

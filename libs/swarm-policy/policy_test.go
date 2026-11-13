@@ -106,9 +106,10 @@ func claimNames(source string) []string {
 // same denials — with the Sentinel CLI.
 //
 // Sentinel has no Go test harness that is free to vendor, so this shells out
-// and skips when the binary is absent. CI installs it (the `policy` job in
-// .github/workflows/pull-request.yml); locally, `make -C libs/swarm-policy
-// sentinel` fetches it.
+// and skips when the binary is absent. CI installs it — the "Install the
+// Sentinel CLI" step of .github/actions/go-checks, which runs before this
+// module's suite in the `Go checks (gatekeeper)` job. Locally, the README has
+// the two-line download.
 func TestSentinelPolicy(t *testing.T) {
 	t.Parallel()
 

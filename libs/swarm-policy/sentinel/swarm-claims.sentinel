@@ -16,6 +16,8 @@
 # for a reason nobody can read — so "not established" is given a value, and
 # that value never passes.
 
+import "types"
+
 param claims
 param approved_images default []
 param reference_builds default []
@@ -69,8 +71,16 @@ image_vouched_for = rule { claim("mrenclave_approved", false) is true }
 # `image ∈ approved`. Every digest the statement resolved has to be one the
 # bank approved — containers and init containers alike. An empty set denies: a
 # statement that resolved no digest says nothing about what ran.
+#
+# The shape is checked before the contents, because `claim()` defaults only an
+# *absent* key. A claim set carrying an explicit `"image_digests": null` —
+# which this module's emitter never writes, but a hand-assembled or relayed
+# document can — would make `length()` raise instead of deny. Vault treats a
+# policy error as a refusal either way, but a refusal somebody can read beats
+# one they have to debug.
 images_approved = rule {
-	length(claim("image_digests", [])) > 0 and
+	types.type_of(claim("image_digests", [])) is "list" and
+		length(claim("image_digests", [])) > 0 and
 		all claim("image_digests", []) as digest { digest in approved_images }
 }
 

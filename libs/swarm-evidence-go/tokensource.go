@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,9 +60,14 @@ type HTTPTokenSource struct {
 // credential path.
 const maxVerifierResponseBytes = 1 << 20
 
-// SubmitsEvidence implements [TokenSource]: this source hands the Verifier the
-// quote it was given, so the token it returns cannot be about another one.
-func (s *HTTPTokenSource) SubmitsEvidence() bool { return true }
+// SubmitsEvidence implements [TokenSource].
+//
+// True only when the configured request body actually carries the quote. A
+// Body of literals alone asks the Verifier about nothing in particular, and
+// answering "yes, I submitted this quote" for it would skip the report-data
+// check that a token not tied to a quote depends on — a misconfiguration
+// would silently become the weaker path rather than an error.
+func (s *HTTPTokenSource) SubmitsEvidence() bool { return carriesQuote(s.Body) }
 
 // Token implements [TokenSource].
 func (s *HTTPTokenSource) Token(ctx context.Context, evidence []byte) (string, error) {
@@ -160,6 +166,25 @@ func (s *HTTPTokenSource) requestBody(evidence []byte) ([]byte, error) {
 func needsRawQuote(members map[string]string) bool {
 	for _, value := range members {
 		if value == "${tdx_quote_base64}" || value == "${tdx_quote_base64url}" {
+			return true
+		}
+	}
+	return false
+}
+
+// quotePlaceholders are the substitutions that put the quote in the request.
+var quotePlaceholders = []string{
+	"${quote_base64}", "${quote_base64url}", "${tdx_quote_base64}", "${tdx_quote_base64url}",
+}
+
+// carriesQuote reports whether a configured request body sends the quote at
+// all. A nil body is the default one, which does.
+func carriesQuote(members map[string]string) bool {
+	if len(members) == 0 {
+		return true
+	}
+	for _, value := range members {
+		if slices.Contains(quotePlaceholders, value) {
 			return true
 		}
 	}

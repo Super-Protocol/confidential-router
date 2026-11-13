@@ -148,6 +148,20 @@ test_deny_a_statement_that_resolved_no_image if {
 	not claims.allow with input as without("image_digests") with data.swarm.policy as approved
 }
 
+# An explicit null is not an absent claim: `object.get` defaults only what is
+# missing, so a document that spells the member out as null would slip past
+# both image rules if the shape were not checked first.
+test_deny_an_explicit_null_image_digests if {
+	nulled := object.union(sound, {"image_digests": null})
+	not claims.allow with input as nulled with data.swarm.policy as approved
+	some message in claims.deny with input as nulled with data.swarm.policy as approved
+	contains(message, "not a list of image digests")
+}
+
+test_deny_image_digests_that_are_not_a_list if {
+	not claims.allow with input as object.union(sound, {"image_digests": "sha256:a1a1"}) with data.swarm.policy as approved
+}
+
 test_deny_an_unlocked_cluster_space if {
 	not claims.allow with input as object.union(sound, {"locked": false}) with data.swarm.policy as approved
 }

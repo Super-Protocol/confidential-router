@@ -142,8 +142,10 @@ func TestDelegatedPathDoesNotTrustAReportedReportData(t *testing.T) {
 	// The Verifier reports request B's digest: either because it was asked
 	// about another quote, or because it is lying.
 	appraiser.Tokens = &staticToken{token: fixture.Token, submits: true}
+	// With no report-data claim mapped, nothing but the quote itself can
+	// supply the field the binding digest is compared against — which is the
+	// property under test.
 	appraiser.Mapping.BindingData = nil
-	appraiser.Mapping.TCBStatus = swarmevidence.ClaimPath{"tdx", "tdx_tcb_status"}
 	options.QuoteAppraiser = appraiser
 
 	claims, err := swarmevidence.AppraiseComposite(t.Context(), c.blob(t), options)
@@ -195,6 +197,91 @@ func TestDelegatedPathRefusesARelayedTokenForAnotherQuote(t *testing.T) {
 	}
 	if !strings.Contains(denial.Reason, "appraises a different quote") {
 		t.Errorf("the denial does not say the token is about another quote: %s", denial.Reason)
+	}
+}
+
+// TestITAClaimMappingFindsIntelsPublishedClaims is what holds
+// [swarmevidence.ITAClaimMapping] to the Verifier it is named after.
+//
+// The fixture token is built in the shape of Intel's published sample —
+// https://docs.trustauthority.intel.com/main/articles/concept-attestation-tokens.html
+// — and this appraises it with the mapping the package exports, not with the
+// copy committed in the fixture. Editing one without the other now fails
+// here, which is the only check standing between a wrong claim name and a
+// demonstration stand that denies every request.
+func TestITAClaimMappingFindsIntelsPublishedClaims(t *testing.T) {
+	t.Parallel()
+
+	fixture := loadDelegatedFixture(t, "intel-trust-authority")
+	quote := swarmevidence.Quote{
+		Type:           "tdx-google",
+		EvidenceBase64: base64.StdEncoding.EncodeToString(fixture.evidence(t)),
+	}
+
+	appraiser := fixture.appraiser(t, nil, &fixtureRegistry{approved: fixture.ExpectedMrEnclave})
+	appraiser.Mapping = swarmevidence.ITAClaimMapping()
+
+	appraisal, err := appraiser.AppraiseQuote(t.Context(), quote)
+	if err != nil {
+		t.Fatalf("the exported ITA mapping did not appraise Intel's token shape: %v", err)
+	}
+	// Intel answers in Intel's vocabulary, and it is reported verbatim.
+	if appraisal.TCBStatus != "UpToDate" {
+		t.Errorf("tcb_status = %q, want Intel's own %q", appraisal.TCBStatus, "UpToDate")
+	}
+	if !appraisal.CollateralChecked {
+		t.Error("collateral_checked is false for a Verifier that reported a TCB status")
+	}
+}
+
+// TestITAFixtureUsesThePublishedMapping keeps the committed fixture and the
+// exported mapping from drifting apart. Without it the fixture would simply
+// carry whatever mapping it was generated with, and every test that runs off
+// the fixture would agree with itself.
+func TestITAFixtureUsesThePublishedMapping(t *testing.T) {
+	t.Parallel()
+
+	committed, err := json.Marshal(loadDelegatedFixture(t, "intel-trust-authority").Mapping)
+	if err != nil {
+		t.Fatalf("marshalling the committed mapping: %v", err)
+	}
+	exported, err := json.Marshal(swarmevidence.ITAClaimMapping())
+	if err != nil {
+		t.Fatalf("marshalling the exported mapping: %v", err)
+	}
+	if string(committed) != string(exported) {
+		t.Errorf("the committed fixture mapping and ITAClaimMapping() differ; regenerate the "+
+			"fixture.\ncommitted: %s\nexported:  %s", committed, exported)
+	}
+}
+
+// TestITAMappingReadsTheReportDataAndNotTheHeldData pins the one mapping
+// mistake that would look like a working configuration right up until a live
+// token arrived.
+//
+// Intel's `attester_held_data` is the *caller's* own binary runtime data, not
+// the quote's REPORT_DATA — that is `tdx_report_data`. A mapping pointed at
+// the first would compare the caller's data against the quote's report data
+// and deny every genuine token. The fixture carries both claims so the
+// mistake fails here rather than on the demonstration stand.
+func TestITAMappingReadsTheReportDataAndNotTheHeldData(t *testing.T) {
+	t.Parallel()
+
+	fixture := loadDelegatedFixture(t, "intel-trust-authority")
+	quote := swarmevidence.Quote{
+		Type:           "tdx-google",
+		EvidenceBase64: base64.StdEncoding.EncodeToString(fixture.evidence(t)),
+	}
+	if got := strings.Join(swarmevidence.ITAClaimMapping().BindingData, "."); got != "tdx.tdx_report_data" {
+		t.Errorf("ITAClaimMapping reads its report data from %q", got)
+	}
+
+	wrong := fixture.appraiser(t, nil, &fixtureRegistry{approved: fixture.ExpectedMrEnclave})
+	wrong.Mapping = swarmevidence.ITAClaimMapping()
+	wrong.Mapping.BindingData = swarmevidence.ClaimPath{"tdx", "attester_held_data"}
+	wrong.Mapping.BindingDataEncoding = swarmevidence.EncodingBase64
+	if _, err := wrong.AppraiseQuote(t.Context(), quote); err == nil {
+		t.Error("the caller's own held data was accepted as the quote's report data")
 	}
 }
 
@@ -668,8 +755,10 @@ func reissue(t *testing.T, fixture *delegatedFixture, mutate func(map[string]any
 }
 
 // TestJWKSKeysServeAFetchedKeySet exercises the other key source: the
-// Verifier's published key set, fetched, cached, and re-fetched when a `kid`
-// it does not hold turns up — which is what key rotation looks like.
+// Verifier's published key set, fetched, cached, re-fetched when a `kid` it
+// does not hold turns up — which is what key rotation looks like — and
+// rate-limited, because on any path where the attester carries its own token
+// the `kid` is attacker-chosen.
 func TestJWKSKeysServeAFetchedKeySet(t *testing.T) {
 	t.Parallel()
 
@@ -682,10 +771,11 @@ func TestJWKSKeysServeAFetchedKeySet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	keys := &swarmevidence.JWKSKeys{URL: server.URL}
+	now := fixtureIssuedAt.Add(time.Minute)
+	keys := &swarmevidence.JWKSKeys{URL: server.URL, Now: func() time.Time { return now }}
 	appraiser := fixture.appraiser(t, nil, &fixtureRegistry{approved: fixture.ExpectedMrEnclave})
 	appraiser.Token.Keys = keys
-	appraiser.Now = func() time.Time { return fixtureIssuedAt.Add(time.Minute) }
+	appraiser.Now = func() time.Time { return now }
 
 	quote := swarmevidence.Quote{
 		Type:           "tdx-google",
@@ -700,11 +790,52 @@ func TestJWKSKeysServeAFetchedKeySet(t *testing.T) {
 		t.Errorf("the key set was fetched %d times; it is cached", fetches)
 	}
 
+	// A `kid` nobody published, straight away: refused from the cache. A
+	// stream of invented identifiers must not be a stream of outbound
+	// requests aimed at the Verifier.
+	if _, err := keys.KeysFor(t.Context(), "a-kid-that-is-not-published"); err == nil {
+		t.Error("an unknown kid resolved to a key")
+	}
+	if fetches != 1 {
+		t.Errorf("an unknown kid was chased immediately (%d fetches); the refetch is rate-limited", fetches)
+	}
+
+	// Past the floor, the same unknown `kid` does force one refetch —
+	// otherwise a real rotation would deny every request until the cache
+	// expired.
+	now = now.Add(swarmevidence.DefaultJWKSMinRefetchInterval + time.Second)
 	if _, err := keys.KeysFor(t.Context(), "a-kid-that-is-not-published"); err == nil {
 		t.Error("an unknown kid resolved to a key")
 	}
 	if fetches != 2 {
-		t.Errorf("an unknown kid did not force a refetch (%d fetches)", fetches)
+		t.Errorf("an unknown kid did not force a refetch past the floor (%d fetches)", fetches)
+	}
+}
+
+// TestHTTPTokenSourceWithoutTheQuoteDoesNotClaimToSubmitIt: a request body of
+// literals alone asks the Verifier about nothing in particular, and the
+// appraiser must not treat the answer as structurally bound to this quote —
+// that is the distinction the report-data check hangs off.
+func TestHTTPTokenSourceWithoutTheQuoteDoesNotClaimToSubmitIt(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name    string
+		body    map[string]string
+		submits bool
+	}{
+		{"the default body", nil, true},
+		{"the quote as base64", map[string]string{"quote": "${quote_base64}"}, true},
+		{"the bare TD quote", map[string]string{"q": "${tdx_quote_base64url}", "policy": "none"}, true},
+		{"literals only", map[string]string{"policy_ids": "none"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			source := &swarmevidence.HTTPTokenSource{URL: "https://verifier.invalid", Body: c.body}
+			if got := source.SubmitsEvidence(); got != c.submits {
+				t.Errorf("SubmitsEvidence() = %v, want %v", got, c.submits)
+			}
+		})
 	}
 }
 

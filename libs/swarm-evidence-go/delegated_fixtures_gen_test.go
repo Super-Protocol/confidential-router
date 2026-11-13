@@ -109,36 +109,65 @@ func fixtureMrEnclave(t *testing.T, quote fixtureQuote) string {
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
-// buildITAFixture records Intel Trust Authority: hex registers under a `tdx`
-// object, base64url attester-held data, PS384 over RSA.
+// buildITAFixture reconstructs an Intel Trust Authority token.
+//
+// The shape — every TDX claim nested inside a `tdx` object, the `attester_*`
+// claims among them, hex registers, a numeric `tdx_seamsvn`, PS384 over RSA —
+// is taken from Intel's published sample,
+// https://docs.trustauthority.intel.com/main/articles/concept-attestation-tokens.html.
+// Claims the appraisal does not read are carried anyway, so that what the
+// mapping has to find its way through is a token of realistic shape rather
+// than one trimmed to the mapping.
 func buildITAFixture(t *testing.T, quote fixtureQuote, mrEnclave string) *delegatedFixture {
 	t.Helper()
 	key := rsaFixtureKey(t, "intel-trust-authority")
 	rtmr0 := hex.EncodeToString(replayEventLog(t, quote.EventLog, nil))
 	claims := map[string]any{
-		"iss":           "https://portal.trustauthority.intel.com",
-		"iat":           fixtureIssuedAt.Unix(),
-		"nbf":           fixtureIssuedAt.Unix(),
-		"exp":           fixtureIssuedAt.Add(5 * time.Minute).Unix(),
-		"attester_type": "TDX",
+		"iss":                   "https://portal.trustauthority.intel.com",
+		"iat":                   fixtureIssuedAt.Unix(),
+		"nbf":                   fixtureIssuedAt.Unix(),
+		"exp":                   fixtureIssuedAt.Add(5 * time.Minute).Unix(),
+		"jti":                   "64b78ebb-04bd-4d33-9db8-245196916941",
+		"ver":                   "2.0.0",
+		"eat_profile":           "https://portal.trustauthority.intel.com/eat_profile.html",
+		"intuse":                "generic",
+		"appraisal":             map[string]any{"method": "default", "ver": 2},
+		"verifier_instance_ids": []any{"a02aa0ee-c849-417c-8413-1ce2579f69f3"},
 		"tdx": map[string]any{
-			"tdx_mrtd":           quote.MRTD,
-			"tdx_rtmr0":          rtmr0,
-			"tdx_rtmr1":          quote.RTMR1,
-			"tdx_rtmr2":          quote.RTMR2,
-			"tdx_rtmr3":          quote.RTMR3,
-			"tdx_tdattributes":   quote.TDAttributes,
-			"tdx_seamsvn":        5,
-			"tdx_tcb_status":     "OK",
-			"attester_held_data": base64.RawURLEncoding.EncodeToString(unhex(t, quote.ReportData)),
+			"attester_type":       "TDX",
+			"attester_tcb_status": "UpToDate",
+			"attester_tcb_date":   "2026-05-14T00:00:00Z",
+			"dbgstat":             "disabled",
+			"tdx_is_debuggable":   false,
+			"tdx_is_migratable":   false,
+			"tdx_mrtd":            quote.MRTD,
+			"tdx_rtmr0":           rtmr0,
+			"tdx_rtmr1":           quote.RTMR1,
+			"tdx_rtmr2":           quote.RTMR2,
+			"tdx_rtmr3":           quote.RTMR3,
+			"tdx_td_attributes":   quote.TDAttributes,
+			"tdx_seamsvn":         263,
+			"tdx_tee_tcb_svn":     quote.TeeTCBSVN,
+			"tdx_seam_attributes": "0000000000000000",
+			"tdx_xfam":            "e702060000000000",
+			// The quote's REPORT_DATA. Not to be confused with
+			// `attester_held_data` beside it, which is the caller's own
+			// binary runtime data in base64 and is carried here precisely so
+			// that a mapping pointed at the wrong one of the two would be
+			// caught by a fixture rather than by a live appraisal.
+			"tdx_report_data":    quote.ReportData,
+			"attester_held_data": base64Std([]byte("the caller's own runtime data, not the report data")),
 		},
 	}
 	return &delegatedFixture{
 		Verifier: "intel-trust-authority",
-		Note: "Intel Trust Authority as the demonstration stand's stand-in Verifier. Recorded, " +
-			"not live: the token is signed by a key generated for this repository, and the quote " +
-			"it appraises is the synthetic one the harness rebuilds. What it pins is the claim " +
-			"mapping and the shape of an ITA result.",
+		Note: "Intel Trust Authority as the demonstration stand's stand-in Verifier. " +
+			"**Reconstructed, not recorded**: the claim names, nesting, encodings and signature " +
+			"algorithm are taken from Intel's published sample token at " +
+			"https://docs.trustauthority.intel.com/main/articles/concept-attestation-tokens.html, " +
+			"and the token is signed by a key generated for this repository over the synthetic " +
+			"quote the harness rebuilds. What it pins is the claim mapping; only the live test " +
+			"against a real tenant (SUP-642) can confirm it.",
 		Issuer:             claims["iss"].(string),
 		JWKS:               jwksDocument(t, key.Public(), "ita-2026-11", "PS384"),
 		VerificationKeyPEM: publicKeyPEM(t, key.Public()),
