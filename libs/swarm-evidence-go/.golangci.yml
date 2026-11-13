@@ -32,6 +32,12 @@ linters:
       - path: conformance/
         linters:
           - gosec
+      # internal/vectorgen is the developer tool that regenerates the
+      # composite conformance vectors: reading the committed fixture keys and
+      # writing the corpus is its whole job, and it ships in no binary.
+      - path: internal/vectorgen/
+        linters:
+          - gosec
       # A verbatim copy of sp-nodejs-addons' azurecvm (see its package
       # comment); kept byte-identical to upstream rather than restyled here.
       - path: attestation/attestedroot/internal/azurecvm/

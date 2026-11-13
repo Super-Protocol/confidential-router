@@ -60,6 +60,41 @@
         "rootCaTeeQuote": {
           "format": "intel-tdx-quote-v5",
           "data": "Y29uZmlkZW50aWFsLXJvdXRlci10ZXN0LXRkeC1xdW90ZQ"
+        },
+        "claims": {
+          "ok": true,
+          "document": {
+            "schema_version": "1",
+            "channel_binding": "observed",
+            "platform": "snp-qemu",
+            "quote_verified": true,
+            "quote_appraiser": "<appraiser>",
+            "tcb_status": "ok",
+            "collateral_checked": true,
+            "measurements": {
+              "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+            },
+            "platform_security": {
+              "vmpl": 0,
+              "debug_allowed": false,
+              "ciphertext_hiding": true,
+              "page_swap_disabled": true,
+              "snp_firmware_tcb": 23,
+              "report_version": 3,
+              "cpu_generation": "Genoa"
+            },
+            "mrenclave": "c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442",
+            "mrenclave_approved": true,
+            "mrenclave_source": "registry",
+            "spvm_build": "build-448-release",
+            "pki_root_fingerprint": "sha256/PsK8UM_yc0mpd8pgETL84kJp5IHD8GWAB4_3lyFWD08",
+            "pki_chain_ok": true,
+            "root_quote_ok": true,
+            "network_type": "untrusted",
+            "evidence_digest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+            "statement_signer_fingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+            "statement_ok": true
+          }
         }
       },
       "response": {
@@ -91,7 +126,41 @@
           "topologyDigest": "sha256/6ypldnvbu9hV65tieh8b5abxzPntQ69Hp-fRLRYoRjY"
         },
         "channelBinding": "observed",
-        "matchedRoot": "confidential-router-test-root-rsa"
+        "matchedRoot": "confidential-router-test-root-rsa",
+        "claims": {
+          "ok": true,
+          "document": {
+            "schema_version": "1",
+            "channel_binding": "observed",
+            "platform": "snp-qemu",
+            "quote_verified": true,
+            "quote_appraiser": "<appraiser>",
+            "tcb_status": "ok",
+            "collateral_checked": true,
+            "measurements": {
+              "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+            },
+            "platform_security": {
+              "vmpl": 0,
+              "debug_allowed": false,
+              "ciphertext_hiding": true,
+              "page_swap_disabled": true,
+              "snp_firmware_tcb": 23,
+              "report_version": 3,
+              "cpu_generation": "Genoa"
+            },
+            "mrenclave": "c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442",
+            "mrenclave_approved": true,
+            "mrenclave_source": "registry",
+            "spvm_build": "build-448-release",
+            "pki_root_fingerprint": "sha256/PsK8UM_yc0mpd8pgETL84kJp5IHD8GWAB4_3lyFWD08",
+            "pki_chain_ok": true,
+            "root_quote_ok": true,
+            "network_type": "untrusted",
+            "statement_signer_fingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+            "statement_ok": true
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -124,7 +193,41 @@
           "kubeSystemDigest": "sha256/nL95VadaaRiPfJbkUlQ7AFW4vsG0Myl53dXuROhec0s"
         },
         "channelBinding": "observed",
-        "matchedRoot": "confidential-router-test-root-rsa"
+        "matchedRoot": "confidential-router-test-root-rsa",
+        "claims": {
+          "ok": true,
+          "document": {
+            "schema_version": "1",
+            "channel_binding": "observed",
+            "platform": "snp-qemu",
+            "quote_verified": true,
+            "quote_appraiser": "<appraiser>",
+            "tcb_status": "ok",
+            "collateral_checked": true,
+            "measurements": {
+              "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+            },
+            "platform_security": {
+              "vmpl": 0,
+              "debug_allowed": false,
+              "ciphertext_hiding": true,
+              "page_swap_disabled": true,
+              "snp_firmware_tcb": 23,
+              "report_version": 3,
+              "cpu_generation": "Genoa"
+            },
+            "mrenclave": "c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442",
+            "mrenclave_approved": true,
+            "mrenclave_source": "registry",
+            "spvm_build": "build-448-release",
+            "pki_root_fingerprint": "sha256/PsK8UM_yc0mpd8pgETL84kJp5IHD8GWAB4_3lyFWD08",
+            "pki_chain_ok": true,
+            "root_quote_ok": true,
+            "network_type": "untrusted",
+            "statement_signer_fingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+            "statement_ok": true
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -182,7 +285,18 @@
           }
         },
         "channelBinding": "observed",
-        "matchedRoot": "confidential-router-test-root-ec"
+        "matchedRoot": "confidential-router-test-root-ec",
+        "claims": {
+          "ok": false,
+          "stage": "root-quote",
+          "reasonContains": "not readable",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "root-quote"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -240,7 +354,18 @@
           }
         },
         "channelBinding": "observed",
-        "matchedRoot": "confidential-router-test-root-ec"
+        "matchedRoot": "confidential-router-test-root-ec",
+        "claims": {
+          "ok": false,
+          "stage": "root-quote",
+          "reasonContains": "not readable",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "root-quote"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -298,7 +423,18 @@
           }
         },
         "channelBinding": "observed",
-        "matchedRoot": "confidential-router-test-root-ec-high-s"
+        "matchedRoot": "confidential-router-test-root-ec-high-s",
+        "claims": {
+          "ok": false,
+          "stage": "root-quote",
+          "reasonContains": "not readable",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "root-quote"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -355,7 +491,42 @@
           }
         },
         "channelBinding": "producer-asserted",
-        "matchedRoot": "confidential-router-test-root-rsa"
+        "matchedRoot": "confidential-router-test-root-rsa",
+        "claims": {
+          "ok": true,
+          "document": {
+            "schema_version": "1",
+            "channel_binding": "producer-asserted",
+            "platform": "snp-qemu",
+            "quote_verified": true,
+            "quote_appraiser": "<appraiser>",
+            "tcb_status": "ok",
+            "collateral_checked": true,
+            "measurements": {
+              "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+            },
+            "platform_security": {
+              "vmpl": 0,
+              "debug_allowed": false,
+              "ciphertext_hiding": true,
+              "page_swap_disabled": true,
+              "snp_firmware_tcb": 23,
+              "report_version": 3,
+              "cpu_generation": "Genoa"
+            },
+            "mrenclave": "c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442",
+            "mrenclave_approved": true,
+            "mrenclave_source": "registry",
+            "spvm_build": "build-448-release",
+            "pki_root_fingerprint": "sha256/PsK8UM_yc0mpd8pgETL84kJp5IHD8GWAB4_3lyFWD08",
+            "pki_chain_ok": true,
+            "root_quote_ok": true,
+            "network_type": "untrusted",
+            "evidence_digest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+            "statement_signer_fingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+            "statement_ok": true
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -412,7 +583,42 @@
           }
         },
         "channelBinding": "observed",
-        "matchedRoot": "confidential-router-test-root-rsa"
+        "matchedRoot": "confidential-router-test-root-rsa",
+        "claims": {
+          "ok": true,
+          "document": {
+            "schema_version": "1",
+            "channel_binding": "observed",
+            "platform": "snp-qemu",
+            "quote_verified": true,
+            "quote_appraiser": "<appraiser>",
+            "tcb_status": "ok",
+            "collateral_checked": true,
+            "measurements": {
+              "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+            },
+            "platform_security": {
+              "vmpl": 0,
+              "debug_allowed": false,
+              "ciphertext_hiding": true,
+              "page_swap_disabled": true,
+              "snp_firmware_tcb": 23,
+              "report_version": 3,
+              "cpu_generation": "Genoa"
+            },
+            "mrenclave": "c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442",
+            "mrenclave_approved": true,
+            "mrenclave_source": "registry",
+            "spvm_build": "build-448-release",
+            "pki_root_fingerprint": "sha256/PsK8UM_yc0mpd8pgETL84kJp5IHD8GWAB4_3lyFWD08",
+            "pki_chain_ok": true,
+            "root_quote_ok": true,
+            "network_type": "untrusted",
+            "evidence_digest": "sha256/weMdyCn3VNUosV0Mxf6P1D8iWGXVyTZ_d-5vEW4Q9qs",
+            "statement_signer_fingerprint": "sha256/d4d-LKXzAIf1DOWon1SzGssmcjKrG1k2hQ-NiU5z_z8",
+            "statement_ok": true
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -438,7 +644,17 @@
       "expect": {
         "ok": false,
         "stage": "fetch",
-        "reasonContains": "unexpected status 503"
+        "reasonContains": "unexpected status 503",
+        "claims": {
+          "ok": false,
+          "stage": "blob",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "blob"
+            }
+          }
+        }
       }
     },
     {
@@ -460,7 +676,17 @@
       "expect": {
         "ok": false,
         "stage": "fetch",
-        "reasonContains": "failed to parse response body as JSON"
+        "reasonContains": "failed to parse response body as JSON",
+        "claims": {
+          "ok": false,
+          "stage": "blob",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "blob"
+            }
+          }
+        }
       }
     },
     {
@@ -478,7 +704,17 @@
       "expect": {
         "ok": false,
         "stage": "fetch",
-        "reasonContains": "does not match request hostname"
+        "reasonContains": "does not match request hostname",
+        "claims": {
+          "ok": false,
+          "stage": "blob",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "blob"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -500,7 +736,17 @@
       "expect": {
         "ok": false,
         "stage": "fetch",
-        "reasonContains": "unsupported bundle version"
+        "reasonContains": "unsupported bundle version",
+        "claims": {
+          "ok": false,
+          "stage": "blob",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "blob"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -522,7 +768,17 @@
       "expect": {
         "ok": false,
         "stage": "fetch",
-        "reasonContains": "unsupported bundle kind"
+        "reasonContains": "unsupported bundle kind",
+        "claims": {
+          "ok": false,
+          "stage": "blob",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "blob"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -544,7 +800,17 @@
       "expect": {
         "ok": false,
         "stage": "fetch",
-        "reasonContains": "missing jws"
+        "reasonContains": "missing jws",
+        "claims": {
+          "ok": false,
+          "stage": "blob",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "blob"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -566,7 +832,17 @@
       "expect": {
         "ok": false,
         "stage": "cert-chain",
-        "reasonContains": "has expired"
+        "reasonContains": "has expired",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -588,7 +864,17 @@
       "expect": {
         "ok": false,
         "stage": "cert-chain",
-        "reasonContains": "issuer does not match"
+        "reasonContains": "issuer does not match",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -610,7 +896,17 @@
       "expect": {
         "ok": false,
         "stage": "cert-chain",
-        "reasonContains": "is not a CA"
+        "reasonContains": "is not a CA",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -632,7 +928,17 @@
       "expect": {
         "ok": false,
         "stage": "cert-chain",
-        "reasonContains": "does not terminate at a self-signed root"
+        "reasonContains": "does not terminate at a self-signed root",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -654,7 +960,17 @@
       "expect": {
         "ok": false,
         "stage": "untrusted-root",
-        "reasonContains": "not in trusted store"
+        "reasonContains": "not in trusted store",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -676,7 +992,17 @@
       "expect": {
         "ok": false,
         "stage": "untrusted-root",
-        "reasonContains": "not in trusted store"
+        "reasonContains": "not in trusted store",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -696,7 +1022,17 @@
       "expect": {
         "ok": false,
         "stage": "untrusted-root",
-        "reasonContains": "not in trusted store"
+        "reasonContains": "not in trusted store",
+        "claims": {
+          "ok": false,
+          "stage": "pki-chain",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "pki-chain"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -718,7 +1054,17 @@
       "expect": {
         "ok": false,
         "stage": "jws",
-        "reasonContains": "signature verification failed"
+        "reasonContains": "signature verification failed",
+        "claims": {
+          "ok": false,
+          "stage": "statement",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "statement"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -740,7 +1086,17 @@
       "expect": {
         "ok": false,
         "stage": "jws",
-        "reasonContains": "unsupported JWS alg"
+        "reasonContains": "unsupported JWS alg",
+        "claims": {
+          "ok": false,
+          "stage": "statement",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "statement"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -762,7 +1118,17 @@
       "expect": {
         "ok": false,
         "stage": "jws",
-        "reasonContains": "payload hostname"
+        "reasonContains": "payload hostname",
+        "claims": {
+          "ok": false,
+          "stage": "statement",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "statement"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -784,7 +1150,17 @@
       "expect": {
         "ok": false,
         "stage": "jws",
-        "reasonContains": "does not match bundle kind"
+        "reasonContains": "does not match bundle kind",
+        "claims": {
+          "ok": false,
+          "stage": "statement",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "statement"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -806,7 +1182,17 @@
       "expect": {
         "ok": false,
         "stage": "jws",
-        "reasonContains": "exceeds maxBundleAge"
+        "reasonContains": "exceeds maxBundleAge",
+        "claims": {
+          "ok": false,
+          "stage": "statement",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "statement"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -828,7 +1214,17 @@
       "expect": {
         "ok": false,
         "stage": "jws",
-        "reasonContains": "in the future"
+        "reasonContains": "in the future",
+        "claims": {
+          "ok": false,
+          "stage": "statement",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "statement"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -850,7 +1246,17 @@
       "expect": {
         "ok": false,
         "stage": "tls-fingerprint",
-        "reasonContains": "does not match observed"
+        "reasonContains": "does not match observed",
+        "claims": {
+          "ok": false,
+          "stage": "binding",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "binding"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -871,7 +1277,17 @@
       "expect": {
         "ok": false,
         "stage": "tls-fingerprint",
-        "reasonContains": "no observed fingerprint and no tlsLeaf"
+        "reasonContains": "no observed fingerprint and no tlsLeaf",
+        "claims": {
+          "ok": false,
+          "stage": "binding",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "binding"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -892,7 +1308,17 @@
       "expect": {
         "ok": false,
         "stage": "tls-fingerprint",
-        "reasonContains": "does not match bundle.tlsLeaf fingerprint"
+        "reasonContains": "does not match bundle.tlsLeaf fingerprint",
+        "claims": {
+          "ok": false,
+          "stage": "binding",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "binding"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,
@@ -914,7 +1340,17 @@
       "expect": {
         "ok": false,
         "stage": "tls-fingerprint",
-        "reasonContains": "must match sha256/<base64url>"
+        "reasonContains": "must match sha256/<base64url>",
+        "claims": {
+          "ok": false,
+          "stage": "binding",
+          "document": {
+            "schema_version": "1",
+            "denial": {
+              "stage": "binding"
+            }
+          }
+        }
       },
       "response": {
         "status": 200,

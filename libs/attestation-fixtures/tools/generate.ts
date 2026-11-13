@@ -450,7 +450,9 @@ interface CaseResponse {
   bodyText?: string;
 }
 
-type CaseExpectation =
+type VerifyStage = 'fetch' | 'cert-chain' | 'untrusted-root' | 'jws' | 'tls-fingerprint';
+
+type CaseVerdict =
   | {
       ok: true;
       kind: EvidenceKind;
@@ -461,9 +463,36 @@ type CaseExpectation =
     }
   | {
       ok: false;
-      stage: 'fetch' | 'cert-chain' | 'untrusted-root' | 'jws' | 'tls-fingerprint';
+      stage: VerifyStage;
       reasonContains: string;
     };
+
+/** The claim-set vocabulary a denial is reported in, beside the claims. */
+type ClaimStage = 'options' | 'blob' | 'pki-chain' | 'root-quote' | 'binding' | 'envelope' | 'statement';
+
+/**
+ * What the claim core (`libs/swarm-evidence-go`) must produce for this case.
+ *
+ * It is a second expectation rather than a richer verdict because the two
+ * answer different questions: the verdict is about the bundle pipeline, which
+ * the TypeScript verifier implements too, and `claims` is about the SwarmClaims
+ * document a relying party's policy is written against. A case can be a sound
+ * bundle and still not be appraisable into claims — a secp256k1 root is, since
+ * crypto/x509 cannot read the key the root's own TEE evidence commits to.
+ *
+ * `document` is compared member by member. `quote_appraiser` is written as the
+ * placeholder `<appraiser>` and resolves to whichever appraiser the harness
+ * ran; `denial.reason` is dropped before the comparison, because only the
+ * stage and `reasonContains` are normative here as everywhere else.
+ */
+interface ClaimsExpectation {
+  ok: boolean;
+  stage?: ClaimStage;
+  reasonContains?: string;
+  document: Record<string, unknown>;
+}
+
+type CaseExpectation = CaseVerdict & { claims: ClaimsExpectation };
 
 interface ConformanceCase {
   id: string;
@@ -472,6 +501,57 @@ interface ConformanceCase {
   response: CaseResponse;
   expect: CaseExpectation;
 }
+
+/**
+ * The pipeline stage a claim-set denial is reported under
+ * (`libs/swarm-evidence-go/DENIAL-STAGES.md`). The two vocabularies are kept
+ * apart on purpose: the pipeline's names are about our implementation, and a
+ * relying party reads a denial beside the claims rather than beside our code.
+ */
+const CLAIM_STAGE_OF: Record<VerifyStage, ClaimStage> = {
+  fetch: 'blob',
+  'cert-chain': 'pki-chain',
+  'untrusted-root': 'pki-chain',
+  jws: 'statement',
+  'tls-fingerprint': 'binding',
+};
+
+/** The appraiser name every `quote_appraiser` claim is written as. */
+const APPRAISER_PLACEHOLDER = '<appraiser>';
+
+/**
+ * The recorded appraisal of the membership root's own TEE evidence, which the
+ * claim-set expectations are written against.
+ *
+ * No fixture can carry a SEV-SNP signature over a certificate this repository
+ * minted, so the quote appraisal is recorded and held fixed, and what the
+ * bundle corpus pins is everything downstream of it — the chain, the signed
+ * statement, the channel binding and the claim set. The vendor-signature half
+ * is covered where real recorded evidence exists, in
+ * `libs/swarm-evidence-go/attestation/attestedroot`.
+ */
+const ROOT_QUOTE_APPRAISAL = {
+  platform: 'snp-qemu',
+  quote_verified: true,
+  tcb_status: 'ok',
+  collateral_checked: true,
+  key_binding: true,
+  network_type: 'untrusted',
+  measurements: { launch_digest: '1d'.repeat(48) },
+  platform_security: {
+    vmpl: 0,
+    debug_allowed: false,
+    ciphertext_hiding: true,
+    page_swap_disabled: true,
+    snp_firmware_tcb: 23,
+    report_version: 3,
+    cpu_generation: 'Genoa',
+  },
+  mrenclave: 'c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442',
+  mrenclave_approved: true,
+  mrenclave_source: 'registry',
+  spvm_build: 'build-448-release',
+} as const;
 
 const TEE_QUOTE = {
   format: 'intel-tdx-quote-v5',
@@ -628,11 +708,88 @@ async function main(): Promise<void> {
     maxBundleAge: MAX_BUNDLE_AGE_MS,
   });
 
+  const rootFingerprints: Record<string, string> = {
+    [ROOT_RSA]: rootA.fingerprint,
+    [ROOT_EC]: ecRoot.fingerprint,
+    [ROOT_EC_HIGH_S]: ecRootHighS.fingerprint,
+    [ROOT_OTHER]: rootB.fingerprint,
+  };
+
+  /** The only claim set a refused appraisal may produce. */
+  const denialDocument = (stage: ClaimStage) => ({ schema_version: '1', denial: { stage } });
+
+  /**
+   * The SwarmClaims document this case must appraise into.
+   *
+   * It is written from the case's own facts — the chain it carries, the root
+   * it terminates at, the recorded root-quote appraisal — and never from a
+   * verifier: expectations a verifier produced would assert nothing.
+   */
+  function claimsFor(verdict: CaseVerdict, body: unknown): ClaimsExpectation {
+    if (!verdict.ok) {
+      const stage = CLAIM_STAGE_OF[verdict.stage];
+      return { ok: false, stage, document: denialDocument(stage) };
+    }
+    if (verdict.matchedRoot === ROOT_EC || verdict.matchedRoot === ROOT_EC_HIGH_S) {
+      // A sound bundle that still establishes no claims: the claim core reads
+      // the root's public key to check that its TEE evidence commits to it,
+      // and crypto/x509 has no secp256k1 parser. The platform issues RSA and
+      // P-256 CAs, so "not one of ours" is the honest answer rather than a
+      // parser limitation to work around — and a corpus that only pinned the
+      // verdict would never have said so.
+      return {
+        ok: false,
+        stage: 'root-quote',
+        reasonContains: 'not readable',
+        document: denialDocument('root-quote'),
+      };
+    }
+
+    const bundle = body as { certChain: string[] };
+    const chainLeaf = sha256Fingerprint(pemToDer(bundle.certChain[0] as string));
+    const document: Record<string, unknown> = {
+      schema_version: '1',
+      channel_binding: verdict.channelBinding,
+      platform: ROOT_QUOTE_APPRAISAL.platform,
+      quote_verified: ROOT_QUOTE_APPRAISAL.quote_verified,
+      quote_appraiser: APPRAISER_PLACEHOLDER,
+      tcb_status: ROOT_QUOTE_APPRAISAL.tcb_status,
+      collateral_checked: ROOT_QUOTE_APPRAISAL.collateral_checked,
+      measurements: ROOT_QUOTE_APPRAISAL.measurements,
+      platform_security: ROOT_QUOTE_APPRAISAL.platform_security,
+      mrenclave: ROOT_QUOTE_APPRAISAL.mrenclave,
+      mrenclave_approved: ROOT_QUOTE_APPRAISAL.mrenclave_approved,
+      mrenclave_source: ROOT_QUOTE_APPRAISAL.mrenclave_source,
+      spvm_build: ROOT_QUOTE_APPRAISAL.spvm_build,
+      pki_root_fingerprint: rootFingerprints[verdict.matchedRoot],
+      pki_chain_ok: true,
+      root_quote_ok: ROOT_QUOTE_APPRAISAL.quote_verified && ROOT_QUOTE_APPRAISAL.key_binding,
+      network_type: ROOT_QUOTE_APPRAISAL.network_type,
+    };
+    // The bundle form is about a served hostname, so it carries no request
+    // binding and no pod claims; the digest a user pins is the one claim it
+    // adds, and only a DeploymentEvidence payload has one.
+    const evidenceDigest = (verdict.payload as { evidenceDigest?: string }).evidenceDigest;
+    if (evidenceDigest !== undefined) document.evidence_digest = evidenceDigest;
+    document.statement_signer_fingerprint = chainLeaf;
+    document.statement_ok = true;
+    return { ok: true, document };
+  }
+
   /** Registers a case whose evidence endpoint answers 200 with `body` as its JSON document. */
-  function addCase(spec: Omit<ConformanceCase, 'response'> & { body: unknown }) {
-    const { body, ...rest } = spec;
+  function addCase(spec: Omit<ConformanceCase, 'response' | 'expect'> & { expect: CaseVerdict; body: unknown }) {
+    const { body, expect, ...rest } = spec;
     bundles.set(spec.id, body);
-    cases.push({ ...rest, response: { status: 200, bodyFile: `bundles/${spec.id}.json` } });
+    cases.push({
+      ...rest,
+      expect: { ...expect, claims: claimsFor(expect, body) },
+      response: { status: 200, bodyFile: `bundles/${spec.id}.json` },
+    });
+  }
+
+  /** Registers a case whose endpoint answers with something other than a bundle document. */
+  function pushCase(spec: Omit<ConformanceCase, 'expect'> & { expect: CaseVerdict }) {
+    cases.push({ ...spec, expect: { ...spec.expect, claims: claimsFor(spec.expect, undefined) } });
   }
 
   const okExpect = (spec: {
@@ -640,7 +797,7 @@ async function main(): Promise<void> {
     payload: Record<string, unknown>;
     channelBinding: 'observed' | 'producer-asserted';
     matchedRoot: string;
-  }): CaseExpectation => ({ ok: true, ...spec });
+  }): CaseVerdict => ({ ok: true, ...spec });
 
   // 1. Happy paths, one per evidence kind, plus the TEE quote pass-through.
   const KIND_SLUGS: Record<EvidenceKind, string> = {
@@ -750,14 +907,14 @@ async function main(): Promise<void> {
   });
 
   // 2. fetch stage.
-  cases.push({
+  pushCase({
     id: 'fetch-http-503',
     description: 'The evidence endpoint answers 503; nothing is parsed.',
     request: observed(leafA.fingerprint),
     response: { status: 503, bodyText: 'service unavailable' },
     expect: { ok: false, stage: 'fetch', reasonContains: 'unexpected status 503' },
   });
-  cases.push({
+  pushCase({
     id: 'fetch-non-json-body',
     description: 'A 200 response whose body is not JSON (a captive-portal style interception).',
     request: observed(leafA.fingerprint),
@@ -963,6 +1120,14 @@ async function main(): Promise<void> {
     referenceNow: REFERENCE_NOW,
     rootsFile: 'roots.json',
     cases,
+  });
+
+  writeJson(join(VECTORS_DIR, 'root-quote-appraisal.json'), {
+    version: '1',
+    description:
+      "The recorded appraisal of the membership root's own TEE evidence that every case's `expect.claims` is written against. The bundle corpus pins what an appraisal establishes downstream of the quote; the quote's own vendor signature is covered against real recorded evidence in libs/swarm-evidence-go/attestation/attestedroot.",
+    appraiser: 'recorded-offline',
+    appraisal: ROOT_QUOTE_APPRAISAL,
   });
 
   writeJson(join(VECTORS_DIR, 'evidence-digest.json'), buildEvidenceDigestVectors());

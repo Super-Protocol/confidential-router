@@ -545,6 +545,43 @@ func TestCompositeGPUAttestedComesFromTheEnvelopeOnly(t *testing.T) {
 	})
 }
 
+// TestCompositeWithoutImageIdentityReportsNeitherClaim is the difference
+// between "nothing vouches for this image" and "nobody looked", which a
+// delegated appraiser makes reachable: mrEnclave needs the RTMR0 event log
+// replayed and normalised, and a Verifier that appraises the quote alone
+// cannot derive one.
+//
+// A `mrenclave_approved: false` there would tell a policy that a set of
+// reference values was consulted, so neither claim may appear.
+func TestCompositeWithoutImageIdentityReportsNeitherClaim(t *testing.T) {
+	t.Parallel()
+	c := newComposite(t)
+	options := c.options()
+	appraisal := quoteAppraisal(c.bindingData, c.bindingSource)
+	appraisal.MrEnclave = ""
+	appraisal.MrEnclaveApproved = false
+	appraisal.MrEnclaveSource = ""
+	appraisal.SpvmBuild = ""
+	options.QuoteAppraiser = &stubAppraiser{appraisal: c.f.appraisal, quoteAppraisal: appraisal}
+
+	claims, err := swarmevidence.AppraiseComposite(context.Background(), c.blob(t), options)
+	if err != nil {
+		t.Fatalf("appraise: %v", err)
+	}
+	if claims.MrEnclaveApproved != nil {
+		t.Errorf("mrenclave_approved = %v, want absent: no appraiser derived an image identity",
+			*claims.MrEnclaveApproved)
+	}
+	if claims.MrEnclave != "" || claims.MrEnclaveSource != "" {
+		t.Errorf("mrenclave = %q / source %q, want neither", claims.MrEnclave, claims.MrEnclaveSource)
+	}
+	// The rest of the appraisal is unaffected: the hardware held up and the
+	// pod claims are the statement's.
+	if claims.QuoteVerified == nil || !*claims.QuoteVerified || claims.PodUID != "pod-7f3a" {
+		t.Error("the rest of the claim set did not survive an appraisal without an image identity")
+	}
+}
+
 // TestCompositeAzureReadsTheBindingFromHCLUserData pins the per-platform half
 // of the binding check. On the Azure nested form the hardware REPORT_DATA is
 // SHA-256(runtime data JSON) ‖ 0³² and is the paravisor's, not the guest's; an
