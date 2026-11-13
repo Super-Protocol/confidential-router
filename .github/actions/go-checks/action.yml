@@ -1,4 +1,4 @@
-name: Go checks (gatekeeper)
+name: Go checks
 description: >-
   vet, race tests, the static CGO_ENABLED=0 build and golangci-lint over
   apps/gatekeeper, and the same checks over the libs/swarm-evidence-go module it
@@ -7,8 +7,8 @@ description: >-
   gate would have rejected.
 
 # A composite action rather than a reusable workflow on purpose: a reusable
-# workflow renames the check to `<caller job> / <called job>`, and `Go checks
-# (gatekeeper)` is one of the names main's branch protection requires.
+# workflow renames the check to `<caller job> / <called job>`, and `Go checks`
+# is one of the names main's branch protection requires.
 
 inputs:
   sentinel-version:
@@ -29,6 +29,25 @@ inputs:
 runs:
   using: composite
   steps:
+    # One Go toolchain serves all three modules, pinned by apps/gatekeeper/go.mod
+    # below. That is sound only while the three `go` directives agree, so assert
+    # it rather than assume it: swarm-evidence-go is released on its own tags and
+    # can move ahead of the gatekeeper, and when it does `GOTOOLCHAIN=auto` would
+    # silently fetch a second toolchain mid-job instead of saying so.
+    - name: The three Go modules agree on a Go version
+      shell: bash
+      run: |
+        set -euo pipefail
+        versions=$(awk '/^go /{print FILENAME": "$2}' \
+          apps/gatekeeper/go.mod \
+          libs/swarm-evidence-go/go.mod \
+          libs/swarm-policy/go.mod)
+        echo "$versions"
+        if [ "$(echo "$versions" | awk '{print $2}' | sort -u | wc -l)" -ne 1 ]; then
+          echo "::error::the modules declare different Go versions; give each its own setup-go step"
+          exit 1
+        fi
+
     - name: Setup Go
       uses: actions/setup-go@v7
       with:
@@ -94,7 +113,7 @@ runs:
       working-directory: libs/swarm-policy
       run: |
         go vet ./...
-        go test -count=1 ./...
+        go test -race -count=1 ./...
 
     - name: go vet
       shell: bash
