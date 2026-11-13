@@ -1,0 +1,107 @@
+{
+  "verifier": "acme-ear-verifier",
+  "note": "A second EAT-emitting Verifier, and deliberately nothing like the first: other claim names (nested, with dots inside the names, as an EAR's annotated evidence has), base64 instead of hex, another issuer, another algorithm and another signing key. It appraises the same quote as the ITA fixture and must produce the same SwarmClaims.",
+  "issuer": "https://verifier.acme-bank.example/ear",
+  "audience": "https://vault.bank.example",
+  "jwks": {
+    "keys": [
+      {
+        "alg": "ES256",
+        "crv": "P-256",
+        "kid": "acme-ear-1",
+        "kty": "EC",
+        "use": "sig",
+        "x": "nWyE0EVDWVzqktpVFInR2on7KzicsJ56K6oZFCNPGuw",
+        "y": "3vb5oTRpO1dsCtqlkayj8ohUziUOmhpxWkDOEvF6SvQ"
+      }
+    ]
+  },
+  "verification_key_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEnWyE0EVDWVzqktpVFInR2on7Kzic\nsJ56K6oZFCNPGuze9vmhNGk7V2wK2qWRrKPyiFTOJQ6aGnFaQM4S8XpK9A==\n-----END PUBLIC KEY-----\n",
+  "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImFjbWUtZWFyLTEiLCJ0eXAiOiJKV1QifQ.eyJhdWQiOiJodHRwczovL3ZhdWx0LmJhbmsuZXhhbXBsZSIsImVhci52ZXJpZmllci1pZCI6eyJidWlsZCI6ImVhci0xIiwiZGV2ZWxvcGVyIjoiYWNtZS1iYW5rIn0sImV4cCI6MTc5NDU2MDcwMCwiaWF0IjoxNzk0NTYwNDAwLCJpc3MiOiJodHRwczovL3ZlcmlmaWVyLmFjbWUtYmFuay5leGFtcGxlL2VhciIsInN1Ym1vZHMiOnsiVERYIjp7ImVhci5zdGF0dXMiOiJhZmZpcm1pbmciLCJlYXIudmVyYWlzb24uYW5ub3RhdGVkLWV2aWRlbmNlIjp7InRkeC5tcnRkIjoiRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUiIsInRkeC5yZXBvcnQtZGF0YSI6Iks3d2FGYmhJa08rMTFweW1qc1lDUDVFY2lWTG9pZzJ2N1JLZDEwNWI0aUNiYytrTTZnVXBNcUp2YVB3M21GK09rYkxhalYvbGo5bktCYkp5MmY4R2FBPT0iLCJ0ZHgucnRtcjAiOiJhTnlnbER5dURZbk5tTVZYWmhWODdpZVg4S0hJbkhRRTJ5QXFha0hLclp1azBRWms2SE93UEtKSis4d0d5ZTdlIiwidGR4LnJ0bXIxIjoiSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaUlpSWlJaSIsInRkeC5ydG1yMiI6Ik16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXoiLCJ0ZHgucnRtcjMiOiJSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFUkVSRVJFIiwidGR4LnRkYXR0cmlidXRlcyI6IkFBQUFFQUFBQUFBPSIsInRkeC50ZWUtdGNiLXN2biI6NX19fX0.FlGN5ye-bnmTd9T3cM8FydTCk3zJZL6jLqHoQ00TuoM7Pyo8SDvctAYCXd7qfUtp_BivgSuOLSD4JEISBN2Ijw",
+  "mapping": {
+    "tdattributes": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.tdattributes"
+    ],
+    "mrtd": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.mrtd"
+    ],
+    "rtmr0": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.rtmr0"
+    ],
+    "rtmr1": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.rtmr1"
+    ],
+    "rtmr2": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.rtmr2"
+    ],
+    "rtmr3": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.rtmr3"
+    ],
+    "seamsvn": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.tee-tcb-svn"
+    ],
+    "tcb_status": [
+      "submods",
+      "TDX",
+      "ear.status"
+    ],
+    "binding_data": [
+      "submods",
+      "TDX",
+      "ear.veraison.annotated-evidence",
+      "tdx.report-data"
+    ],
+    "encoding": "base64",
+    "binding_data_encoding": "base64"
+  },
+  "quote": {
+    "platform": "tdx-gcp",
+    "tdattributes": "0000001000000000",
+    "mrtd": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+    "rtmr1": "222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+    "rtmr2": "333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+    "rtmr3": "444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444",
+    "tee_tcb_svn": "05000600000000000000000000000000",
+    "event_log": [
+      {
+        "type": "EV_EFI_PLATFORM_FIRMWARE_BLOB",
+        "digest": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      {
+        "type": "EV_SEPARATOR",
+        "digest": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      },
+      {
+        "type": "EV_EFI_PLATFORM_FIRMWARE_BLOB2",
+        "digest": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      },
+      {
+        "type": "EV_EVENT_TAG",
+        "digest": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+      }
+    ],
+    "report_data": "2bbc1a15b84890efb5d69ca68ec6023f911c8952e88a0dafed129dd74e5be2209b73e90cea052932a26f68fc37985f8e91b2da8d5fe58fd9ca05b272d9ff0668"
+  },
+  "expected_mrenclave": "17be83eb82800c8763f2f35f9b3bd917a3862290dcbe215ee187d53fe2efa0ca"
+}

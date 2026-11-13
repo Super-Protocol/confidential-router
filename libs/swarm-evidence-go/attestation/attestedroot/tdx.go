@@ -1,7 +1,6 @@
 package attestedroot
 
 import (
-	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
 	"errors"
@@ -134,49 +133,16 @@ func tdRegisters(body *tdxpb.TDQuoteBody) RawMeasurements {
 // tdxMeasurement derives the normalised mrEnclave of a TD
 // (sp-vm/docs/04-vm-measurements.md §"Intel TDX").
 //
-// The event list is checked against the register it claims to explain before
-// any of it is used: a list that does not replay to the quote's RTMR0 describes
-// some other boot, and normalising it would silently measure a VM nobody
-// attested.
+// It is the quote-shaped entry point to [TDXMrEnclave], which is the formula
+// itself. The two are kept apart because the delegated appraiser of SUP-648
+// reaches the same formula from registers an EAT reported rather than from a
+// quote body, and a second implementation of the digest would be a second
+// place for the two paths to disagree.
 func tdxMeasurement(body *tdxpb.TDQuoteBody, eventLog []TdxEventLogEntry) ([]byte, error) {
-	attributes := body.GetTdAttributes()
-	if len(attributes) != tdAttributesSize {
-		return nil, fmt.Errorf("tdx quote: TDATTRIBUTES is %d bytes, expected %d", len(attributes), tdAttributesSize)
-	}
-	mrtd := body.GetMrTd()
-	rtmrs := body.GetRtmrs()
-	if len(rtmrs) < 4 {
+	if rtmrs := body.GetRtmrs(); len(rtmrs) < 4 {
 		return nil, fmt.Errorf("tdx quote: the quote carries %d RTMRs, expected 4", len(rtmrs))
 	}
-	for name, value := range map[string][]byte{
-		"MRTD": mrtd, "RTMR0": rtmrs[0], "RTMR1": rtmrs[1], "RTMR2": rtmrs[2], "RTMR3": rtmrs[3],
-	} {
-		if len(value) != tdxRegisterSize {
-			return nil, fmt.Errorf("tdx quote: %s is %d bytes, expected %d", name, len(value), tdxRegisterSize)
-		}
-	}
-	if len(eventLog) == 0 {
-		return nil, errors.New("tdx evidence: the quote has no RTMR0 event list, so RTMR0 cannot be normalised")
-	}
-
-	replayed, err := replayRTMR(eventLog, nil)
-	if err != nil {
-		return nil, err
-	}
-	if !equalBytes(replayed, rtmrs[0]) {
-		return nil, fmt.Errorf("tdx evidence: the event list replays to %x, but the quote's RTMR0 is %x",
-			replayed, rtmrs[0])
-	}
-	normalized, err := replayRTMR(eventLog, normalizedRTMR0Events)
-	if err != nil {
-		return nil, err
-	}
-
-	sum := sha256.New()
-	for _, part := range [][]byte{attributes, mrtd, normalized, rtmrs[1], rtmrs[2], rtmrs[3]} {
-		sum.Write(part)
-	}
-	return sum.Sum(nil), nil
+	return TDXMrEnclave(tdRegisters(body), eventLog)
 }
 
 // replayRTMR folds an event list into a register, optionally keeping only the

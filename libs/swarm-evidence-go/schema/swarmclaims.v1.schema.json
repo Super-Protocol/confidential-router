@@ -189,6 +189,7 @@
             "blob",
             "pki-chain",
             "root-quote",
+            "coverage",
             "binding",
             "envelope",
             "statement"

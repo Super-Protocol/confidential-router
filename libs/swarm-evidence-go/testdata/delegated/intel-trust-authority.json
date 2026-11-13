@@ -1,0 +1,88 @@
+{
+  "verifier": "intel-trust-authority",
+  "note": "Intel Trust Authority as the demonstration stand's stand-in Verifier. Recorded, not live: the token is signed by a key generated for this repository, and the quote it appraises is the synthetic one the harness rebuilds. What it pins is the claim mapping and the shape of an ITA result.",
+  "issuer": "https://portal.trustauthority.intel.com",
+  "jwks": {
+    "keys": [
+      {
+        "alg": "PS384",
+        "e": "AQAB",
+        "kid": "ita-2026-11",
+        "kty": "RSA",
+        "n": "vPN85JGb-cMubKBfbLd9QLU_-LBa8fdJj2R9CBV58XpjCIdw7VXPKNRT5klAfb9kfXK-j3mEHWvFkDlMT3WrHawX-gBUmozCq01TMy2eBR5mRTSvxL_arWWPxw8d_BIVc96k6bdrRWI0fJ3r6C5dvIvx3LpdmdQt2a_SJnGTDl5z0aAXLMkvM19SY4N3C610x8HvU3Jn5bzPVtHH6bkfOym9IXdja5_5O9F92rlExB_9HL1v9ZbDB9dtAf5PQzEMgfwcFSAU8I9S-LY4esurUuc7E60Hwf864oF2ZCu7urH1Ydn2wOCYAVHedt92ZbbYRHrrlMoPCSSS0qYSSo3Oo0cyvtax6Ujd0iqH3yswMWZ01Sik9RWaqygGFJmnurfiSl3ONHzmk3t5qvksZN9depvLdz9W7EQChp9ll7iiEt_hwkVv5VIGCUPS2y4X88ffkXEigbFgxm-fYeayUrOLNbLOppGab-FVCpGINRGigNZ4yKR-y4ggdvvT6plVAueZ",
+        "use": "sig"
+      }
+    ]
+  },
+  "verification_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvPN85JGb+cMubKBfbLd9\nQLU/+LBa8fdJj2R9CBV58XpjCIdw7VXPKNRT5klAfb9kfXK+j3mEHWvFkDlMT3Wr\nHawX+gBUmozCq01TMy2eBR5mRTSvxL/arWWPxw8d/BIVc96k6bdrRWI0fJ3r6C5d\nvIvx3LpdmdQt2a/SJnGTDl5z0aAXLMkvM19SY4N3C610x8HvU3Jn5bzPVtHH6bkf\nOym9IXdja5/5O9F92rlExB/9HL1v9ZbDB9dtAf5PQzEMgfwcFSAU8I9S+LY4esur\nUuc7E60Hwf864oF2ZCu7urH1Ydn2wOCYAVHedt92ZbbYRHrrlMoPCSSS0qYSSo3O\no0cyvtax6Ujd0iqH3yswMWZ01Sik9RWaqygGFJmnurfiSl3ONHzmk3t5qvksZN9d\nepvLdz9W7EQChp9ll7iiEt/hwkVv5VIGCUPS2y4X88ffkXEigbFgxm+fYeayUrOL\nNbLOppGab+FVCpGINRGigNZ4yKR+y4ggdvvT6plVAueZAgMBAAE=\n-----END PUBLIC KEY-----\n",
+  "token": "eyJhbGciOiJQUzM4NCIsImtpZCI6Iml0YS0yMDI2LTExIiwidHlwIjoiSldUIn0.eyJhdHRlc3Rlcl90eXBlIjoiVERYIiwiZXhwIjoxNzk0NTYwNzAwLCJpYXQiOjE3OTQ1NjA0MDAsImlzcyI6Imh0dHBzOi8vcG9ydGFsLnRydXN0YXV0aG9yaXR5LmludGVsLmNvbSIsIm5iZiI6MTc5NDU2MDQwMCwidGR4Ijp7ImF0dGVzdGVyX2hlbGRfZGF0YSI6Iks3d2FGYmhJa08tMTFweW1qc1lDUDVFY2lWTG9pZzJ2N1JLZDEwNWI0aUNiYy1rTTZnVXBNcUp2YVB3M21GLU9rYkxhalZfbGo5bktCYkp5MmY4R2FBIiwidGR4X21ydGQiOiIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJ0ZHhfcnRtcjAiOiI2OGRjYTA5NDNjYWUwZDg5Y2Q5OGM1NTc2NjE1N2NlZTI3OTdmMGExYzg5Yzc0MDRkYjIwMmE2YTQxY2FhZDliYTRkMTA2NjRlODczYjAzY2EyNDlmYmNjMDZjOWVlZGUiLCJ0ZHhfcnRtcjEiOiIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJ0ZHhfcnRtcjIiOiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMiLCJ0ZHhfcnRtcjMiOiI0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJ0ZHhfc2VhbXN2biI6NSwidGR4X3RjYl9zdGF0dXMiOiJPSyIsInRkeF90ZGF0dHJpYnV0ZXMiOiIwMDAwMDAxMDAwMDAwMDAwIn19.EBcgROVwEcIDLiZ34wL8WJu1-hOnfK94ik6oB39w501HsyC3qaN_engRU9fSE7994xcisNLkDFpIxWC9EW-yv_udtfeDfZqVKvDtxYzYQL_NBx9X3Fu2EwFT6v4-AAml2YbRU9fVOn1KGv2GCFFdNO3TAzGlA_1Km42a5Fd56i-z5d2DbEDJI_lWz8JE3wm2eVt4GjMq4veVJf57tVgBS8r2K3rxSTjm2KDxwGNt9BRE_pOIRNWtmcNAitgFHe7RsDoOkq5FQYJOnTwZHqiyMp65QeC0jqjNLqukq3C3pt9niTSu7Su8yES6E16CCdbdMJlWTGpUybsrH3Vp3pBmGaQKx8x_Gi1aR81h-IC8J3CYYMLWECvxgmbP9ku60EKpgIYJxrJ1VQd0JPKWGj2rVY-WzrmTF84xLtZNX-5DzyQ_ktY9903-shecUDKCipC9aSvQer0Y-11KMB5dQrUwDH2NuddcG2m6yjRjpOTVWgwvmMaDJfHL8Ln-VD7MecOs",
+  "mapping": {
+    "tdattributes": [
+      "tdx",
+      "tdx_tdattributes"
+    ],
+    "mrtd": [
+      "tdx",
+      "tdx_mrtd"
+    ],
+    "rtmr0": [
+      "tdx",
+      "tdx_rtmr0"
+    ],
+    "rtmr1": [
+      "tdx",
+      "tdx_rtmr1"
+    ],
+    "rtmr2": [
+      "tdx",
+      "tdx_rtmr2"
+    ],
+    "rtmr3": [
+      "tdx",
+      "tdx_rtmr3"
+    ],
+    "seamsvn": [
+      "tdx",
+      "tdx_seamsvn"
+    ],
+    "tcb_status": [
+      "tdx",
+      "tdx_tcb_status"
+    ],
+    "binding_data": [
+      "tdx",
+      "attester_held_data"
+    ],
+    "encoding": "hex",
+    "binding_data_encoding": "base64url"
+  },
+  "quote": {
+    "platform": "tdx-gcp",
+    "tdattributes": "0000001000000000",
+    "mrtd": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+    "rtmr1": "222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+    "rtmr2": "333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+    "rtmr3": "444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444",
+    "tee_tcb_svn": "05000600000000000000000000000000",
+    "event_log": [
+      {
+        "type": "EV_EFI_PLATFORM_FIRMWARE_BLOB",
+        "digest": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      {
+        "type": "EV_SEPARATOR",
+        "digest": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      },
+      {
+        "type": "EV_EFI_PLATFORM_FIRMWARE_BLOB2",
+        "digest": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      },
+      {
+        "type": "EV_EVENT_TAG",
+        "digest": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+      }
+    ],
+    "report_data": "2bbc1a15b84890efb5d69ca68ec6023f911c8952e88a0dafed129dd74e5be2209b73e90cea052932a26f68fc37985f8e91b2da8d5fe58fd9ca05b272d9ff0668"
+  },
+  "expected_mrenclave": "17be83eb82800c8763f2f35f9b3bd917a3862290dcbe215ee187d53fe2efa0ca"
+}

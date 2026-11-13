@@ -295,6 +295,17 @@ const (
 	// anybody vouches for" is a claim a policy decides on, so it is reported as
 	// MrEnclaveApproved false, not hidden behind a denial.
 	StageRootQuote DenialStage = "root-quote"
+	// StageCoverage is an attester the configured appraiser does not cover:
+	// a platform whose quote it cannot appraise, or whose image identity a
+	// quote alone never establishes.
+	//
+	// It is kept apart from root-quote because it is the one refusal that
+	// says nothing about the evidence. The evidence may be perfect; the
+	// relying party's Verifier simply does not reach a verdict about this
+	// platform, and what clears it is a different appraiser rather than a
+	// different attester. A relying party reading it knows to fall back to
+	// the built-in offline appraiser instead of investigating a node.
+	StageCoverage DenialStage = "coverage"
 	// StageBinding is evidence that does not answer the request it was
 	// presented for: a report data digest, or a channel binding, that does not
 	// hold.
