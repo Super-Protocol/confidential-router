@@ -7,7 +7,9 @@ The machine-readable contract is `swarmclaims.v1.schema.json` beside this file.
 This page is the prose that goes with it, and it ships in the module so that
 whoever writes the policy has it offline.
 
-Pinned to `libs/swarm-evidence-go/v0.1.0`.
+It describes `schema_version: "1"`, and it describes the tree it ships in:
+`schema_doc_test.go` holds this page and `swarmclaims.v1.schema.json` to each
+other in both directions, so neither can gain, lose or rename a claim alone.
 
 ## Two rules to read every claim by
 
