@@ -29,6 +29,11 @@ A relying party that could not tell the two apart would send an operator to
 investigate a healthy SEV-SNP host every time a bank's Intel-only Verifier met
 one.
 
+It is asserted in two places that cannot drift apart: the unit test
+`TestCoverageDenialReachesTheClaimSetAsItsOwnStage`, and the shared composite
+corpus, whose SEV-SNP and Azure cases record `coverage` under both delegated
+profiles (`libs/attestation-fixtures/vectors/composite/manifest.json`).
+
 Two stages are deliberately **not** in the set, and both are claims instead:
 
 - An image nothing vouches for is `mrenclave_approved: false`, not a denial.

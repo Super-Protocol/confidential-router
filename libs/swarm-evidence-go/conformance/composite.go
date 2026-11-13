@@ -94,7 +94,7 @@ func runCompositeCase(
 ) {
 	t.Helper()
 	now := parseTime(t, vector.Request.Now)
-	appraiser, err := NewAppraiser(profile, appraisals, now)
+	appraiser, err := NewAppraiser(profile, vector, appraisals, now)
 	if err != nil {
 		t.Fatalf("build the %q appraiser: %v", profile.Name, err)
 	}

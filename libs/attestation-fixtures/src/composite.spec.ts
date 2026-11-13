@@ -32,7 +32,7 @@ describe('composite manifest', () => {
     expect(manifest.appraisers.filter((a) => a.kind === 'eat').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('keeps the two EAT profiles different in claim names and signing key', () => {
+  it('keeps the two EAT profiles different in claim mapping and signing key', () => {
     const [first, second] = manifest.appraisers.filter((a) => a.kind === 'eat');
     expect(first, 'two EAT profiles are needed to show the swap is configuration').toBeDefined();
     expect(second).toBeDefined();
@@ -42,11 +42,33 @@ describe('composite manifest', () => {
     // demonstrate nothing: it would be the same decoder running twice.
     expect(second.verificationKey?.pem).not.toBe(first.verificationKey?.pem);
     expect(second.issuer).not.toBe(first.issuer);
-    expect(second.octetEncoding).not.toBe(first.octetEncoding);
-    const shared = Object.keys(first.claimNames ?? {}).filter(
-      (field) => first.claimNames?.[field] === second.claimNames?.[field],
-    );
-    expect(shared, 'the two profiles share claim names').toEqual([]);
+    expect(second.claimMapping?.encoding).not.toBe(first.claimMapping?.encoding);
+
+    const registers = ['tdattributes', 'mrtd', 'rtmr0', 'rtmr1', 'rtmr2', 'rtmr3'] as const;
+    for (const register of registers) {
+      const a = first.claimMapping?.[register];
+      const b = second.claimMapping?.[register];
+      expect(a, `the first profile does not map ${register}`).toBeDefined();
+      expect(b, `the second profile does not map ${register}`).toBeDefined();
+      // Every register is mapped on both, and nowhere the same: the image
+      // identity is computed from all six, and a mapping missing one would
+      // derive an identity from a register nothing checked.
+      expect(a, `the two profiles share the ${register} claim path`).not.toEqual(b);
+    }
+  });
+
+  it('names no profile after a real Verifier', () => {
+    // The tokens are this repository's invention. A profile carrying a
+    // vendor's name would publish claim names that vendor does not emit —
+    // which is how `tdx_tdattributes` and `attester_held_data`-as-report-data
+    // were once published under Intel's name (SUP-648, SUP-699).
+    const vendors = ['ita', 'intel', 'trustauthority', 'trust-authority', 'veraison', 'azure', 'maa'];
+    for (const profile of manifest.appraisers) {
+      const subject = `${profile.name} ${profile.issuer ?? ''}`.toLowerCase();
+      for (const vendor of vendors) {
+        expect(subject, `${profile.name} is named after a real Verifier`).not.toContain(vendor);
+      }
+    }
   });
 
   it('covers every platform and every denial stage the claim set can report', () => {
@@ -86,22 +108,71 @@ describe('composite manifest', () => {
     }
   });
 
-  it('records a token per EAT profile, or states the coverage limit', () => {
+  it('overrides a profile only where the delegated path legitimately differs', () => {
+    // An absent override is the acceptance this corpus exists for: the claim
+    // set may not depend on which appraiser produced it. The two shapes an
+    // override may take are a typed coverage denial, and a sound appraisal
+    // that says in `note` why this profile reaches another answer.
+    for (const testCase of manifest.cases) {
+      for (const [profile, override] of Object.entries(testCase.expect.appraisers ?? {})) {
+        const where = `${testCase.id} / ${profile}`;
+        if (!override.ok) {
+          expect(override.stage, `${where}: a denial override is only ever about coverage`).toBe('coverage');
+          continue;
+        }
+        expect(override.note, `${where}: a sound override says nothing about why it differs`).toBeTruthy();
+      }
+    }
+  });
+
+  it('records a token per EAT profile against the quote it appraises, or states the coverage limit', () => {
     for (const testCase of manifest.cases) {
       const appraisal = loadCompositeAppraisal(testCase);
+      const platform = appraisal.quote.platform;
       for (const profile of manifest.appraisers.filter((a) => a.kind === 'eat')) {
-        const tokens = appraisal.eat?.[profile.name];
-        expect(tokens, `${testCase.id}: no tokens recorded for ${profile.name}`).toBeDefined();
-        if (!tokens) continue;
+        const recorded = appraisal.eat?.[profile.name];
+        expect(recorded, `${testCase.id}: nothing recorded for ${profile.name}`).toBeDefined();
+        const tokens = Object.entries(recorded?.tokens ?? {});
 
-        for (const [half, token] of Object.entries(tokens)) {
-          if (token === '') {
-            // No result recorded means this profile does not cover that
-            // half's platform, and it must say what it answers instead.
-            expect(profile.outsideCoverage, `${profile.name} covers no ${half} and declares nothing`).toBeDefined();
-            continue;
-          }
+        if (tokens.length === 0) {
+          // No token means this profile does not cover the quote's platform:
+          // the delegated path denies before it asks a Verifier anything, so
+          // the profile has to say what it answers instead.
+          expect(
+            profile.outsideCoverage,
+            `${profile.name} records nothing and declares no coverage limit`,
+          ).toBeDefined();
+          expect(platform, `${testCase.id}: no platform recorded to be outside a coverage`).toBeDefined();
+          expect(profile.platforms ?? [], `${profile.name} covers ${platform} and recorded nothing`).not.toContain(
+            platform,
+          );
+          continue;
+        }
+        for (const [evidenceDigest, token] of tokens) {
+          // Keyed by the digest of the evidence it appraises: a token that
+          // sat beside a case rather than being about its quote would still
+          // pass a corpus that keyed by position.
+          expect(evidenceDigest).toMatch(/^[0-9a-f]{64}$/);
           expect(token.split('.')).toHaveLength(3);
+        }
+      }
+    }
+  });
+
+  it('keeps the image identity out of every token', () => {
+    // A quote-only Verifier does not know it: mrEnclave is derived from the
+    // RTMR0 event list it never consumed. A corpus whose tokens carried the
+    // finished answer could not be replayed through the production delegated
+    // appraiser at all (SUP-699).
+    for (const testCase of manifest.cases) {
+      const appraisal = loadCompositeAppraisal(testCase);
+      for (const recorded of Object.values(appraisal.eat ?? {})) {
+        for (const token of Object.values(recorded.tokens)) {
+          const payload = token.split('.')[1] ?? '';
+          const claims = Buffer.from(payload, 'base64url').toString('utf8');
+          for (const absent of ['mrenclave', 'spvm_build', 'approved', 'identity']) {
+            expect(claims, `${testCase.id}: a token carries ${absent}`).not.toContain(absent);
+          }
         }
       }
     }

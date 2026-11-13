@@ -47,7 +47,7 @@ var (
 type material struct {
 	root, inter, node, signer   *testca.Cert
 	foreignRoot, foreignNode    *testca.Cert
-	itaKey, secondVerifierKey   *testca.Key
+	verifierAKey, verifierBKey  *testca.Key
 	keysDir, vectorsDir, outDir string
 }
 
@@ -110,10 +110,10 @@ func newMaterial(keysDir, vectorsDir string) (*material, error) {
 		ee("node-01.other-cloud", 6), m.foreignRoot); err != nil {
 		return nil, err
 	}
-	if m.itaKey, err = m.key("eat-ita-stand-in"); err != nil {
+	if m.verifierAKey, err = m.key("eat-verifier-a"); err != nil {
 		return nil, err
 	}
-	if m.secondVerifierKey, err = m.key("eat-second-verifier"); err != nil {
+	if m.verifierBKey, err = m.key("eat-verifier-b"); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -196,10 +196,19 @@ func (m *material) baseEnvelope() map[string]any {
 	}
 }
 
-func baseQuote(challengeType string) map[string]any {
+// baseQuote is the collection's quote element: the producer's own challenge
+// spelling, and the serialised TeeEvidence itself.
+//
+// The evidence is a real message — a parseable TeeEvidence whose registers,
+// RTMR0 event list and guest-chosen field are the ones the case is about —
+// because the delegated path reads all three out of the quote in hand rather
+// than out of anything an intermediary says about it. A placeholder here
+// would mean the corpus could only ever be replayed through an appraiser that
+// does not look at the evidence.
+func baseQuote(challengeType string, evidence []byte) map[string]any {
 	return map[string]any{
 		"type":           challengeType,
-		"evidenceBase64": base64.StdEncoding.EncodeToString([]byte("serialised TeeEvidence (" + challengeType + ")")),
+		"evidenceBase64": base64.StdEncoding.EncodeToString(evidence),
 		"networkID":      "swarm-cloud-conformance",
 	}
 }

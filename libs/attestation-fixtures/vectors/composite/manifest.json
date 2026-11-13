@@ -18,57 +18,58 @@
       ]
     },
     {
-      "name": "ita-stand-in",
-      "description": "The stand-in Verifier on the demonstration stand, consumed as an EAT. Flat claim names, hex octets, Intel TEEs on bare metal and GCP only — outside that it returns a typed denial rather than a partial verdict.",
+      "name": "verifier-a",
+      "description": "A Verifier consumed as an EAT, through the production delegated appraiser: flat claim names, hex octets, its own issuer and signing key. It appraises the quote's signature and reports the registers; the image identity is derived locally from the RTMR0 event list, which no quote-only Verifier consumes.",
       "kind": "eat",
       "tokenFormat": "jwt",
-      "issuer": "https://portal.trustauthority.intel.com",
+      "issuer": "https://verifier-a.example/attestation",
       "verificationKey": {
-        "kid": "ita-stand-in-1",
+        "kid": "verifier-a-2026",
         "pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkZahkckeRvPTxIoCcHa\nq9CueFSScD0gPfgm5IxOA/veUluAL+7BW9Qe25HThyYHs3XQOTWjfzSLLUUnPbQz\nXmFa3opp5oVHGFb8F9ymf+Tei248tQFaN2rpzpAWq8mvn7wiqt+A/7sPQ4yRIPvo\nQ6Jt3xzVzPxliyJGI7ca9qk/6zZqPkjRm0xiLd2ALNEiAhmCMA2n/4POceT+XzFD\n8XPBcF/dSnmXtczA/xD5AYzvMoaIfn2xZHB9o8MMvKBPMzUqcJ6dq/TB9qV2FHTo\nTjsTpdZ6ssSYmKqrBIEMqCPo9w25/oOCbgP5o7ucpHBi/4Rl9YjycMlVsPpz9XAs\nmwIDAQAB\n-----END PUBLIC KEY-----\n"
       },
-      "octetEncoding": "hex",
-      "claimNames": {
-        "binding_data": "attester_held_data",
-        "binding_data_source": "attester_held_data_source",
-        "ciphertext_hiding": "snp_ciphertext_hiding",
-        "collateral_checked": "attester_collateral_checked",
-        "cpu_generation": "cpu_generation",
-        "debug_allowed": "snp_debug_allowed",
-        "error": "appraisal_error",
-        "key_binding": "attester_held_data_binds_key",
-        "launch_digest": "snp_measurement",
-        "mrenclave": "sp_mrenclave",
-        "mrenclave_approved": "sp_mrenclave_approved",
-        "mrenclave_source": "sp_mrenclave_source",
-        "mrtd": "tdx_mrtd",
-        "network_type": "sp_network_type",
-        "page_swap_disabled": "snp_page_swap_disabled",
-        "platform": "attester_type",
-        "quote_verified": "attester_evidence_verified",
-        "report_version": "report_version",
-        "rtmr0": "tdx_rtmr0",
-        "rtmr1": "tdx_rtmr1",
-        "rtmr2": "tdx_rtmr2",
-        "rtmr3": "tdx_rtmr3",
-        "snp_firmware_tcb": "snp_firmware_tcb",
-        "spvm_build": "sp_vm_build",
-        "tcb_status": "attester_tcb_status",
-        "tdattributes": "tdx_tdattributes",
-        "vmpl": "snp_vmpl"
+      "claimMapping": {
+        "tdattributes": [
+          "td_attributes"
+        ],
+        "mrtd": [
+          "mrtd"
+        ],
+        "rtmr0": [
+          "rtmr0"
+        ],
+        "rtmr1": [
+          "rtmr1"
+        ],
+        "rtmr2": [
+          "rtmr2"
+        ],
+        "rtmr3": [
+          "rtmr3"
+        ],
+        "seamsvn": [
+          "seam_svn"
+        ],
+        "tcb_status": [
+          "tcb_status"
+        ],
+        "binding_data": [
+          "report_data"
+        ],
+        "encoding": "hex",
+        "binding_data_encoding": "hex"
       },
       "platforms": [
         "tdx-qemu",
         "tdx-gcp"
       ],
       "outsideCoverage": {
-        "stage": "root-quote",
-        "reason": "ita-stand-in appraises Intel TDX quotes on bare metal and GCP only, and this evidence is outside that coverage"
+        "stage": "coverage",
+        "reason": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
       }
     },
     {
-      "name": "second-verifier",
-      "description": "A second EAT-emitting Verifier, with different claim names, nested claims, base64url octets, a different issuer and a different signing key. Nothing about it is named in any implementation: it is configuration, and it must appraise this corpus into the same claim sets as the other two profiles.",
+      "name": "verifier-b",
+      "description": "A second EAT-emitting Verifier, with nested claim names that share none of the first's, base64url registers, a base64 report data, a different issuer and a different signing key. Nothing about it is named in any implementation: it is configuration, and it must appraise this corpus into the same claim sets as the other two profiles.",
       "kind": "eat",
       "tokenFormat": "jwt",
       "issuer": "https://verifier.bank.example/eat",
@@ -76,43 +77,60 @@
         "kid": "bank-verifier-2026",
         "pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAytnW7J6QetwG+49NFFYI\nJi2cE8Al+4pDkb1s1aO6cffDcV//ixALPV6RX3ghTzNgtxNkFZ4jEvsFctoYp1rG\n+gJjJJ7ulA7ZUtlu+bk2+UJr7/NnKJ88wH2afLTni/B2/G+OK8Mdj6Eh6PPqgMOQ\n2KgjvKlHtG56rDAipuAruqu4Oinr3+7u8YpDzYUV/M1MWyAN96/ykmkv4bW1FVjO\nvyM/QchSK6ZodrwD/Xz73ylvNrPSGnxtDa9dMMFN0kUb+e4TzMFZZpiCrvf3yXFf\n88jTEHQILM/YvWIB4yWHd/bqWKdX0PhQj1jlMio7Dt/2Xl3TwVg600S7q36Lpou0\n6QIDAQAB\n-----END PUBLIC KEY-----\n"
       },
-      "octetEncoding": "base64url",
-      "claimNames": {
-        "binding_data": "appraisal.binding.held_data",
-        "binding_data_source": "appraisal.binding.source",
-        "ciphertext_hiding": "appraisal.platform.ciphertext_hiding",
-        "collateral_checked": "appraisal.tee.collateral_checked",
-        "cpu_generation": "appraisal.platform.cpu",
-        "debug_allowed": "appraisal.platform.debug",
-        "error": "appraisal.error",
-        "key_binding": "appraisal.binding.commits_to_key",
-        "launch_digest": "appraisal.measurement.launch_digest",
-        "mrenclave": "appraisal.image.identity",
-        "mrenclave_approved": "appraisal.image.approved",
-        "mrenclave_source": "appraisal.image.source",
-        "mrtd": "appraisal.measurement.mrtd",
-        "network_type": "appraisal.pki.network",
-        "page_swap_disabled": "appraisal.platform.page_swap_disabled",
-        "platform": "appraisal.tee.kind",
-        "quote_verified": "appraisal.tee.verified",
-        "report_version": "appraisal.platform.report_version",
-        "rtmr0": "appraisal.measurement.rtmr.0",
-        "rtmr1": "appraisal.measurement.rtmr.1",
-        "rtmr2": "appraisal.measurement.rtmr.2",
-        "rtmr3": "appraisal.measurement.rtmr.3",
-        "snp_firmware_tcb": "appraisal.platform.firmware_tcb",
-        "spvm_build": "appraisal.image.build",
-        "tcb_status": "appraisal.tee.tcb",
-        "tdattributes": "appraisal.measurement.td_attributes",
-        "vmpl": "appraisal.platform.vmpl"
+      "claimMapping": {
+        "tdattributes": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "attributes"
+        ],
+        "mrtd": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "measurement"
+        ],
+        "rtmr0": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "rtmr",
+          "0"
+        ],
+        "rtmr1": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "rtmr",
+          "1"
+        ],
+        "rtmr2": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "rtmr",
+          "2"
+        ],
+        "rtmr3": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "rtmr",
+          "3"
+        ],
+        "tcb_status": [
+          "ear.status"
+        ],
+        "binding_data": [
+          "ear.veraison.annotated-evidence",
+          "tdx",
+          "held_data"
+        ],
+        "encoding": "base64url",
+        "binding_data_encoding": "base64"
       },
       "platforms": [
         "tdx-qemu",
-        "tdx-gcp",
-        "tdx-azure",
-        "snp-qemu",
-        "snp-azure"
-      ]
+        "tdx-gcp"
+      ],
+      "outsideCoverage": {
+        "stage": "coverage",
+        "reason": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
+      }
     }
   ],
   "cases": [
@@ -126,7 +144,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-full-tdx-qemu.json",
       "appraisalFile": "composite/appraisals/composite-full-tdx-qemu.json",
@@ -148,13 +169,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -163,22 +184,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -195,7 +206,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-full-tdx-gcp.json",
       "appraisalFile": "composite/appraisals/composite-full-tdx-gcp.json",
@@ -217,13 +231,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -232,22 +246,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-gcp",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -256,7 +260,7 @@
     },
     {
       "id": "composite-full-tdx-azure",
-      "description": "Azure TDX: the binding lives in the 64-octet HCL user-data, because the hardware REPORT_DATA there is the paravisor's SHA-256(runtime data JSON) ‖ 0³² and is not guest-chosen. Outside the stand-in Verifier's coverage.",
+      "description": "Azure TDX: the binding lives in the 64-octet HCL user-data, because the hardware REPORT_DATA there is the paravisor's SHA-256(runtime data JSON) ‖ 0³² and is not guest-chosen. Outside the delegated path's coverage.",
       "request": {
         "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
         "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
@@ -264,7 +268,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+        ]
       },
       "evidenceFile": "composite/collections/composite-full-tdx-azure.json",
       "appraisalFile": "composite/appraisals/composite-full-tdx-azure.json",
@@ -301,15 +308,6 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-azure",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
@@ -322,24 +320,38 @@
           "tcb_status": "ok"
         },
         "appraisers": {
-          "ita-stand-in": {
+          "verifier-a": {
             "ok": false,
-            "stage": "root-quote",
-            "reasonContains": "outside that coverage",
+            "stage": "coverage",
+            "reasonContains": "outside the delegated path's coverage",
             "claims": {
               "denial": {
-                "stage": "root-quote"
+                "stage": "coverage"
               },
               "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
               "schema_version": "1"
-            }
+            },
+            "note": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
+          },
+          "verifier-b": {
+            "ok": false,
+            "stage": "coverage",
+            "reasonContains": "outside the delegated path's coverage",
+            "claims": {
+              "denial": {
+                "stage": "coverage"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            },
+            "note": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
           }
         }
       }
     },
     {
       "id": "composite-full-snp-qemu",
-      "description": "Bare-metal SEV-SNP: the image identity comes from the report's MEASUREMENT rather than from TDX registers. A Verifier that appraises Intel TEEs only has no stage 1 for it at all.",
+      "description": "Bare-metal SEV-SNP: the image identity is rebuilt from the published firmware of the build the VM booted, which no quote-only Verifier reports. The delegated path denies at `coverage`, which says nothing about the evidence.",
       "request": {
         "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
         "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
@@ -347,7 +359,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+        ]
       },
       "evidenceFile": "composite/collections/composite-full-snp-qemu.json",
       "appraisalFile": "composite/appraisals/composite-full-snp-qemu.json",
@@ -400,17 +415,31 @@
           "tcb_status": "ok"
         },
         "appraisers": {
-          "ita-stand-in": {
+          "verifier-a": {
             "ok": false,
-            "stage": "root-quote",
-            "reasonContains": "outside that coverage",
+            "stage": "coverage",
+            "reasonContains": "outside the delegated path's coverage",
             "claims": {
               "denial": {
-                "stage": "root-quote"
+                "stage": "coverage"
               },
               "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
               "schema_version": "1"
-            }
+            },
+            "note": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
+          },
+          "verifier-b": {
+            "ok": false,
+            "stage": "coverage",
+            "reasonContains": "outside the delegated path's coverage",
+            "claims": {
+              "denial": {
+                "stage": "coverage"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            },
+            "note": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
           }
         }
       }
@@ -425,7 +454,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+        ]
       },
       "evidenceFile": "composite/collections/composite-full-snp-azure.json",
       "appraisalFile": "composite/appraisals/composite-full-snp-azure.json",
@@ -478,24 +510,38 @@
           "tcb_status": "ok"
         },
         "appraisers": {
-          "ita-stand-in": {
+          "verifier-a": {
             "ok": false,
-            "stage": "root-quote",
-            "reasonContains": "outside that coverage",
+            "stage": "coverage",
+            "reasonContains": "outside the delegated path's coverage",
             "claims": {
               "denial": {
-                "stage": "root-quote"
+                "stage": "coverage"
               },
               "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
               "schema_version": "1"
-            }
+            },
+            "note": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
+          },
+          "verifier-b": {
+            "ok": false,
+            "stage": "coverage",
+            "reasonContains": "outside the delegated path's coverage",
+            "claims": {
+              "denial": {
+                "stage": "coverage"
+              },
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "schema_version": "1"
+            },
+            "note": "the attester's platform is outside the delegated path's coverage: a quote-only Verifier reports no image identity for it, and this corpus records a typed denial rather than a partial verdict"
           }
         }
       }
     },
     {
       "id": "composite-snp-attested-root",
-      "description": "A membership root whose own TEE evidence is SEV-SNP, beside a TDX per-request quote. The stand-in Verifier covers the quote and not the root, and a path that cannot appraise the root must deny rather than report an unanchored chain.",
+      "description": "A membership root whose own TEE evidence is SEV-SNP, beside a TDX per-request quote. The delegated path delegates the per-request quote and appraises the membership root offline — the root's quote is part of the Super Swarm chain, not of the request — so a root the relying party's Verifier could not appraise changes nothing.",
       "request": {
         "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
         "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
@@ -503,7 +549,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-snp-attested-root.json",
       "appraisalFile": "composite/appraisals/composite-snp-attested-root.json",
@@ -525,13 +574,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -540,39 +589,15 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
-        },
-        "appraisers": {
-          "ita-stand-in": {
-            "ok": false,
-            "stage": "root-quote",
-            "reasonContains": "outside that coverage",
-            "claims": {
-              "denial": {
-                "stage": "root-quote"
-              },
-              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
-              "schema_version": "1"
-            }
-          }
         }
       }
     },
@@ -586,7 +611,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-minimal.json",
       "appraisalFile": "composite/appraisals/composite-minimal.json",
@@ -599,33 +627,23 @@
           "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "network_type": "untrusted",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "tcb_status": "ok"
         }
       }
@@ -640,7 +658,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-envelope-without-statement.json",
       "appraisalFile": "composite/appraisals/composite-envelope-without-statement.json",
@@ -655,13 +676,13 @@
           "gpu_attested": false,
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "network_type": "untrusted",
@@ -669,20 +690,10 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "tcb_status": "ok"
         }
       }
@@ -697,7 +708,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-gpu-attested.json",
       "appraisalFile": "composite/appraisals/composite-gpu-attested.json",
@@ -719,13 +733,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -734,22 +748,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -766,7 +770,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-standard-cmw-wrapper.json",
       "appraisalFile": "composite/appraisals/composite-standard-cmw-wrapper.json",
@@ -788,13 +795,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -803,22 +810,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -835,7 +832,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-unlocked-cluster-space.json",
       "appraisalFile": "composite/appraisals/composite-unlocked-cluster-space.json",
@@ -856,13 +856,13 @@
           "locked": false,
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -871,22 +871,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -903,7 +893,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-pss-privileged.json",
       "appraisalFile": "composite/appraisals/composite-pss-privileged.json",
@@ -925,13 +918,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
@@ -940,22 +933,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "privileged",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -994,13 +977,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": false,
           "namespace": "tenant-acme",
           "network_type": "untrusted",
@@ -1008,22 +991,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -1042,7 +1015,7 @@
         ],
         "now": "2026-01-15T12:00:00.000Z",
         "referenceValues": [
-          "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
         ]
       },
       "evidenceFile": "composite/collections/composite-mrenclave-from-reference-values.json",
@@ -1065,13 +1038,13 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
             "tdattributes": "0000001000000000"
           },
-          "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
           "mrenclave_approved": true,
           "mrenclave_source": "reference-values",
           "namespace": "tenant-acme",
@@ -1080,22 +1053,12 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
           "quote_verified": true,
           "root_quote_ok": true,
           "schema_version": "1",
-          "spvm_build": "build-448-release",
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
@@ -1104,7 +1067,7 @@
     },
     {
       "id": "composite-quote-only-verifier-no-image-identity",
-      "description": "A Verifier that appraises the quote and nothing else: it reports the registers and no image identity, because mrEnclave needs the RTMR0 event log replayed and normalised. Neither `mrenclave` nor `mrenclave_approved` may then appear — a policy reading `mrenclave_approved: false` would believe something was checked.",
+      "description": "An appraiser that appraises the quote and nothing else: it reports the registers and no image identity, because mrEnclave needs the RTMR0 event log replayed and normalised. Neither `mrenclave` nor `mrenclave_approved` may then appear — a policy reading `mrenclave_approved: false` would believe something was checked. The delegated profiles are the other half of the same point: handed the same quote, they replay the event list themselves and do report an identity.",
       "request": {
         "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
         "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
@@ -1112,7 +1075,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-quote-only-verifier-no-image-identity.json",
       "appraisalFile": "composite/appraisals/composite-quote-only-verifier-no-image-identity.json",
@@ -1134,7 +1100,7 @@
           "locked_at": "2026-01-15T11:45:00.000Z",
           "measurements": {
             "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
-            "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
             "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
             "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
@@ -1146,15 +1112,6 @@
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
-          "platform_security": {
-            "ciphertext_hiding": false,
-            "cpu_generation": "Emerald Rapids",
-            "debug_allowed": false,
-            "page_swap_disabled": false,
-            "report_version": 4,
-            "snp_firmware_tcb": 0,
-            "vmpl": 0
-          },
           "pod_uid": "pod-7f3a",
           "pss_enforce": "restricted",
           "quote_appraiser": "\u003cappraiser\u003e",
@@ -1164,6 +1121,98 @@
           "statement_ok": true,
           "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
           "tcb_status": "ok"
+        },
+        "appraisers": {
+          "verifier-a": {
+            "ok": true,
+            "claims": {
+              "binding_ok": true,
+              "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+              "cluster_space_id": "space-42",
+              "collateral_checked": true,
+              "envelope_ok": true,
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "gpu_attested": false,
+              "image_digests": [
+                "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+                "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "locked": true,
+              "locked_at": "2026-01-15T11:45:00.000Z",
+              "measurements": {
+                "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+                "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
+                "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+                "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+                "tdattributes": "0000001000000000"
+              },
+              "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
+              "mrenclave_approved": true,
+              "mrenclave_source": "registry",
+              "namespace": "tenant-acme",
+              "network_type": "untrusted",
+              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "pki_chain_ok": true,
+              "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+              "platform": "tdx-qemu",
+              "pod_uid": "pod-7f3a",
+              "pss_enforce": "restricted",
+              "quote_appraiser": "\u003cappraiser\u003e",
+              "quote_verified": true,
+              "root_quote_ok": true,
+              "schema_version": "1",
+              "statement_ok": true,
+              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "tcb_status": "ok"
+            },
+            "note": "the delegated path derives the image identity from the quote's own RTMR0 event list, so it reports one where a quote-only appraiser cannot"
+          },
+          "verifier-b": {
+            "ok": true,
+            "claims": {
+              "binding_ok": true,
+              "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+              "cluster_space_id": "space-42",
+              "collateral_checked": true,
+              "envelope_ok": true,
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "gpu_attested": false,
+              "image_digests": [
+                "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+                "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "locked": true,
+              "locked_at": "2026-01-15T11:45:00.000Z",
+              "measurements": {
+                "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+                "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
+                "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+                "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+                "tdattributes": "0000001000000000"
+              },
+              "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
+              "mrenclave_approved": true,
+              "mrenclave_source": "registry",
+              "namespace": "tenant-acme",
+              "network_type": "untrusted",
+              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "pki_chain_ok": true,
+              "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+              "platform": "tdx-qemu",
+              "pod_uid": "pod-7f3a",
+              "pss_enforce": "restricted",
+              "quote_appraiser": "\u003cappraiser\u003e",
+              "quote_verified": true,
+              "root_quote_ok": true,
+              "schema_version": "1",
+              "statement_ok": true,
+              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "tcb_status": "ok"
+            },
+            "note": "the delegated path derives the image identity from the quote's own RTMR0 event list, so it reports one where a quote-only appraiser cannot"
+          }
         }
       }
     },
@@ -1177,7 +1226,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-wrong-target.json",
       "appraisalFile": "composite/appraisals/composite-deny-wrong-target.json",
@@ -1204,7 +1256,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-replayed-nonce.json",
       "appraisalFile": "composite/appraisals/composite-deny-replayed-nonce.json",
@@ -1231,7 +1286,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-modified-cekpub.json",
       "appraisalFile": "composite/appraisals/composite-deny-modified-cekpub.json",
@@ -1258,7 +1316,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-binding-source-unreported.json",
       "appraisalFile": "composite/appraisals/composite-deny-binding-source-unreported.json",
@@ -1272,6 +1333,98 @@
           },
           "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
           "schema_version": "1"
+        },
+        "appraisers": {
+          "verifier-a": {
+            "ok": true,
+            "claims": {
+              "binding_ok": true,
+              "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+              "cluster_space_id": "space-42",
+              "collateral_checked": true,
+              "envelope_ok": true,
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "gpu_attested": false,
+              "image_digests": [
+                "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+                "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "locked": true,
+              "locked_at": "2026-01-15T11:45:00.000Z",
+              "measurements": {
+                "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+                "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
+                "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+                "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+                "tdattributes": "0000001000000000"
+              },
+              "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
+              "mrenclave_approved": true,
+              "mrenclave_source": "registry",
+              "namespace": "tenant-acme",
+              "network_type": "untrusted",
+              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "pki_chain_ok": true,
+              "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+              "platform": "tdx-qemu",
+              "pod_uid": "pod-7f3a",
+              "pss_enforce": "restricted",
+              "quote_appraiser": "\u003cappraiser\u003e",
+              "quote_verified": true,
+              "root_quote_ok": true,
+              "schema_version": "1",
+              "statement_ok": true,
+              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "tcb_status": "ok"
+            },
+            "note": "the delegated path reads the guest-chosen field out of the quote itself and always names which field that was, so it cannot be the appraiser this case is about"
+          },
+          "verifier-b": {
+            "ok": true,
+            "claims": {
+              "binding_ok": true,
+              "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+              "cluster_space_id": "space-42",
+              "collateral_checked": true,
+              "envelope_ok": true,
+              "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+              "gpu_attested": false,
+              "image_digests": [
+                "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+                "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "locked": true,
+              "locked_at": "2026-01-15T11:45:00.000Z",
+              "measurements": {
+                "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+                "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
+                "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+                "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+                "tdattributes": "0000001000000000"
+              },
+              "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
+              "mrenclave_approved": true,
+              "mrenclave_source": "registry",
+              "namespace": "tenant-acme",
+              "network_type": "untrusted",
+              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "pki_chain_ok": true,
+              "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+              "platform": "tdx-qemu",
+              "pod_uid": "pod-7f3a",
+              "pss_enforce": "restricted",
+              "quote_appraiser": "\u003cappraiser\u003e",
+              "quote_verified": true,
+              "root_quote_ok": true,
+              "schema_version": "1",
+              "statement_ok": true,
+              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "tcb_status": "ok"
+            },
+            "note": "the delegated path reads the guest-chosen field out of the quote itself and always names which field that was, so it cannot be the appraiser this case is about"
+          }
         }
       }
     },
@@ -1285,7 +1438,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-envelope-foreign-subject.json",
       "appraisalFile": "composite/appraisals/composite-deny-envelope-foreign-subject.json",
@@ -1312,7 +1468,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-envelope-replayed-nonce.json",
       "appraisalFile": "composite/appraisals/composite-deny-envelope-replayed-nonce.json",
@@ -1339,7 +1498,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-envelope-foreign-target.json",
       "appraisalFile": "composite/appraisals/composite-deny-envelope-foreign-target.json",
@@ -1366,7 +1528,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-envelope-foreign-node-certificate.json",
       "appraisalFile": "composite/appraisals/composite-deny-envelope-foreign-node-certificate.json",
@@ -1393,7 +1558,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-statement-of-another-pod.json",
       "appraisalFile": "composite/appraisals/composite-deny-statement-of-another-pod.json",
@@ -1420,7 +1588,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-substituted-statement-signer.json",
       "appraisalFile": "composite/appraisals/composite-deny-substituted-statement-signer.json",
@@ -1447,7 +1618,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-chain-to-another-pki-root.json",
       "appraisalFile": "composite/appraisals/composite-deny-chain-to-another-pki-root.json",
@@ -1474,7 +1648,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-statement-without-envelope.json",
       "appraisalFile": "composite/appraisals/composite-deny-statement-without-envelope.json",
@@ -1501,7 +1678,10 @@
         "trustedRoots": [
           "swarm-cloud-conformance-root"
         ],
-        "now": "2026-01-15T12:00:00.000Z"
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-gpu-token-with-invalid-envelope.json",
       "appraisalFile": "composite/appraisals/composite-deny-gpu-token-with-invalid-envelope.json",
@@ -1520,7 +1700,7 @@
     },
     {
       "id": "composite-deny-event-log-does-not-replay",
-      "description": "The RTMR0 event log the collection carries does not replay to the quote's RTMR0, so no image identity can be derived from it. The appraiser reports a failure to reach an answer, which is a denial and not an unapproved image.",
+      "description": "The RTMR0 event list the quote carries does not replay to the quote's own RTMR0, so no image identity can be derived from it. The appraiser reports a failure to reach an answer, which is a denial and not an unapproved image — and both paths reach it from the evidence rather than from a recorded verdict.",
       "request": {
         "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
         "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
@@ -1535,7 +1715,7 @@
       "expect": {
         "ok": false,
         "stage": "root-quote",
-        "reasonContains": "event log does not replay",
+        "reasonContains": "replays to",
         "claims": {
           "denial": {
             "stage": "root-quote"
@@ -1556,7 +1736,10 @@
           "swarm-cloud-conformance-root"
         ],
         "now": "2026-01-15T12:00:00.000Z",
-        "maxEvidenceAge": 60000
+        "maxEvidenceAge": 60000,
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
       },
       "evidenceFile": "composite/collections/composite-deny-stale-evidence.json",
       "appraisalFile": "composite/appraisals/composite-deny-stale-evidence.json",

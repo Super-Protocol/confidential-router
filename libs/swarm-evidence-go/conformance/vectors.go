@@ -31,35 +31,42 @@ type CompositeManifest struct {
 // through.
 //
 // Everything a delegated appraiser needs is here and nothing is in code: the
-// token format, the issuer, the verification key, the claim names and the
-// octet encoding. That is the swap acceptance of SUP-648 stated as data — two
-// profiles that differ in all of them appraise the same cases into the same
-// claims, and neither is named anywhere in an implementation.
+// token format, the issuer, the verification key and the claim mapping. That
+// is the swap acceptance of SUP-648 stated as data — two profiles that differ
+// in all of them appraise the same cases into the same claims, and neither is
+// named anywhere in an implementation.
+//
+// An "eat" profile configures the production
+// [swarmevidence.DelegatedQuoteAppraiser]; see [NewAppraiser].
 type AppraiserProfile struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	// Kind is "recorded" — the appraisal read straight out of the fixture,
-	// standing for the offline built-in appraiser — or "eat", which reads it
-	// out of a signed Entity Attestation Token.
+	// standing for the offline built-in appraiser — or "eat", which hands the
+	// quote to a Verifier and consumes the answer as an Entity Attestation
+	// Token.
 	Kind string `json:"kind"`
 
 	// TokenFormat, Issuer and VerificationKey apply to the "eat" kind.
 	TokenFormat     string  `json:"tokenFormat,omitempty"`
 	Issuer          string  `json:"issuer,omitempty"`
 	VerificationKey *EATKey `json:"verificationKey,omitempty"`
-	// OctetEncoding is how octet-valued claims are spelled in this profile's
-	// tokens: "hex" or "base64url". Verifiers disagree about this, and a
-	// corpus in which both spellings appraise identically is what shows the
-	// disagreement is configuration.
-	OctetEncoding string `json:"octetEncoding,omitempty"`
-	// ClaimNames maps each logical appraisal field to this profile's claim
-	// path, dotted for nested claims.
-	ClaimNames map[string]string `json:"claimNames,omitempty"`
+	// ClaimMapping says where this Verifier's token carries the registers,
+	// the report data and the TCB verdict, and how it spells them. It is the
+	// production configuration type, so the corpus configures the adapter a
+	// bank runs rather than a spelling only the corpus understands.
+	ClaimMapping swarmevidence.ClaimMapping `json:"claimMapping,omitzero"`
 
 	// Platforms are the attester platforms this appraiser covers. A case
 	// whose quote is outside them records no token for this profile, and the
-	// appraiser refuses with OutsideCoverage — the honest coverage of a
-	// stand-in Verifier, asserted rather than documented.
+	// appraiser denies at OutsideCoverage.Stage — the honest coverage of a
+	// delegated path, asserted rather than documented.
+	//
+	// It is declared rather than derived because the generator reads it too,
+	// to decide whether to record a token at all; the appraiser's own
+	// coverage is the production one, and a profile claiming a platform the
+	// delegated path does not cover would be contradicted by the first case
+	// that used it.
 	Platforms       []string         `json:"platforms,omitempty"`
 	OutsideCoverage *CoverageRefusal `json:"outsideCoverage,omitempty"`
 }
@@ -120,8 +127,19 @@ type CompositeRequest struct {
 	TrustedRoots   []string `json:"trustedRoots"`
 	Now            string   `json:"now"`
 	// MaxEvidenceAge is in milliseconds; absent disables the check.
-	MaxEvidenceAge  *int64   `json:"maxEvidenceAge,omitempty"`
+	MaxEvidenceAge *int64 `json:"maxEvidenceAge,omitempty"`
+	// ReferenceValues are the image identities this relying party accepts
+	// besides the registry-signed ones, hex.
 	ReferenceValues []string `json:"referenceValues,omitempty"`
+	// RegistrySignedMeasurements are the image identities Super Protocol's
+	// signed-measurement registry vouches for, hex.
+	//
+	// It is part of the case because an appraiser that derives the image
+	// identity itself must then ask who vouches for it, and both paths have
+	// to be asked the same question. A case whose image nobody signed
+	// declares none, and `mrenclave_approved: false` is then a claim the
+	// policy decides on rather than a failure to consult the registry.
+	RegistrySignedMeasurements []string `json:"registrySignedMeasurements,omitempty"`
 }
 
 // CompositeExpect is the verdict and the claim set a case pins.
@@ -137,6 +155,10 @@ type CompositeExpect struct {
 	Stage          string         `json:"stage,omitempty"`
 	ReasonContains string         `json:"reasonContains,omitempty"`
 	Claims         map[string]any `json:"claims"`
+	// Note says why a per-profile override differs, for the cases where a
+	// profile legitimately reaches another answer. It is documentation, never
+	// asserted.
+	Note string `json:"note,omitempty"`
 	// Appraisers overrides the expectation for the named profiles. An absent
 	// entry means the profile must reach exactly the expectation above —
 	// which is the whole point: the claim set is the appraiser's, and
@@ -163,16 +185,29 @@ type AppraisalFile struct {
 	Description string            `json:"description"`
 	Root        RecordedAppraisal `json:"root"`
 	Quote       RecordedAppraisal `json:"quote"`
-	// EAT holds, per appraiser profile name, the same two appraisals as
-	// signed tokens. A profile missing from the map does not cover this
-	// case's platform.
+	// EAT holds, per appraiser profile name, the Verifier's own answer about
+	// this case's quote as a signed token. Only the per-request quote is
+	// recorded: the membership root's embedded quote is appraised by the
+	// built-in offline appraiser on the delegated path too, which is the
+	// architecture rather than a limit of the corpus (see
+	// [swarmevidence.DelegatedQuoteAppraiser.RootAppraiser]).
 	EAT map[string]RecordedTokens `json:"eat,omitempty"`
 }
 
-// RecordedTokens is one profile's pair of tokens for a case.
+// RecordedTokens is what one profile's Verifier answered about this case's
+// quote, keyed by the lowercase hex SHA-256 of the serialised TeeEvidence it
+// appraises — the shape [swarmevidence.RecordedTokens] replays.
+//
+// Keying by the evidence digest rather than by position is what makes a
+// recorded token a token *about this quote*: a corpus that handed the
+// appraiser whatever token sat beside the case would still pass if the two
+// drifted apart.
+//
+// An empty map is how the corpus states a coverage limit: the delegated path
+// denies at [swarmevidence.StageCoverage] before it asks a Verifier anything,
+// so there is no token to record.
 type RecordedTokens struct {
-	Root  string `json:"root"`
-	Quote string `json:"quote"`
+	Tokens map[string]string `json:"tokens"`
 }
 
 // RecordedAppraisal is a quote appraisal in the neutral spelling: the claim

@@ -286,19 +286,26 @@ Three things follow from pinning the whole claim set rather than a verdict:
   agreed on "appraisable" and disagreed on `locked` would both pass a
   verdict-shaped corpus and hand a bank's policy two different answers.
 - **The appraiser is configuration.** The composite corpus declares two
-  EAT-emitting profiles whose claim names, octet encodings, issuers and
-  signing keys all differ, and both must produce the claim set the recorded
-  offline appraisal produces — the only claim allowed to differ is
-  `quote_appraiser`, which names the appraiser. Nothing in this module names
-  either profile.
-- **Coverage is asserted, not described.** A profile that cannot appraise a
-  case's platform returns a typed denial, and the case says so. That is how
-  "the stand-in Verifier covers bare-metal and GCP TDX" stops being a footnote.
+  EAT-emitting profiles whose claim paths, encodings, issuers and signing keys
+  all differ, and both must produce the claim set the recorded offline
+  appraisal produces — the only claim allowed to differ is `quote_appraiser`,
+  which names the appraiser. Nothing in this module names either profile, and
+  neither is named after a real Verifier.
+- **The vectors exercise what a bank runs.** An `eat` profile configures
+  [`DelegatedQuoteAppraiser`](delegated.go) itself — the production JWS check,
+  the production claim mapping, the production image identity derived from the
+  quote's own RTMR0 event list. There is one EAT implementation in this
+  module; a second one living in the harness would be a corpus that agreed
+  with itself.
+- **Coverage is asserted, not described.** A platform the delegated path
+  cannot appraise is denied at `coverage`, and the case says so. That is how
+  "the delegated path covers bare-metal and GCP TDX" stops being a footnote.
 
 What the corpus does not cover is the vendor signature itself: no fixture can
 carry a TDX or SEV-SNP signature over a request this repository invented, so
-the quote appraisal is recorded and everything downstream of it is pinned.
-That half is covered against real recorded evidence in
+the quote's ECDSA signature is filler and everything else — the registers, the
+event replay, the image identity and the whole claim set downstream of them —
+is pinned. The signature half is covered against real recorded evidence in
 `attestation/attestedroot`.
 
 ```bash
