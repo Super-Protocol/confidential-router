@@ -207,6 +207,12 @@ func TestSchemaEnumsMatchConstants(t *testing.T) {
 			string(swarmevidence.SourceRegistry),
 			string(swarmevidence.SourceReferenceValues),
 		}},
+		{[]string{"statement_signer_binding"}, []string{
+			string(swarmevidence.SignerBindingQuote),
+			string(swarmevidence.SignerBindingAttestedCertificate),
+			string(swarmevidence.SignerBindingSecret),
+			string(swarmevidence.SignerBindingUnknown),
+		}},
 		{[]string{"denial", "properties", "stage"}, []string{
 			string(swarmevidence.StageOptions),
 			string(swarmevidence.StageBlob),

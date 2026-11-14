@@ -85,6 +85,25 @@ func TestRealAppraisalsValidateAgainstTheSchema(t *testing.T) {
 			return claims
 		},
 	}, {
+		// Every value of the signer-binding enum, produced rather than
+		// written by hand: the claim is the one a bank's policy engine
+		// matches on literally, so each word has to survive the validator it
+		// will be run through.
+		name: "a composite appraisal of a token-challenged statement signer",
+		claims: func(t *testing.T) swarmevidence.SwarmClaims {
+			return appraiseWithSignerChallenge(t, "token", "")
+		},
+	}, {
+		name: "a composite appraisal of a certificate-challenged statement signer",
+		claims: func(t *testing.T) swarmevidence.SwarmClaims {
+			return appraiseWithSignerChallenge(t, "certificate", "tdx")
+		},
+	}, {
+		name: "a composite appraisal of an unlabelled statement signer",
+		claims: func(t *testing.T) swarmevidence.SwarmClaims {
+			return appraiseWithSignerChallenge(t, "", "")
+		},
+	}, {
 		name: "a denial",
 		claims: func(t *testing.T) swarmevidence.SwarmClaims {
 			composite := newComposite(t)
@@ -126,6 +145,9 @@ func TestSchemaPatternsRefuseMalformedClaims(t *testing.T) {
 		{"a network type outside the published set", "network_type", "semi-trusted"},
 		{"a channel binding outside the published set", "channel_binding", "assumed"},
 		{"an mrenclave source outside the published set", "mrenclave_source", "vibes"},
+		{"a signer binding outside the published set", "statement_signer_binding", "hardware"},
+		{"a signer binding the TypeScript reader spells differently",
+			"statement_signer_binding", "attestedCertificate"},
 		{"a claim nobody declared", "pod_colour", "green"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

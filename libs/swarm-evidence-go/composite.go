@@ -354,6 +354,13 @@ func checkEnvelopeRequest(envelope *NodeRequestEnvelope, opts Options) *Denial {
 // it — and it is what lets one PEM file carry both the node's certificate and
 // the per-leader signer's, which are different leaves of the same PKI
 // (SUP-636).
+//
+// What the search does *not* establish is which of those leaves this is. The
+// authority marks a per-leader signer with nothing a node leaf does not also
+// carry — no role extension, no EKU, no name constraint — so there is nothing
+// here to refuse on (SUP-696). What the appraisal reports instead is how the
+// authority was persuaded to issue the leaf, as `statement_signer_binding`;
+// what that is worth is the policy's decision.
 func verifyStatement(
 	parsed *collection, pool *attestation.CertPool, opts Options,
 ) (*verifiedStatement, *Denial) {
@@ -367,7 +374,7 @@ func verifyStatement(
 			"attester does not have is omitted, never carried empty", ElementStatement)
 	}
 
-	body, signer, denial := verifyUnderPool(jws, pool, opts)
+	body, signerChain, denial := verifyUnderPool(jws, pool, opts)
 	if denial != nil {
 		return nil, denial
 	}
@@ -401,24 +408,34 @@ func verifyStatement(
 	if denial := checkIssuedAt("statement", statement.IssuedAt, opts); denial != nil {
 		return nil, denial
 	}
-	return &verifiedStatement{statement: &statement, hash: hash, signer: signer}, nil
+	return &verifiedStatement{
+		statement: &statement,
+		hash:      hash,
+		signer:    signerChain.LeafFingerprint,
+		// Read off the chain this signature actually verified under, and only
+		// after it validated to a pinned root: before that the extensions are
+		// attacker-supplied text rather than the authority's record.
+		binding: signerBindingOf(attestation.ReadSignerBinding(signerChain).Kind),
+	}, nil
 }
 
-// verifiedStatement is a statement that verified, together with the two things
+// verifiedStatement is a statement that verified, together with the things
 // about it the rest of the appraisal needs: the hash the envelope must name,
-// recomputed rather than taken from the signature, and who signed it.
+// recomputed rather than taken from the signature, who signed it, and what
+// that signer's certificate proves about the signing key.
 type verifiedStatement struct {
 	statement *WorkloadStatement
 	hash      string
 	signer    string
+	binding   SignerBindingKind
 }
 
 // verifyUnderPool finds the certificate in the pool whose chain reaches a
 // pinned root and whose key the JWS verifies under, and returns the payload
-// and that certificate's fingerprint.
+// and that certificate's validated chain.
 func verifyUnderPool(
 	jws string, pool *attestation.CertPool, opts Options,
-) ([]byte, string, *Denial) {
+) ([]byte, *attestation.ParsedChain, *Denial) {
 	var chainErr, signatureErr error
 	for i := range pool.Len() {
 		chain, err := pool.ChainTo(i, opts.now())
@@ -435,19 +452,39 @@ func verifyUnderPool(
 			signatureErr = err
 			continue
 		}
-		return body, chain.LeafFingerprint, nil
+		return body, chain, nil
 	}
 	switch {
 	case signatureErr != nil:
-		return nil, "", denyf(StageStatement,
+		return nil, nil, denyf(StageStatement,
 			"no certificate in the %q element that chains to a pinned root signed this statement "+
 				"(last signature failure: %v)", ElementMembership, signatureErr)
 	case chainErr != nil:
-		return nil, "", denyf(StageStatement,
+		return nil, nil, denyf(StageStatement,
 			"no certificate in the %q element chains to a pinned root: %v", ElementMembership, chainErr)
 	default:
-		return nil, "", denyf(StageStatement, "the %q element carries no usable signer certificate",
+		return nil, nil, denyf(StageStatement, "the %q element carries no usable signer certificate",
 			ElementMembership)
+	}
+}
+
+// signerBindingOf renames the attestation package's verdict in the claim
+// core's vocabulary, by an explicit switch rather than a cast.
+//
+// A kind this build does not know must degrade to `unknown`, which is the
+// fail-closed value: a policy reading it requires something and refuses. A
+// cast would publish a word the schema does not list, and a policy matching
+// on these strings literally would fall through to its default.
+func signerBindingOf(kind attestation.SignerBindingKind) SignerBindingKind {
+	switch kind {
+	case attestation.SignerBindingQuote:
+		return SignerBindingQuote
+	case attestation.SignerBindingAttestedCertificate:
+		return SignerBindingAttestedCertificate
+	case attestation.SignerBindingSecret:
+		return SignerBindingSecret
+	default:
+		return SignerBindingUnknown
 	}
 }
 
@@ -577,6 +614,11 @@ func compositeClaims(
 		pod := statement.statement
 		claims.StatementOK = boolOf(true)
 		claims.StatementSignerFingerprint = statement.signer
+		// Always reported beside a verified statement, `unknown` included: a
+		// policy that requires a hardware-bound signer needs to be able to
+		// tell "the leaf says nothing" from "the claim was not produced by
+		// this build", and only a value it can read says the first.
+		claims.StatementSignerBinding = statement.binding
 		claims.PodUID = pod.Pod.UID
 		claims.Namespace = pod.Pod.Namespace
 		claims.ClusterSpaceID = derefString(pod.ClusterSpace.ID)

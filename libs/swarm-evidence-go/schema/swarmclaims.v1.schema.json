@@ -150,6 +150,11 @@
       "description": "Whether that signature verified and chained to the pinned root.",
       "type": "boolean"
     },
+    "statement_signer_binding": {
+      "description": "What the signer's certificate proves about the key that signed the statement - the authority's own record of the enrolment challenge it certified that key against. \"quote\" is a quote from measured hardware committed to this key; \"attested-certificate\" a certificate the authority had itself issued against a hardware challenge; \"secret\" a bearer token every node of the swarm holds; \"unknown\" a leaf carrying no challenge extension this contract recognises. Reported, never enforced: a policy that wants a hardware-bound signer must read this claim and supply a denying default, because `unknown` and an absent claim both mean nothing was established. Composite form only.",
+      "type": "string",
+      "enum": ["quote", "attested-certificate", "secret", "unknown"]
+    },
 
     "envelope_ok": {
       "description": "Whether the node-signed NodeRequestEnvelope verified and chained to the pinned root through the node certificate.",

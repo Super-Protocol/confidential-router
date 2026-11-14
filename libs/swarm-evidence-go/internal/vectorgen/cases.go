@@ -138,6 +138,19 @@ func cases() []caseSpec {
 			e["gpu_attestation_token_sha256"] = b64(sha256Of([]byte("nvidia attestation token")))
 		},
 	}, {
+		id: "composite-unlabelled-statement-signer",
+		description: "The statement is signed by a leaf carrying no challenge extension — a chain " +
+			"from outside this PKI, or one issued before the authority recorded the enrolment. The " +
+			"appraisal still verifies the signature and still reports " +
+			"`statement_signer_binding: unknown`, because a policy that requires a hardware-bound " +
+			"signer has to be able to tell an unlabelled leaf from a claim this build did not " +
+			"produce. Nothing here is refused: what the binding is worth is the policy's decision.",
+		platform:        swarmevidence.PlatformTDXQemu,
+		statementSigner: func(m *material) *testca.Cert { return m.unlabelledSigner },
+		membership: func(m *material) []*testca.Cert {
+			return []*testca.Cert{m.node, m.unlabelledSigner, m.inter, m.root}
+		},
+	}, {
 		id: "composite-standard-cmw-wrapper",
 		description: "The same parts under the CMW JSON collection of draft-ietf-rats-msg-wrap. The " +
 			"relying party runs one Verifier of its own choosing, and a collection carrying the same " +
@@ -779,6 +792,7 @@ func (m *material) soundClaims(
 
 		claims["statement_ok"] = true
 		claims["statement_signer_fingerprint"] = in.signer.Fingerprint()
+		claims["statement_signer_binding"] = declaredSignerBinding(in.signer)
 		claims["pod_uid"] = pod["uid"]
 		claims["namespace"] = pod["namespace"]
 		claims["locked"] = space["locked"]
@@ -796,6 +810,32 @@ func (m *material) soundClaims(
 		}
 	}
 	return claims, nil
+}
+
+// declaredSignerBinding is what the statement signer's certificate records
+// about the key that signed, read off the template the case minted it from.
+//
+// It is written out here rather than taken from the package under test, like
+// every other expectation in this generator: the mapping from a challenge the
+// authority certified against to the word a policy matches on is the contract,
+// and a corpus that asked the verifier for it would assert nothing.
+func declaredSignerBinding(signer *testca.Cert) string {
+	hardware := map[string]bool{
+		"tdx": true, "tdx-google": true, "tdx-azure": true,
+		"sev-snp": true, "sev-snp-azure": true,
+	}
+	switch challenge := signer.Template.ChallengeType; {
+	case hardware[challenge]:
+		return string(swarmevidence.SignerBindingQuote)
+	case challenge == "certificate" && hardware[signer.Template.ChallengeSubtype]:
+		return string(swarmevidence.SignerBindingAttestedCertificate)
+	case challenge == "certificate" || challenge == "":
+		// A certificate challenge with no hardware behind it says as little
+		// as no extension at all, and both fail closed.
+		return string(swarmevidence.SignerBindingUnknown)
+	default:
+		return string(swarmevidence.SignerBindingSecret)
+	}
 }
 
 // denialClaims is the only claim set a refused appraisal may produce: the

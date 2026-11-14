@@ -46,6 +46,7 @@ var (
 // re-running the generator produces byte-identical vectors.
 type material struct {
 	root, inter, node, signer   *testca.Cert
+	unlabelledSigner            *testca.Cert
 	foreignRoot, foreignNode    *testca.Cert
 	verifierAKey, verifierBKey  *testca.Key
 	keysDir, vectorsDir, outDir string
@@ -74,12 +75,28 @@ func newMaterial(keysDir, vectorsDir string) (*material, error) {
 			KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		}
 	}
+	// A device-enrolled end-entity leaf: the authority certified the key
+	// against a quote from the measured image, and records that challenge in
+	// the extension the signer-binding claim is read from (SUP-697). Both the
+	// node's leaf and the per-leader signer's carry it, and neither carries
+	// anything that says which of the two it is — the PKI draws no such
+	// distinction (SUP-696).
 	ee := func(cn string, serial int64) testca.Template {
 		return testca.Template{
 			CommonName: cn, NotBefore: from, NotAfter: until,
 			MaxPathLen: -1, Serial: big.NewInt(serial),
-			KeyUsage: x509.KeyUsageDigitalSignature,
+			KeyUsage:      x509.KeyUsageDigitalSignature,
+			ChallengeType: "tdx",
 		}
+	}
+	// An end-entity leaf with no challenge extension at all: a chain from
+	// outside this PKI, or one issued before the authority recorded the
+	// challenge. The corpus carries it so that `unknown` is pinned as a
+	// produced value rather than as prose.
+	unlabelled := func(cn string, serial int64) testca.Template {
+		template := ee(cn, serial)
+		template.ChallengeType = ""
+		return template
 	}
 
 	issue := func(name string, template testca.Template, issuer *testca.Cert) (*testca.Cert, error) {
@@ -101,6 +118,13 @@ func newMaterial(keysDir, vectorsDir string) (*material, error) {
 		return nil, err
 	}
 	if m.signer, err = issue("composite-signer", ee("leader.swarm-cloud-test", 4), m.inter); err != nil {
+		return nil, err
+	}
+	// Minted from the signer's own key: the case it serves is about what the
+	// *certificate* records, so the key being the same keeps the difference
+	// down to the one extension.
+	if m.unlabelledSigner, err = issue("composite-signer",
+		unlabelled("leader.swarm-cloud-test", 7), m.inter); err != nil {
 		return nil, err
 	}
 	if m.foreignRoot, err = issue("composite-foreign-root", ca("Some Other Cloud Root", 5), nil); err != nil {
