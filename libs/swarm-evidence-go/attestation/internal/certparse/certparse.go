@@ -23,7 +23,9 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
@@ -96,6 +98,17 @@ type Certificate struct {
 	// KeyUsage
 	KeyUsagePresent bool
 	KeyUsage        x509.KeyUsage
+
+	// Extensions are every extension the certificate carries, in DER order
+	// and unparsed.
+	//
+	// They are kept because the attestation extensions this PKI stamps — the
+	// enrolment challenge a key was certified against, the TEE evidence a CA
+	// enrolled with — are read off a certificate by OID, and this parser
+	// exists precisely for the certificates crypto/x509 will not parse at
+	// all. A caller that could not reach them here would have no second way
+	// in.
+	Extensions []pkix.Extension
 }
 
 type tbsCertificate struct {
@@ -281,6 +294,7 @@ func (c *Certificate) parsePublicKey(spki publicKeyInfo) error {
 }
 
 func (c *Certificate) parseExtensions(extensions []pkix.Extension) error {
+	c.Extensions = extensions
 	for _, ext := range extensions {
 		switch {
 		case ext.Id.Equal(oidExtBasicConstraints):
@@ -363,4 +377,54 @@ func (c *Certificate) CheckSignature(algorithm asn1.ObjectIdentifier, signed, si
 	default:
 		return errf("certificate carries no usable public key")
 	}
+}
+
+// Extension returns the value of the extension the OID names, and whether the
+// certificate carries it. A repeated OID — which RFC 5280 forbids — yields the
+// first occurrence, so two copies cannot make the answer depend on iteration
+// order.
+func (c *Certificate) Extension(oid asn1.ObjectIdentifier) ([]byte, bool) {
+	for _, ext := range c.Extensions {
+		if ext.Id.Equal(oid) {
+			return ext.Value, true
+		}
+	}
+	return nil, false
+}
+
+// ExtensionText reads an extension whose value the platform writes as bare
+// ASCII rather than as a DER string.
+//
+// Generators disagree about whether to wrap such a value in an OCTET STRING or
+// a UTF8String, so a wrapper is unwrapped when the whole value is one and the
+// bare bytes are used otherwise. Both spellings denote the same extension, and
+// refusing one of them would reject certificates the platform's own verifier
+// accepts. Surrounding whitespace and control bytes are stripped either way,
+// so a value a future generator wraps differently degrades to an unrecognised
+// string — which every caller fails closed on — rather than to a wrong answer.
+func ExtensionText(value []byte) string {
+	if unwrapped, ok := unwrapDERString(value); ok {
+		return unwrapped
+	}
+	return trimText(string(value))
+}
+
+func unwrapDERString(value []byte) (string, bool) {
+	var octets []byte
+	if rest, err := asn1.Unmarshal(value, &octets); err == nil && len(rest) == 0 {
+		return trimText(string(octets)), true
+	}
+	var text string
+	if rest, err := asn1.Unmarshal(value, &text); err == nil && len(rest) == 0 {
+		return trimText(text), true
+	}
+	return "", false
+}
+
+// trimText strips the surrounding whitespace and control bytes an extension
+// value may carry, matching libs/swarm-attestation/src/signer-binding.ts.
+func trimText(text string) string {
+	return strings.TrimFunc(text, func(r rune) bool {
+		return r <= 0x1f || r == 0x7f || unicode.IsSpace(r)
+	})
 }

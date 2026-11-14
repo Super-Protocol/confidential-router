@@ -128,9 +128,9 @@ What it establishes, and what each step would otherwise leave open:
    are this request's — `envelope_ok`, `node_cert_fingerprint`.
 5. **The leader's statement** verifies under a signer that chains to the
    pinned root, and its signed `statement_hash` is the hash of its own body —
-   `statement_ok`, `statement_signer_fingerprint`, and the pod claims
-   `pod_uid`, `namespace`, `cluster_space_id`, `image_digests`, `locked`,
-   `locked_at`, `pss_enforce`.
+   `statement_ok`, `statement_signer_fingerprint`,
+   `statement_signer_binding`, and the pod claims `pod_uid`, `namespace`,
+   `cluster_space_id`, `image_digests`, `locked`, `locked_at`, `pss_enforce`.
 6. **The pairing**: the envelope binds the statement in hand and the pod that
    statement is about. Without this a requester in an *unlocked* cluster space
    could take a quote over its own key and attach a locked neighbour's
@@ -147,6 +147,25 @@ substitution shape itself. The consequence a policy author should hold on to:
 and `envelope_ok` remain separate claims, because they answer different
 questions, but neither being absent can leave a policy reading pod facts that
 nothing binds to its request.
+
+**Who signed the statement is a second footgun of the same shape.** The signer
+is *found* rather than named — every certificate in the membership bag that
+chains to a pinned root is tried until one verifies — and the authority marks a
+per-leader signer with nothing a node leaf does not also carry: no role
+extension, no EKU, no name constraint, and a subject name derived from the
+measurement, identical for both leaves of one image (SUP-696). So `statement_ok`
+true means "some leaf of the pinned PKI signed this", and nothing narrower.
+What the appraisal reports instead is **how the authority was persuaded to issue
+that leaf** — `statement_signer_binding`, one of `quote`,
+`attested-certificate`, `secret` or `unknown`, read off the leaf's
+challenge-type extensions. A `token`-issued leaf and a quote-issued one chain to
+the same root and are otherwise indistinguishable, so a policy that wants a
+hardware-bound signer has to read this claim, and has to supply a **denying
+default**: `unknown` and the claim being absent both mean nothing was
+established, and reading either as hardware-bound is worse than not checking,
+because it looks like a check. Nothing in the core enforces it — which bindings
+an enterprise accepts is policy, not a fact about the evidence, exactly as in
+the TypeScript verifier's `requireHardwareBoundSigner`.
 
 `gpu_attested` comes from the envelope's `gpu_attestation_token_sha256` and
 never from the quote: the binding digest owns all 64 octets of the guest-chosen

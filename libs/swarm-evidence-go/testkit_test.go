@@ -85,8 +85,13 @@ func newFixture(t *testing.T) *fixture {
 
 	f.stray = issue(t, ee(testSubject), testca.RSA, issue(t, ca("Some Other Cloud Root"), testca.RSA, nil))
 
-	f.node = issue(t, ee("node-01.swarm-cloud-test"), testca.RSA, f.inter)
-	f.signer = issue(t, ee("leader.swarm-cloud-test"), testca.RSA, f.inter)
+	// Both composite signers are device-enrolled leaves of the same PKI: the
+	// authority certified each key against a quote from the measured image it
+	// runs on, and records that as the challenge type the signer-binding
+	// claim is read from (SUP-697). Nothing distinguishes the two leaves'
+	// roles, which is the point — see composite_signerbinding_test.go.
+	f.node = issue(t, hardwareChallenged(ee("node-01.swarm-cloud-test")), testca.RSA, f.inter)
+	f.signer = issue(t, hardwareChallenged(ee("leader.swarm-cloud-test")), testca.RSA, f.inter)
 	f.foreign = issue(t, ee("node-01.other-cloud"), testca.RSA,
 		issue(t, ca("Some Other Cloud Root"), testca.RSA, nil))
 	return f

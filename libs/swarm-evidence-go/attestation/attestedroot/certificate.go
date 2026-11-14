@@ -7,7 +7,8 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/Super-Protocol/confidential-router/libs/swarm-evidence-go/attestation/internal/certparse"
 )
 
 // The OIDs a Super Swarm root certificate carries. They are the constants of
@@ -101,27 +102,9 @@ func BindsPublicKey(reportData []byte, spkiDigest [32]byte) bool {
 }
 
 // extensionText reads an extension whose value the platform writes as bare
-// ASCII rather than as a DER string.
-//
-// Generators disagree about whether to wrap such a value in an OCTET STRING or
-// a UTF8String, so a wrapper is unwrapped when the whole value is one and the
-// bare bytes are used otherwise. Both spellings denote the same extension, and
-// refusing one of them would reject roots the platform's own verifier accepts.
+// ASCII rather than as a DER string. The unwrapping rules are shared with the
+// signer-binding reader, so the two cannot disagree about what a challenge
+// type extension says.
 func extensionText(value []byte) string {
-	if unwrapped, ok := unwrapDERString(value); ok {
-		return unwrapped
-	}
-	return strings.TrimSpace(string(value))
-}
-
-func unwrapDERString(value []byte) (string, bool) {
-	var octets []byte
-	if rest, err := asn1.Unmarshal(value, &octets); err == nil && len(rest) == 0 {
-		return strings.TrimSpace(string(octets)), true
-	}
-	var text string
-	if rest, err := asn1.Unmarshal(value, &text); err == nil && len(rest) == 0 {
-		return strings.TrimSpace(text), true
-	}
-	return "", false
+	return certparse.ExtensionText(value)
 }

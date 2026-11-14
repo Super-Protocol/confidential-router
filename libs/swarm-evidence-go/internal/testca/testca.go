@@ -46,6 +46,16 @@ var (
 	oidExtKeyUsage         = asn1.ObjectIdentifier{2, 5, 29, 15}
 )
 
+// The private extension OIDs the PKI authority stamps its record of an
+// enrolment into. They are exported so a test can mint the same extension
+// with a value this package would not write — a DER-wrapped string, an
+// unrecognised challenge type — without restating the OID.
+var (
+	OIDChallengeType    = asn1.ObjectIdentifier{1, 3, 6, 1, 3, 8888, 1, 1}
+	OIDChallengeSubtype = asn1.ObjectIdentifier{1, 3, 6, 1, 3, 8888, 1, 1, 1}
+	OIDTEEEvidence      = asn1.ObjectIdentifier{0, 6, 9, 42, 840, 113741, 1337, 6}
+)
+
 // Key is a minted key pair together with the certificate that carries it.
 type Key struct {
 	Algorithm Algorithm
@@ -141,6 +151,18 @@ type Template struct {
 	// so every certificate in them is minted from a fixed key and a fixed
 	// serial.
 	Serial *big.Int
+	// ChallengeType and ChallengeSubtype stamp the authority's record of the
+	// enrolment challenge the key was certified against, in the private
+	// extensions the PKI writes for every certificate it issues. Empty omits
+	// the extension, which is what a leaf issued before the authority
+	// recorded the challenge looks like.
+	ChallengeType    string
+	ChallengeSubtype string
+	// TEEEvidence stamps the TEE-evidence extension; nil omits it.
+	TEEEvidence []byte
+	// ExtraExtensions are stamped verbatim, for the cases that are about how
+	// a value is *encoded* rather than what it says.
+	ExtraExtensions []pkix.Extension
 }
 
 // Issue mints a certificate for key, signed by issuer. A nil issuer makes it
@@ -378,7 +400,27 @@ func marshalExtensions(template Template) ([]pkix.Extension, error) {
 		extensions = append(extensions, pkix.Extension{Id: oidExtKeyUsage, Critical: true, Value: value})
 	}
 
-	return extensions, nil
+	// The authority writes the challenge extensions as bare ASCII, with no
+	// DER wrapper — confirmed against a certificate a real authority issued,
+	// and the spelling the readers on both sides are written for. A test that
+	// needs the wrapped spelling supplies it through ExtraExtensions.
+	for _, ext := range []struct {
+		oid   asn1.ObjectIdentifier
+		value string
+	}{
+		{OIDChallengeType, template.ChallengeType},
+		{OIDChallengeSubtype, template.ChallengeSubtype},
+	} {
+		if ext.value != "" {
+			extensions = append(extensions, pkix.Extension{Id: ext.oid, Value: []byte(ext.value)})
+		}
+	}
+	if len(template.TEEEvidence) > 0 {
+		extensions = append(extensions,
+			pkix.Extension{Id: OIDTEEEvidence, Value: template.TEEEvidence})
+	}
+
+	return append(extensions, template.ExtraExtensions...), nil
 }
 
 // trimBitString drops trailing zero bits, as RFC 5280 requires for KeyUsage.

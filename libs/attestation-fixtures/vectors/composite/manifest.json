@@ -180,7 +180,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -191,7 +191,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -242,7 +243,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-gcp",
@@ -253,7 +254,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -304,7 +306,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-azure",
@@ -316,7 +318,8 @@
           "schema_version": "1",
           "spvm_build": "build-448-release",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         },
         "appraisers": {
@@ -390,7 +393,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "snp-qemu",
@@ -411,7 +414,8 @@
           "schema_version": "1",
           "spvm_build": "build-448-release",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         },
         "appraisers": {
@@ -485,7 +489,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "snp-azure",
@@ -506,7 +510,8 @@
           "schema_version": "1",
           "spvm_build": "build-448-release",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         },
         "appraisers": {
@@ -585,7 +590,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -596,7 +601,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -686,7 +692,7 @@
           "mrenclave_approved": true,
           "mrenclave_source": "registry",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -744,7 +750,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -755,7 +761,71 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
+          "tcb_status": "ok"
+        }
+      }
+    },
+    {
+      "id": "composite-unlabelled-statement-signer",
+      "description": "The statement is signed by a leaf carrying no challenge extension — a chain from outside this PKI, or one issued before the authority recorded the enrolment. The appraisal still verifies the signature and still reports `statement_signer_binding: unknown`, because a policy that requires a hardware-bound signer has to be able to tell an unlabelled leaf from a claim this build did not produce. Nothing here is refused: what the binding is worth is the policy's decision.",
+      "request": {
+        "freshnessInput": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "target": "aHR0cHM6Ly92YXVsdC5iYW5rLmV4YW1wbGUvdjEvcGF5bWVudHMtZGI",
+        "subject": "MFkwE0NFS3B1YiBTdWJqZWN0UHVibGljS2V5SW5mbyBERVI",
+        "trustedRoots": [
+          "swarm-cloud-conformance-root"
+        ],
+        "now": "2026-01-15T12:00:00.000Z",
+        "registrySignedMeasurements": [
+          "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4"
+        ]
+      },
+      "evidenceFile": "composite/collections/composite-unlabelled-statement-signer.json",
+      "appraisalFile": "composite/appraisals/composite-unlabelled-statement-signer.json",
+      "expect": {
+        "ok": true,
+        "claims": {
+          "binding_ok": true,
+          "binding_subject_digest": "7a4963da6aa92a9be1848d6db3d4b8375effcb570dad278dcbbb8b652c3dcd58",
+          "cluster_space_id": "space-42",
+          "collateral_checked": true,
+          "envelope_ok": true,
+          "freshness_input": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+          "gpu_attested": false,
+          "image_digests": [
+            "sha256:a100000000000000000000000000000000000000000000000000000000000000",
+            "sha256:b200000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "locked": true,
+          "locked_at": "2026-01-15T11:45:00.000Z",
+          "measurements": {
+            "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+            "rtmr0": "ae7038a8d58c859e182329e11e5445316ded750b5cd793b5fa73cbcc5535a9b8bd9b7951cfce3e010acce2bb3ac3d032",
+            "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+            "tdattributes": "0000001000000000"
+          },
+          "mrenclave": "85ae2a0acd0e1a5437c6d569813dbaaf8b655b104f89a91413a3def349642af4",
+          "mrenclave_approved": true,
+          "mrenclave_source": "registry",
+          "namespace": "tenant-acme",
+          "network_type": "untrusted",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
+          "pki_chain_ok": true,
+          "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
+          "platform": "tdx-qemu",
+          "pod_uid": "pod-7f3a",
+          "pss_enforce": "restricted",
+          "quote_appraiser": "\u003cappraiser\u003e",
+          "quote_verified": true,
+          "root_quote_ok": true,
+          "schema_version": "1",
+          "statement_ok": true,
+          "statement_signer_binding": "unknown",
+          "statement_signer_fingerprint": "sha256/coFrhUdVZId0YSy5XMFfaaBgEoTKMymnezZp4xOh0i0",
           "tcb_status": "ok"
         }
       }
@@ -806,7 +876,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -817,7 +887,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -867,7 +938,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -878,7 +949,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -929,7 +1001,7 @@
           "mrenclave_source": "registry",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -940,7 +1012,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -987,7 +1060,7 @@
           "mrenclave_approved": false,
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -998,7 +1071,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -1049,7 +1123,7 @@
           "mrenclave_source": "reference-values",
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -1060,7 +1134,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         }
       }
@@ -1108,7 +1183,7 @@
           },
           "namespace": "tenant-acme",
           "network_type": "untrusted",
-          "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+          "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
           "pki_chain_ok": true,
           "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
           "platform": "tdx-qemu",
@@ -1119,7 +1194,8 @@
           "root_quote_ok": true,
           "schema_version": "1",
           "statement_ok": true,
-          "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+          "statement_signer_binding": "quote",
+          "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
           "tcb_status": "ok"
         },
         "appraisers": {
@@ -1152,7 +1228,7 @@
               "mrenclave_source": "registry",
               "namespace": "tenant-acme",
               "network_type": "untrusted",
-              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
               "pki_chain_ok": true,
               "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
               "platform": "tdx-qemu",
@@ -1163,7 +1239,8 @@
               "root_quote_ok": true,
               "schema_version": "1",
               "statement_ok": true,
-              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "statement_signer_binding": "quote",
+              "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
               "tcb_status": "ok"
             },
             "note": "the delegated path derives the image identity from the quote's own RTMR0 event list, so it reports one where a quote-only appraiser cannot"
@@ -1197,7 +1274,7 @@
               "mrenclave_source": "registry",
               "namespace": "tenant-acme",
               "network_type": "untrusted",
-              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
               "pki_chain_ok": true,
               "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
               "platform": "tdx-qemu",
@@ -1208,7 +1285,8 @@
               "root_quote_ok": true,
               "schema_version": "1",
               "statement_ok": true,
-              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "statement_signer_binding": "quote",
+              "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
               "tcb_status": "ok"
             },
             "note": "the delegated path derives the image identity from the quote's own RTMR0 event list, so it reports one where a quote-only appraiser cannot"
@@ -1364,7 +1442,7 @@
               "mrenclave_source": "registry",
               "namespace": "tenant-acme",
               "network_type": "untrusted",
-              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
               "pki_chain_ok": true,
               "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
               "platform": "tdx-qemu",
@@ -1375,7 +1453,8 @@
               "root_quote_ok": true,
               "schema_version": "1",
               "statement_ok": true,
-              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "statement_signer_binding": "quote",
+              "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
               "tcb_status": "ok"
             },
             "note": "the delegated path reads the guest-chosen field out of the quote itself and always names which field that was, so it cannot be the appraiser this case is about"
@@ -1409,7 +1488,7 @@
               "mrenclave_source": "registry",
               "namespace": "tenant-acme",
               "network_type": "untrusted",
-              "node_cert_fingerprint": "sha256/JaIDkNEKxDdUsN5DESkH1Ye6QV42Tsa0NeiTgNsFkRk",
+              "node_cert_fingerprint": "sha256/pnHfJY7Y3lq9obMe5DUw6l9FnIZQld_FOl3ZSaQkzH4",
               "pki_chain_ok": true,
               "pki_root_fingerprint": "sha256/K6aprLP4uEcIBx4NLOTuYlPzGQyHHM5TZAaT9VnD8ME",
               "platform": "tdx-qemu",
@@ -1420,7 +1499,8 @@
               "root_quote_ok": true,
               "schema_version": "1",
               "statement_ok": true,
-              "statement_signer_fingerprint": "sha256/jAnbJgIf1tguitQkttFrur0izO70Z_AI7Zyet6-N52Q",
+              "statement_signer_binding": "quote",
+              "statement_signer_fingerprint": "sha256/7LlJV_jtdnMrseWRIUQE0bFBvTUz0Rmcd2JtbNN7evo",
               "tcb_status": "ok"
             },
             "note": "the delegated path reads the guest-chosen field out of the quote itself and always names which field that was, so it cannot be the appraiser this case is about"

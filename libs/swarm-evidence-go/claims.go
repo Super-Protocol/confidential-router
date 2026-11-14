@@ -76,6 +76,38 @@ const (
 	BindingProducerAsserted ChannelBinding = "producer-asserted"
 )
 
+// SignerBindingKind is what a signed statement's signer certificate proves
+// about the key that signed it — how the PKI authority was persuaded to issue
+// that leaf.
+//
+// It is the claim set's spelling of the TypeScript `SignerBindingKind`
+// (libs/swarm-attestation/src/signer-binding.ts), so the two verifiers answer
+// the same question with the same four words.
+type SignerBindingKind string
+
+// The four bindings a signer certificate can report. A policy that requires a
+// hardware-bound signer accepts the first two and refuses the rest; see
+// [SwarmClaims.StatementSignerBinding] for why the core itself requires
+// nothing.
+const (
+	// SignerBindingQuote means the authority saw a quote from measured
+	// hardware committed to this key.
+	SignerBindingQuote SignerBindingKind = "quote"
+	// SignerBindingAttestedCertificate means the authority saw a certificate
+	// it had itself issued against a hardware challenge: one step removed from
+	// a fresh quote, and still rooted in one.
+	SignerBindingAttestedCertificate SignerBindingKind = "attested-certificate"
+	// SignerBindingSecret means the authority saw a bearer secret — a token
+	// every node of the swarm holds — rather than hardware.
+	SignerBindingSecret SignerBindingKind = "secret"
+	// SignerBindingUnknown means the certificate says nothing this build
+	// recognises: no challenge extension, or a certificate challenge whose own
+	// subtype is not hardware. It is the fail-closed value, and reading it as
+	// anything else is the one mistake that would make the claim worse than
+	// useless.
+	SignerBindingUnknown SignerBindingKind = "unknown"
+)
+
 // NetworkType is which Super Protocol network a PKI root declares it belongs
 // to. It is reported and never enforced: the live Swarm stand's root declares
 // "untrusted", and a verifier that refused it would look exactly like a broken
@@ -237,6 +269,35 @@ type SwarmClaims struct {
 	// why no statement is appraised without one — see the pod claims below.
 	StatementSignerFingerprint string `json:"statement_signer_fingerprint,omitempty"`
 	StatementOK                *bool  `json:"statement_ok,omitempty"`
+
+	// StatementSignerBinding is what that signer's certificate proves about
+	// the key that signed the statement: the authority's own record of the
+	// enrolment challenge it certified the key against (SUP-697).
+	//
+	// It is reported and **never enforced**, as in the TypeScript verifier:
+	// the core says what the certificate proves and the policy decides
+	// whether that is enough, because which bindings an enterprise will
+	// accept is not a fact about the evidence.
+	//
+	// The footgun it exists to close, and the one it introduces, are the same
+	// shape as the pod claims below. A verified statement alone says only
+	// that *some* leaf of the pinned PKI signed it — the appraisal accepts
+	// any certificate in the membership bag that chains to a pinned root,
+	// including the node's own, and the authority marks a per-leader signer
+	// leaf with nothing that distinguishes it from a node leaf (SUP-696). So
+	// a policy that wants a hardware-bound signer must read this claim, and a
+	// policy that reads it must supply a denying default: `unknown` and the
+	// claim being absent are both "nothing was established", and treating
+	// either as hardware-bound admits a token-issued leaf.
+	//
+	// Composite form only, deliberately. The bundle form's signer is the
+	// served deployment's own leaf and its statement is a document about a
+	// hostname, so "how was the leader's signing key certified" is not the
+	// question that form answers; the claim is left absent rather than
+	// answered about a different certificate. A policy that requires a
+	// binding therefore refuses a bundle, which is the safe direction and the
+	// one a policy author should expect.
+	StatementSignerBinding SignerBindingKind `json:"statement_signer_binding,omitempty"`
 
 	// EnvelopeOK, NodeCertFingerprint and GPUAttested come from the
 	// node-signed NodeRequestEnvelope (SUP-637). GPUAttested derives from the

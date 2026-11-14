@@ -38,7 +38,8 @@ Two consequences follow for a policy author:
 ## The two forms, and which claims each sets
 
 **The composite form** — a CMW collection — is about one credential request.
-It sets `binding_ok`, `envelope_ok` and the pod claims, and no channel claim.
+It sets `binding_ok`, `envelope_ok`, `statement_signer_binding` and the pod
+claims, and no channel claim.
 
 **The bundle form** — `/.well-known/swarm-evidence` — is about one served
 hostname. It sets `channel_binding` and `evidence_digest`, and no request
@@ -338,13 +339,15 @@ statement in hand rather than trusting the signed copy.
 **Does not assert** that the statement is about the request being appraised.
 That is `envelope_ok`, and it is why no statement is appraised without one.
 
-**A v1 gap worth knowing before you write a policy.** SwarmClaims v1 carries no
-claim about what the signer's certificate itself proves. The appraisal accepts
-any certificate in the membership bag that chains to a pinned root and verifies
-the signature — including the node's own certificate — so the "the signer is
-hardware-bound" predicate cannot be written against v0.1.0. The claim that will
-carry it, `statement_signer_binding`, is tracked as SUP-697 and lands as an
-additive `v0.y` minor before `v1.0.0`.
+**What it does not narrow down is which leaf signed.** The appraisal accepts any
+certificate in the membership bag that chains to a pinned root and verifies the
+signature — the node's own certificate included — and the authority marks a
+per-leader signer with nothing a node leaf does not also carry: no role
+extension, no EKU, no name constraint, and a subject name derived from the
+measurement, which is identical for both leaves of one image. There is
+therefore no "this is a leader" claim to read, and none is coming. What the
+appraisal can report instead is **how the authority was persuaded to issue that
+leaf**, which is `statement_signer_binding`.
 
 ### `statement_signer_fingerprint`
 
@@ -352,7 +355,55 @@ additive `v0.y` minor before `v1.0.0`.
 statement's signature.
 **Produced by** the same search.
 **Does not assert** that this certificate is a per-leader signer rather than
-some other leaf of the same PKI — see the gap above.
+some other leaf of the same PKI — see above.
+
+### `statement_signer_binding`
+
+*Composite form.*
+
+**Asserts** what the signer's certificate proves about the key that signed the
+statement: the authority's own record of the enrolment challenge it certified
+that key against, in four values.
+
+| value | the authority saw |
+| --- | --- |
+| `quote` | a quote from measured hardware whose guest-chosen field is `SHA-256(SPKI DER)` of this key |
+| `attested-certificate` | a certificate it had itself issued against a hardware challenge — one step removed from a fresh quote, still rooted in one |
+| `secret` | a bearer secret: the `token` challenge every node of the swarm holds, or `untrusted`, which is no proof at all |
+| `unknown` | nothing this contract recognises — no challenge extension, a chain from outside this PKI, or a `certificate` challenge whose own subtype is not hardware |
+
+**Produced by** reading the private challenge-type and challenge-subtype
+extensions (`1.3.6.1.3.8888.1.1` and `1.3.6.1.3.8888.1.1.1`) off the leaf the
+signature verified under, after that leaf's chain validated to a pinned root.
+The value is matched against the closed set **exactly**: a challenge type this
+build does not list reads as `unknown`, never as the hardware type whose name
+it resembles. The same extensions, the same four words and the same matching
+rule as the TypeScript verifier's `readSignerBinding`.
+
+**Does not assert** that the signer is a per-leader signer rather than another
+leaf of the same PKI — nothing does, see `statement_ok` — nor that a
+hardware-bound key is *currently* on that hardware: the challenge was answered
+when the certificate was issued, and what proves the attester is on measured
+hardware *now* is `binding_ok` over the per-request quote.
+
+**Nothing in the core enforces it.** Which bindings an enterprise will accept
+is policy, not a fact about the evidence, so the core reports and the policy
+decides — the same division as `network_type` and `mrenclave_approved`.
+
+**The bundle form leaves it absent, deliberately.** That form's signer is the
+served deployment's own leaf and its statement is a document about a hostname,
+so "how was the leader's signing key certified" is not the question it answers;
+the claim is left out rather than answered about a different certificate. A
+policy that requires a binding therefore refuses a bundle.
+
+**The footgun, and it is the pod claims' footgun pointing the other way.** A
+policy that does not read this claim accepts a statement signed by *any* leaf
+of the pinned PKI, a `token`-issued one included, because `statement_ok` is
+true for all of them. A policy that does read it must supply a denying default:
+`unknown` and the claim being absent both mean nothing was established, and
+reading either as hardware-bound is worse than not checking, because it looks
+like a check. In Rego, `object.get(input, "statement_signer_binding", "unknown")`
+against an allow-list of `{"quote", "attested-certificate"}`.
 
 ### `envelope_ok`
 

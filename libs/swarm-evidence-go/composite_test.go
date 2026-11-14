@@ -193,9 +193,38 @@ func TestAppraiseCompositeStandardWrapper(t *testing.T) {
 // identifiers, media types and encodings this parser accepts are the ones the
 // producer was written against rather than the ones that happened to be
 // convenient here.
+//
+// The copy below is kept in step with that file by hand, which is why the bag
+// is spelled out and checked block by block rather than only replayed: the
+// previous copy went stale when SUP-696 replaced element 2's single chain with
+// a four-block bag, and the replay alone did not notice, because a bag of
+// placeholders denies at `pki-chain` whatever is in it.
 func TestParseCollectionMatchesTheSharedFixture(t *testing.T) {
 	t.Parallel()
-	const fixture = `{
+	// The bag element 2 now carries: the node leaf the envelope names, written
+	// first as a producer must, the statement signer's leaf, and the one
+	// device subroot and root the two share.
+	membership := sharedFixtureBag(t,
+		"TACRA-v1/evidence/pki-membership/node-leaf",
+		"TACRA-v1/evidence/pki-membership/statement-signer-leaf",
+		"TACRA-v1/evidence/pki-membership/device-subroot",
+		"TACRA-v1/evidence/pki-membership/root",
+	)
+	const bag = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClZFRkRVa0V0ZGpFdlpYWnBaR1Z1WTJVdmNHdHBM" +
+		"VzFsYldKbGNuTm9hWEF2Ym05a1pTMXNaV0ZtCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0KLS0tLS1CRUdJTiBD" +
+		"RVJUSUZJQ0FURS0tLS0tClZFRkRVa0V0ZGpFdlpYWnBaR1Z1WTJVdmNHdHBMVzFsYldKbGNuTm9hWEF2YzNSaGRH" +
+		"VnRaVzUwTFhOcFoyNWxjaTFzWldGbQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tQkVHSU4gQ0VSVElG" +
+		"SUNBVEUtLS0tLQpWRUZEVWtFdGRqRXZaWFpwWkdWdVkyVXZjR3RwTFcxbGJXSmxjbk5vYVhBdlpHVjJhV05sTFhO" +
+		"MVluSnZiM1E9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0KLS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClZF" +
+		"RkRVa0V0ZGpFdlpYWnBaR1Z1WTJVdmNHdHBMVzFsYldKbGNuTm9hWEF2Y205dmRBPT0KLS0tLS1FTkQgQ0VSVElG" +
+		"SUNBVEUtLS0tLQo"
+	if bag != membership {
+		t.Fatalf("the embedded `swarm-pki-membership` value is not the bag the shared fixture pins;\n"+
+			"refresh it from swarm-cloud testdata/tacra-v1/evidence/collection-v1.json, sample "+
+			"\"full\":\ngot  %s\nwant %s", bag, membership)
+	}
+
+	fixture := `{
 	  "collection": "swarm-evidence",
 	  "v": 1,
 	  "elements": [
@@ -203,7 +232,7 @@ func TestParseCollectionMatchesTheSharedFixture(t *testing.T) {
 	     "encoding":"json","value":{"type":"tdx","evidenceBase64":"YcRmwwg5MAoam1o3AKqEFKfxJnMAPtJ6jSYXCpOC2lA=",
 	     "nvidiaTokens":{"gpuToken":"eyJhbGciOiJFUzM4NCJ9.e30.sig"}}},
 	    {"type":"swarm-pki-membership","media_type":"application/x-pem-file","encoding":"base64url",
-	     "value":"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClZFRkRVa0V0ZGpFdlpYWnBaR1Z1WTJVdmNHdHBMVzFsYldKbGNuTm9hWEE9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K"},
+	     "value":"` + bag + `"},
 	    {"type":"swarm-workload-statement","media_type":"application/jose","encoding":"json",
 	     "value":"eyJhbGciOiJFUzI1NiJ9.eyJwb2RfdWlkIjoicG9kLTdmM2EifQ.c3RhdGVtZW50"},
 	    {"type":"swarm-node-request-envelope","media_type":"application/jose","encoding":"json",
@@ -717,4 +746,26 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return encoded
+}
+
+// sharedFixtureBag rebuilds the `swarm-pki-membership` element value of the
+// shared fixture's "full" sample from the names of the certificates it carries.
+//
+// The sample's blocks are placeholders: each body is the base64 of a label
+// saying which certificate of the bag it stands for. Rebuilding the element
+// from those labels is what makes the copy above checkable — a drift in the
+// shared fixture shows up as a name, not as a wall of base64.
+func sharedFixtureBag(t *testing.T, names ...string) string {
+	t.Helper()
+	var bag string
+	for _, name := range names {
+		// Written out rather than run through encoding/pem: the producer
+		// writes each placeholder body on one line, and Go's encoder would
+		// wrap the longest of them at 64 characters and so compare unequal to
+		// a bag that is byte-for-byte right.
+		bag += "-----BEGIN CERTIFICATE-----\n" +
+			base64.StdEncoding.EncodeToString([]byte(name)) +
+			"\n-----END CERTIFICATE-----\n"
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(bag))
 }
