@@ -104,6 +104,8 @@ function request(stream: boolean, headers: Record<string, string> = {}): ApiKeyR
 function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
   const recorded: GenerationOutcome[] = [];
   const metered: GatewayContext[] = [];
+  /** The admission-time rows, in the order `open` was told about them (SUP-423). */
+  const opened: GatewayContext[] = [];
   let httpResponse!: HangingUpResponse;
 
   const policy = {
@@ -112,7 +114,12 @@ function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
     settle: async () => undefined,
   } as unknown as GatewayPolicyService;
   const recorder = {
-    begin: async () => ({ id: 'gen-01J6TEST', coverage: null, evidenceDigest: null }),
+    prepare: async () => ({ id: 'gen-01J6TEST', coverage: null, evidenceDigest: null }),
+    // The write-ahead row the gateway opens before it forwards anything
+    // (SUP-423); the context it is given has to be the same one `finish` gets.
+    open: async (context: GatewayContext) => {
+      opened.push(context);
+    },
     finish: async (context: GatewayContext, outcome: GenerationOutcome) => {
       metered.push(context);
       recorded.push(outcome);
@@ -135,6 +142,7 @@ function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
   return {
     recorded,
     metered,
+    opened,
     async handle(stream: boolean, headers?: Record<string, string>): Promise<HangingUpResponse> {
       httpResponse = new HangingUpResponse();
       await service.handle(request(stream, headers), httpResponse.as(), 'chat');
@@ -232,6 +240,11 @@ describe('the client dimension', () => {
 
     expect(harness.recorded[0]).toMatchObject({ status: 'error' });
     expect(harness.metered[0]?.client).toBe('cline');
+    // The admission row was opened before the upstream was dialled, so the label
+    // is on the row even for the requests SUP-423 exists for: the ones the
+    // router may not live to close.
+    expect(harness.opened[0]?.client).toBe('cline');
+    expect(harness.opened[0]).toBe(harness.metered[0]);
   });
 
   it('is `other` rather than null when the client announced nothing', async () => {
