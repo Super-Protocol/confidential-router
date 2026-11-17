@@ -16,6 +16,18 @@ export const MIN_RETENTION_DAYS = 1;
 export const MAX_RETENTION_DAYS = 3650;
 
 /**
+ * The window an account that has never changed the setting is promised, and the
+ * one `/privacy`'s attestation row publishes as "90 days by default".
+ *
+ * Named rather than written twice: `EvidenceRetentionService` has to apply it to
+ * every holder with no `user_preferences` row, and a second literal would be a
+ * second chance for the enforced period to drift from the published one. It
+ * mirrors the column default in `user-preferences.entity.ts`, which is where the
+ * database applies it.
+ */
+export const DEFAULT_RETENTION_DAYS = 90;
+
+/**
  * Console preferences, including the Evidence group.
  *
  * A user who has never changed anything has no row: `get` answers from the
@@ -62,7 +74,7 @@ export class PreferencesService {
     return this.dataSource.getRepository(UserPreferences).create({
       userId,
       archiveEvidence: true,
-      evidenceRetentionDays: 90,
+      evidenceRetentionDays: DEFAULT_RETENTION_DAYS,
       notifyOnMeasurementChange: true,
       desktopNotifications: false,
       emailReceipts: true,
