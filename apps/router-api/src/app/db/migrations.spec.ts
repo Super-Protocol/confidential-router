@@ -126,12 +126,19 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-406's operator column is one additive column; the first undo drops
+      // only that and leaves the ledger it hangs off. First because this
+      // migration is numbered last — several of main's landed while this branch
+      // was in review, and a migration is appended rather than inserted.
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(false);
+      expect(await queryRunner.hasColumn('credit_transactions', 'idempotencyKey')).toBe(true);
+
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. First because this migration is numbered last — it was
-      // renumbered past SUP-466's, SUP-551's and SUP-517's when they landed on
-      // `main` during review, because a migration is appended, never inserted.
+      // `generations`. Second now that SUP-406's column is appended after it.
       // The undo can only restore the NOT NULLs on a database the sweep has not
       // run on yet, which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);

@@ -8,6 +8,7 @@ import { routerConfig } from '../config.js';
 import { CreditTransaction, type CreditTransactionKind } from '../db/entities/credit-transaction.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { InsufficientCreditsError, LedgerSignError } from './ledger.errors.js';
+import { generationLedgerKey } from './ledger.keys.js';
 
 export interface LedgerEntryInput {
   workspaceId: string;
@@ -18,6 +19,11 @@ export interface LedgerEntryInput {
   idempotencyKey: string;
   reference?: string | null;
   description?: string | null;
+  /**
+   * The operator who wrote this entry by hand, if one did (SUP-406). Left unset
+   * by everything a user, a provider or a worker triggers.
+   */
+  grantedByUserId?: string | null;
 }
 
 export interface LedgerEntry {
@@ -180,7 +186,7 @@ export class LedgerService {
       kind: 'usage',
       amountMicros: -input.amountMicros,
       reference: input.generationId,
-      idempotencyKey: `generation:${input.generationId}`,
+      idempotencyKey: generationLedgerKey(input.generationId),
       description: null,
     });
   }
@@ -311,6 +317,7 @@ export class LedgerService {
       amountMicros: input.amountMicros,
       reference: input.reference ?? null,
       description: input.description ?? null,
+      grantedByUserId: input.grantedByUserId ?? null,
       idempotencyKey: input.idempotencyKey,
       createdAt: new Date(),
     };

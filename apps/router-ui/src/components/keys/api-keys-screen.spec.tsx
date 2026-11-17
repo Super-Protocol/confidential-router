@@ -172,12 +172,15 @@ describe('APIKeysScreen', () => {
       for (const label of ['curl', 'Python', 'Node', 'VS Code', 'OpenCode']) {
         expect(tabs).toContain(label);
       }
+      expect(screen.getByTestId('wiring-snippet-curl')).toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
       // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('${input:chat.lm.secret.-...}');
       expect(screen.getByText(/Update API Key/)).toBeInTheDocument();
-      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1-4f…');
+      // No key, not even a prefix: VS Code resolves this file's `apiKey` against
+      // its own secret storage, so a literal there is never sent (SUP-326).
+      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
     });
@@ -196,6 +199,26 @@ describe('APIKeysScreen', () => {
       expect(screen.queryByText(/Keys are stored hashed/)).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
       expect(await screen.findByText(/Keys are stored hashed/)).toBeInTheDocument();
+    });
+
+    /**
+     * SUP-326. This paragraph is shared by all five tabs, and "paste the full
+     * key" is the instruction that caused the incident when a reader on the VS
+     * Code tab followed it: a key written into the language-models file is
+     * resolved against VS Code's secret storage, never used as the key, so
+     * every request goes out unauthenticated. It has to name which snippets it
+     * is talking about — the VS Code entry has an `apiKey` line, which is
+     * exactly what invites the paste, and it is a reference rather than a key.
+     */
+    it('does not tell the VS Code reader to paste a key into the file', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+      await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
+
+      const note = await screen.findByText(/Keys are stored hashed/);
+      expect(note).toHaveTextContent(/in curl, Python and Node, paste the full key/i);
+      expect(note).toHaveTextContent(/Do not paste it into the VS Code entry/i);
+      expect(note).toHaveTextContent(/secret storage/i);
     });
 
     it('links the documentation site, which does not exist yet and is linked anyway', async () => {
