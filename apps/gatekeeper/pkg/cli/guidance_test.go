@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -186,4 +187,74 @@ func TestHeadlessRunSaysWhatIsListeningAndWhereToPointAClient(t *testing.T) {
 	}
 	assertInventsNoPath(t, "run --headless", got.stderr)
 	golden(t, "run-headless-banner", got.stderr)
+}
+
+// TestTheBannerNeverOffersAnAddressNothingIsListeningOn is the honesty half of
+// that banner, and the defect the first version of it shipped: it rendered
+// every *configured* endpoint, so a port already in use printed
+// `bind: address already in use` and then, two lines below, an address to point
+// a client at. The step whose success the banner exists to confirm is exactly
+// the step it then lied about.
+func TestTheBannerNeverOffersAnAddressNothingIsListeningOn(t *testing.T) {
+	inUse := errors.New("listen tcp 127.0.0.1:8443: bind: address already in use")
+
+	t.Run("the only endpoint fails to bind", func(t *testing.T) {
+		h := configured(t)
+		h.env.Supervisor = &fakeSupervisor{
+			snapshot: liveSnapshot(),
+			startErr: map[string]error{"llama-33-70b": inUse},
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		got := h.runCtx(ctx, "run", "--headless")
+
+		if strings.Contains(got.stderr, "http://127.0.0.1:8443/v1") {
+			t.Errorf("the banner offers an address nothing is bound to:\n%s", got.stderr)
+		}
+		if strings.Contains(got.stderr, "gatekeeper running") {
+			t.Errorf("the banner says it is running with no listener at all:\n%s", got.stderr)
+		}
+		for _, want := range []string{
+			"nothing is listening",
+			"not listening: llama-33-70b (127.0.0.1:8443)",
+			"bind: address already in use",
+			"Next: free the address",
+		} {
+			if !strings.Contains(got.stderr, want) {
+				t.Errorf("the banner does not mention %q:\n%s", want, got.stderr)
+			}
+		}
+		golden(t, "run-headless-none-listening", got.stderr)
+	})
+
+	t.Run("one of two endpoints fails to bind", func(t *testing.T) {
+		h := configured(t)
+		h.mustRun("endpoint", "add", "qwen25-72b",
+			"--upstream", "https://qwen25-72b.tee.swarm.cloud", "--listen", "127.0.0.1:8444",
+			"--trust", pinB)
+		h.env.Supervisor = &fakeSupervisor{
+			snapshot: liveSnapshot(),
+			startErr: map[string]error{"qwen25-72b": inUse},
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		got := h.runCtx(ctx, "run", "--headless")
+
+		// The one that started is offered; the one that did not is named, and
+		// its address is not presented as somewhere to send traffic.
+		if !strings.Contains(got.stderr, "http://127.0.0.1:8443/v1") {
+			t.Errorf("the endpoint that started is not offered:\n%s", got.stderr)
+		}
+		if strings.Contains(got.stderr, "http://127.0.0.1:8444/v1") {
+			t.Errorf("the endpoint that failed is offered as a client address:\n%s", got.stderr)
+		}
+		if !strings.Contains(got.stderr, "not listening: qwen25-72b (127.0.0.1:8444)") {
+			t.Errorf("the failed endpoint is not named:\n%s", got.stderr)
+		}
+		if !strings.Contains(got.stderr, "gatekeeper running") {
+			t.Errorf("a partial start should still report what is running:\n%s", got.stderr)
+		}
+	})
 }

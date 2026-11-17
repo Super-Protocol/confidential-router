@@ -165,7 +165,7 @@ func newEndpoint(sup *Supervisor, spec config.Endpoint, tuning config.Tuning) (*
 		hostname:     hostname,
 		port:         port,
 		tuning:       tuning,
-		admittedPool: newPool(hostname, port, sup.opts.Dial),
+		admittedPool: newAdmittedPool(hostname, port, sup.opts.Dial),
 		openPool:     newPool(hostname, port, sup.opts.Dial),
 		firstVerdict: make(chan struct{}),
 		wanted:       true,
@@ -536,6 +536,17 @@ func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
 		return result
 	}
 	previous := e.verdict
+	// The data plane moves first, under the same hold of e.mu that publishes
+	// the verdict. Otherwise there is a window in which a reader of e.current()
+	// — a single-flight waiter returning from here, a first-request waiter
+	// released by firstVerdict, or any concurrent request — sees an admitted
+	// verdict while the admitted pool is still pinned to whatever the previous
+	// denial left it at. Such a request would be forwarded over a connection
+	// the pool was never holding to the attested leaf, and recorded as `allow`;
+	// and the re-pin that followed would sweep that connection out from under
+	// it mid-response (SUP-428). Publishing after the pin leaves no such
+	// window: by the time a verdict is visible, the pool already matches it.
+	e.movePool(result)
 	e.verdict = result
 	e.lastAttestAt = result.At
 	e.attesting = false
@@ -548,7 +559,7 @@ func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
 	e.mu.Unlock()
 	close(done)
 
-	e.applyVerdict(previous, result)
+	e.reportVerdict(previous, result)
 	return result
 }
 
@@ -625,23 +636,43 @@ func (e *endpoint) retryDenied(ctx context.Context, current *verdict) *verdict {
 	return current
 }
 
-// applyVerdict moves the data plane to a new verdict: it re-pins the connection
-// pool, closes what the new verdict no longer covers, and reports the change.
-func (e *endpoint) applyVerdict(previous, current *verdict) {
+// movePool moves the data plane onto a new verdict: it re-pins the admitted
+// connection pool and closes what the new verdict no longer covers.
+//
+// Called with e.mu held, so that the move and the verdict it belongs to become
+// visible together — see the comment at the call site in [endpoint.attest] for
+// why the order matters. Taking pool.mu under endpoint.mu is the lock order
+// [endpoint.release] already establishes, and nothing the pool does reaches back
+// into the endpoint: [pool.forget], which a Close calls into, takes pool.mu
+// alone, and setPin closes outside its own hold for exactly that reason.
+//
+// It has to stay quick, because every reader of the verdict is waiting on the
+// same lock. The sweep is what could have been slow, and [discardAll] is why it
+// is not: a revoked connection's socket is dropped rather than shut down
+// politely. The sweep cannot be deferred past the publish instead — the
+// transport's idle pool is not pin-aware, so a connection left in it is one a
+// newly admitted request could ride under the pin it was just revoked from.
+func (e *endpoint) movePool(current *verdict) {
 	if current.Admitted {
 		// Pinning to the observed leaf is what makes the verdict a statement
 		// about a channel rather than about a hostname. setPin closes every
 		// connection opened under the previous leaf.
 		e.admittedPool.setPin(current.Leaf)
-	} else {
-		e.admittedPool.setPin("")
-		if e.tuning.FailMode == config.FailClosed {
-			// ADR-003 §7: a flip to deny under fail-closed takes down the
-			// connections already carrying traffic, not just the next request.
-			e.admittedPool.closeAll()
-		}
+		return
 	}
+	e.admittedPool.setPin("")
+	if e.tuning.FailMode == config.FailClosed {
+		// ADR-003 §7: a flip to deny under fail-closed takes down the
+		// connections already carrying traffic, not just the next request.
+		e.admittedPool.closeAll()
+	}
+}
 
+// reportVerdict records a new verdict everywhere an operator reads one:
+// metrics, the log, the audit log and the status snapshot. It runs after
+// [endpoint.movePool] has moved the data plane and the verdict is published,
+// because none of it is on the admission path and all of it takes other locks.
+func (e *endpoint) reportVerdict(previous, current *verdict) {
 	result := "admitted"
 	if !current.Admitted {
 		result = current.Stage
