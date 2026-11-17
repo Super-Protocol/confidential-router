@@ -5,6 +5,7 @@ import { Generation } from '../db/entities/generation.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { User } from '../db/entities/user.entity.js';
+import { signUpOrigin } from './invite-admin.service.js';
 
 export interface InviteCampaignStats {
   campaign: string;
@@ -225,8 +226,11 @@ export class InviteStatsService {
     for (const account of accounts) {
       const day = account.createdAt.getTime() >= since.getTime() ? dayOf(account.createdAt) : undefined;
       if (!day) continue;
-      if (invited.has(account.id)) day.signUpsInvited += 1;
-      else if (account.id === bootstrapId) day.signUpsBootstrap += 1;
+      // The rule the account list labels a row with, so one account cannot be
+      // counted here as something the list calls it otherwise.
+      const origin = signUpOrigin(account.id, invited.has(account.id), bootstrapId);
+      if (origin === 'invite') day.signUpsInvited += 1;
+      else if (origin === 'bootstrap') day.signUpsBootstrap += 1;
       else day.signUpsOpen += 1;
     }
     return series;
