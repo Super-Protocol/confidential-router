@@ -280,6 +280,11 @@
           "$ref": "#/$defs/duration",
           "default": "24h",
           "description": "Snapshots older than this render as STALE."
+        },
+        "retentionSweepInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "6h",
+          "description": "How often archived evidence bundles past UserPreferences.evidenceRetentionDays are removed, keeping their digests. 0ms switches the sweep off, which makes the deployment keep bundles past the period /privacy publishes."
         }
       }
     },

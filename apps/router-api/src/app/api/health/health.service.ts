@@ -7,6 +7,7 @@ import { serviceVersion } from '../../config.js';
 import { ExternalEndpointHealth } from '../../external-endpoints/external-endpoint-health.js';
 import { MailService } from '../../mail/mail.service.js';
 import { MailDeliveryService } from '../../mail/mail-delivery.service.js';
+import { EvidenceRetentionHealth } from '../../preferences/evidence-retention-health.js';
 import type { HealthResponseDto } from './health.dto.js';
 
 @Injectable()
@@ -21,6 +22,7 @@ export class HealthService {
     private readonly analytics: AnalyticsHealth,
     private readonly externalEndpoints: ExternalEndpointHealth,
     private readonly alerts: OperatorAlertsService,
+    private readonly evidenceRetention: EvidenceRetentionHealth,
   ) {}
 
   /**
@@ -64,6 +66,13 @@ export class HealthService {
    *
    * Counts only, no endpoint names: `/health` is unauthenticated, and ruling 3 on
    * SUP-221 keeps upstream identity and verdict detail behind a session.
+   *
+   * `evidenceRetention` is the same rule again, for the one subsystem here whose
+   * failure is a disclosure problem rather than an availability one (SUP-498). A
+   * deployment whose retention sweep is not running serves every model perfectly
+   * well; it just keeps archived evidence bundles past the period `/privacy`
+   * publishes. That was unobservable for a whole preview — the setting was
+   * stored, offered and read by nothing — so it is a field rather than a log line.
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();
@@ -76,6 +85,7 @@ export class HealthService {
       analytics: this.analytics.status(),
       externalEndpoints: this.externalEndpoints.status(),
       alerts: this.alerts.status(),
+      evidenceRetention: this.evidenceRetention.status(),
     };
   }
 

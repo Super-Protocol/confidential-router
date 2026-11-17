@@ -8,6 +8,7 @@ import { routerConfig } from '../config.js';
 import { CreditTransaction, type CreditTransactionKind } from '../db/entities/credit-transaction.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { InsufficientCreditsError, LedgerSignError } from './ledger.errors.js';
+import { generationLedgerKey } from './ledger.keys.js';
 
 export interface LedgerEntryInput {
   workspaceId: string;
@@ -180,7 +181,7 @@ export class LedgerService {
       kind: 'usage',
       amountMicros: -input.amountMicros,
       reference: input.generationId,
-      idempotencyKey: `generation:${input.generationId}`,
+      idempotencyKey: generationLedgerKey(input.generationId),
       description: null,
     });
   }

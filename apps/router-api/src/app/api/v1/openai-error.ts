@@ -270,7 +270,7 @@ export const openAiErrors = {
 
   /**
    * The verdict was withdrawn while a generation was already streaming: the
-   * sidecar closed the connection under it (`pkg/proxy/endpoint.go` `applyVerdict`
+   * sidecar closed the connection under it (`pkg/proxy/endpoint.go` `movePool`
    * under `failMode: closed`).
    *
    * A separate code from {@link attestationFailed} because it answers a different

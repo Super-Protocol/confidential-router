@@ -7,7 +7,11 @@
  * text all read one set of strings. A command a user pastes is part of the
  * product's contract with the gatekeeper CLI (`apps/gatekeeper/pkg/cli`).
  *
- * Nothing it returns contains an angle-bracket placeholder, and
+ * Nothing it returns contains an angle-bracket placeholder, and no string here
+ * names its own surroundings — "the digest printed above" is true on the API
+ * Keys page, where `DeploymentDigest` sits over this block, and false in the
+ * chat's tier-3 panel, which renders the same steps with nothing above them
+ * (SUP-541). Shared data describes the command; the screen describes the screen.
  * `setup-commands.spec.ts` holds it to that. A page that printed
  * `--upstream https://<hostname>` to a reader who arrived from the very
  * deployment that *is* the hostname made them edit a command the console could
@@ -115,7 +119,7 @@ export function setupSteps(input: SetupInput): SetupStep[] {
       id: 'endpoint',
       command: `gatekeeper endpoint add ${ENDPOINT_NAME} --upstream ${upstream} --listen ${GATEKEEPER_LISTEN}`,
       title: 'Front this endpoint',
-      detail: `The upstream is this deployment’s API origin; ${GATEKEEPER_LISTEN} is what your agents will point at instead. Nothing is registered with the router at any point — it never learns that a gatekeeper exists.`,
+      detail: `The upstream is this deployment’s API origin; ${GATEKEEPER_LISTEN} is what your agents will point at instead. Nothing is registered with the router at any point, and the request it forwards is your client’s own, so no header reveals that a gatekeeper is in the path.`,
     },
     evidenceDigestHex
       ? {
@@ -130,7 +134,7 @@ export function setupSteps(input: SetupInput): SetupStep[] {
           command: `gatekeeper endpoint trust add ${ENDPOINT_NAME} --from-upstream`,
           title: 'Pin what you are willing to trust',
           detail:
-            '--from-upstream is not trust-on-first-use: it verifies the endpoint first, prints the chain, the quote format and the evidenceDigest it found, and pins only what you then confirm. Compare that digest with the one Overview shows before you accept it.',
+            '--from-upstream is not trust-on-first-use: it verifies the endpoint first, prints the chain, the quote format and the evidenceDigest it found, and pins only what you then confirm. Compare all 64 characters of what it prints against the digest this console shows for the endpoint before you accept it — a prefix and a suffix matching is not that comparison.',
         },
     {
       id: 'run',
