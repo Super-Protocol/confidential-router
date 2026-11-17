@@ -85,13 +85,22 @@ jobs:
           # `type=semver` is given the version rather than the ref, so it can
           # still do the part worth keeping: skipping the moving tags and
           # `latest` when the version is a prerelease.
+          #
+          # `type=sha` is push-only, and the event test there is as load-bearing
+          # as the ref one: `main-<sha>` names the image built from that commit
+          # once, because a chart pins its digest and a reviewer re-resolves the
+          # tag to check that pin. A dispatch with `push` on — like the
+          # gatekeeper's nightly in SUP-316 — also runs with `github.ref` at
+          # `refs/heads/main`, and a rebuild of the same commit is a different
+          # digest. `:main` and `:build<run number>` still move, or are fresh,
+          # as they are meant to.
           tags: |
             type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
             type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=build${{ github.run_number }}
             type=ref,event=branch
-            type=sha,prefix=main-,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=main-,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.app }}
             org.opencontainers.image.description=Confidential Router — ${{ matrix.app }}

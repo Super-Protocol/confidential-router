@@ -457,6 +457,18 @@ with the matching semver tags, and on every push to `main` as `:main` and
 `:main-<sha>`. The digest is in the job summary, because the digest is what a
 chart pins (ADR-008 §2: the sidecar is inside the snapshot a user verifies).
 
+Only a push publishes the image, so `:main-<sha>` is written by the push that
+advanced the branch and by nothing else — not by the nightly, not by a dispatch
+— which is what keeps re-resolving it a usable check on a chart's pins. A
+rebuild of the same commit is not byte-identical, so a second publish hands out
+a different digest for source that never changed (SUP-316).
+
+One way to move it is left: re-running that push's workflow from the Actions UI,
+which is still a `push` event. GHCR has no immutable tags to lean on, so that
+one is convention rather than mechanism — re-run a release run only when you
+mean to replace what it published, and re-pin whatever declared the old digest.
+`:main` is the one moving tag; `:build<run number>` names a run.
+
 The image is the *cluster* packaging, not a replacement for the binaries: it
 exists for a pod running the gatekeeper as an attested egress, where the
 configuration is rendered by a control loop rather than edited by a person. Its
@@ -485,6 +497,7 @@ docker build -f gatekeeper.dockerfile -t gatekeeper .
 | `cmd/gatekeeper-sidecar/`| Entry point of the container image. Flags and signals onto `pkg/sidecar`; never part of a Release. |
 | `cmd/gatekeeper-teststand/`| The gatekeeper with its attested-root *hardware* leg read from a file, for the external-endpoint e2e stand. Behind the `teststand` build tag, so no release build contains it; `go build ./cmd/...` does not compile it. |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
+| `pkg/attestation/`       | The gatekeeper's view of the claim core. The verifier itself is the standalone `libs/swarm-evidence-go` module (SUP-647), which a bank or a Veraison deployment imports without the router; this package re-exports the names the gatekeeper uses and nothing else. |
 | `pkg/cli/`               | Every command, its output and its exit code. Driven end to end in tests through `cli.Run`. |
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
 | `pkg/status/`            | What an endpoint's live state and one verification look like, plus the two seams the CLI and TUI are written against. |
