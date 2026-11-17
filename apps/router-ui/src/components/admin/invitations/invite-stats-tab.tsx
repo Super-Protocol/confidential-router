@@ -35,7 +35,27 @@ const CAMPAIGN_SERIES = [
   { key: 'unredeemed', label: 'Not redeemed' },
 ];
 
-const TILES = ['Codes issued', 'Redeemed', 'Redemption rate', 'Credit granted', 'Accounts'];
+const TILES = ['Codes issued', 'Redeemed', 'Redemption rate', 'Credit paid out', 'Accounts'];
+
+/**
+ * A campaign's face value — what one redemption of its codes grants.
+ *
+ * A span when the tag collects batches issued at different grants, because
+ * `issueInviteCodes` takes the grant per batch and quoting whichever end a query
+ * returned would be the same kind of half-truth this column exists to end
+ * (SUP-390). Equal ends read as the one number an operator is after.
+ *
+ * Uniformity is decided on the micros, not on what they render as: the issue
+ * dialog accepts six decimals (`usdToMicros`) and `formatUsdShort` prints two,
+ * so `$25.123456` and `$25.123999` format alike and a genuinely mixed campaign
+ * would collapse to one number — this column's own failure mode, through our own
+ * UI. Both ends are canonical integer strings off the same `String(Number(…))`,
+ * so comparing them is exact.
+ */
+function formatCodeGrant(campaign: Statistics['campaigns'][number]): string {
+  if (campaign.codeGrantMicrosMin === campaign.codeGrantMicrosMax) return formatUsdShort(campaign.codeGrantMicrosMin);
+  return `${formatUsdShort(campaign.codeGrantMicrosMin)}–${formatUsdShort(campaign.codeGrantMicrosMax)}`;
+}
 
 /** `2026-10-09` → `9 Oct`, the console's chart axis shape. UTC, as the buckets are. */
 function dayLabel(date: string): string {
@@ -140,7 +160,11 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
           hint="Redeemed of issued, all time"
           accent="success"
         />
-        <StatTile label="Credit granted" value={formatUsdShort(totals.grantedMicros)} hint="Through invitations" />
+        <StatTile
+          label="Credit paid out"
+          value={formatUsdShort(totals.grantedMicros)}
+          hint="Granted by redemptions so far"
+        />
         <StatTile
           label="Accounts"
           value={formatCount(totals.signUps)}
@@ -212,7 +236,10 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
       <Card>
         <CardHeader className="border-b pb-4">
           <CardTitle className="text-sm">By campaign</CardTitle>
-          <CardDescription>All time. Activated means the account went on to send a request.</CardDescription>
+          <CardDescription>
+            All time. Activated means the account went on to send a request. Per code is a code's face value; paid out
+            is what its redemptions have granted so far.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           {campaigns.length === 0 ? (
@@ -240,7 +267,8 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
                     <TableHead className="text-right">Redeemed</TableHead>
                     <TableHead className="text-right">Rate</TableHead>
                     <TableHead className="text-right">Activated</TableHead>
-                    <TableHead className="text-right">Credit granted</TableHead>
+                    <TableHead className="text-right">Per code</TableHead>
+                    <TableHead className="text-right">Paid out</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -251,6 +279,7 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
                       <TableCell className="text-right font-mono">{formatCount(entry.redeemed)}</TableCell>
                       <TableCell className="text-right font-mono">{formatRatio(entry.redemptionRate)}</TableCell>
                       <TableCell className="text-right font-mono">{formatCount(entry.activated)}</TableCell>
+                      <TableCell className="text-right font-mono">{formatCodeGrant(entry)}</TableCell>
                       <TableCell className="text-right font-mono">{formatUsdShort(entry.grantedMicros)}</TableCell>
                     </TableRow>
                   ))}

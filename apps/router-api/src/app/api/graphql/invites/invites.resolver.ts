@@ -20,6 +20,7 @@ import {
 import { InviteRateLimitedError } from '../../../invites/invites.errors.js';
 import { RATE_LIMITER, type RateLimiter } from '../../v1/rate-limiter.js';
 import {
+  campaignStatsOf,
   DisableInviteCodesInputModel,
   InviteCampaignStatsModel,
   InviteGrantModel,
@@ -128,7 +129,7 @@ export class InvitesResolver {
     @Args('campaign', { type: () => String, nullable: true }) campaign?: string,
   ): Promise<InviteCampaignStatsModel[]> {
     const campaigns = await this.stats.campaigns(campaign ?? null);
-    return campaigns.map((entry) => ({ ...entry, grantedMicros: String(entry.grantedMicros) }));
+    return campaigns.map(campaignStatsOf);
   }
 
   /**

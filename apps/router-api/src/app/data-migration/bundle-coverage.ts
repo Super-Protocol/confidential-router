@@ -47,6 +47,13 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
   },
   InviteCode: { section: 'inviteCodes' },
   InviteRedemption: { section: 'inviteRedemptions', note: 'The salted IP and user-agent digests stay behind.' },
+  InviteCarriedRedemption: {
+    section: 'inviteCarriedRedemptions',
+    note:
+      'Who spent a code on a deployment this one is not (SUP-272), carried on from here so a rebuild does not read ' +
+      'a spent code as spent by nobody — and a redemption whose account this deployment has lost travels as one of ' +
+      'these rather than being dropped (SUP-403).',
+  },
   ApiKey: {
     section: 'apiKeys',
     note: 'Hash included — the key keeps working after the redeploy. See the paragraph in export-bundle.ts.',
@@ -113,12 +120,6 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
       'Self-healing state, in other words, and carrying it would carry one deployment’s `failures` counts into ' +
       'another deployment’s timeline. What is lost is the operator’s record of who was unreachable before the ' +
       'cutover; the process log of the old deployment still has it.',
-  },
-  InviteCarriedRedemption: {
-    notCarried:
-      'A redemption that happened on another deployment, recorded here by a codes CSV import (SUP-272). Not carried ' +
-      'yet, and this one is a known gap rather than a decision: SUP-403 adds the section. Until it lands, a rebuild ' +
-      'forgets that a carried code was already spent, and the same code can be redeemed here again.',
   },
 };
 
