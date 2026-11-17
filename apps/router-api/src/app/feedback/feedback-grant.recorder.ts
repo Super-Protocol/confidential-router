@@ -121,11 +121,14 @@ export class FeedbackGrantRecorder {
         }
       }
     }
+    // The counterpart of the line `grant` writes: a refusal is the half of the
+    // funnel an operator reads the log for, and the only other record of it is a
+    // PostHog event a deployment with no project key never sends.
+    this.logger.log(`Feedback grant refused for user ${input.userId}: ${input.reason}.`);
     this.analytics.grantApplied({
       uuid: input.delivery.submissionId,
       distinctId: input.userId,
       outcome: 'refused',
-      grantMicros: 0,
       reason: input.reason,
     });
     return { status: 'refused', reason: input.reason };

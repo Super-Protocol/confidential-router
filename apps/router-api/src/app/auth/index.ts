@@ -10,6 +10,7 @@ export * from './request-of.js';
 export * from './session.guard.js';
 export * from './sign-in-options.service.js';
 export * from './sign-up-gate.service.js';
+export * from './sign-up-mail-gate.plugin.js';
 export * from './sign-up-method.js';
 export * from './sign-up-provisioning.service.js';
 export * from './user-profile.service.js';

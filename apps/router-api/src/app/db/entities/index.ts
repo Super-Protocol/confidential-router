@@ -12,6 +12,7 @@ import { Generation } from './generation.entity.js';
 import { InviteCarriedRedemption } from './invite-carried-redemption.entity.js';
 import { InviteCode } from './invite-code.entity.js';
 import { InviteRedemption } from './invite-redemption.entity.js';
+import { MailAddressState } from './mail-address-state.entity.js';
 import { Model } from './model.entity.js';
 import { TrustedMeasurement } from './trusted-measurement.entity.js';
 import { User } from './user.entity.js';
@@ -33,6 +34,7 @@ export * from './generation.entity.js';
 export * from './invite-carried-redemption.entity.js';
 export * from './invite-code.entity.js';
 export * from './invite-redemption.entity.js';
+export * from './mail-address-state.entity.js';
 export * from './model.entity.js';
 export * from './trusted-measurement.entity.js';
 export * from './user.entity.js';
@@ -60,6 +62,7 @@ export const ENTITIES = [
   InviteCarriedRedemption,
   InviteCode,
   InviteRedemption,
+  MailAddressState,
   Model,
   TrustedMeasurement,
   User,
