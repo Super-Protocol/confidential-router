@@ -115,13 +115,16 @@ Invariants enforced in code and tests:
 9. The deployment export (SUP-271) carries **no credential and no request content**, by construction:
    `DataExportService` names every column it writes, reads Better Auth's `user` table and none of its
    other three, and `buildBundle` refuses to assemble a document with a credential-shaped key in it.
-   `ApiKey`, `ChatThread`, `ChatMessage`, `Generation`, `EvidenceSnapshot`, `FeedbackSubmission`,
+   `ChatThread`, `ChatMessage`, `Generation`, `EvidenceSnapshot`, `FeedbackSubmission`,
    `UserPreferences`, `ExternalEndpointEvent`, `ExternalEndpoint.apiKeyCiphertext` and every verdict
-   column are left behind (`data-migration.e2e.spec.ts` asserts both the key names and that the stored
-   hashes, tokens and ciphertexts are absent from the bytes). `Generation` is not merely left out but
-   **cannot** be carried: `modelId` is `NOT NULL` and names a `models` row the deployment projects
-   from its own `router.yaml`, which the bundle does not carry at all, and nulling `endpointId`
-   instead would break `generationEndpointIsExclusive` above and leave a row no screen can reach.
+   column are left behind (`data-migration.e2e.spec.ts` asserts both the key names and that no session
+   token, sign-in code, key plaintext or sealed ciphertext is in the bytes). `ApiKey` travels since
+   SUP-445 — as `sha256(secret)`, which recognises a key and cannot present one; `bundle-coverage.ts`
+   holds the carried/left-behind decision for every entity and a spec fails the build on a new one in
+   neither list. `Generation` is not merely left out but **cannot** be carried: `modelId` is `NOT
+   NULL` and names a `models` row the deployment projects from its own `router.yaml`, which the bundle
+   does not carry at all, and nulling `endpointId` instead would break `generationEndpointIsExclusive`
+   above and leave a row no screen can reach.
    Because the log stays behind, **no exported or imported ledger row may name one** (SUP-446):
    `LedgerService.debitGeneration` writes one `usage` entry per metered request, `reference` the
    generation id and `idempotencyKey` `generation:<id>`, and carrying those as written leaves the
