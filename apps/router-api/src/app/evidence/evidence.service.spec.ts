@@ -3,7 +3,7 @@ import { loadCaseBody, loadConformanceManifest } from '@confidential-router/atte
 import { NotFoundException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createSqliteFixture, type SqliteFixture } from '../../../test/sqlite.js';
 import type { routerConfig } from '../config.js';
 import { type RouterConfig, RouterConfigSchema } from '../config.schema.js';
@@ -138,35 +138,55 @@ describe('reading snapshots', () => {
     expect(latest.get(other)?.issuedAt.toISOString()).toBe('2026-07-01T00:00:00.000Z');
   });
 
-  /*
-   * The shape of the read, not only its answer. This used to be one `IN` query
-   * that loaded every publication of every endpoint named — `bundle` and `jws`
-   * per row — and chose the newest in JS. The table only grows: a row per
-   * issuance, and `evidence.retentionDays` prunes nothing today. The console's
-   * Overview paid all of it per load, so the cost had to stop scaling with
-   * history.
-   */
-  it('reads one indexed row per endpoint, whatever the history, and collapses repeated ids', async () => {
-    const other = await seedEndpoint(fixture.dataSource, 'second');
-    for (const day of ['01', '02', '03', '04']) {
-      await service.record(endpointId, parsed({ issuedAt: `2026-08-${day}T00:00:00.000Z` }));
-    }
-    const newest = await service.record(endpointId, parsed({ issuedAt: '2026-08-05T00:00:00.000Z' }));
-    await service.record(other, parsed({ issuedAt: '2026-07-01T00:00:00.000Z' }));
-    expect(await fixture.dataSource.getRepository(EvidenceSnapshot).count()).toBe(6);
+  it('leaves an endpoint that has published nothing out of the map', async () => {
+    const silent = await seedEndpoint(fixture.dataSource, 'silent');
+    await service.record(endpointId, parsed({ issuedAt: '2026-08-01T00:00:00.000Z' }));
 
-    const perEndpoint = vi.spyOn(service, 'latestFor');
-    // A caller holding a model list names one endpoint once per model it serves.
-    const latest = await service.latestForMany([endpointId, endpointId, other, endpointId]);
+    const latest = await service.latestForMany([endpointId, silent, endpointId]);
+
+    expect([...latest.keys()]).toEqual([endpointId]);
+    expect(await service.latestForMany([])).toEqual(new Map());
+  });
+
+  it('agrees with latestFor however long the history has grown', async () => {
+    for (let day = 1; day <= 30; day++) {
+      await service.record(endpointId, parsed({ issuedAt: `2026-08-${String(day).padStart(2, '0')}T00:00:00.000Z` }));
+    }
+    const newest = await service.record(endpointId, parsed({ issuedAt: '2026-09-01T00:00:00.000Z' }));
+    // Recorded last but issued first: insertion order must not decide which row is newest.
+    await service.record(endpointId, parsed({ issuedAt: '2026-07-01T00:00:00.000Z' }));
+
+    const latest = await service.latestForMany([endpointId]);
 
     expect(latest.get(endpointId)?.id).toBe(newest.id);
-    expect(perEndpoint.mock.calls.map(([id]) => id)).toEqual([endpointId, other]);
-    perEndpoint.mockRestore();
+    expect(latest.get(endpointId)?.id).toBe((await service.latestFor(endpointId))?.id);
+  });
+
+  it('pages newest first', async () => {
+    for (const day of ['01', '02', '03', '04', '05']) {
+      await service.record(endpointId, parsed({ issuedAt: `2026-08-${day}T00:00:00.000Z` }));
+    }
+
+    const first = await service.snapshots(endpointId, 2);
+    expect(first.nodes.map((node) => node.issuedAt.toISOString())).toEqual([
+      '2026-08-05T00:00:00.000Z',
+      '2026-08-04T00:00:00.000Z',
+    ]);
+    expect(first.hasNextPage).toBe(true);
+
+    const second = await service.snapshots(endpointId, 2, first.endCursor);
+    expect(second.nodes.map((node) => node.issuedAt.toISOString())).toEqual([
+      '2026-08-03T00:00:00.000Z',
+      '2026-08-02T00:00:00.000Z',
+    ]);
+
+    const third = await service.snapshots(endpointId, 2, second.endCursor);
+    expect(third.hasNextPage).toBe(false);
   });
 
   /*
-   * The claim the comment on `latestForMany` makes, checked against the planner
-   * rather than asserted. An earlier draft of this change said the read was
+   * The claim `latestFor`'s comment makes, checked against the planner rather
+   * than asserted. An earlier draft of SUP-298 said the single-row read was
    * answered by `IDX_evidence_snapshots_endpointId`, which was not true: that
    * index is one column, the ordering is `issuedAt DESC, fetchedAt DESC`, and
    * SQLite answered it with `SEARCH … USING INDEX IDX_evidence_snapshots_endpointId`
@@ -197,37 +217,6 @@ describe('reading snapshots', () => {
     );
     expect(page).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
     expect(page).not.toContain('TEMP B-TREE');
-  });
-
-  it('answers an empty list without touching the table', async () => {
-    const perEndpoint = vi.spyOn(service, 'latestFor');
-
-    expect(await service.latestForMany([])).toEqual(new Map());
-
-    expect(perEndpoint).not.toHaveBeenCalled();
-    perEndpoint.mockRestore();
-  });
-
-  it('pages newest first', async () => {
-    for (const day of ['01', '02', '03', '04', '05']) {
-      await service.record(endpointId, parsed({ issuedAt: `2026-08-${day}T00:00:00.000Z` }));
-    }
-
-    const first = await service.snapshots(endpointId, 2);
-    expect(first.nodes.map((node) => node.issuedAt.toISOString())).toEqual([
-      '2026-08-05T00:00:00.000Z',
-      '2026-08-04T00:00:00.000Z',
-    ]);
-    expect(first.hasNextPage).toBe(true);
-
-    const second = await service.snapshots(endpointId, 2, first.endCursor);
-    expect(second.nodes.map((node) => node.issuedAt.toISOString())).toEqual([
-      '2026-08-03T00:00:00.000Z',
-      '2026-08-02T00:00:00.000Z',
-    ]);
-
-    const third = await service.snapshots(endpointId, 2, second.endCursor);
-    expect(third.hasNextPage).toBe(false);
   });
 
   it('treats an unreadable cursor as the first page', async () => {

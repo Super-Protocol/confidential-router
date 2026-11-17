@@ -55,6 +55,20 @@ function openExternal(state: VerificationState = verification({ gate: relayedGat
   );
 }
 
+/** The relayed bundle, failing a check this page can make. */
+function failedRelay() {
+  return verification({
+    gate: {
+      unlocked: false,
+      checks: [{ id: 'signature' as const, status: 'fail' as const, detail: 'The signature did not verify.' }],
+      registry: null,
+      evidence: null,
+    },
+    pageState: 'fail' as const,
+    unlocked: false,
+  });
+}
+
 /** The gate result the external path produces: same checks, `source: 'router'`. */
 function relayedGate() {
   return {
@@ -359,21 +373,50 @@ describe('an external upstream’s evidence', () => {
   });
 
   it('refuses to draw anything when the relayed bundle did not check out', () => {
-    openExternal(
-      verification({
-        gate: {
-          unlocked: false,
-          checks: [{ id: 'signature', status: 'fail', detail: 'The signature did not verify.' }],
-          registry: null,
-          evidence: null,
-        },
-        pageState: 'fail',
-        unlocked: false,
-      }),
-    );
+    openExternal(failedRelay());
 
-    expect(screen.getByText(/Nothing below is drawn from this endpoint’s evidence/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing below is drawn from this upstream’s relayed evidence/)).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Deployment graph' })).not.toBeInTheDocument();
+  });
+
+  /*
+   * SUP-618. The panel used to render tier 1's failure copy here, which says the
+   * composer stays locked — a lock this panel does not apply and cannot observe,
+   * because the composer is gated by the chat's own tier 1 over `routerEndpoint`.
+   * On production 0.19.8 that sentence was on screen while the composer answered
+   * a real turn, and it sent a round of triage at the wrong deployment.
+   */
+  it('says nothing about the composer when the relayed bundle fails', () => {
+    openExternal(failedRelay());
+
+    expect(screen.queryByText(/composer/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Nothing is sent to a deployment whose evidence does not verify/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says instead what is true of it: that it gates nothing, and what pins the hop', () => {
+    openExternal(failedRelay());
+
+    expect(screen.getByRole('heading', { name: 'Attestation for this external upstream' })).toBeInTheDocument();
+    expect(screen.getByText(/unlocks nothing and locks nothing/i)).toBeInTheDocument();
+    expect(screen.getByText(/its egress attested and pinned/i)).toBeInTheDocument();
+    expect(screen.getByText(/not by itself a verdict on the channel/i)).toBeInTheDocument();
+    expect(screen.getByText('The signature did not verify.')).toBeInTheDocument();
+  });
+
+  it('badges the upstream’s own tier rather than the endpoint’s', () => {
+    openExternal(failedRelay());
+
+    expect(screen.getByText('Upstream evidence did not check out')).toBeInTheDocument();
+    expect(screen.queryByText('Evidence did not check out')).not.toBeInTheDocument();
+  });
+
+  it('keeps the stale-copy warning on a pass, and still claims nothing for the composer', () => {
+    openExternal();
+
+    expect(screen.getByText(/older than what its own host serves/i)).toBeInTheDocument();
+    expect(screen.queryByText(/composer/i)).not.toBeInTheDocument();
   });
 
   it('says it is relaying while tier 1 is outstanding', () => {

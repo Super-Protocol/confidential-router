@@ -13,7 +13,10 @@ import { ExternalEndpointPinnedDigest1759800000000 } from './1759800000000-Exter
 import { InviteCodeIssuer1759900000000 } from './1759900000000-InviteCodeIssuer.js';
 import { InviteCarriedRedemptions1760000000000 } from './1760000000000-InviteCarriedRedemptions.js';
 import { DropDeclaredTee1760100000000 } from './1760100000000-DropDeclaredTee.js';
-import { EvidenceSnapshotsByIssuedAt1760200000000 } from './1760200000000-EvidenceSnapshotsByIssuedAt.js';
+import { GenerationClient1760200000000 } from './1760200000000-GenerationClient.js';
+import { MailAddressStates1760400000000 } from './1760400000000-MailAddressStates.js';
+import { ExternalEndpointLiveness1760500000000 } from './1760500000000-ExternalEndpointLiveness.js';
+import { EvidenceSnapshotsByIssuedAt1760600000000 } from './1760600000000-EvidenceSnapshotsByIssuedAt.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -37,5 +40,8 @@ export const MIGRATIONS = [
   InviteCodeIssuer1759900000000,
   InviteCarriedRedemptions1760000000000,
   DropDeclaredTee1760100000000,
-  EvidenceSnapshotsByIssuedAt1760200000000,
+  GenerationClient1760200000000,
+  MailAddressStates1760400000000,
+  ExternalEndpointLiveness1760500000000,
+  EvidenceSnapshotsByIssuedAt1760600000000,
 ];

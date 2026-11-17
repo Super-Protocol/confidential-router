@@ -43,6 +43,18 @@
           "type": "string",
           "default": "0.0.0.0",
           "description": "Interface to bind. 127.0.0.1 to keep the service off the network."
+        },
+        "maxInferenceRequestBytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 268435456,
+          "default": 8388608,
+          "description": "Largest /v1 request body the router accepts, in bytes. Its own limit, well above the 1 MiB the console surfaces keep: a prompt that fills the context_length the catalogue advertises is megabytes of JSON. Raise it for a deployment serving a larger context window, remembering that this number times the expected concurrency is memory."
+        },
+        "streamKeepAliveAfter": {
+          "$ref": "#/$defs/durationAtLeast1s",
+          "default": "15s",
+          "description": "How long a streaming /v1 request may wait in silence before the router opens its event stream and starts sending heartbeat comments into it. Keep it below the read timeout of the ingress in front of this deployment (nginx and OpenResty default to 60s), so the router rather than the ingress decides how a slow request ends. Past this point a failure before the first token is delivered as a data: error event instead of a 502. At least 1s: a shorter delay opens the stream before the backend could plausibly have answered, costing every streamed failure its status code, and 0s turns the heartbeat into a busy loop."
         }
       }
     },
@@ -312,6 +324,25 @@
           "default": "5s",
           "description": "How often router-api reads the sidecar's /status and /verdicts back. 0 disables the poll."
         },
+        "outage": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "When a run of failed checks against a registered upstream stops being noise and becomes an outage worth waking somebody for (SUP-517). Crossing either threshold writes one ERROR log line, one `outage` row on the endpoint's timeline, and `status: outage` in GET /health's externalEndpoints block. Both halves exist because they miss different failures: a count is the honest unit while checks happen on schedule and sees nothing when the checking itself has stopped, which only elapsed time notices. An endpoint an operator disabled, or one whose deployment has never been approved, is never an outage.",
+          "properties": {
+            "afterFailures": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000,
+              "default": 3,
+              "description": "Distinct failed checks in a row, counted per re-attestation rather than per poll. Three against a 10-minute reattestInterval is roughly half an hour of a model refusing every request. 0 disables this threshold."
+            },
+            "afterNoSuccess": {
+              "$ref": "#/$defs/duration",
+              "default": "15m",
+              "description": "How long since the endpoint was last known to serve, however little has been checked in between \u2014 the threshold that notices a sidecar which never answers at all. 0 disables it."
+            }
+          }
+        },
         "connectTimeout": {
           "$ref": "#/$defs/duration",
           "default": "5s",
@@ -483,6 +514,11 @@
           "default": "Confidential Router",
           "description": "Display name in front of `from`."
         },
+        "replyTo": {
+          "type": "string",
+          "format": "email",
+          "description": "Where a reply goes. `from` is a no-reply address on a domain that need not receive mail, so without this a reply lands nowhere."
+        },
         "consoleUrl": {
           "type": "string",
           "format": "uri",
@@ -491,6 +527,23 @@
         "resendApiKey": {
           "type": "string",
           "description": "Needed with `provider: resend`. Blank counts as unset."
+        },
+        "webhookSecret": {
+          "type": "string",
+          "minLength": 16,
+          "description": "Signs the provider's delivery notifications (SUP-551). Unset, `POST /v1/webhooks/resend` is a 404 and an address the provider is dropping mail to stays invisible. Read whatever `provider` is."
+        },
+        "webhooksPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 120,
+          "description": "Provider deliveries accepted per minute per source address. The signature is the authority; the budget only stops an unsigned flood."
+        },
+        "stateLookupsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "`signInMailState` lookups per minute per source address."
         },
         "smtp": {
           "type": "object",
@@ -645,7 +698,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 60,
-          "description": "Per-source-address budget on the console's POST /v1/analytics/events."
+          "description": "Per-source-address budget on the console's POST /v1/console-events."
         }
       }
     },
@@ -748,6 +801,29 @@
         }
       }
     },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where an alert goes so that a human reads it (SUP-535). An ERROR log line is an alert only on a deployment with a log sink somebody has wired an alarm to; this one has none, and both production outages so far were found by a person stumbling over them. So the alert leaves by the channel this deployment proves every day \u2014 the mail provider the sign-in codes go out through. Nothing here has to be set for the channel to work: `emails` falls back to `auth.adminEmails`.",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "items": { "type": "string", "format": "email" },
+          "default": [],
+          "description": "Who to write to. Empty means auth.adminEmails, which a deployment with an admin section already sets \u2014 a channel nobody had to configure is a channel that works on the deployment already running. Name a shared inbox or an on-call alias here to override."
+        },
+        "email": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switches the outbound path off. The log line, the /health block and the endpoint timeline are unchanged \u2014 they are the record; this is the thing that wakes somebody. Off is for a deployment whose log sink already pages."
+        },
+        "minInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "15m",
+          "description": "Least time between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox that has been flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. The interval is armed by a message that landed, not by one that was attempted: a send that reached nobody put nothing in a mailbox. A recovery is sent past this interval \u2014 an operator who was woken is owed the \u201cit is back\u201d line. 0 disables it."
+        }
+      }
+    },
     "log": {
       "type": "object",
       "additionalProperties": false,
@@ -838,6 +914,11 @@
     "duration": {
       "type": "string",
       "pattern": "^([0-9]+(ms|s|m|h))+$"
+    },
+    "durationAtLeast1s": {
+      "description": "A duration of at least one second: the lookahead requires either a non-zero s/m/h component or a four-digit ms one, so \"0s\" and \"500ms\" are refused.",
+      "type": "string",
+      "pattern": "^(?=.*([1-9][0-9]*(s|m(?!s)|h)|[0-9]{4,}ms))([0-9]+(ms|s|m|h))+$"
     },
     "oauthClient": {
       "type": "object",

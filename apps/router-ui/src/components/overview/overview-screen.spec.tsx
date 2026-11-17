@@ -61,15 +61,69 @@ describe('OverviewScreen', () => {
             promptTokens: 0,
             completionTokens: 0,
             coveredRequests: 0,
-            evidenceCoverage: 0,
+            coverableRequests: 0,
+            evidenceCoverage: null,
           },
         }),
       ),
     ]);
 
     const coverage = await screen.findByRole('group', { name: 'Evidence coverage' });
-    expect(within(coverage).getByText('0%')).toBeInTheDocument();
+    expect(within(coverage).getByText('—')).toBeInTheDocument();
     expect(coverage).toHaveTextContent('No generations were served in this period.');
+  });
+
+  it('says coverage does not apply, rather than 0%, when every generation was external', async () => {
+    // SUP-421, from production: 34 generations, every one served by an external
+    // endpoint this router had verified and whose digest each row carries. The
+    // tile read "Evidence coverage 0% — 0 of 34 generations were served while
+    // the endpoint had a fresh bundle published", which is the product's central
+    // claim reported as never kept.
+    renderOverview([
+      overviewMock(
+        overviewData({
+          activitySummary: {
+            spendMicros: '100738',
+            requests: 34,
+            promptTokens: 1_000,
+            completionTokens: 500,
+            coveredRequests: 0,
+            coverableRequests: 0,
+            evidenceCoverage: null,
+          },
+        }),
+      ),
+    ]);
+
+    const coverage = await screen.findByRole('group', { name: 'Evidence coverage' });
+    expect(within(coverage).queryByText('0%')).not.toBeInTheDocument();
+    expect(within(coverage).getByText('—')).toBeInTheDocument();
+    expect(coverage).toHaveTextContent('coverage does not apply here');
+    expect(coverage).toHaveTextContent('all 34 generations were served by external endpoints');
+    expect(coverage).toHaveTextContent('verified by this router');
+  });
+
+  it('counts the ratio over this platform’s endpoints and says where the rest went', async () => {
+    renderOverview([
+      overviewMock(
+        overviewData({
+          activitySummary: {
+            spendMicros: '5000',
+            requests: 50,
+            promptTokens: 1_000,
+            completionTokens: 500,
+            coveredRequests: 8,
+            coverableRequests: 10,
+            evidenceCoverage: 0.8,
+          },
+        }),
+      ),
+    ]);
+
+    const coverage = await screen.findByRole('group', { name: 'Evidence coverage' });
+    expect(within(coverage).getByText('80%')).toBeInTheDocument();
+    expect(coverage).toHaveTextContent('8 of 10 generations on this platform’s own endpoints');
+    expect(coverage).toHaveTextContent('The other 40 went to external endpoints, verified by this router.');
   });
 
   it('lists each endpoint with the digest a gatekeeper pins', async () => {

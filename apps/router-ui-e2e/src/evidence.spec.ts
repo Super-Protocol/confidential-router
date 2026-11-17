@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
   CONSOLE_OPERATIONS,
+  EXTERNAL_ONLY_CONSOLE_OPERATIONS,
   MIXED_CATALOGUE_DATA,
   PUBLISHED_DIGEST_HEX,
   PUBLISHED_HOST,
@@ -41,6 +42,23 @@ test.describe('Overview', () => {
     const table = page.getByRole('table', { name: 'Confidential endpoints' });
     await expect(table.getByRole('row', { name: new RegExp(PUBLISHED_HOST) })).toContainText('598M');
     await expect(page.getByRole('button', { name: `Evidence for ${ROTATING_HOST}: Stale` })).toBeVisible();
+  });
+
+  test('does not report 0% coverage for a week served entirely by external endpoints', async ({ page, baseURL }) => {
+    // SUP-421: coverage is about bundles *this* platform published, and an
+    // external endpoint has none — the router verified it instead. With no
+    // coverable request in the week there is no ratio, and "0%" on this tile
+    // reads as the product's own promise never once kept.
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, EXTERNAL_ONLY_CONSOLE_OPERATIONS);
+    await page.goto('/');
+
+    const tile = page.getByRole('group', { name: 'Evidence coverage' });
+
+    await expect(tile).toContainText('coverage does not apply here');
+    await expect(tile).toContainText('all 34 generations were served by external endpoints');
+    await expect(tile).toContainText('verified by this router');
+    await expect(tile).not.toContainText('0%');
   });
 
   test('copies the digest a gatekeeper pins', async ({ page, baseURL }) => {

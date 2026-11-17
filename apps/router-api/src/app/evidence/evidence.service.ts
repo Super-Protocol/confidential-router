@@ -155,7 +155,17 @@ export class EvidenceService {
     }
   }
 
-  /** The snapshot the console shows for an endpoint: the most recently issued one. */
+  /**
+   * The snapshot the console shows for an endpoint: the most recently issued one.
+   *
+   * Served by `IDX_evidence_snapshots_endpointId_issuedAt`, the composite over
+   * `(endpointId, issuedAt, fetchedAt)` — and by nothing before it (SUP-298).
+   * `IDX_evidence_snapshots_endpointId` covers one column and the identity index
+   * leads `endpointId, evidenceDigest`, so the ordering column sat behind a value
+   * this query does not constrain: SQLite narrowed to the endpoint and then put
+   * its *whole history* through a temp B-tree to return one row. `snapshots()`
+   * pages on the same key and is carried by the same index.
+   */
   async latestFor(endpointId: string): Promise<EvidenceSnapshot | null> {
     return this.dataSource
       .getRepository(EvidenceSnapshot)
@@ -163,38 +173,28 @@ export class EvidenceService {
   }
 
   /**
-   * Same, for a list of endpoints — one indexed row each.
+   * Same, for a list of endpoints — what the Overview, the Models screen and
+   * `/v1/models` read on every request.
    *
-   * `latestFor` per id rather than one `IN` query over all of them. The `IN`
-   * form read *every* publication of every endpoint named, `bundle` and `jws`
-   * included, and picked the newest in JS, because neither driver takes a
-   * window function portably. That is unbounded: a row is filed per issuance
-   * (`record`), `evidence.retentionDays` is a stored preference nothing
-   * enforces, so the table grows for the life of the deployment — and the
-   * console's Overview paid the whole of it on every load.
-   *
-   * Now it is N single-row lookups, each a `LIMIT 1` served by
-   * `IDX_evidence_snapshots_endpointId_issuedAt` — the composite this change
-   * added, because the ordering is `issuedAt DESC, fetchedAt DESC` and no index
-   * on `endpointId` alone can answer it without sorting the endpoint's whole
-   * history first. N is how many endpoints the router declares, a handful, so N
-   * bounded queries beat one query whose size nobody bounds.
-   *
-   * Sequential rather than `Promise.all`: N is small, so there is nothing to win
-   * from concurrency, and the e2e stand runs this on SQLite, which takes one
-   * writer. Fanning N reads out there would interleave them with the external
-   * endpoint status poller's writes for no gain.
+   * One `latestFor` per endpoint rather than one query over all of them: the
+   * table only ever grows, and reading every snapshot an endpoint has published
+   * — bundles and certificates included — to keep the last one made `models`
+   * slower every day until the console timed out on it (SUP-598). A window
+   * function would do it in one round trip but is not portable to SQLite, and
+   * a deployment has a handful of endpoints, so this is a handful of LIMIT 1s —
+   * each one an index seek rather than a sort over the endpoint's history, see
+   * {@link latestFor}.
    */
   async latestForMany(endpointIds: string[]): Promise<Map<string, EvidenceSnapshot>> {
+    const unique = [...new Set(endpointIds)];
+    const rows = await Promise.all(unique.map((endpointId) => this.latestFor(endpointId)));
     const latest = new Map<string, EvidenceSnapshot>();
-    // Deduplicated: several models share one endpoint, so a caller holding a
-    // model list routinely names the same id more than once.
-    for (const endpointId of new Set(endpointIds)) {
-      const snapshot = await this.latestFor(endpointId);
-      if (snapshot) {
-        latest.set(endpointId, snapshot);
+    unique.forEach((endpointId, index) => {
+      const row = rows[index];
+      if (row) {
+        latest.set(endpointId, row);
       }
-    }
+    });
     return latest;
   }
 
