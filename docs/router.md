@@ -953,6 +953,14 @@ with its origin (invitation / bootstrap / open sign-up), and charts sign-ups and
 redemptions from this database. No code value is ever logged: the audit lines name
 the operator, the campaign and the row id.
 
+The statistics tab keeps a campaign's **face value** and its **payout** apart
+(SUP-390): *Per code* is what one redemption grants — a span when the tag collects
+batches issued at different grants — and *Paid out* (the *Credit paid out* tile) is
+the cumulative total redemptions have actually written. A mailed campaign nobody has
+redeemed yet has paid out $0 and is still worth every dollar it was issued for; the
+column that used to say "Credit granted" reported only the second and was read as the
+first.
+
 **Moving codes between deployments** (SUP-272). A redeploy starts from an empty
 database, and codes that were already mailed have to keep working on it. The Codes
 tab has **Export CSV** and **Import CSV** for that — both behind
@@ -1367,6 +1375,7 @@ built for the request that asked for it and kept nowhere on the server:
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
 | `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `inviteCarriedRedemptions` | who spent a code on a deployment this one is not — carried in by a codes CSV import (SUP-272) and carried on from here, so a code that arrives already spent still names its redeemers. A redemption whose account this deployment no longer has travels as one of these rather than being dropped |
 | `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
@@ -1408,6 +1417,14 @@ in it is refused on both sides — the export will not write one and the import
 will not read one; the exact paths excused are listed, with their reasons, in
 `CARRIED_NON_CREDENTIAL_PATHS`. An older build handed a file that carries the new
 section refuses it on that guard rather than importing it without the keys.
+
+**Import into a build at least as new as the one that wrote the file.** A
+version this build does not know is refused outright, but a *section* it does
+not know is dropped in silence — that is what makes a new section additive, and
+it is also how an older build would read a newer file: everything it knows, and
+nothing of what it does not. Across a redeploy that direction never comes up;
+if you have to take an export into an older build, check the section list above
+against that build first.
 
 The import takes the file **only into a fresh deployment**, and always in two
 steps:
