@@ -83,10 +83,11 @@ export function ModelsScreen() {
   const models = data?.models;
 
   // In config order, so the filter chips do not reshuffle as the catalogue grows.
-  // External models declare no TEE label and therefore contribute no chip — and
-  // selecting one hides them, which is the filter being honest rather than
-  // losing rows: it narrows on an operator's declaration about this deployment's
-  // own hardware, and there is none to make about someone else's.
+  // A chip exists for each TEE the deployment's own endpoints publish evidence
+  // from (SUP-260) — so an endpoint that has published nothing contributes none,
+  // and neither does an external model: selecting a chip hides those, which is
+  // the filter being honest rather than losing rows. This router reads no
+  // evidence for someone else's hardware.
   const tees = React.useMemo(
     () => [...new Set((models ?? []).flatMap((model) => (model.tee ? [model.tee] : [])))],
     [models],

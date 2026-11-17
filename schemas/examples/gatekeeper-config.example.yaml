@@ -1,4 +1,5 @@
-# ~/.config/confidential-gatekeeper/config.yaml
+# confidential-gatekeeper/config.yaml, under the OS user configuration directory.
+# `gatekeeper config path` prints the one your machine resolves.
 version: 1
 
 # Global trusted roots ("Trusted Clouds"). A bundle's certChain must end in one of

@@ -84,16 +84,32 @@ export function setupSteps(input: SetupInput): SetupStep[] {
   return [
     {
       id: 'install',
-      command: platform.command,
+      // Two lines on macOS and Linux, and the second one is not decoration: the
+      // installer runs in a child process and cannot change this terminal's
+      // PATH, so without it the next step is command-not-found on any machine
+      // whose shell does not already search the install directory — which is a
+      // stock macOS zsh (SUP-295).
+      command: [platform.command, platform.sessionPath].filter(Boolean).join('\n'),
       title: `Install it — ${platform.platform}`,
-      detail: `${installStepsSentence()} Nobody should paste a one-liner from the internet on trust alone, so that is what this one does.`,
+      detail: `${installStepsSentence()} Nobody should paste a one-liner from the internet on trust alone, so that is what this one does.${
+        platform.sessionPath
+          ? ' The second line puts it on the PATH of this terminal; the installer has already done the same for the ones you open afterwards.'
+          : ''
+      }`,
     },
     {
       id: 'init',
       command: 'gatekeeper init',
       title: 'Write a starter config',
+      // No path here, deliberately. The gatekeeper resolves its config with Go's
+      // `os.UserConfigDir()` (`apps/gatekeeper/pkg/config/load.go`), which is
+      // `~/.config` on Linux, `~/Library/Application Support` on macOS and
+      // `%AppData%` on Windows — so the literal this used to print was simply
+      // false for the macOS reader it was shown to (SUP-300). An instruction
+      // written before the command runs never invents a path; the command
+      // prints the one it actually resolved, afterwards.
       detail:
-        'Creates ~/.config/confidential-gatekeeper/config.yaml with the default policy. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
+        'Creates a starter config in your user configuration directory — the command prints the full path — with the default policy. Nothing is contacted, and the file it writes admits nothing until an endpoint has a pin.',
     },
     {
       id: 'endpoint',

@@ -14,7 +14,7 @@ export interface PickableModel {
   id: string;
   name: string;
   contextLength: number;
-  /** Null for an external model: this router declares no TEE label for another deployment. */
+  /** The TEE the serving endpoint's evidence names; null for an external model, and while nothing is published. */
   tee: string | null;
   origin: ModelOrigin;
   pricing: { promptPer1m: string; completionPer1m: string };

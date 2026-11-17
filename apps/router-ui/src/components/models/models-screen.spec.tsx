@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalogueQuery } from '../../generated/graphql';
-import { catalogueData, externalModel, verifiedUpstream } from '../../test-fixtures';
+import { catalogueData, externalModel, snpConfigModel, verifiedUpstream } from '../../test-fixtures';
 import { renderWithApollo } from '../../test-utils';
 import { MODEL_CATALOGUE_QUERY, ModelsScreen } from './models-screen';
 
@@ -72,14 +72,28 @@ describe('ModelsScreen', () => {
     expect(screen.getByText(/1 of 2 models/)).toBeInTheDocument();
   });
 
-  it('narrows the catalogue to one TEE', async () => {
+  /*
+   * A chip exists for each TEE the catalogue's endpoints publish evidence from
+   * (SUP-260), so narrowing to one also hides the row whose endpoint has
+   * published nothing — it is under no chip at all, and there is no declared
+   * label that would have put it under one.
+   */
+  it('narrows the catalogue to one TEE, by the label the evidence names', async () => {
     const user = userEvent.setup();
-    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData())] });
+    const models = [...catalogueData().models, snpConfigModel()];
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData({ models }))] });
 
-    await user.click(await screen.findByRole('tab', { name: 'AMD SEV-SNP' }));
+    // A chip per TEE the catalogue's endpoints publish evidence from, and none
+    // for the label the chart used to declare on every deployment.
+    expect(await screen.findByRole('tab', { name: 'AMD SEV-SNP (Azure)' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Intel TDX + H100 CC' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }));
 
     await waitFor(() => expect(screen.queryByText('Llama 3.3 70B Instruct')).not.toBeInTheDocument());
-    expect(screen.getByText('Qwen2.5 72B Instruct')).toBeInTheDocument();
+    expect(screen.getByText('DeepSeek-V3')).toBeInTheDocument();
+    // Its endpoint has published nothing, so it is under no chip at all.
+    expect(screen.queryByText('Qwen2.5 72B Instruct')).not.toBeInTheDocument();
   });
 
   it('says so when a filter matches nothing', async () => {
@@ -214,17 +228,20 @@ describe('ModelsScreen, external models', () => {
     expect(row).not.toHaveTextContent('partner.example');
   });
 
-  it('leaves the TEE cell and filter alone: an external row declares no label', async () => {
+  it('leaves the TEE cell and filter alone: this router reads no TEE for an upstream', async () => {
     const user = userEvent.setup();
-    renderWithApollo(<ModelsScreen />, { mocks: [mixed()] });
+    // Two built-in TEEs, so there is a filter to narrow at all, plus the
+    // external row this test is about.
+    const models = [...catalogueData().models, snpConfigModel(), externalModel()];
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData({ models }))] });
     await screen.findByRole('table', { name: 'Model catalogue' });
 
     expect(within(externalRow()).getAllByText('—').length).toBeGreaterThan(0);
 
     // Narrowing to a TEE hides the external rows, which is the filter being
-    // honest rather than losing them: it narrows on a declaration about this
-    // deployment's hardware.
-    await user.click(screen.getByRole('tab', { name: 'AMD SEV-SNP' }));
+    // honest rather than losing them: it narrows on what this deployment's own
+    // endpoints publish, and nothing publishes for someone else's hardware.
+    await user.click(screen.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }));
     await waitFor(() => expect(screen.queryByText('Llama 3.3 70B (partner)')).not.toBeInTheDocument());
   });
 

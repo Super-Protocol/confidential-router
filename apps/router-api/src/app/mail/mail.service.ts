@@ -4,7 +4,14 @@ import { routerConfig } from '../config.js';
 import { type MailSettings, resolveMailSettings } from './mail-settings.js';
 import { MAIL_TRANSPORT, type MailKind, type MailTransport } from './mail-transport.js';
 import { RecipientWindow } from './recipient-window.js';
-import { type RenderedMail, renderMagicLinkMail, renderSignInCodeMail, renderWelcomeMail } from './templates.js';
+import {
+  type OperatorAlertMail,
+  type RenderedMail,
+  renderMagicLinkMail,
+  renderOperatorAlertMail,
+  renderSignInCodeMail,
+  renderWelcomeMail,
+} from './templates.js';
 
 /**
  * Where the mail path stands, as `/health` reports it.
@@ -33,6 +40,22 @@ export interface MailStatus {
  * `rejected` is the server refusing the message itself.
  */
 export type MailFailureReason = 'unreachable' | 'auth_failed' | 'rejected' | 'error';
+
+/** One operator alert, before it has recipients or a console URL. */
+export type OperatorAlert = Omit<OperatorAlertMail, 'consoleUrl'>;
+
+/**
+ * What one alert's send actually did — the difference between "a channel is
+ * configured" and "a human was written to", which is the whole point of SUP-535.
+ */
+export interface OperatorAlertDelivery {
+  /** Addresses tried, after de-duplication and after dropping undeliverable ones. */
+  attempted: number;
+  delivered: string[];
+  failed: Array<{ to: string; reason: MailFailureReason }>;
+  /** Why nothing was tried, when nothing was: no mail provider, or nobody named. */
+  skipped: 'no_provider' | 'no_recipients' | null;
+}
 
 const UNREACHABLE_CODES = new Set([
   'ECONNECTION',
@@ -186,6 +209,45 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
     this.track(
       this.deliver({ to: input.email, kind: 'welcome', mail, link: this.settings.consoleUrl, rethrow: false }),
     );
+  }
+
+  /**
+   * An operator alert, to every address that was named (SUP-535).
+   *
+   * Awaited, and it never rejects: the caller is a background pass that has
+   * already written the outage to the log, the timeline and `/health`, and a mail
+   * server that is down must not turn a detected outage into an undetected one.
+   * What comes back says which addresses took it, so `/health` and the admin test
+   * can report delivery rather than configuration.
+   *
+   * One message per recipient rather than one with several `To:` addresses: a
+   * provider that refuses one address refuses the whole envelope, and the
+   * operator who would then not be told is the one whose address was fine.
+   */
+  async sendOperatorAlert(alert: OperatorAlert, recipients: readonly string[]): Promise<OperatorAlertDelivery> {
+    if (!this.enabled) {
+      return { attempted: 0, delivered: [], failed: [], skipped: 'no_provider' };
+    }
+    const to = [...new Set(recipients.map((address) => address.trim()).filter((address) => address.length > 0))].filter(
+      (address) => !undeliverable(address),
+    );
+    if (to.length === 0) {
+      return { attempted: 0, delivered: [], failed: [], skipped: 'no_recipients' };
+    }
+
+    const mail = renderOperatorAlertMail({ ...alert, consoleUrl: this.settings.consoleUrl });
+    const delivery: OperatorAlertDelivery = { attempted: to.length, delivered: [], failed: [], skipped: null };
+    for (const address of to) {
+      try {
+        await this.transport.send({ to: address, kind: 'operator-alert', ...mail });
+        this.record({ state: 'ok' });
+        delivery.delivered.push(address);
+      } catch (error) {
+        this.reportFailure('operator-alert', error);
+        delivery.failed.push({ to: address, reason: failureReasonOf(error) });
+      }
+    }
+    return delivery;
   }
 
   private async deliver(job: {

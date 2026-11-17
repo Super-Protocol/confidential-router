@@ -93,12 +93,17 @@ func newRunCommand(g *globals) *cobra.Command {
 
 		// Every endpoint is started individually so that one address already in
 		// use leaves that endpoint broken — and visible as broken — instead of
-		// taking the whole gatekeeper down with it.
+		// taking the whole gatekeeper down with it. It is also not the last
+		// attempt: the supervisor reconciles what the configuration declares
+		// against what is listening, so an endpoint that could not bind now is
+		// retried rather than left stopped for the life of the process
+		// (SUP-537).
 		for _, ep := range cfg.Endpoints {
 			if err := supervisor.Start(ctx, ep.Name); err != nil {
-				fmt.Fprintf(runLog, "starting %s: %v\n", ep.Name, err)
+				fmt.Fprintf(runLog, "starting %s: %v — it will be retried\n", ep.Name, err)
 			}
 		}
+		printRunning(runLog, g.path(), cfg)
 
 		if headless {
 			err = runHeadless(ctx, cmd.OutOrStdout(), supervisor)
@@ -127,6 +132,24 @@ func newRunCommand(g *globals) *cobra.Command {
 		return nil
 	}
 	return cmd
+}
+
+// printRunning says what `run` just did, where it read its configuration, and
+// the one thing the reader does next: point a client at a listener.
+//
+// It goes to the run log, which is stderr under --headless and discarded
+// otherwise — the dashboard owns the terminal and shows the same table. Without
+// it a headless run printed nothing at all until the first event, so the last
+// step of the console's sequence was the only one whose output never confirmed
+// that it had worked (SUP-300).
+func printRunning(w io.Writer, path string, cfg *config.Config) {
+	fmt.Fprintf(w, "gatekeeper running, from %s — every endpoint is verified before anything is forwarded.\n\n", path)
+	rows := make([][]string, 0, len(cfg.Endpoints))
+	for _, ep := range cfg.Endpoints {
+		rows = append(rows, []string{"  " + ep.Name, "http://" + ep.Listen + "/v1", ep.Upstream})
+	}
+	table(w, []string{"  ENDPOINT", "POINT YOUR CLIENT AT", "VERIFIED UPSTREAM"}, rows)
+	fmt.Fprintln(w, "\nPress Ctrl-C to stop.")
 }
 
 // dashboard launches the TUI, through Env.RunDashboard when one was supplied.

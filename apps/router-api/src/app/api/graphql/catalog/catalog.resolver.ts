@@ -39,7 +39,7 @@ export class CatalogResolver {
   @UseGuards(OptionalSessionGuard)
   async models(
     @CurrentUser() user: SessionUser | undefined,
-    @Args('tee', { nullable: true, description: 'Narrow to one TEE label.' }) tee?: string,
+    @Args('tee', { nullable: true, description: 'Narrow to one TEE label, as `Model.tee` spells it.' }) tee?: string,
   ): Promise<LlmModel[]> {
     return this.view.modelViews({
       workspaceId: await this.defaultWorkspaceId(user),

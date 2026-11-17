@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_KEY_FORM, expiryInstant, keyFormOf, toCreateInput, toUpdateInput, validateKeyForm } from './key-form';
+import {
+  EMPTY_KEY_FORM,
+  expiryInstant,
+  keyFormErrorsOf,
+  keyFormOf,
+  toCreateInput,
+  toUpdateInput,
+  validateKeyForm,
+} from './key-form';
 import type { ApiKeyRow } from './types';
 
 const values = { ...EMPTY_KEY_FORM, name: 'production-agent' };
@@ -63,6 +71,40 @@ describe('toCreateInput', () => {
       modelIds: ['m-1'],
       requestsPerMinute: 60,
     });
+  });
+});
+
+describe('keyFormErrorsOf', () => {
+  it('shows the API’s refusal under the input it is about', () => {
+    expect(keyFormErrorsOf({ spendLimitMicros: 'spendLimitMicros must match /^\\d{1,15}$/' })).toEqual({
+      spendLimit: 'spendLimitMicros must match /^\\d{1,15}$/',
+    });
+  });
+
+  it('covers every field the form can send', () => {
+    expect(
+      keyFormErrorsOf({
+        name: 'a',
+        modelIds: 'b',
+        spendLimitMicros: 'c',
+        expiresAt: 'd',
+        requestsPerMinute: 'e',
+        tokensPerMinute: 'f',
+      }),
+    ).toEqual({
+      name: 'a',
+      modelIds: 'b',
+      spendLimit: 'c',
+      expiresAt: 'd',
+      requestsPerMinute: 'e',
+      tokensPerMinute: 'f',
+    });
+  });
+
+  it('drops a field this form does not render, so the caller can say it outright', () => {
+    // `workspaceId` is not a control the reader can correct; a message hidden
+    // under nothing is worse than one shown at the bottom of the dialog.
+    expect(keyFormErrorsOf({ workspaceId: 'workspaceId must be a string' })).toEqual({});
   });
 });
 

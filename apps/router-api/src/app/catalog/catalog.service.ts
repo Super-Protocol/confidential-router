@@ -12,7 +12,6 @@ export interface CatalogEndpoint {
   id: string;
   name: string;
   hostname: string;
-  tee: string;
   /** The operator's image allow-list, or null when the config declares none. */
   declaredImages: DeclaredImage[] | null;
 }
@@ -109,7 +108,6 @@ export class CatalogService implements OnApplicationBootstrap {
           id,
           name: endpoint.name,
           hostname: endpoint.hostname,
-          tee: endpoint.tee,
           evidenceUrl: endpoint.evidenceUrl ?? null,
           // `?? null` rather than `?? []`: an absent allow-list and an empty one
           // are different statements, and the console renders them differently.
@@ -121,7 +119,6 @@ export class CatalogService implements OnApplicationBootstrap {
           id,
           name: endpoint.name,
           hostname: endpoint.hostname,
-          tee: endpoint.tee,
           declaredImages: endpoint.declaredImages ?? null,
         });
       }
@@ -143,7 +140,6 @@ export class CatalogService implements OnApplicationBootstrap {
           capabilities: model.capabilities,
           promptPer1mMicros: model.pricing.promptPer1mMicros,
           completionPer1mMicros: model.pricing.completionPer1mMicros,
-          tee: endpoint.tee,
           enabled: true,
           updatedAt: now,
         });

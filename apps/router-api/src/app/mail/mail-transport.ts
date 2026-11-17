@@ -3,7 +3,7 @@ import { createTransport, type Transporter } from 'nodemailer';
 import type { MailSettings } from './mail-settings.js';
 
 /** Which flow a message belongs to — logged, and how tests find the one they want. */
-export type MailKind = 'magic-link' | 'sign-in-code' | 'welcome';
+export type MailKind = 'magic-link' | 'sign-in-code' | 'welcome' | 'operator-alert';
 
 /** An image the HTML refers to as `cid:<contentId>` rather than by URL. */
 export interface InlineImage {
@@ -73,6 +73,7 @@ const CONSOLE_LABEL: Record<MailKind, string> = {
   'magic-link': 'Magic link',
   'sign-in-code': 'Sign-in code',
   welcome: 'Welcome mail',
+  'operator-alert': 'Operator alert',
 };
 
 /**
@@ -101,6 +102,7 @@ export class ResendMailTransport implements MailTransport {
   constructor(
     private readonly apiKey: string,
     private readonly from: string,
+    private readonly replyTo?: string,
   ) {}
 
   async send(message: MailMessage): Promise<void> {
@@ -109,6 +111,9 @@ export class ResendMailTransport implements MailTransport {
       headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         from: this.from,
+        // Omitted rather than sent null: Resend reads the snake_case name, and
+        // a deployment that named no mailbox should send no header at all.
+        ...(this.replyTo ? { reply_to: this.replyTo } : {}),
         to: message.to,
         subject: message.subject,
         html: message.html,
@@ -139,11 +144,13 @@ export class SmtpMailTransport implements MailTransport {
   constructor(
     private readonly transporter: Pick<Transporter, 'sendMail' | 'verify' | 'close'>,
     private readonly from: string,
+    private readonly replyTo?: string,
   ) {}
 
   async send(message: MailMessage): Promise<void> {
     await this.transporter.sendMail({
       from: this.from,
+      ...(this.replyTo ? { replyTo: this.replyTo } : {}),
       to: message.to,
       subject: message.subject,
       html: message.html,
@@ -213,12 +220,12 @@ export function createMailTransport(settings: MailSettings, nodeEnv = process.en
       if (!settings.resendApiKey) {
         throw new Error('The mail provider is "resend" but no Resend API key is set (mail.resendApiKey).');
       }
-      return new ResendMailTransport(settings.resendApiKey, from);
+      return new ResendMailTransport(settings.resendApiKey, from, settings.replyTo);
     case 'smtp':
       if (!settings.smtp) {
         throw new Error('The mail provider is "smtp" but mail.smtp.host is not set.');
       }
-      return new SmtpMailTransport(createTransport(smtpTransportOptions(settings.smtp)), from);
+      return new SmtpMailTransport(createTransport(smtpTransportOptions(settings.smtp)), from, settings.replyTo);
     default:
       throw new Error(`Unknown mail provider: ${String(settings.provider)}`);
   }

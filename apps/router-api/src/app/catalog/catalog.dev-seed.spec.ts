@@ -81,7 +81,7 @@ describe('the development seed, projected', () => {
     });
   });
 
-  it('denormalises the endpoint’s TEE label onto the model so a listing needs no join', async () => {
+  it('joins each model to the endpoint row its config entry names', async () => {
     await serviceFor(seedConfig(), fixture.dataSource).onApplicationBootstrap();
 
     const repository = fixture.dataSource.getRepository(Model);
@@ -89,7 +89,6 @@ describe('the development seed, projected', () => {
     const endpoint = await fixture.dataSource.getRepository(Endpoint).findOneOrFail({ where: { name: 'qwen25-72b' } });
 
     expect(onSnp.endpointId).toBe(endpoint.id);
-    expect(onSnp.tee).toBe(endpoint.tee);
   });
 
   it('serves the catalogue from memory in config order', async () => {

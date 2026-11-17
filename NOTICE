@@ -42,3 +42,10 @@ Ported components:
 
 A further port (the Rego evidence gate from swarm-cloud `apps/gatekeeper-proxy`)
 will be recorded here as it lands.
+
+Third-party artwork:
+
+  * apps/router-ui/src/components/keys/wiring-snippet.tsx
+      the `go-to-file` icon path, from @vscode/codicons
+      (https://github.com/microsoft/vscode-codicons), licensed under
+      Creative Commons Attribution 4.0 International (CC BY 4.0).

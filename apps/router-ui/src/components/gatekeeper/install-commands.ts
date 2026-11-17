@@ -30,6 +30,23 @@ export interface InstallCommand {
   shell: string;
   command: string;
   /**
+   * The line that makes the freshly installed binary runnable in the terminal
+   * the reader is already in, or null when the install line has already done it.
+   *
+   * A `curl | sh` runs in a child process and cannot export into the shell that
+   * started it, so on macOS and Linux the PATH entry the installer writes to the
+   * startup file only reaches the *next* terminal. Without this line the console
+   * printed a block whose first command succeeded and whose second —
+   * `gatekeeper init` — was command-not-found (SUP-295).
+   *
+   * `~/.local/bin` and not some other directory: `tools/installer/install.sh`
+   * installs into the first writable candidate already on the PATH and falls
+   * back to exactly this one, so the only case where the line is needed is the
+   * case where it names the right directory. When the install landed somewhere
+   * already searched, prepending this is harmless.
+   */
+  sessionPath: string | null;
+  /**
    * `gatekeeper trust roots add`, written for this shell.
    *
    * It pipes a download into a command, and the two shells do not spell that
@@ -46,6 +63,7 @@ export const INSTALL_COMMANDS: InstallCommand[] = [
     platform: 'macOS and Linux',
     shell: 'sh',
     command: `curl -fsSL ${LATEST}/install.sh | sh`,
+    sessionPath: 'export PATH="$HOME/.local/bin:$PATH"',
     trustRoot: (name, pemUrl) => `curl -fsSL ${pemUrl} | gatekeeper trust roots add ${name} --pem-file -`,
   },
   {
@@ -53,6 +71,10 @@ export const INSTALL_COMMANDS: InstallCommand[] = [
     platform: 'Windows',
     shell: 'PowerShell',
     command: `irm ${LATEST}/install.ps1 | iex`,
+    // `iex` runs the script in the caller's own session rather than a child
+    // process, and install.ps1 updates both the user PATH and `$env:Path` there
+    // — so Windows needs no second line.
+    sessionPath: null,
     // PowerShell pipes objects, not bytes, so the PEM lands in a file first
     // rather than on the command's standard input.
     trustRoot: (name, pemUrl) =>
@@ -69,6 +91,7 @@ export const INSTALL_STEPS = [
   'downloads the matching archive from the latest release',
   'verifies it against the release checksums',
   'installs one binary, and nothing else',
+  'puts the directory it used on your PATH, for the terminals you open next',
 ];
 
 /** {@link INSTALL_STEPS} as the sentence the install step of the setup block shows. */

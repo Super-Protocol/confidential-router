@@ -10,6 +10,7 @@ import {
   TableRow,
 } from '@confidential-router/ui/components/table';
 import { BookText } from 'lucide-react';
+import { readCoverage } from '../../lib/evidence-coverage';
 import { formatUsd } from '../../lib/format';
 import { formatCount, formatRatio } from '../../lib/metrics';
 import { USAGE_BY_MODEL_DAYS } from '../../lib/ranges';
@@ -21,7 +22,9 @@ export interface ModelUsageRow {
   promptTokens: number;
   completionTokens: number;
   spendMicros: string;
-  evidenceCoverage: number;
+  coveredRequests: number;
+  coverableRequests: number;
+  evidenceCoverage: number | null;
 }
 
 export interface UsageByModelCardProps {
@@ -51,6 +54,8 @@ export function UsageByModelCard({ models }: UsageByModelCardProps) {
     label: model.name,
     values: { promptTokens: model.promptTokens, completionTokens: model.completionTokens },
   }));
+
+  const rows = models.map((model) => ({ model, coverage: readCoverage(model) }));
 
   return (
     <Card>
@@ -87,7 +92,7 @@ export function UsageByModelCard({ models }: UsageByModelCardProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {models.map((model) => (
+                {rows.map(({ model, coverage }) => (
                   <TableRow key={model.modelId}>
                     <TableCell className="max-w-[18rem] truncate font-medium">{model.name}</TableCell>
                     <TableCell className="text-right font-mono">{formatCount(model.requests)}</TableCell>
@@ -95,7 +100,21 @@ export function UsageByModelCard({ models }: UsageByModelCardProps) {
                       {formatCount(model.promptTokens + model.completionTokens)}
                     </TableCell>
                     <TableCell className="text-right font-mono">{formatUsd(model.spendMicros)}</TableCell>
-                    <TableCell className="text-right font-mono">{formatRatio(model.evidenceCoverage)}</TableCell>
+                    {/*
+                      An external model has no coverable request, so it has no
+                      ratio — an em dash with the reason on hover, never the
+                      `0%` that reads as "nothing about this model was proved"
+                      (SUP-421).
+                    */}
+                    <TableCell className="text-right font-mono">
+                      {coverage.ratio === null ? (
+                        <span className="text-muted-foreground" title={coverage.detail}>
+                          —
+                        </span>
+                      ) : (
+                        formatRatio(coverage.ratio)
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

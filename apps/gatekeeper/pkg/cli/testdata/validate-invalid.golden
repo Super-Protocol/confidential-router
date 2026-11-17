@@ -4,3 +4,6 @@ $TMP/config.yaml is invalid (5 problems):
   - endpoints[0].trustedEvidence[0]: is not an evidenceDigest (expected sha256:<64 hex> — the form the CLI prints — or sha256/<43 canonical base64url chars>, sha256/<64 hex>, bare 64 hex), got "not-a-digest"
   - endpoints[0].upstream: must be an https:// base URL without path, query or fragment, got "http://insecure.example"
   - log.level: must be one of debug, info, warn, error, got "shouty"
+
+Next: fix each path listed above, then check again
+  gatekeeper config validate

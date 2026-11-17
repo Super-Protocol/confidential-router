@@ -45,16 +45,13 @@ func newInitCommand(g *globals) *cobra.Command {
 
 		return p.emit(map[string]any{"path": path, "created": created}, func(w io.Writer) {
 			if !created {
-				fmt.Fprintf(w, "%s already exists; left untouched\n", path)
+				fmt.Fprintf(w, "Configuration already exists at %s; nothing was written.\n", path)
+				nextStep(w, "check what is still missing", "gatekeeper config validate")
+				fmt.Fprintln(w, "\nTo start over from a fresh starter file: gatekeeper init --force")
 				return
 			}
-			fmt.Fprintf(w, "Wrote %s\n\nNext:\n", path)
-			fmt.Fprintf(w, "  gatekeeper endpoint add <name> --listen 127.0.0.1:8443 --upstream https://<host>\n")
-			fmt.Fprintf(w, "  gatekeeper endpoint trust add <name> --from-upstream\n")
-			fmt.Fprintf(w, "  gatekeeper config validate\n")
-			fmt.Fprintf(w, "\nA Swarm cloud needs no `trust roots add`: its certificate authority is\n")
-			fmt.Fprintf(w, "accepted on its own TEE evidence. Add one with `gatekeeper trust roots add`\n")
-			fmt.Fprintf(w, "to pin a particular cloud, or to trust a CA that publishes no evidence.\n")
+			fmt.Fprintf(w, "Configuration created at %s\n", path)
+			nextStep(w, "front the endpoint you want to verify", addEndpointExample())
 		})
 	}
 	return cmd

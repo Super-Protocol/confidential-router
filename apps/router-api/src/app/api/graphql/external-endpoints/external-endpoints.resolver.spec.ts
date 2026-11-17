@@ -1,5 +1,6 @@
 import type { ConfigType } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../../../test/operator-alerts-recorder.js';
 import type { SessionUser, UserProfileService } from '../../../auth/index.js';
 import type { routerConfig } from '../../../config.js';
 import { RouterConfigSchema } from '../../../config.schema.js';
@@ -44,7 +45,6 @@ function model(overrides: Partial<Model> = {}): Model {
     capabilities: ['chat'],
     promptPer1mMicros: 400_000,
     completionPer1mMicros: 800_000,
-    tee: '',
     enabled: true,
     updatedAt: NOW,
     ...overrides,
@@ -166,6 +166,7 @@ function build({ admin: adminOverrides = {}, evidence: evidenceOverrides = {}, a
       evidence,
       { discover: vi.fn().mockResolvedValue([]) } as unknown as ExternalModelDiscoveryService,
       profiles,
+      new RecordingOperatorAlerts().asService(),
       config(adminEmails),
     ),
   };

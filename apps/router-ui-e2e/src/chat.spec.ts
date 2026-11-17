@@ -29,7 +29,6 @@ const CHAT_ENDPOINT = {
   id: 'ep-1',
   name: 'confidential-router',
   hostname: ENDPOINT_HOST,
-  tee: 'Intel TDX + H100 CC',
   evidenceState: 'PUBLISHED',
   latestEvidence: null,
 };
@@ -58,7 +57,9 @@ function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = 
           name: 'Llama 3.3 70B Instruct',
           contextLength: 128_000,
           capabilities: ['CHAT', 'COMPLETIONS'],
-          tee: 'Intel TDX + H100 CC',
+          // Nothing is published for the endpoint in this fixture, so no
+          // evidence names a TEE (SUP-260).
+          tee: null,
           origin: 'CONFIG',
           pricing: { __typename: 'Pricing', promptPer1m: '280000', completionPer1m: '420000' },
           endpoint: CHAT_ENDPOINT,

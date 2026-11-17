@@ -51,7 +51,7 @@ and this repository is going to be published as open source under a different li
    and `internal/tui` are thin. Desktop (Electron) is out of scope.
 6. **Language-neutral conformance fixtures** live in `libs/attestation-fixtures` (JSON bundles, chains,
    expected verdicts per stage). Both the TS verifier (`libs/attestation`) and the Go verifier
-   (`apps/gatekeeper/pkg/attestation`) run the same vectors, so the two implementations cannot drift.
+   (`libs/swarm-evidence-go/attestation`) run the same vectors, so the two implementations cannot drift.
 
 ## Layout
 

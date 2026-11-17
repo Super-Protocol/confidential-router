@@ -58,7 +58,7 @@ beforeAll(async () => {
   harness = await createHarness({
     config: {
       version: 1,
-      endpoints: [{ name: 'published', hostname: 'router.example.test', tee: 'Intel TDX + H100 CC' }],
+      endpoints: [{ name: 'published', hostname: 'router.example.test' }],
       models: [
         {
           id: MODEL,

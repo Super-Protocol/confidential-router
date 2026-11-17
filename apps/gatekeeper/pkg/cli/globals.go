@@ -86,6 +86,21 @@ func (g *globals) pathSource() (path, source string) {
 	return config.ResolvePathSource(g.overrides.ConfigPath, g.env.environ())
 }
 
+// attestedRootsOn reports whether a root may be accepted on its own TEE
+// evidence — the anchor that makes an empty `trustedRoots` list the normal
+// state rather than a broken one.
+//
+// A config that cannot be loaded answers "yes", which is the built-in default
+// and so what an unreadable file would run with anyway. The callers use this to
+// choose wording, never to decide anything, so guessing beats refusing.
+func (g *globals) attestedRootsOn() bool {
+	cfg, err := g.loadEditable()
+	if err != nil {
+		return true
+	}
+	return cfg.AttestedRootsEnabled()
+}
+
 // load reads and fully validates the config — the four precedence layers, and
 // every rule including "is this runnable". It is what the commands that act on
 // a whole configuration use.
@@ -164,7 +179,10 @@ func (g *globals) verifier(ctx context.Context) (status.Verifier, error) {
 //
 // Building it binds no endpoint listener — `run` starts them one at a time so a
 // port that is already taken shows up as one broken endpoint rather than a
-// failed startup.
+// failed startup. It does start the supervisor's reconcile loop, so an endpoint
+// the configuration declares comes up within a reconcile interval whether or
+// not `run` got to it; starting them here is how a failure is reported at once
+// rather than inferred from a snapshot (SUP-537).
 func (g *globals) supervisor(ctx context.Context, cfg *config.Config) (status.Supervisor, error) {
 	if g.env.Supervisor != nil {
 		return g.env.Supervisor, nil

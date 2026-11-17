@@ -127,24 +127,47 @@ worse than not reloading. `SIGINT` and `SIGTERM` drain every listener
 
 ## Getting started
 
+Paths below are a Linux session's; the configuration directory is
+`os.UserConfigDir()` and differs per OS, so every command prints the one it
+actually resolved and `gatekeeper config path` prints it on demand.
+
 ```console
 $ gatekeeper init
-Wrote ~/.config/confidential-gatekeeper/config.yaml
-...
+Configuration created at /home/you/.config/confidential-gatekeeper/config.yaml
+
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
+/home/you/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
   - endpoints: at least one endpoint is required
 
-Nothing in the file is wrong — it is not finished. See `gatekeeper trust roots add`
-and `gatekeeper endpoint add`.
+Nothing in the file is wrong — it is not finished.
+
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper endpoint add llama-33-70b \
-    --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
+    --upstream https://llama-33-70b.tee.swarm.cloud --listen 127.0.0.1:8787
+Added endpoint "llama-33-70b" (127.0.0.1:8787 → https://llama-33-70b.tee.swarm.cloud) to /home/you/.config/confidential-gatekeeper/config.yaml
+
+It has no pinned evidenceDigest, so it cannot admit traffic yet.
+
+Next: review what the endpoint publishes, then pin it
+  gatekeeper endpoint trust add llama-33-70b --from-upstream
+
 $ gatekeeper endpoint discover llama-33-70b     # review what it publishes
 $ gatekeeper endpoint trust add llama-33-70b --from-upstream
+Pinned sha256:aba90ff985…75e530fe for "llama-33-70b" in /home/you/.config/confidential-gatekeeper/config.yaml
+
+Next: start the gatekeeper
+  gatekeeper run
+
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is valid and ready to run
+/home/you/.config/confidential-gatekeeper/config.yaml is valid and ready to run
+
+Next: start the gatekeeper
+  gatekeeper run
 ```
 
 There is no `trust roots add` in that sequence. A Swarm cloud's certificate
@@ -462,6 +485,7 @@ docker build -f gatekeeper.dockerfile -t gatekeeper .
 | `cmd/gatekeeper-sidecar/`| Entry point of the container image. Flags and signals onto `pkg/sidecar`; never part of a Release. |
 | `cmd/gatekeeper-teststand/`| The gatekeeper with its attested-root *hardware* leg read from a file, for the external-endpoint e2e stand. Behind the `teststand` build tag, so no release build contains it; `go build ./cmd/...` does not compile it. |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
+| `pkg/attestation/`       | The gatekeeper's view of the claim core. The verifier itself is the standalone `libs/swarm-evidence-go` module (SUP-647), which a bank or a Veraison deployment imports without the router; this package re-exports the names the gatekeeper uses and nothing else. |
 | `pkg/cli/`               | Every command, its output and its exit code. Driven end to end in tests through `cli.Run`. |
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
 | `pkg/status/`            | What an endpoint's live state and one verification look like, plus the two seams the CLI and TUI are written against. |
@@ -484,9 +508,10 @@ and the schemas in [`/schemas`](../../schemas); read those first.
 
 ### Configuration (`pkg/config`)
 
-`~/.config/confidential-gatekeeper/config.yaml` by default
-(`--config`, `$CR_GATEKEEPER_CONFIG`, or `$GATEKEEPER_CONFIG`). Values resolve
-in four layers, later ones winning:
+`confidential-gatekeeper/config.yaml` under `os.UserConfigDir()` by default —
+`$XDG_CONFIG_HOME`/`~/.config`, `~/Library/Application Support`, `%AppData%` —
+overridden by `--config`, `$CR_GATEKEEPER_CONFIG`, or `$GATEKEEPER_CONFIG`.
+Values resolve in four layers, later ones winning:
 
 ```
 built-in defaults  →  the file  →  CR_GATEKEEPER_*  →  command-line flags
@@ -609,7 +634,22 @@ built-in of the same name, so policies move over unchanged.
 forwarded only if that endpoint holds a verdict admitting it; the very first
 request waits for the first verdict (`initialTimeout`), and every later one is
 decided against the last one the background loop produced (`reattestInterval`).
-Verification never happens on the request path.
+Admitted traffic never waits for a verification — but a request the verdict in
+force would *refuse* re-attests on the spot, bounded to one check every two
+seconds per endpoint, so an upstream that came back seconds ago is admitted on
+the next request instead of at the next `reattestInterval` tick (ADR-003 §7).
+That request does wait for the check, up to two seconds: a refused dial fails in
+milliseconds, but an upstream that blackholes its traffic hangs inside the check
+until `initialTimeout`, and then each refused request pays the full two seconds
+on top of its 503. It is the price of not having the next five minutes of
+requests fail as well.
+
+Traffic is not the only trigger. While an endpoint is denied, the background
+loop re-checks on a backoff — two seconds, doubling to thirty, never slower than
+`reattestInterval` — instead of waiting out the interval, so an endpoint nobody
+calls is already admitted again when its next caller arrives. That matters most
+where the interval is long: the router's own egress sidecar runs this loop with
+`reattestInterval: 10m`.
 
 Three things make it more than a reverse proxy with a check in front:
 
@@ -635,14 +675,22 @@ Without a verdict, `failMode: closed` (the default) answers `503` with
   "error": { "type": "gatekeeper_error", "code": "attestation_failed",
              "message": "untrusted-root: the chain terminates in …" },
   "stage": "untrusted-root",
-  "reason": "the chain terminates in …"
+  "reason": "the chain terminates in …",
+  "checkedAt": "2026-10-19T20:05:00Z"
 }
 ```
 
-and never opens an upstream connection. `failMode: open` forwards anyway, logs
-at `warn`, tags the client-facing response `X-Gatekeeper-Verdict: deny <stage>:
-<reason>`, and carries that traffic on a *separate* connection pool, so nothing
-a verdict covered is ever reused for traffic it did not.
+and never opens an upstream connection. `checkedAt` — also on the response as
+`X-Gatekeeper-Checked-At` — dates the verdict the refusal came from, so a reason
+is never read as describing the present. The code is `attestation_unreachable`
+rather than `attestation_failed` when the evidence fetch never completed: a
+dial, handshake or read failure means no check ran at all, and calling a brief
+network outage an attestation failure sends its reader after the wrong thing.
+
+`failMode: open` forwards anyway, logs at `warn`, tags the client-facing
+response `X-Gatekeeper-Verdict: deny <stage>: <reason>`, and carries that
+traffic on a *separate* connection pool, so nothing a verdict covered is ever
+reused for traffic it did not.
 
 ### Admin socket
 

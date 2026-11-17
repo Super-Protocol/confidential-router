@@ -64,18 +64,31 @@ describe('chat content and the logs', () => {
 });
 
 describe('chat content and the evidence export', () => {
-  it('is never read by the export, which touches three repositories and no chat table', () => {
+  it('is never read by the export, which touches four repositories and no chat table', () => {
     /*
      * The export is the one feature that walks the database and hands the result
      * to a user as a file, so it is the likeliest accident. Rather than trust the
-     * current source, this records which repositories it opens: `Generation`,
-     * `EvidenceSnapshot` and `Endpoint`, and nothing else.
+     * current source, this records which repositories it opens: the two endpoint
+     * tables, their snapshots and the generations that reference them, and
+     * nothing else.
+     *
+     * `ExternalEndpoint` joined the list in SUP-295, so the manifest can name the
+     * upstream that served a generation. It is the one table here that holds a
+     * secret — the sealed upstream credential — which is why the export reads two
+     * columns of it by name and why this list is a list rather than a habit.
      */
     const exportSource = source('preferences/evidence-export.service.ts');
 
     const repositories = [...exportSource.matchAll(/getRepository\(\s*(\w+)\s*\)/g)].map((match) => match[1]);
 
-    expect([...new Set(repositories)].sort()).toEqual(['Endpoint', 'EvidenceSnapshot', 'Generation']);
+    expect([...new Set(repositories)].sort()).toEqual([
+      'Endpoint',
+      'EvidenceSnapshot',
+      'ExternalEndpoint',
+      'Generation',
+    ]);
+    expect(exportSource).toMatch(/getRepository\(ExternalEndpoint\)[\s\S]{0,200}select: \{ id: true, name: true \}/);
+    expect(exportSource).not.toMatch(/apiKeyCiphertext|apiKeyPrefix/);
     expect(exportSource).not.toMatch(/ChatThread|ChatMessage|chat_/);
   });
 });

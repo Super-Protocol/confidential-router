@@ -2,14 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import JSZip from 'jszip';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CreditTransaction } from '../src/app/db/entities/credit-transaction.entity.js';
+import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint, type ExternalEndpointStatus } from '../src/app/db/entities/external-endpoint.entity.js';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
 import { Model } from '../src/app/db/entities/model.entity.js';
 import { ExternalCatalogService, ExternalEndpointStatusService } from '../src/app/external-endpoints/index.js';
+import { EvidenceExportService } from '../src/app/preferences/evidence-export.service.js';
 import { SecretEnvelopeService } from '../src/app/secrets/index.js';
 import { createHarness, type Harness, listen } from './app-harness.js';
 import { bearer, createKey, routerConfigFor, seedWorkspace } from './gateway-fixture.js';
@@ -149,7 +152,6 @@ async function register(
       contextLength: 8192,
       capabilities: ['chat', 'completions'],
       ...PRICING,
-      tee: 'AMD SEV-SNP',
       enabled: true,
       updatedAt: now,
     });
@@ -271,6 +273,52 @@ describe('a verified external endpoint', () => {
     expect(generation.costMicros).toBe(STREAM_USAGE.prompt_tokens + STREAM_USAGE.completion_tokens);
   });
 
+  /*
+   * SUP-295 item 4, end to end: a real request through the egress leg, the real
+   * metering row it leaves behind, and the auditor's archive built from it. The
+   * row carries no `evidenceSnapshotId` and never will — which is exactly why
+   * the export has to find the publication by the digest the verdict observed.
+   */
+  it('reaches the auditor’s evidence export, which has no snapshot id to go on', async () => {
+    const response = await chat(endpoint.modelId).expect(200);
+    const served = new Date((await generationOf(response.body.id)).createdAt);
+
+    // What `ExternalEvidenceService` files once its poller has fetched the
+    // upstream's bundle: keyed on the endpoint and the digest, never on ours.
+    const snapshotId = randomUUID();
+    await dataSource()
+      .getRepository(EvidenceSnapshot)
+      .insert({
+        id: snapshotId,
+        endpointId: null,
+        externalEndpointId: endpoint.id,
+        fetchedAt: served,
+        issuedAt: served,
+        evidenceDigest: UPSTREAM_DIGEST,
+        evidenceDigestHex: 'f1'.repeat(32),
+        certFingerprint: 'sha256/leaf',
+        quoteFormat: 'amd-sev-snp-report-v2',
+        containerImages: ['ghcr.io/partner/vllm@sha256:def'],
+        chainSummary: [],
+        workloads: null,
+        measurements: null,
+        jws: 'eyJhbGciOiJFUzI1NksifQ.upstream.signature',
+        bundle: { version: 1, evidenceDigest: UPSTREAM_DIGEST },
+      });
+
+    const zip = await harness.app
+      .get(EvidenceExportService)
+      .build(workspaceId, new Date(served.getTime() - 1_000), new Date(served.getTime() + 1_000));
+    const archive = await JSZip.loadAsync(zip);
+    const manifest = JSON.parse((await archive.file('manifest.json')?.async('string')) ?? '{}');
+
+    expect(manifest.snapshots).toMatchObject([
+      { id: snapshotId, endpoint: endpoint.name, origin: 'external', evidenceDigest: UPSTREAM_DIGEST },
+    ]);
+    expect(archive.file(`snapshots/${snapshotId}/bundle.json`)).not.toBeNull();
+    expect(manifest.generations.served).toBeGreaterThanOrEqual(1);
+  });
+
   it('debits the ledger exactly as a built-in generation does', async () => {
     const before = await dataSource().getRepository(CreditTransaction).countBy({ workspaceId });
     const response = await chat(endpoint.modelId).expect(200);
@@ -294,7 +342,7 @@ describe('a verified external endpoint', () => {
       .expect(200);
     expect(one.body).toMatchObject({
       id: endpoint.modelId,
-      endpoint: { name: endpoint.name, hostname: endpoint.hostname, tee: 'AMD SEV-SNP' },
+      endpoint: { name: endpoint.name, hostname: endpoint.hostname },
       pricing: { prompt_per_1m_micros: PRICING.promptPer1mMicros },
     });
   });
@@ -389,6 +437,40 @@ describe('an external endpoint with no verdict admitting it', () => {
     // The same place `model_not_found` is decided — admission, before the meter
     // opens. A refusal that cost nothing is not a generation.
     expect(await dataSource().getRepository(Generation).count()).toBe(before);
+  });
+});
+
+/**
+ * SUP-448. The distinction this suite exists to keep — a refusal by the
+ * gatekeeper versus a failure of the upstream — has a third case, and the egress
+ * leg used to collapse it into the second: an admitted, healthy endpoint whose
+ * *model server* read the request and called it invalid.
+ */
+describe('an admitted external endpoint whose upstream calls the request invalid', () => {
+  it('answers 4xx with the field named, not a 502 that invites a retry', async () => {
+    const endpoint = await register('picky-cloud', { behaviour: 'reject-request' });
+
+    const response = await chat(endpoint.modelId).expect(400);
+
+    expect(response.body.error).toMatchObject({
+      type: 'invalid_request_error',
+      code: 'upstream_invalid_request',
+      param: 'messages[8].tool_calls[0].function.arguments',
+    });
+    expect(response.body.error.message).toContain('tool_calls[0].function.arguments');
+    // And emphatically not the gatekeeper's vocabulary: nothing here is a denial.
+    expect(response.body.error.type).not.toBe('gatekeeper_error');
+  });
+
+  it('meters it as an error that cost nothing', async () => {
+    const endpoint = await register('picky-metered-cloud', { behaviour: 'reject-request' });
+
+    await chat(endpoint.modelId).expect(400);
+
+    const row = await dataSource()
+      .getRepository(Generation)
+      .findOneOrFail({ where: { modelId: endpoint.modelId }, order: { createdAt: 'DESC' } });
+    expect(row).toMatchObject({ status: 'error', errorCode: 'upstream_invalid_request', costMicros: 0 });
   });
 });
 

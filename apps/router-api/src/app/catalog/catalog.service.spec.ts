@@ -16,7 +16,7 @@ import { CatalogService, UnknownEndpointError } from './catalog.service.js';
 
 let dataSource: DataSource;
 
-const ENDPOINT = { name: 'primary', hostname: 'primary.tee.example', tee: 'Intel TDX', enabled: true };
+const ENDPOINT = { name: 'primary', hostname: 'primary.tee.example', enabled: true };
 const MODEL = {
   id: 'vendor/model:tdx',
   name: 'Model',
@@ -56,7 +56,7 @@ describe('projection', () => {
     await catalogue([ENDPOINT], [MODEL]);
 
     const endpoint = await dataSource.getRepository(Endpoint).findOneByOrFail({ name: 'primary' });
-    expect(endpoint).toMatchObject({ hostname: 'primary.tee.example', tee: 'Intel TDX', enabled: true });
+    expect(endpoint).toMatchObject({ hostname: 'primary.tee.example', enabled: true });
 
     const model = await dataSource.getRepository(Model).findOneByOrFail({ id: 'vendor/model:tdx' });
     expect(model).toMatchObject({
@@ -64,8 +64,6 @@ describe('projection', () => {
       endpointId: endpoint.id,
       promptPer1mMicros: 100,
       completionPer1mMicros: 200,
-      // Denormalised from the endpoint, so a model list needs no join.
-      tee: 'Intel TDX',
       enabled: true,
     });
   });

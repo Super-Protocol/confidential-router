@@ -51,8 +51,8 @@ func TestInitLeavesAnExistingConfigAlone(t *testing.T) {
 	}
 
 	forced := h.mustRun("init", "--force")
-	if !strings.Contains(forced.stdout, "Wrote") {
-		t.Errorf("stdout = %q, want confirmation of an overwrite", forced.stdout)
+	if !strings.Contains(forced.stdout, "Configuration created at $TMP/config.yaml") {
+		t.Errorf("stdout = %q, want confirmation of an overwrite that names the file", forced.stdout)
 	}
 	if strings.Contains(h.config(), "name: prod") {
 		t.Error("--force did not overwrite the configuration")

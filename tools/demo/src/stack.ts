@@ -130,7 +130,6 @@ export function demoRouterConfig(input: {
       {
         name: DEMO_ENDPOINT,
         hostname: input.hostname,
-        tee: 'Intel TDX + H100 CC',
         evidenceUrl: input.evidenceUrl,
         /*
          * What this endpoint is declared to run, so the console's attestation

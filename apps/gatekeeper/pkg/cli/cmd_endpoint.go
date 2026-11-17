@@ -72,8 +72,8 @@ func newEndpointListCommand(g *globals) *cobra.Command {
 
 		return g.printer(cmd, *asJSON).emit(views, func(w io.Writer) {
 			if len(views) == 0 {
-				fmt.Fprintln(w, "No endpoints. Add one:")
-				fmt.Fprintln(w, "  gatekeeper endpoint add <name> --listen 127.0.0.1:8443 --upstream https://<host>")
+				fmt.Fprintf(w, "No endpoints are configured in %s.\n", store.Path())
+				nextStep(w, "front the endpoint you want to verify", addEndpointExample())
 				return
 			}
 			rows := make([][]string, 0, len(views))
@@ -105,7 +105,7 @@ func newEndpointAddCommand(g *globals) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "add <name> --listen <host:port> --upstream <https://host>",
+		Use:   "add <name> --upstream <https://host> --listen <host:port>",
 		Short: "Add an endpoint",
 		Long: "add appends a local listener for one upstream. It is written without pins unless\n" +
 			"--trust is given; until the endpoint has at least one pinned evidenceDigest it can\n" +
@@ -115,7 +115,7 @@ func newEndpointAddCommand(g *globals) *cobra.Command {
 			"  gatekeeper endpoint trust add <name> --from-upstream",
 		Args: exactArgs(1, "add takes exactly one argument: the endpoint name"),
 	}
-	cmd.Flags().StringVar(&listen, "listen", "", "local `host:port` to bind, e.g. 127.0.0.1:8443")
+	cmd.Flags().StringVar(&listen, "listen", "", "local `host:port` to bind, e.g. 127.0.0.1:8787")
 	cmd.Flags().StringVar(&upstream, "upstream", "", "`https://host` of the router endpoint")
 	cmd.Flags().StringVar(&failMode, "fail-mode", "",
 		"`closed` or `open` for this endpoint; omit to inherit the global default")
@@ -150,12 +150,19 @@ func newEndpointAddCommand(g *globals) *cobra.Command {
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Added endpoint %q (%s → %s) to %s\n", name, listen, upstream, store.Path())
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "Added endpoint %q (%s → %s) to %s\n", name, listen, upstream, store.Path())
+		// The missing pin is not a warning on another stream: it is the state
+		// this command leaves behind by design, and the command that resolves it
+		// is the sequence's own next step. Printing it twice — once as a warning,
+		// once as advice — was what made the success path read as a problem.
 		if len(normalised) == 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(),
-				"warning: %q has no pinned evidenceDigest and cannot admit traffic yet; "+
-					"pin one with `gatekeeper endpoint trust add %s --from-upstream`\n", name, name)
+			fmt.Fprintln(out, "\nIt has no pinned evidenceDigest, so it cannot admit traffic yet.")
+			nextStep(out, "review what the endpoint publishes, then pin it",
+				fmt.Sprintf("gatekeeper endpoint trust add %s --from-upstream", name))
+			return nil
 		}
+		nextStep(out, "start the gatekeeper", "gatekeeper run")
 		return nil
 	}
 	return cmd
@@ -182,7 +189,7 @@ func newEndpointRemoveCommand(g *globals) *cobra.Command {
 		if !removed {
 			return failf(ExitError, "no endpoint named %q", name)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Removed endpoint %q from %s\n", name, store.Path())
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed endpoint %q, and its pins with it, from %s\n", name, store.Path())
 		return nil
 	}
 	return cmd

@@ -36,6 +36,7 @@ export const API_KEYS_QUERY = graphql(`
       id
       name
       available
+      contextLength
     }
   }
 `);
