@@ -1,6 +1,7 @@
 import { Button } from '@confidential-router/ui/components/button';
 import Link from 'next/link';
 import { BrandMark } from '../../components/brand-mark';
+import { DeploymentDigest } from '../../components/evidence/deployment-digest';
 import { NextStepCard } from '../../components/onboarding/next-step-card';
 import { OverviewScreen } from '../../components/overview/overview-screen';
 import { PageHeader } from '../../components/page-header';
@@ -41,6 +42,12 @@ export default function OverviewPage() {
         <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
           <Link href="/keys#how-to-connect">How it works</Link>
         </Button>
+      </div>
+
+      {/* The claim above says attestation is the reader's to check; this is the
+          value they check it with, in full, directly under it (SUP-541). */}
+      <div className="mb-6">
+        <DeploymentDigest headingLevel="h2" />
       </div>
 
       {/* Only for an account with credit and no key yet — see `NextStepCard`. It

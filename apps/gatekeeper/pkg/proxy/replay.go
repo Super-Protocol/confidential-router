@@ -37,9 +37,10 @@ var errAttemptAbandoned = errors.New("request body belongs to a newer attempt")
 //
 // Everything else is surfaced as it is today. In particular a request that put
 // even one byte on the wire is never replayed: the upstream may have started a
-// generation, and running it twice is worse than failing once. A certificate
-// that is not the attested one is a denial, not a transport failure, and is
-// not replayed either.
+// generation, and running it twice is worse than failing once. A channel
+// binding that failed — a certificate that is not the attested one, or an
+// admitted pool holding no pin at all — is a denial rather than a transport
+// failure, and is not replayed either.
 type replayingTransport struct {
 	pool *pool
 	// onReplay, when set, is told why a request is being sent a second time.
@@ -103,8 +104,12 @@ func (a *attemptTrace) replayable(ctx context.Context, err error) bool {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return false
 	}
+	// A channel binding that failed is a denial, not a transport failure:
+	// sending the request again would fail the same way and report it as a
+	// stale connection.
 	var mismatch *leafMismatchError
-	if errors.As(err, &mismatch) {
+	var unpinned *unpinnedPoolError
+	if errors.As(err, &mismatch) || errors.As(err, &unpinned) {
 		return false
 	}
 	a.mu.Lock()
