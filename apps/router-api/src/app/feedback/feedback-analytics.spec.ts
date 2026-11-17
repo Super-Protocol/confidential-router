@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { RecordingAnalyticsSink } from '../../../test/analytics-recorder.js';
+import { AnalyticsHealth } from '../analytics/analytics-health.js';
 import { AnalyticsService, type AnalyticsSink, eventUuid } from '../analytics/index.js';
 import { CapturingFeedbackAnalytics, type FeedbackGrantAppliedEvent } from './feedback-analytics.js';
 
@@ -36,7 +37,7 @@ let analytics: CapturingFeedbackAnalytics;
 
 beforeEach(() => {
   sink = new RecordingAnalyticsSink();
-  analytics = new CapturingFeedbackAnalytics(new AnalyticsService(sink));
+  analytics = new CapturingFeedbackAnalytics(new AnalyticsService(sink, new AnalyticsHealth()));
 });
 
 describe('a grant that landed', () => {
@@ -96,7 +97,7 @@ describe('whatever analytics does', () => {
     const dead: AnalyticsSink = {
       send: () => Promise.reject(new Error('posthog is down')),
     };
-    const offline = new CapturingFeedbackAnalytics(new AnalyticsService(dead));
+    const offline = new CapturingFeedbackAnalytics(new AnalyticsService(dead, new AnalyticsHealth()));
 
     expect(() => offline.grantApplied(granted)).not.toThrow();
     // Flushes the microtask the fire-and-forget capture left behind: an
