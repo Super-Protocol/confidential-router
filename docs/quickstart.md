@@ -113,7 +113,7 @@ gatekeeper trust roots add swarm-cloud-demo --pem-file "$ROOT_PEM"
 Then the endpoint — a local port, and the router hostname behind it:
 
 ```bash
-gatekeeper endpoint add router --listen 127.0.0.1:8443 --upstream "$UPSTREAM"
+gatekeeper endpoint add router --listen 127.0.0.1:8787 --upstream "$UPSTREAM"
 ```
 
 It warns you, correctly, that the endpoint has no pinned digest and cannot admit
@@ -158,7 +158,7 @@ In another shell — one base-URL swap, nothing else:
 ```python
 from openai import OpenAI
 
-client = OpenAI(api_key=API_KEY, base_url="http://127.0.0.1:8443/v1")
+client = OpenAI(api_key=API_KEY, base_url="http://127.0.0.1:8787/v1")
 print(client.chat.completions.create(
     model="meta/llama-3.3-70b-instruct:tdx",
     messages=[{"role": "user", "content": "Is this endpoint attested?"}],
@@ -187,7 +187,7 @@ default — pass `--reattest-interval 2s` if you do not want to wait) and send t
 same request again:
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8443/v1/chat/completions \
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8787/v1/chat/completions \
     -H "authorization: Bearer $API_KEY" -H 'content-type: application/json' \
     -d '{"model":"meta/llama-3.3-70b-instruct:tdx","messages":[{"role":"user","content":"hi"}]}'
 503

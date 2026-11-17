@@ -23,7 +23,7 @@ export type SidecarBehaviour =
   /** `writeDenial`: fail-closed 503 with the `gatekeeper_error` body. */
   | 'deny'
   /**
-   * Two chunks, then the connection goes — which is what `applyVerdict` →
+   * Two chunks, then the connection goes — which is what `movePool` →
    * `closeAll` does to a stream in flight when a verdict is withdrawn.
    */
   | 'drop-mid-stream'

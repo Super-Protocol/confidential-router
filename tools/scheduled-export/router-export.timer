@@ -1,0 +1,16 @@
+# Daily, in the quiet hours UTC, with a spread so the router is not asked for
+# its database at the same second as every other timer on the host.
+[Unit]
+Description=Daily deployment export of the production confidential router
+Documentation=https://github.com/Super-Protocol/confidential-router/blob/main/tools/scheduled-export/README.md
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=900
+# A host that was off at 03:17 takes the export when it comes back, rather than
+# skipping the day. A skipped day is exactly the gap this is insurance against.
+Persistent=true
+Unit=router-export.service
+
+[Install]
+WantedBy=timers.target

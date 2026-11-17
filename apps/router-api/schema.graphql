@@ -69,6 +69,14 @@ input AddTrustedMeasurementInput {
   note: String
 }
 
+"""
+How an operator credit movement is recorded in the ledger. GRANT is credit nobody paid for; ADJUSTMENT is a correction and the only kind that may remove credit.
+"""
+enum AdminCreditGrantKind {
+  ADJUSTMENT
+  GRANT
+}
+
 """One invitation code, as an operator sees it."""
 type AdminInviteCode {
   campaign: String!
@@ -108,6 +116,10 @@ type AdminInviteCodePage {
 
 """One account, and how it came to exist."""
 type AdminSignUp {
+  """
+  That workspace’s balance in micro-USD, so the operator can see who has run out. Null with no workspace.
+  """
+  balanceMicros: String
   campaign: String
   createdAt: DateTime!
   email: String!
@@ -120,6 +132,11 @@ type AdminSignUp {
   origin: SignUpOrigin!
   redeemedAt: DateTime
   userId: ID!
+
+  """
+  The workspace this account owns — what `grantCredit` credits. Null when it owns none.
+  """
+  workspaceId: ID
 }
 
 type AdminSignUpPage {
@@ -371,6 +388,32 @@ type CreditBalance {
   workspaceId: ID!
 }
 
+"""The ledger entry an operator grant wrote, and the balance it produced."""
+type CreditGrant {
+  """Set when the workspace was named by its account holder."""
+  accountEmail: String
+
+  """Signed micro-USD, as written."""
+  amountMicros: String!
+
+  """The workspace balance after the entry, in micro-USD."""
+  balanceMicros: String!
+  createdAt: DateTime!
+
+  """The `credit_transactions` row."""
+  creditTransactionId: ID!
+  kind: AdminCreditGrantKind!
+
+  """The reason recorded on the row — the first call’s, on a replay."""
+  note: String!
+
+  """
+  True when this requestId had already been recorded: nothing was written and the balance is unchanged. The console says “already recorded” rather than reporting a second success.
+  """
+  replayed: Boolean!
+  workspaceId: ID!
+}
+
 """One entry of the append-only credits ledger."""
 type CreditTransaction {
   """Signed micro-USD: credits positive, usage negative."""
@@ -522,8 +565,10 @@ type EvidenceExport {
 
 """What an endpoint published, and when. Never whether it was valid."""
 type EvidenceSnapshot {
-  """The raw bundle, for export and offline verification."""
-  bundle: JSON!
+  """
+  The raw bundle, for export and offline verification. Null once the retention sweep has removed it.
+  """
+  bundle: JSON
 
   """sha256/<base64url> of the TLS leaf the bundle asserts."""
   certFingerprint: String!
@@ -551,11 +596,18 @@ type EvidenceSnapshot {
   """When the platform signed it."""
   issuedAt: DateTime!
 
-  """The compact JWS as published — "Copy evidence JWS"."""
-  jws: String!
+  """
+  The compact JWS as published — "Copy evidence JWS". Null once the retention sweep has removed the document: the `evidenceSnapshots` connection reaches an endpoint’s whole history, and a publication past the retention window of every account that held it keeps its digests and nothing else.
+  """
+  jws: String
 
   """Empty when the producer published none."""
   measurements: [Measurement!]!
+
+  """
+  When the retention sweep removed `jws` and `bundle`, or null while this row still carries them.
+  """
+  payloadStrippedAt: DateTime
 
   """Quote age in seconds — "issued 4 min ago" in the evidence modal."""
   quoteAgeSeconds: Int!
@@ -1075,6 +1127,32 @@ enum GenerationStatus {
   OK
 }
 
+input GrantCreditInput {
+  """The account holder to credit. Exactly one of this and `workspaceId`."""
+  accountEmail: String
+
+  """
+  Signed micro-USD as an integer string, bounded by `billing.maxCreditGrantMicros`. A negative amount removes credit and needs kind ADJUSTMENT and `billing.allowCreditDebits`.
+  """
+  amountMicros: String!
+  kind: AdminCreditGrantKind! = GRANT
+
+  """
+  Why the credit is moving, kept on the ledger row and shown to the account holder. Required: it is the only field that explains an entry nobody paid for.
+  """
+  note: String!
+
+  """
+  The caller's name for this decision — a UUID the console mints when the dialog opens. The same value replays the first call instead of crediting twice; a second deliberate grant sends a new one.
+  """
+  requestId: String!
+
+  """
+  The workspace to credit, when the caller already has its id. Exactly one of this and `accountEmail`.
+  """
+  workspaceId: ID
+}
+
 """How one invitation campaign converted. Operators only."""
 type InviteCampaignStats {
   """
@@ -1438,6 +1516,11 @@ type Mutation {
 
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
+
+  """
+  Puts credit on an existing account, or corrects a balance, as one audited ledger entry naming the operator and the reason. Idempotent on `requestId`, so a retried submission replays rather than credits twice. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.
+  """
+  grantCredit(input: GrantCreditInput!): CreditGrant!
 
   """Issues invitation codes. Restricted to auth.adminEmails."""
   issueInviteCodes(input: IssueInviteCodesInput!): IssuedInviteCodes!
@@ -1957,12 +2040,16 @@ type User {
 
 """Console settings, including the Evidence group."""
 type UserPreferences {
-  """Keep the published bundle and JWS, not just the digests."""
+  """
+  Whether this account holds the published bundle and JWS, not just the digests. Off, it holds nothing and contributes nothing to a publication’s retention window, so a publication only such accounts hold is stripped on the next retention pass; one an opted-in account also holds stays until that window closes. It does not stop the poller fetching bundles, which the live-evidence endpoints serve from.
+  """
   archiveEvidence: Boolean!
   desktopNotifications: Boolean!
   emailReceipts: Boolean!
 
-  """How long archived bundles are kept, in days. Digests are kept forever."""
+  """
+  How long archived bundles are kept, in days. Digests are kept forever. Ignored while archiveEvidence is off, and still settable, so the window is already right when it goes back on.
+  """
   evidenceRetentionDays: Int!
 
   """Notify when an endpoint publishes different measurements."""
