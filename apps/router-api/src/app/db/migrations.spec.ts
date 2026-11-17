@@ -112,11 +112,41 @@ describe('SQLite', () => {
       const queryRunner = dataSource.createQueryRunner();
 
       // SUP-437 records which hostname a stored publication was served under;
-      // the first undo drops that column and nothing else.
+      // the first undo drops that column and nothing else. First because this
+      // migration is numbered last — three of main's landed while this branch
+      // was in review, and a migration is appended rather than inserted.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'hostname')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('evidence_snapshots', 'hostname')).toBe(false);
       expect(await queryRunner.hasColumn('evidence_snapshots', 'workloads')).toBe(true);
+
+      // SUP-517's failure-run columns are five additive columns on one table; the
+      // next undo drops only those.
+      expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
+      await dataSource.undoLastMigration();
+      for (const column of [
+        'lastSuccessAt',
+        'lastFailureAt',
+        'notServingSince',
+        'consecutiveFailures',
+        'upstreamUnreachable',
+      ]) {
+        expect(await queryRunner.hasColumn('external_endpoints', column)).toBe(false);
+      }
+      expect(await queryRunner.hasColumn('external_endpoints', 'lastCheckedAt')).toBe(true);
+
+      // SUP-551's mail address states are one additive table; the next undo
+      // drops only that and leaves the rest of the schema alone.
+      expect(await queryRunner.hasTable('mail_address_states')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('mail_address_states')).toBe(false);
+
+      // SUP-466's client dimension is one additive column; the next undo drops
+      // only that and leaves the rest of the metering row alone.
+      expect(await queryRunner.hasColumn('generations', 'client')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('generations', 'client')).toBe(false);
+      expect(await queryRunner.hasColumn('generations', 'clientIpHash')).toBe(true);
 
       // SUP-260 drops the operator-declared TEE label from both catalogue
       // tables; the next undo puts the two columns back and nothing else.

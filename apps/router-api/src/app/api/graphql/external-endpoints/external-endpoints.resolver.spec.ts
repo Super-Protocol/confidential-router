@@ -1,5 +1,6 @@
 import type { ConfigType } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../../../test/operator-alerts-recorder.js';
 import type { SessionUser, UserProfileService } from '../../../auth/index.js';
 import type { routerConfig } from '../../../config.js';
 import { RouterConfigSchema } from '../../../config.schema.js';
@@ -166,6 +167,7 @@ function build({ admin: adminOverrides = {}, evidence: evidenceOverrides = {}, a
       evidence,
       { discover: vi.fn().mockResolvedValue([]) } as unknown as ExternalModelDiscoveryService,
       profiles,
+      new RecordingOperatorAlerts().asService(),
       config(adminEmails),
     ),
   };

@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { routerConfig } from '../../config.js';
 import type { SecretEnvelopeService } from '../../secrets/index.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
@@ -231,11 +232,66 @@ describe('mapFailure', () => {
 
     expect(error.code).toBe('context_length_exceeded');
   });
+
+  it('reports a request the upstream called invalid as a 4xx naming the field (SUP-448)', async () => {
+    // The shared table's own rows are `upstream-failure.spec.ts`; what this
+    // asserts is that the egress leg reaches them — it used to answer this with
+    // `502 backend_error`, and an SDK retried the same poisoned history forever.
+    const response = jsonResponse(400, {
+      object: 'error',
+      message: 'Invalid JSON in messages[8].tool_calls[0].function.arguments.',
+      param: 'messages[8].tool_calls[0].function.arguments',
+    });
+
+    const error = await clientFor().mapFailure(model(1), response);
+
+    expect(error.status).toBe(400);
+    expect(error.type).toBe('invalid_request_error');
+    expect(error.code).toBe('upstream_invalid_request');
+    expect(error.message).toContain('tool_calls[0].function.arguments');
+    expect(error.param).toBe('messages[8].tool_calls[0].function.arguments');
+  });
+
+  it('does not turn the upstream refusing the router’s stored key into the caller’s 401', async () => {
+    const error = await clientFor().mapFailure(model(1), jsonResponse(401, { error: { message: 'bad api key' } }));
+
+    expect(error.status).toBe(502);
+    expect(error.code).toBe('backend_error');
+  });
+
+  it('logs what the upstream refused without logging the request it quoted (SUP-497)', async () => {
+    /*
+     * An external endpoint is someone else's model server, and the least
+     * predictable quoter of a request there is: a 4xx from one may echo the
+     * field it rejected along with its value. `/privacy` §5 says prompt text
+     * reaches no log, so the line carries the error class, the field path and
+     * the body's size — and the caller still gets the wording on the wire.
+     */
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const response = jsonResponse(400, {
+      error: {
+        message: 'Rejected messages[1].content: "my private prompt, in full" exceeds the per-message limit.',
+        param: 'messages[1].content',
+        type: 'invalid_request_error',
+      },
+    });
+
+    const error = await clientFor().mapFailure(model(1), response);
+    const lines = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    warn.mockRestore();
+
+    expect(lines).toContain('answered 400');
+    expect(lines).toContain('type=invalid_request_error');
+    expect(lines).toContain('param=messages[1].content');
+    expect(lines).not.toContain('my private prompt');
+    // The caller is still told what to fix. Only the log is poorer.
+    expect(error.message).toContain('my private prompt');
+  });
 });
 
 describe('classifyStreamFailure', () => {
   it('reports a withdrawn verdict as an abort named attestation_revoked', async () => {
-    // The connection died because `applyVerdict` closed it under fail-closed.
+    // The connection died because `movePool` closed it under fail-closed.
     // Denis's ruling 5: metered `aborted`, and the client sees policy.
     const adminPort = await serving((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });

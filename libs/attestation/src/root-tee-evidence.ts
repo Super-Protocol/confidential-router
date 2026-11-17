@@ -3,7 +3,7 @@
  *
  * A root issued by the platform carries three non-standard extensions — the
  * constants of `@super-protocol/pki-common`, and the same three
- * `apps/gatekeeper/pkg/attestation/attestedroot/certificate.go` reads:
+ * `libs/swarm-evidence-go/attestation/attestedroot/certificate.go` reads:
  *
  * ```
  * 1.3.6.1.3.8888.1.1            challenge type  -> "sev-snp" | "tdx" | "tdx-google" | "untrusted"
