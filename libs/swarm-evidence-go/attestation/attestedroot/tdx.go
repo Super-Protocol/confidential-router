@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	tdxabi "github.com/google/go-tdx-guest/abi"
 	tdxpb "github.com/google/go-tdx-guest/proto/tdx"
@@ -74,7 +75,7 @@ func (v *Verifier) tdxRevocation(quote []byte) (checked, notRevoked bool) {
 		o := tdxverify.DefaultOptions()
 		o.GetCollateral = true
 		o.CheckRevocations = crl
-		o.Now = v.clock()
+		o.Now = tdxTimeSet(v.clock())
 		if v.TdxGetter != nil {
 			o.Getter = v.TdxGetter
 		}
@@ -95,28 +96,64 @@ func (v *Verifier) tdxRevocation(quote []byte) (checked, notRevoked bool) {
 	}
 }
 
-// tdQuoteBody pulls the TD quote body out of a raw quote.
-func tdQuoteBody(raw []byte) (*tdxpb.TDQuoteBody, error) {
+// tdQuoteBodyFields is the TD quote body as this package reads it. Intel
+// defines two quote formats and go-tdx-guest gives each its own protobuf
+// message, so the registers below are reached through the accessors the two
+// share rather than through one of the types (SUP-768).
+type tdQuoteBodyFields interface {
+	GetTdAttributes() []byte
+	GetMrTd() []byte
+	GetRtmrs() [][]byte
+	GetReportData() []byte
+	GetTeeTcbSvn() []byte
+}
+
+// tdQuoteBody pulls the TD quote body out of a raw quote, in either format: a
+// v4 quote, or a v5 quote carrying a TDX 1.0 or TDX 1.5 TD report body. The
+// fields read here are in every one of them.
+func tdQuoteBody(raw []byte) (tdQuoteBodyFields, error) {
 	quote, err := tdxabi.QuoteToProto(raw)
 	if err != nil {
 		return nil, fmt.Errorf("tdx quote: %w", err)
 	}
-	v4, ok := quote.(*tdxpb.QuoteV4)
-	if !ok {
+	// Assigned through a typed local so a missing body stays a nil interface
+	// rather than an interface holding a nil pointer.
+	var body tdQuoteBodyFields
+	switch q := quote.(type) {
+	case *tdxpb.QuoteV4:
+		if v4 := q.GetTdQuoteBody(); v4 != nil {
+			body = v4
+		}
+	case *tdxpb.QuoteV5:
+		if v5 := q.GetTdQuoteBodyDescriptor().GetTdQuoteBodyV5(); v5 != nil {
+			body = v5
+		}
+	default:
 		return nil, fmt.Errorf("tdx quote: unsupported quote format %T", quote)
 	}
-	body := v4.GetTdQuoteBody()
 	if body == nil {
 		return nil, errors.New("tdx quote: the quote carries no TD quote body")
 	}
 	return body, nil
 }
 
+// tdxTimeSet checks every collateral artefact at the same instant: the
+// verifier has one clock, and go-tdx-guest takes a time per artefact.
+func tdxTimeSet(now time.Time) *tdxverify.TimeSet {
+	return &tdxverify.TimeSet{
+		PckCertChain: now,
+		TcbInfo:      now,
+		QeIdentity:   now,
+		PckCrl:       now,
+		RootCaCrl:    now,
+	}
+}
+
 // tdRegisters records the TD quote's own measurement registers, before any
 // check decides whether they are acceptable. They are recorded even when the
 // steps after this one fail: a reader comparing a denial against a reference
 // value needs the numbers that were compared.
-func tdRegisters(body *tdxpb.TDQuoteBody) RawMeasurements {
+func tdRegisters(body tdQuoteBodyFields) RawMeasurements {
 	out := RawMeasurements{
 		TDAttributes: hex.EncodeToString(body.GetTdAttributes()),
 		MRTD:         hex.EncodeToString(body.GetMrTd()),
@@ -138,7 +175,7 @@ func tdRegisters(body *tdxpb.TDQuoteBody) RawMeasurements {
 // reaches the same formula from registers an EAT reported rather than from a
 // quote body, and a second implementation of the digest would be a second
 // place for the two paths to disagree.
-func tdxMeasurement(body *tdxpb.TDQuoteBody, eventLog []TdxEventLogEntry) ([]byte, error) {
+func tdxMeasurement(body tdQuoteBodyFields, eventLog []TdxEventLogEntry) ([]byte, error) {
 	if rtmrs := body.GetRtmrs(); len(rtmrs) < 4 {
 		return nil, fmt.Errorf("tdx quote: the quote carries %d RTMRs, expected 4", len(rtmrs))
 	}
