@@ -1,10 +1,15 @@
-import type { BundleSource, GateResult } from './evidence-gate';
+import type { BundleSource, EndpointKind, GateResult } from './evidence-gate';
 import type { BridgeOutcome } from './extension-bridge';
 
 /**
- * Every claim the chat screen makes about verification, in one file.
+ * Every claim the chat screen makes about verification, in one file — and,
+ * since SUP-189 and SUP-501, the screen's other load-bearing copy with it: where
+ * a conversation is kept (`HISTORY_COPY`) and what the Private Preview asks a
+ * reader not to send (`PREVIEW_DATA_COPY`). Those two are not verification, but
+ * they are held to the same standard and by the same tests, which is the reason
+ * they live beside it rather than inline in a component.
  *
- * The rule the whole feature turns on: a stronger word may only appear when a
+ * The rule the verification half turns on: a stronger word may only appear when a
  * stronger thing actually happened. Three tiers, three different things, and the
  * labels must never blur —
  *
@@ -24,9 +29,14 @@ import type { BridgeOutcome } from './extension-bridge';
  * ADR-002 forbids the *router* from asserting a verdict, and nothing here breaks
  * that: each of these is the viewer's own agent reporting what it did, and the
  * router never learns the answer.
+ *
+ * Tier 1 comes in two flavours, and {@link UPSTREAM_TIER} is why: the same
+ * verifier run over *this* deployment's evidence and over a copy of another
+ * deployment's evidence are two different claims, and only the first one gates
+ * anything.
  */
 
-export type TierId = 'page' | 'extension' | 'gatekeeper';
+export type TierId = 'page' | 'upstream' | 'extension' | 'gatekeeper';
 
 export type TierState = 'pending' | 'pass' | 'fail' | 'unavailable';
 
@@ -67,6 +77,63 @@ export const PAGE_TIER: Record<Exclude<TierState, 'unavailable'>, TierPresentati
     label: 'Evidence did not check out',
     caveat:
       'The endpoint’s evidence failed a check this page can make, so the composer stays locked. Nothing is sent to a deployment whose evidence does not verify.',
+    variant: 'destructive',
+  },
+};
+
+/**
+ * Tier 1 again, over an *external* upstream's relayed document (SUP-618).
+ *
+ * The same verifier, the same checks, a different claim — and the difference is
+ * exactly the one {@link PAGE_TIER} must not be allowed to make here. Three
+ * things are true of this tier and of no other:
+ *
+ *  - **It unlocks nothing.** The composer is gated by the chat's own tier 1 over
+ *    `routerEndpoint`; this panel runs its own `useVerification` precisely
+ *    because "it unlocks nothing" (`external-inspect-button.tsx`). Borrowing
+ *    tier 1's failure copy made a panel that gates nothing announce "the
+ *    composer stays locked" — a lock it does not apply and cannot observe. On
+ *    production 0.19.8 it printed that sentence while the composer answered a
+ *    real turn, and sent a round of triage at the wrong deployment.
+ *  - **It is not about the hop the prompt takes.** The browser opened no channel
+ *    to this host. The traffic goes to this router, whose egress sidecar
+ *    attested and pinned the connection (ADR-008 §1), so a failure here is a
+ *    failure to verify a *document* and not evidence of an unattested leg.
+ *  - **It reads a copy.** The relay serves the publication this router's own
+ *    verdict named, which may be older than what the upstream's host serves now.
+ *
+ * So the copy says what is true of this panel, and does not use the word
+ * "composer" at all — not a softer claim about it, none. The screen that is
+ * allowed to talk about the composer is the one that locks it, and a panel that
+ * reassures a reader about a lock it cannot observe is the same mistake in a
+ * friendlier tone.
+ *
+ * The topology itself — that the prompt goes to this router, which proxies over
+ * a channel its egress attested and pinned — is said once, by the dialog that
+ * has the room for it (`attestation/inspector.tsx`). These caveats stop at what
+ * the *tier* established, which is what keeps the two from becoming two
+ * paraphrases of one sentence.
+ */
+export const UPSTREAM_TIER: Record<Exclude<TierState, 'unavailable'>, TierPresentation> = {
+  pending: {
+    id: 'upstream',
+    label: 'Checking this upstream',
+    caveat:
+      'Fetching the copy of this upstream’s signed evidence that this router relayed, and checking it here in your browser.',
+    variant: 'secondary',
+  },
+  pass: {
+    id: 'upstream',
+    label: 'Upstream evidence checked by this page',
+    caveat:
+      'This page checked the signature on the document this router relayed for the upstream — a copy of what that deployment published, which may be older than what its own host serves now. It is that deployment’s own claim about itself, verified here, and this check is not the one that decides whether your prompt may be sent.',
+    variant: 'warning',
+  },
+  fail: {
+    id: 'upstream',
+    label: 'Upstream evidence did not check out',
+    caveat:
+      'This page could not verify the copy of the upstream’s evidence that this router relayed. Nothing on this screen is gated by that result: this panel unlocks nothing and locks nothing. What failed is the document this page read, which is not by itself a verdict on the channel the egress pinned.',
     variant: 'destructive',
   },
 };
@@ -115,8 +182,19 @@ export const GATEKEEPER_TIER: TierPresentation = {
  * The strongest tier that actually concluded something wins, and a refusal
  * outranks a pass: if the extension says no while the page says yes, the badge
  * says no, because the extension is the less credulous of the two.
+ *
+ * `kind` is the one thing this cannot default its way out of. For an external
+ * upstream the ranking above does not apply at all: tier 2 is never asked (see
+ * `useVerification`), so `extension` is always the borrowed `unavailable` and
+ * there is nothing to rank tier 1 against. The answer is {@link UPSTREAM_TIER}
+ * by page state alone — which is also why the extension argument is ignored
+ * rather than consulted on that branch: a tier nobody asked has no opinion, and
+ * reading one out of a borrowed value is how the next wrong sentence gets
+ * shipped. If the extension is ever asked about an upstream, that is the day
+ * this branch grows a ranking of its own.
  */
-export function badgeTier(page: TierState, extension: TierState): TierPresentation {
+export function badgeTier(page: TierState, extension: TierState, kind: EndpointKind = 'own'): TierPresentation {
+  if (kind === 'external') return UPSTREAM_TIER[page === 'unavailable' ? 'pending' : page];
   if (extension === 'fail') return EXTENSION_TIER.fail;
   if (page === 'fail') return PAGE_TIER.fail;
   if (extension === 'pass') return EXTENSION_TIER.pass;
@@ -253,4 +331,59 @@ export const HISTORY_COPY: Record<string, HistoryCopy> = {
     /* Nothing maintenance can take: the history was never on the deployment. */
     maintenanceCaveat: null,
   },
+};
+
+/**
+ * The Private Preview's personal-data restriction, where someone is about to
+ * send content (SUP-501).
+ *
+ * Counsel's point was that a condition of the preview has to appear at the
+ * keyboard, not only in a document accepted at sign-up — so it ships on the two
+ * surfaces where content is about to leave: the chat composer's footer and the
+ * dialog that hands over a new API key. Her own constraint bounds what it may
+ * be: *"this text does not replace acceptance of the Terms."* A notice, then —
+ * no checkbox, no dialog to dismiss, nothing that has to be cleared before the
+ * product works, and no dismissal remembered in browser storage (that would be
+ * new storage to disclose, which is SUP-492's sibling problem).
+ *
+ * Split the way `HISTORY_COPY` is split, for the same reason: `summary` is the
+ * only part rendered inline, and it is the condition stated affirmatively,
+ * because this is a restriction on a preview and not a warning about a defect.
+ * `restriction` is counsel's sentence verbatim — it is the wording that was
+ * reviewed, and a paraphrase under the composer is how a reviewed sentence
+ * quietly becomes an unreviewed one. It lives one click away, behind an ⓘ whose
+ * accessible name says there is something to read.
+ *
+ * Shared with `keys/created-key-dialog.tsx`, which is why it is one constant
+ * rather than a sentence in each component: two copies of a lawyer's sentence
+ * is one copy that will go stale.
+ */
+export interface PreviewDataCopy {
+  /** The condition, affirmative and short. Inline, and nothing else is. */
+  summary: string;
+  /** Popover: counsel's wording, unedited. */
+  restriction: string;
+  /** Popover: what this notice is, and what it is not. */
+  standing: string;
+  /** Where the condition is actually written down. */
+  termsUrl: string;
+  /** The link's text — the clause, named, so the reader knows where they land. */
+  termsLabel: string;
+}
+
+export const PREVIEW_DATA_COPY: PreviewDataCopy = {
+  summary: 'Private Preview: use synthetic or non-personal data',
+  restriction:
+    'Please do not submit personal data, including sensitive personal data, in prompts or other content. Use synthetic or non-personal data for testing.',
+  standing: 'This is a condition of the Private Preview. It does not replace the Terms of Service you accepted.',
+  /*
+   * `/TOS_06`, the Acceptable use clause of the published Terms — the landing
+   * repo's `src/app/terms/page.tsx` renders it under this anchor, and counsel's
+   * Private Preview restriction is being added to that clause rather than to a
+   * new one. Hard-coded like `how-to-connect.tsx`'s `DOCS_URL`: the legal pages
+   * are published by the landing, not by this deployment, so there is nothing
+   * per-deployment to resolve.
+   */
+  termsUrl: 'https://router.superprotocol.com/terms#acceptable-use',
+  termsLabel: 'Acceptable use (Terms §6)',
 };

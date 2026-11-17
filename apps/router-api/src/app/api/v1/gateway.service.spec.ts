@@ -4,6 +4,7 @@ import type { ApiKeyRequest } from './api-key.guard.js';
 import type { ExternalUpstreamClient } from './external-upstream.client.js';
 import { GatewayService } from './gateway.service.js';
 import type { GatewayContext, GenerationOutcome, RoutedModel } from './gateway.types.js';
+import type { GatewayAnalytics } from './gateway-analytics.service.js';
 import type { GatewayPolicyService } from './gateway-policy.service.js';
 import type { GenerationRecorder } from './generation-recorder.service.js';
 import type { LiteLlmClient } from './litellm.client.js';
@@ -90,11 +91,11 @@ class HangingUpResponse {
   }
 }
 
-function request(stream: boolean): ApiKeyRequest {
+function request(stream: boolean, headers: Record<string, string> = {}): ApiKeyRequest {
   return {
     apiKey: { workspace: { id: 'ws-1' }, key: { id: 'key-1' } },
     body: { model: MODEL.id, stream, messages: [{ role: 'user', content: 'Hello there' }] },
-    headers: {},
+    headers,
     ip: '127.0.0.1',
   } as unknown as ApiKeyRequest;
 }
@@ -102,6 +103,7 @@ function request(stream: boolean): ApiKeyRequest {
 /** Builds the service with fakes, and hands back what the recorder was told. */
 function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
   const recorded: GenerationOutcome[] = [];
+  const metered: GatewayContext[] = [];
   let httpResponse!: HangingUpResponse;
 
   const policy = {
@@ -111,7 +113,8 @@ function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
   } as unknown as GatewayPolicyService;
   const recorder = {
     begin: async () => ({ id: 'gen-01J6TEST', coverage: null, evidenceDigest: null }),
-    finish: async (_context: GatewayContext, outcome: GenerationOutcome) => {
+    finish: async (context: GatewayContext, outcome: GenerationOutcome) => {
+      metered.push(context);
       recorded.push(outcome);
     },
   } as unknown as GenerationRecorder;
@@ -126,13 +129,15 @@ function gateway(send: (response: HangingUpResponse) => Promise<Response>) {
     recorder,
     upstream,
     {} as unknown as ExternalUpstreamClient,
+    { modelRequested: async () => undefined } as unknown as GatewayAnalytics,
   );
 
   return {
     recorded,
-    async handle(stream: boolean): Promise<HangingUpResponse> {
+    metered,
+    async handle(stream: boolean, headers?: Record<string, string>): Promise<HangingUpResponse> {
       httpResponse = new HangingUpResponse();
-      await service.handle(request(stream), httpResponse.as(), 'chat');
+      await service.handle(request(stream, headers), httpResponse.as(), 'chat');
       return httpResponse;
     },
   };
@@ -174,5 +179,68 @@ describe('a client that hangs up as the upstream answers', () => {
 
     expect(harness.recorded).toHaveLength(1);
     expect(harness.recorded[0]).toMatchObject({ status: 'ok', errorCode: null, completionTokens: 7 });
+  });
+});
+
+/**
+ * SUP-466: the client dimension is derived once, on the way in, so that the
+ * paths with no request object left to look at record the same label as the
+ * happy one. A row that failed or was abandoned is the row the question "which
+ * client fails in ways the user never reports" is actually asked of — if those
+ * two came back null, the breakdown would answer it with survivors only.
+ */
+describe('the client dimension', () => {
+  const CLINE = { 'user-agent': 'node', 'x-title': 'Cline' };
+
+  it('is on the row of a request that succeeded', async () => {
+    const harness = gateway(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: 'chatcmpl-upstream',
+            choices: [{ index: 0, message: { role: 'assistant', content: 'Hi' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+
+    await harness.handle(false, { 'user-agent': 'GitHubCopilotChat/0.69.0' });
+
+    expect(harness.recorded[0]).toMatchObject({ status: 'ok' });
+    expect(harness.metered[0]?.client).toBe('vscode-chat');
+  });
+
+  it('is on the row of a request the client abandoned', async () => {
+    const harness = gateway(async (response) => {
+      response.hangUp();
+      return new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n', EVENT_STREAM);
+    });
+
+    await harness.handle(true, CLINE);
+
+    expect(harness.recorded[0]).toMatchObject({ status: 'aborted' });
+    expect(harness.metered[0]?.client).toBe('cline');
+  });
+
+  it('is on the row of a request that never reached the backend', async () => {
+    const harness = gateway(async () => {
+      throw new Error('connect ECONNREFUSED');
+    });
+
+    await expect(harness.handle(false, CLINE)).rejects.toThrow();
+
+    expect(harness.recorded[0]).toMatchObject({ status: 'error' });
+    expect(harness.metered[0]?.client).toBe('cline');
+  });
+
+  it('is `other` rather than null when the client announced nothing', async () => {
+    const harness = gateway(async () => {
+      throw new Error('connect ECONNREFUSED');
+    });
+
+    await expect(harness.handle(false)).rejects.toThrow();
+
+    expect(harness.metered[0]?.client).toBe('other');
   });
 });

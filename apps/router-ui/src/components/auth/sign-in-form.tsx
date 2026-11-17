@@ -53,6 +53,9 @@ const OFFER_EVERYTHING = {
   // the code field wakes up, and the router checks the code either way.
   emailCodeLength: 6,
   magicLink: true,
+  // No guess: the contact only ever appears beside "this address is being
+  // rejected", which is an answer the same unreachable API would have to give.
+  supportEmail: null,
 };
 
 export function SignInForm() {
@@ -206,6 +209,7 @@ export function SignInForm() {
         key={attempt}
         email={email}
         length={options.emailCodeLength}
+        supportEmail={options.supportEmail ?? null}
         submitLabel="Sign in"
         submittingLabel="Signing in…"
         pending={pending === 'code-verify' ? 'verify' : pending === 'code-resend' ? 'resend' : null}

@@ -25,9 +25,12 @@ export {
   startExternalStand,
   startExternalUpstream,
   TESTSTAND_BIN,
+  type TrustedMeasurementRow,
+  trustedMeasurements,
   waitForExternal,
   waitForExternalStatus,
   waitForRelayedBundle,
+  withdrawTrustedMeasurement,
 } from './external-stand.js';
 export {
   type CommandResult,

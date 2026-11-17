@@ -11,7 +11,7 @@ a bundle, never a policy decision (Rego, stage 7, is the Go gatekeeper's job) an
 a network side effect beyond the single evidence fetch.
 
 Ported from swarm-cloud `libs/swarm-attestation` (BSL-1.1) with permission — see the
-repository `NOTICE`. The Go verifier in `apps/gatekeeper/pkg/attestation` implements the
+repository `NOTICE`. The Go verifier in `libs/swarm-evidence-go/attestation` implements the
 same algorithm and is held to the same conformance vectors.
 
 ## Usage

@@ -399,6 +399,71 @@ describe('the external-endpoint sidecar section', () => {
     expect(config.externalEndpoints.adminListen).toBe('127.0.0.1:9465');
   });
 
+  it('defaults the outage thresholds to three failed checks or a quarter of an hour', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    // Three checks against a 10-minute re-attestation is about half an hour of a
+    // model refusing every request; the duration threshold catches the case where
+    // the checking itself stopped and nothing is being counted (SUP-517).
+    expect(config.externalEndpoints.outage).toEqual({ afterFailures: 3, afterNoSuccess: 900_000 });
+  });
+
+  it('lets an operator loosen, tighten or switch off either threshold', () => {
+    const config = RouterConfigSchema.parse({
+      auth: { secret: SECRET },
+      externalEndpoints: { outage: { afterFailures: '0', afterNoSuccess: '2h' } },
+    });
+
+    expect(config.externalEndpoints.outage).toEqual({ afterFailures: 0, afterNoSuccess: 7_200_000 });
+    expect(
+      RouterConfigSchema.safeParse({
+        auth: { secret: SECRET },
+        externalEndpoints: { outage: { afterFailures: -1 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('defaults the relayed-evidence windows to an hourly refresh and a six-hour alert (SUP-615)', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    // An hour of refresh against the 24 hours at which every verifier rejects a
+    // bundle leaves 23 attempts' headroom; six hours of silence is five failed
+    // refreshes, which no longer reads as one bad fetch.
+    expect(config.externalEndpoints.evidenceRefreshAfter).toBe(3_600_000);
+    expect(config.externalEndpoints.evidenceStaleAfter).toBe(21_600_000);
+  });
+
+  it('refuses a staleness alert that could only fire on an already-locked console', () => {
+    for (const evidenceStaleAfter of ['24h', '48h']) {
+      const result = RouterConfigSchema.safeParse({
+        auth: { secret: SECRET },
+        externalEndpoints: { evidenceStaleAfter },
+      });
+
+      expect(result.success, evidenceStaleAfter).toBe(false);
+      expect(result.error?.issues[0].path).toEqual(['externalEndpoints', 'evidenceStaleAfter']);
+    }
+  });
+
+  it('refuses a staleness alert that fires before the refresh it is waiting on', () => {
+    const result = RouterConfigSchema.safeParse({
+      auth: { secret: SECRET },
+      externalEndpoints: { evidenceRefreshAfter: '2h', evidenceStaleAfter: '1h' },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['externalEndpoints', 'evidenceStaleAfter']);
+  });
+
+  it('lets an operator switch the staleness alert off', () => {
+    const config = RouterConfigSchema.parse({
+      auth: { secret: SECRET },
+      externalEndpoints: { evidenceStaleAfter: '0s' },
+    });
+
+    expect(config.externalEndpoints.evidenceStaleAfter).toBe(0);
+  });
+
   it('accepts the whole of the range Denis ruled on, and nothing outside it', () => {
     // Ruling 6: 10 minutes by default, bounded to [1m, 1h]. The upper bound is
     // the point of the range — "hourly" was the acceptable worst case, so a
@@ -450,6 +515,37 @@ describe('the external-endpoint sidecar section', () => {
       RouterConfigSchema.safeParse({ auth: { secret: SECRET }, externalEndpoints: { reattestInverval: '10m' } })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('the alert section', () => {
+  it('is on by default with nobody named, so the recipients come from the admin list', () => {
+    const config = RouterConfigSchema.parse({ auth: { secret: SECRET } });
+
+    // The default that makes the channel work on the deployment already running:
+    // a new deploy parameter would be unset exactly where the outage happens
+    // (SUP-535).
+    expect(config.alerts).toEqual({ email: true, emails: [], minInterval: 900_000 });
+  });
+
+  it('takes a comma-separated list from the environment, the way the admin list does', () => {
+    const config = RouterConfigSchema.parse({
+      auth: { secret: SECRET },
+      alerts: { emails: 'oncall@example.test, second@example.test' },
+    });
+
+    expect(config.alerts.emails).toEqual(['oncall@example.test', 'second@example.test']);
+  });
+
+  it('refuses a recipient that is not an address, at boot rather than at the first outage', () => {
+    const result = RouterConfigSchema.safeParse({
+      auth: { secret: SECRET },
+      alerts: { emails: 'not-an-address' },
+    });
+
+    // A silent non-delivery is the failure mode this whole section exists to
+    // remove, so a typo has to be a boot error and not a surprise six weeks on.
+    expect(result.success).toBe(false);
   });
 });
 
