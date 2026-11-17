@@ -1,6 +1,7 @@
+import { Logger } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
 import { createHarness, type Harness } from './app-harness.js';
 import { bearer, createKey, routerConfigFor, seedWorkspace } from './gateway-fixture.js';
@@ -362,5 +363,27 @@ describe('a request the model endpoint itself calls invalid', () => {
     await post(secret, poisoned()).expect(400);
 
     expect(upstream.requests).toHaveLength(1);
+  });
+
+  it('reaches the client with the upstream’s wording and the log without it (SUP-497)', async () => {
+    /*
+     * The two halves of this request go to different places on purpose. The
+     * upstream's sentence is the only thing that names the bad field, so the
+     * caller gets it (SUP-448) — and a model server refusing a request is the
+     * one place on this path that quotes the request back, so the log does not
+     * (`describeUpstreamError`). `/privacy` §5 publishes the second half.
+     */
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const response = await post(secret, poisoned()).expect(400);
+    const lines = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    warn.mockRestore();
+
+    expect(response.body.error.message).toContain('unterminated object');
+
+    expect(lines).toContain('LiteLLM answered 400');
+    expect(lines).toContain('param=messages[8].tool_calls[0].function.arguments');
+    expect(lines).not.toContain('unterminated object');
+    expect(lines).not.toContain('Invalid JSON in');
   });
 });

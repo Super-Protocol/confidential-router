@@ -11,6 +11,7 @@ import {
   HISTORY_COPY,
   PAGE_TIER,
   pageTierState,
+  UPSTREAM_TIER,
 } from './tiers';
 
 describe('the tier labels', () => {
@@ -20,6 +21,7 @@ describe('the tier labels', () => {
     // served by the deployment it is checking cannot make that claim.
     const labels = [
       ...Object.values(PAGE_TIER).map((tier) => tier.label),
+      ...Object.values(UPSTREAM_TIER).map((tier) => tier.label),
       ...Object.values(EXTENSION_TIER).map((tier) => tier.label),
       GATEKEEPER_TIER.label,
     ];
@@ -32,7 +34,12 @@ describe('the tier labels', () => {
   });
 
   it('gives every tier a caveat, so a label never travels alone', () => {
-    for (const tier of [...Object.values(PAGE_TIER), ...Object.values(EXTENSION_TIER), GATEKEEPER_TIER]) {
+    for (const tier of [
+      ...Object.values(PAGE_TIER),
+      ...Object.values(UPSTREAM_TIER),
+      ...Object.values(EXTENSION_TIER),
+      GATEKEEPER_TIER,
+    ]) {
       expect(tier.caveat.length, `${tier.id}/${tier.label}`).toBeGreaterThan(40);
     }
   });
@@ -67,6 +74,73 @@ describe('badgeTier', () => {
   it('stays pending while either tier is still working', () => {
     expect(badgeTier('pending', 'unavailable')).toBe(PAGE_TIER.pending);
     expect(badgeTier('pass', 'pending')).toBe(PAGE_TIER.pending);
+  });
+});
+
+describe('the external upstream tier (SUP-618)', () => {
+  it('never claims the composer is locked, because it locks nothing', () => {
+    /*
+     * The defect, as one assertion. The external panel runs its own
+     * `useVerification` because "it unlocks nothing"; borrowing tier 1's failure
+     * copy had it announce "the composer stays locked" on a page whose composer
+     * was answering turns. Production 0.19.8 printed exactly that and routed an
+     * urgent issue at the wrong deployment.
+     */
+    for (const tier of Object.values(UPSTREAM_TIER)) {
+      // Not "a weaker claim about the composer" — no claim. This panel cannot
+      // observe that lock in either direction, so it has nothing to say about it.
+      expect(tier.caveat, tier.label).not.toMatch(/composer/i);
+      expect(tier.caveat, tier.label).not.toMatch(/nothing is sent to a deployment/i);
+    }
+  });
+
+  it('says of a failure what is true of it: that it gates nothing', () => {
+    // Not merely silent about the composer — a reader who opened this panel
+    // because they are worried needs the positive statement too.
+    expect(UPSTREAM_TIER.fail.caveat).toMatch(/unlocks nothing and locks nothing/i);
+    expect(UPSTREAM_TIER.fail.caveat).toMatch(/not by itself a verdict on the channel/i);
+  });
+
+  it('names what failed: the relayed copy, not the upstream itself', () => {
+    expect(UPSTREAM_TIER.fail.caveat).toMatch(/relayed/i);
+    expect(UPSTREAM_TIER.fail.label).toMatch(/upstream evidence/i);
+  });
+
+  it('warns on a pass that the relayed copy may be stale', () => {
+    // The relay serves the publication this router's own verdict named, which is
+    // the whole reason SUP-615 existed.
+    expect(UPSTREAM_TIER.pass.caveat).toMatch(/older than what its own host serves/i);
+  });
+
+  it('keeps tier 1’s own failure copy talking about the composer, because there it is true', () => {
+    // The fix is a second presentation, not a weaker first one: the chat's own
+    // endpoint failing really does shut the composer, and that sentence must
+    // survive.
+    expect(PAGE_TIER.fail.caveat).toMatch(/composer stays locked/i);
+  });
+});
+
+describe('badgeTier over an external upstream', () => {
+  it('reads the upstream tier rather than tier 1’s', () => {
+    expect(badgeTier('fail', 'unavailable', 'external')).toBe(UPSTREAM_TIER.fail);
+    expect(badgeTier('pass', 'unavailable', 'external')).toBe(UPSTREAM_TIER.pass);
+    expect(badgeTier('pending', 'unavailable', 'external')).toBe(UPSTREAM_TIER.pending);
+  });
+
+  it('ignores the extension, which is never asked about an upstream', () => {
+    /*
+     * `useVerification` sets the outcome to `absent` for an external upstream and
+     * asks no extension at all — the extension speaks to a channel this browser
+     * never opened. A ranking against that borrowed value would be an opinion
+     * nobody gave.
+     */
+    expect(badgeTier('pass', 'fail', 'external')).toBe(UPSTREAM_TIER.pass);
+    expect(badgeTier('pass', 'pass', 'external')).toBe(UPSTREAM_TIER.pass);
+    expect(badgeTier('pending', 'pass', 'external')).toBe(UPSTREAM_TIER.pending);
+  });
+
+  it('still defaults to the endpoint’s own tiers when no kind is given', () => {
+    expect(badgeTier('fail', 'unavailable')).toBe(PAGE_TIER.fail);
   });
 });
 
