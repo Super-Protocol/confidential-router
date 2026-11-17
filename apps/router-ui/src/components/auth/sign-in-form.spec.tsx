@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { INVITE_COOKIE_NAME } from '../../lib/invite';
 import { clearSignedIn, SIGNED_IN_COOKIE_NAME } from '../../lib/signed-in-cookie';
 import { renderWithApollo } from '../../test-utils';
+import { signInMailStateMock } from './auth-mocks';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 import { SignInForm } from './sign-in-form';
 
@@ -36,6 +37,7 @@ type Offers = Partial<{
   emailCodeLength: number;
   magicLink: boolean;
   inviteRequired: boolean;
+  supportEmail: string | null;
 }>;
 
 /**
@@ -58,6 +60,7 @@ function optionsMock(overrides: Offers = {}) {
           emailCodeLength: 6,
           magicLink: true,
           inviteRequired: false,
+          supportEmail: null,
           ...overrides,
         },
       },
@@ -111,6 +114,24 @@ async function requestCode(email = 'dev@example.com') {
 }
 
 describe('SignInForm', () => {
+  /**
+   * The wiring SUP-556 adds: the contact is deployment configuration, so it
+   * arrives with the sign-in options and has to reach the code step — which is
+   * the only screen that can tell a locked-out person anything at all.
+   */
+  it('hands the configured support contact to the code step', async () => {
+    routeCode();
+    renderForm([
+      optionsMock({ ...CODE_ONLY, supportEmail: 'community@superprotocol.com' }),
+      signInMailStateMock('REJECTING'),
+    ]);
+
+    await requestCode();
+
+    const contact = await screen.findByTestId('email-code-rejected-contact');
+    expect(contact).toHaveAttribute('href', 'mailto:community@superprotocol.com');
+  });
+
   it('offers both providers and an address to mail', async () => {
     renderForm();
 
@@ -591,6 +612,41 @@ describe('SignInForm, the emailed-code path', () => {
     expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
   });
 
+  /**
+   * SUP-460: a code the router could not send used to come back as
+   * `200 {"success": true}`, which put the viewer on the code step waiting for
+   * a mail that was never coming. It refuses with a 503 now, and the card has
+   * to keep them where they can try again.
+   */
+  it('keeps the viewer on the address when the router could not send the code', async () => {
+    routeCode({
+      send: jsonResponse({ code: 'MAIL_SEND_FAILED', message: 'The sign-in code could not be sent.' }, false, 503),
+    });
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be sent just now');
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeEnabled();
+  });
+
+  /**
+   * A gateway in front of the router answers the same status with no body —
+   * the viewer must not be told "Sign-in failed" for an outage they can only
+   * wait out.
+   */
+  it('says the same thing when the 503 carries no body at all', async () => {
+    routeCode({ send: { ok: false, status: 503, json: async () => undefined } as unknown as Response });
+    renderForm([optionsMock(CODE_ONLY)]);
+
+    await userEvent.type(await screen.findByLabelText('Email'), 'dev@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a code' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be sent just now');
+  });
+
   it('says so when the deployment turns out to have no mailer after all', async () => {
     // Only reachable from the fallback that offers everything: the options
     // query failed, so the card guessed.
@@ -763,9 +819,10 @@ describe('an invitation carried to a sign-in screen', () => {
     // account creation and nowhere else, so an existing one is not topped up
     // (SUP-142) and the console does not have to know which this is.
     expect(bodyOf(SIGN_IN)).toEqual({ email: 'invited@example.com', otp: '123456', inviteCode: 'ABCDEFGH' });
-    // The request for the code carries nothing of it: a code is asked for by
-    // address alone.
-    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in' });
+    // And the request that asks for the code, because an invite-only deployment
+    // will not mail an address it has no account for without one (SUP-410) —
+    // this screen registers an invited visitor who never opened `/signup`.
+    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in', inviteCode: 'ABCDEFGH' });
   });
 });
 

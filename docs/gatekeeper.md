@@ -483,7 +483,8 @@ upstream, and any connection the previous verdict admitted is closed.
     "code": "attestation_failed"
   },
   "stage": "policy",
-  "reason": "the built-in pin policy (gatekeeper.default) denied"
+  "reason": "the built-in pin policy (gatekeeper.default) denied",
+  "checkedAt": "2026-10-19T20:05:00Z"
 }
 ```
 
@@ -492,9 +493,24 @@ bare status. `stage` and `reason` sit beside it because "which check failed" is
 the operational question, and it should not require parsing prose. The same
 string is on every response as `X-Gatekeeper-Verdict`.
 
+`checkedAt` is when the verdict being reported was taken, and it is also on the
+response as `X-Gatekeeper-Checked-At`. Read it before you go looking: the
+refusal is answered from the verdict in force, so the reason describes the
+moment of that check and not the moment you read it.
+
+`code` is `attestation_failed` for every check that ran and said no, and
+`attestation_unreachable` when the gatekeeper could not reach the endpoint to
+run one at all — a refused dial, a failed handshake, a truncated read. The
+second is a statement about the network between you and the endpoint, not about
+the endpoint. A request arriving against a denial also re-runs the check
+immediately (at most one every two seconds), so a blip that has already passed
+clears on your next request rather than on the next `reattestInterval` — and
+while the endpoint stays denied the background loop re-checks on the same
+backoff, so it recovers even with no traffic at all.
+
 | `stage` | What happened |
 | --- | --- |
-| `fetch` | the endpoint did not serve a usable bundle |
+| `fetch` | the endpoint did not serve a usable bundle, or could not be reached at all |
 | `cert-chain` | its chain is malformed, expired or does not chain up |
 | `untrusted-root` | the chain ends somewhere you never trusted |
 | `jws` | bad signature, wrong payload, or a stale/future bundle |
@@ -681,6 +697,14 @@ your measurement list. `gatekeeper verify <endpoint>` is what answers for one.
   streams log lines, which is what a container or a systemd unit wants.
 - **SIGHUP** reloads the configuration in place. A reload that fails to load or
   validate changes nothing — a typo must not take the proxy down.
+- **Every endpoint the configuration declares is kept listening.** The
+  supervisor re-checks that, a few times a minute, against what is actually
+  bound, and starts whatever is missing: an endpoint that arrived in a reload, an
+  address that was taken a moment ago, a listener that died on its own. Binding
+  opens nothing — a fresh listener admits no traffic until its own verification
+  completes — so the only state this will not override is a stop you asked for
+  from the dashboard. A bind that keeps failing shows up as `broken` with the
+  reason, rather than as a `stopped` endpoint nothing is retrying (SUP-537).
 - **SIGINT / SIGTERM** drain the listeners (`--drain-timeout`, 30s) and exit.
 - **`gatekeeper status`** reports on a gatekeeper running in another process,
   through the `admin` socket. Without an `admin:` section there is nothing to

@@ -94,15 +94,21 @@ func newRunCommand(g *globals) *cobra.Command {
 
 		// Every endpoint is started individually so that one address already in
 		// use leaves that endpoint broken — and visible as broken — instead of
-		// taking the whole gatekeeper down with it.
+		// taking the whole gatekeeper down with it. It is also not the last
+		// attempt: the supervisor reconciles what the configuration declares
+		// against what is listening, so an endpoint that could not bind now is
+		// retried rather than left stopped for the life of the process
+		// (SUP-537).
 		//
-		// Which ones failed is carried to the summary rather than only logged:
-		// a banner that lists an address nothing is bound to is a false
-		// confirmation of the very step it exists to confirm.
+		// Which ones failed is still carried to the summary rather than only
+		// logged: a banner that offers an address nothing is bound to is a false
+		// confirmation of the very step it exists to confirm, and a retry that
+		// may succeed a second from now does not make the address live when the
+		// banner prints (SUP-300).
 		failed := make(map[string]bool, len(cfg.Endpoints))
 		for _, ep := range cfg.Endpoints {
 			if err := supervisor.Start(ctx, ep.Name); err != nil {
-				fmt.Fprintf(runLog, "starting %s: %v\n", ep.Name, err)
+				fmt.Fprintf(runLog, "starting %s: %v — it will be retried\n", ep.Name, err)
 				failed[ep.Name] = true
 			}
 		}
@@ -165,14 +171,16 @@ func printRunning(w io.Writer, path string, cfg *config.Config, failed map[strin
 		rows = append(rows, []string{"  " + ep.Name, "http://" + ep.Listen + "/v1", ep.Upstream})
 	}
 
-	// Nothing bound: the process stays up — the dashboard still reports, and a
-	// SIGHUP can still fix the file — but it is serving nobody, and the summary
-	// has to lead with that rather than with the word "running".
+	// Nothing bound: the process stays up — the dashboard still reports, the
+	// supervisor keeps retrying (SUP-537), and a SIGHUP can still fix the file
+	// — but it is serving nobody right now, and the summary has to lead with
+	// that rather than with the word "running".
 	if len(rows) == 0 {
 		fmt.Fprintf(w, "gatekeeper started from %s, and nothing is listening: "+
 			"every endpoint failed to start.\n", path)
 		fmt.Fprintf(w, "\n! not listening: %s — the reason for each is above.\n", strings.Join(broken, ", "))
-		fmt.Fprintf(w, "\nNext: free the address, or change `listen:` for it in %s, then start again.\n", path)
+		fmt.Fprintf(w, "\nNext: free the address, or change `listen:` for it in %s and reload — "+
+			"each endpoint is retried, and picked up as soon as it can bind.\n", path)
 		fmt.Fprintln(w, "Press Ctrl-C to stop.")
 		return
 	}
@@ -181,8 +189,8 @@ func printRunning(w io.Writer, path string, cfg *config.Config, failed map[strin
 		"before anything is forwarded.\n\n", path)
 	table(w, []string{"  ENDPOINT", "POINT YOUR CLIENT AT", "VERIFIED UPSTREAM"}, rows)
 	if len(broken) > 0 {
-		fmt.Fprintf(w, "\n! not listening: %s — the reason for each is above, and nothing of ours "+
-			"answers there.\n", strings.Join(broken, ", "))
+		fmt.Fprintf(w, "\n! not listening: %s — the reason for each is above, nothing of ours "+
+			"answers there yet, and each is retried until it binds.\n", strings.Join(broken, ", "))
 	}
 	fmt.Fprintln(w, "\nPress Ctrl-C to stop.")
 }

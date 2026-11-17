@@ -239,6 +239,9 @@ describe('a bundle a gatekeeper would reject', () => {
 
     expect(result.unlocked).toBe(false);
     expect(statusOf(result.checks, 'freshness')).toBe('fail');
+    // Read from the host itself, so the host is the party that stopped
+    // publishing and the sentence says so.
+    expect(detailOf(result, 'freshness')).toContain('The evidence was signed 48 hours ago');
   });
 
   it('locks the composer when the published TLS certificate is not the one the evidence signs', async () => {
@@ -746,6 +749,29 @@ describe('an external upstream', () => {
     expect(result.unlocked).toBe(true);
     expect(result.evidence?.source).toBe('router');
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([RELAY_URL]);
+  });
+
+  it('blames the relay rather than the upstream when the copy it hands out has aged out (SUP-615)', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === RELAY_URL) {
+        return new Response(JSON.stringify(loadBundle('valid-producer-asserted')), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const result = await run({
+      fetcher: fetcher as unknown as typeof fetch,
+      kind: 'external',
+      now: new Date(REFERENCE_NOW.getTime() + 37 * 60 * 60 * 1000),
+    });
+
+    expect(result.unlocked).toBe(false);
+    expect(statusOf(result.checks, 'freshness')).toBe('fail');
+    // The production reading this got wrong for 37 hours: the upstream was
+    // republishing every minute and this page told the reader its evidence did
+    // not check out. A relayed document that is old is this router's copy being
+    // old, which is a fact about a party the reader can act on.
+    expect(detailOf(result, 'freshness')).toContain('The copy this router relayed was signed 37 hours ago');
   });
 
   it('does not fall through to the upstream’s own host when the relay has nothing yet', async () => {

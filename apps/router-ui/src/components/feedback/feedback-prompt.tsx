@@ -26,7 +26,7 @@ const CREDITS_PATH = '/credits';
 export function FeedbackPrompt() {
   const pathname = usePathname();
   const { activeWorkspace, refetch } = useSession();
-  const { offer, waiting, opened } = useFeedbackOffer(refetch);
+  const { offer, waiting, opened } = useFeedbackOffer('balance_banner', refetch);
 
   const spentOut = Number(activeWorkspace?.balanceMicros ?? '0') <= 0;
   if (!offer?.formUrl || !spentOut || pathname === CREDITS_PATH) {
