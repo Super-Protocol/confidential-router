@@ -60,11 +60,16 @@ type Model {
   id: ID!, slug: String!, name: String!, contextLength: Int!, capabilities: [ModelCapability!]!
   pricing: Pricing!, endpoint: Endpoint!, tee: String                 # = endpoint.latestEvidence.tee (SUP-260)
 }
-enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS }
+# What the router serves, derived from the declared routes (SUP-450): COMPLETIONS
+# appears for a chat model too, because the surface translates that route, and
+# TOOLS / STREAMING are facts about the surface rather than routes.
+enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS TOOLS STREAMING }
+# What an operator declares the upstream serves itself; the editable value.
+enum RouteCapability { CHAT COMPLETIONS EMBEDDINGS }
 type Pricing { promptPer1m: Micros!, completionPer1m: Micros! }
 
 type EvidenceDigestChange { evidenceDigest: String!, evidenceDigestHex: String!, firstIssuedAt: DateTime!, lastIssuedAt: DateTime!, snapshots: Int! }
-type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float! }
+type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float }   # requests = own-endpoint generations only; ratio is null when that is 0
 
 extend type Query {
   models(tee: String): [Model!]!
@@ -106,8 +111,9 @@ input GenerationFilter { from: DateTime, to: DateTime, modelIds: [ID!], apiKeyId
 extend type Query { generations(workspaceId: ID!, filter: GenerationFilter, first: Int = 50, after: String): GenerationConnection! }
 
 # ---------- activity aggregates ----------
-type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, evidenceCoverage: Float!, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float }
-type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, evidenceCoverage: Float! }
+type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, coverableRequests: Int!, evidenceCoverage: Float, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float, timedRequests: Int!, ratedRequests: Int! }
+# evidenceCoverage is null when coverableRequests is 0 — no ratio, not 0%. timedRequests / ratedRequests are the samples the two averages are over; ratedRequests <= timedRequests.
+type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, coverableRequests: Int!, evidenceCoverage: Float }
 type KeyUsage { apiKey: ApiKey!, spend: Micros!, requests: Int! }
 type ModelUsage { model: Model!, spend: Micros!, requests: Int!, tokens: Int! }
 enum Bucket { HOUR DAY }
@@ -281,10 +287,11 @@ type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: 
 #   expiresAt?, note? }): IssuedInviteCodes!                     # { campaign, grantMicros, expiresAt, codes { id code url } }
 # Mutation.withdrawInviteCode(id: ID!): InviteWithdrawal!        # unspent only, by row id — the code never travels back
 #
-# BOOTSTRAP is derived, not stored: `/auth/bootstrap` only ever creates the first
-# account, under `auth.bootstrapEmail`, so it is the earliest account iff it has
-# that address. Codes are answered in full (issuing them is the section's job);
-# the console masks them until revealed, and no resolver logs one.
+# BOOTSTRAP is derived, not stored: `/auth/bootstrap` only ever creates an account
+# under `auth.bootstrapEmail`, so it is the account carrying that address — by
+# address and not by position, which a deployment import would hide (SUP-309).
+# Codes are answered in full (issuing them is the section's job); the console
+# masks them until revealed, and no resolver logs one.
 
 # ---------- the second grant, for feedback ----------
 
@@ -357,8 +364,15 @@ and small:
   id and the payload travel together — that pair is what the membership check reads.
 - **`generations` gains `sort:`**, and `usageByModel` an optional `limit:` (which is the "top models by
   spend" list).
-- **`activitySummary`/`activitySeries` also return `coveredRequests`**, so a client can render the ratio
-  and its numerator without a second query.
+- **`activitySummary`/`activitySeries` also return `coveredRequests` and `coverableRequests`**, so a
+  client can render the ratio with both of its own halves and without a second query — and
+  `evidenceCoverage` is **nullable**. `coverableRequests` is the denominator: generations this
+  deployment's own endpoints served. An external-endpoint generation counts in `requests`, tokens and
+  spend, and in neither half of the ratio (ADR-008 §4) — it has no bundle of ours to have been covered
+  by, and the router verified that upstream itself, which is reported in the other vocabulary. So a
+  window with no coverable request has **no ratio** (`null`), never `0`: pairing `coveredRequests` with
+  `requests` is what made the console tell a production account "0 of 34 generations were served with
+  published evidence" about 34 generations each carrying a verified endpoint's digest (SUP-421).
 - **Downloads are REST, not GraphQL**, because a download is a browser navigation with a filename and a
   content type:
   - `GET /activity/generations.csv?workspaceId=&from=&to=&modelIds=&apiKeyIds=&status=` — session
@@ -439,7 +453,18 @@ SUP-75 deltas above, these are the differences between this document's outline a
   `adminRecovery` while it is set and the account it created exists — the two states in which
   `POST /auth/bootstrap` does something. The token itself is never reported. `password`,
   `passwordMinLength`, `me.hasPassword` and the `setPassword` mutation were removed with password sign-in
-  (SUP-269): there is nothing left for them to describe.
+  (SUP-269): there is nothing left for them to describe. `supportEmail` (SUP-556) is `mail.replyTo`, null
+  where the deployment configured none: not a sign-in path but the thing to offer when none can work, since
+  an address the provider has suppressed can never be mailed a code again and the person holding it has no
+  other way to reach the operator.
+- **`signInMailState(email)`** — new (SUP-551), and public for the same reason: the code-entry screen asks
+  it before there is a session. `state` is `UNKNOWN` | `REJECTING` | `DELAYED` | `DELIVERING`, from what
+  the mail provider reported after it accepted the message, and only `REJECTING` changes what the screen
+  says — for an address on the provider's suppression list every clause of "check spam, a new code may be
+  slow" is false. **Not an account-existence oracle**: the answer is about the mailbox, an address with an
+  account and one without answer identically, and the same fact is obtainable by anyone who mails the
+  address and reads the refusal. It spends `mail.stateLookupsPerMinute` per source address, which is what
+  stops it being walked down a list of addresses.
 - **`gatekeeperRelease`** — new, and the Gatekeeper screen's only query. Version, notes URL, checksum
   manifest and one `GatekeeperDownload` per platform, read from GitHub Releases and cached
   (`gatekeeper.*` in the router config). `stale: true` means GitHub could not be reached and these are the
@@ -485,7 +510,7 @@ error."* and could not tell a deliberate refusal from an outage.
 
 ### Screen → operations, as shipped
 
-**Sign in** `signInOptions` (public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
+**Sign in** `signInOptions` + `signInMailState` (both public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
 `models` (public) `+ endpoints`;
 **Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` / `evidenceDigestHistory` +
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
@@ -757,7 +782,11 @@ type ExternalEndpointModel {
   upstreamModel: String
   contextLength: Int!
   pricing: Pricing!
-  capabilities: [ModelCapability!]!
+  """
+  The declared routes of the upstream — the editable value, not the wider list
+  `Model.capabilities` reports (SUP-450).
+  """
+  capabilities: [RouteCapability!]!
 }
 
 """
@@ -827,7 +856,12 @@ input ExternalModelInput {
   contextLength: Int!
   promptPer1mMicros: String!
   completionPer1mMicros: String!
-  capabilities: [ModelCapability!]
+  """
+  Which routes the upstream serves itself; defaults to `[CHAT]`. Add
+  `COMPLETIONS` when it serves the legacy route natively, which forwards that
+  route verbatim instead of translating it (SUP-450).
+  """
+  capabilities: [RouteCapability!]
 }
 
 input RegisterExternalEndpointInput {
@@ -947,6 +981,41 @@ TOFU-with-approval loop: *Measurement seen* with the registry-signed badge and "
 (`addTrustedMeasurement`), *Digest seen* with "Pin this digest"; after a redeploy, the approved and the
 new digest with the evidence diff and "Approve new digest". The register dialog shows the same two
 approvals in the stage that waits for them.
+
+## As shipped (SUP-435) — an edit can carry the approval it would otherwise drop
+
+Re-pointing an endpoint withdraws its pin, which is SUP-252 being fail-closed: the approval was of
+the deployment that answered at the old URL. What it was missing is a way to say otherwise, and any
+trace of having happened. `UpdateExternalEndpointInput` carried `baseUrl` and `models` only, so the
+one mutation an operator reaches for to correct an upstream URL left the endpoint `PENDING` /
+`digest-not-pinned` with every model on it answering 503 until someone pinned the same digest again
+— on production, 28 minutes of it, and nothing in the response or the timeline said the approval had
+gone.
+
+- **`UpdateExternalEndpointInput.evidenceDigest`** — optional, the same value and spellings
+  `pinExternalEndpointDigest` takes. Stating it makes the edit and the approval one write, so a
+  re-point does not pass through an unapproved endpoint; it also pins on an edit that re-points
+  nothing, which is `pinExternalEndpointDigest` reached from inside an edit. Omitting it says nothing
+  about the pin: the approval survives an edit that leaves `baseUrl` alone, and a re-point still
+  withdraws it. A digest the parser refuses fails the whole mutation before any of it is written.
+- **`DIGEST_UNPINNED`** joins the event kinds — an approval an edit withdrew, carrying the digest that
+  is no longer approved and the reason (which URL it was re-pointed to from where). The withdrawal is
+  also a WARN naming the endpoint, the digest and both URLs, because the mutation itself answers with
+  the row it wrote and the refusal only arrives at the next check. An approval *carried* records
+  `DIGEST_PINNED` as a pin always does, and re-sending the digest the endpoint already holds records
+  nothing: it approves nothing new.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  DIGEST_UNPINNED
+}
+
+input UpdateExternalEndpointInput {
+  # …as above, plus:
+  evidenceDigest: String
+}
+```
 
 ## As shipped (SUP-249) — model discovery, attest-then-list
 
@@ -1113,3 +1182,132 @@ this router reads none for someone else's hardware.
 | --- | --- | --- |
 | Models | `models` | One table. The origin badge comes from `origin`; the attestation column renders `EvidenceBadge` for a row with an `endpoint`, `ExternalAttestationBadge` for one with an `externalUpstream`, and `available` alone for an anonymous reader. The two badges share no component and no label. |
 | Chat | `chatSettings`, `routerEndpoint`, `models` | `chatModelIds` contains an external model only while its endpoint holds a live admitting verdict, and is also the scope every chat credential is minted with — so the picker and the key cannot disagree. The gate runs on `routerEndpoint`; `externalUpstream` drives the second inspect panel. |
+
+## As shipped (SUP-517) — the failure run beside the verdict
+
+A published upstream lost the gateway route for its hostname at 2026-10-23 06:11 UTC and this router
+answered `503 gatekeeper_error` / `attestation_failed` for 30 hours. Every individual behaviour was
+right: the verdict flipped to `DENIED_BY_THIS_ROUTER`, the model left `/v1/models`, the public
+catalogue carried `available: false`. What no surface could answer was *how long*, *how many checks*
+and *did the upstream answer at all* — so a dark upstream and a registration awaiting its first
+approval rendered identically, and nobody was told about either.
+
+- **`ExternalEndpoint.liveness`** — the run behind the latest verdict, grouped rather than flattened
+  because a console row reads them together: `reachability`, `notServingSince`, `lastSuccessAt`,
+  `lastFailureAt`, `consecutiveFailures`, `outage`. Readable by any signed-in user, like the rest of the
+  verdict (ruling 3). Every field is a projection of live verification and is reset on boot (ADR-008 §8).
+- **`ExternalEndpointReachability`** — `UNREACHABLE` when the sidecar reported that the dial, the
+  handshake or the read failed (`Report.unreachable`, SUP-422), `REACHABLE` when something answered and
+  verification or policy refused it, `UNKNOWN` before the first check. The distinction the outage turned
+  on: `UNREACHABLE` is "go look at the cloud", `REACHABLE`-and-denied is "open this drawer and approve a
+  deployment". **Read from the sidecar, not inferred from the stage** — `fetch` is wider than the flag,
+  and an upstream whose ingress is up while `/.well-known/swarm-evidence` 502s stops at `fetch` having
+  answered. Calling that one `UNREACHABLE` would be this field's own mis-direction pointing the other way.
+- **`liveness.consecutiveFailures`** counts *distinct checks*, not polls. The status poll re-reads the
+  sidecar every 5 s against a re-attestation every 10 minutes, so counting readings would make the
+  threshold a number of seconds wearing a different name.
+- **`liveness.outage`** is whether the run has crossed `externalEndpoints.outage.afterFailures` or
+  `.afterNoSuccess` and been alerted on. It is always false for an endpoint an operator disabled, and
+  for one whose deployment has never been approved (`pinnedEvidenceDigest: null`) — that is a
+  registration half-finished, not an upstream that went dark, and the two must not share an alarm.
+- **`OUTAGE`** / **`RECOVERED`** join the event kinds, one per run in each direction. They are not
+  `DENIED_BY_THIS_ROUTER` / `VERIFIED_BY_THIS_ROUTER` under another name: a denial is one check that
+  refused, an `OUTAGE` is this router declaring the run of them worth waking somebody for.
+- **`ExternalUpstream.notServingSince`** — the same clock on the public catalogue's reduced upstream
+  type, so `available: false` on a fresh registration and `available: false` on a model that has been
+  dark for a day are finally different answers. Still null for an anonymous caller, like the rest of
+  `externalUpstream`.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  OUTAGE
+  RECOVERED
+}
+
+"""
+Whether the last check got a document back, as distinct from whether this router
+admitted what it got.
+"""
+enum ExternalEndpointReachability {
+  REACHABLE
+  UNREACHABLE
+  UNKNOWN
+}
+
+"""
+How long this upstream has been dark, and whether that has passed this router's
+outage threshold. A projection of live verification, reset on boot like the
+verdict itself.
+"""
+type ExternalEndpointLiveness {
+  reachability: ExternalEndpointReachability!
+  """
+  Since when it has not been known to serve — a denial, an operator switching it
+  back on, or this process starting. Null while it is serving.
+  """
+  notServingSince: DateTime
+  lastSuccessAt: DateTime
+  """
+  Kept across a recovery, so flapping is visible on the row.
+  """
+  lastFailureAt: DateTime
+  consecutiveFailures: Int!
+  outage: Boolean!
+}
+
+extend type ExternalEndpoint {
+  liveness: ExternalEndpointLiveness!
+}
+
+extend type ExternalUpstream {
+  notServingSince: DateTime
+}
+```
+
+The unauthenticated half of the same answer is `GET /health`'s `externalEndpoints` block
+(`docs/contracts/router-api.md`), which is counts and a word — no endpoint identity, because ruling 3
+holds there too.
+
+## As shipped (SUP-535) — proving the alert reaches a human
+
+The alert above now leaves the process by mail (`docs/router.md`, *Where an alert goes*). The one
+thing an operator cannot read off configuration is whether a message actually arrives, so there is a
+mutation that sends one.
+
+```graphql
+"""
+What one test of the alert channel did. `delivered` is a count, not a list: the
+operator asking already knows which inbox they are watching, and the addresses
+an alert goes to are configuration an authenticated-but-curious reader has no
+claim on.
+"""
+type OperatorAlertTest {
+  sent: Boolean!
+  delivered: Int!
+  """
+  Addresses the provider refused. Each one is in the container log.
+  """
+  failed: Int!
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER or NO_RECIPIENTS.
+  """
+  skipped: String
+}
+
+extend type Mutation {
+  """
+  Restricted to auth.adminEmails. Sends past alerts.minInterval, to every
+  configured recipient, with a body that says nothing is wrong.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+}
+```
+
+Admin-only, and logged with the name of whoever asked: it writes to every address the deployment
+alerts to, which is a thing to be accountable for rather than a read. It exists because the
+acceptance criterion for an alerting path is a message that *arrived*, and inducing a real outage on
+a live deployment to watch the mail go out is what cost 28 minutes once already.
+
+The unauthenticated half of the same answer is `GET /health`'s `alerts` block — a state and a count
+of recipients, never an address.

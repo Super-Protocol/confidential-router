@@ -9,6 +9,7 @@
 //
 //	gatekeeper-sidecar [--config /etc/gatekeeper/config.yaml] [--interval 2s]
 //	                   [-- <command to supervise>...]
+//	gatekeeper-sidecar --healthcheck    # the container's own liveness probe
 package main
 
 import (
@@ -30,7 +31,15 @@ func main() {
 		"how often the configuration file is examined")
 	grace := flag.Duration("shutdown-grace", sidecar.DefaultShutdownGrace,
 		"how long the gatekeeper may take to drain after SIGTERM")
+	healthcheck := flag.Bool("healthcheck", false,
+		"report whether this container is answering, and exit; the liveness probe")
 	flag.Parse()
+
+	// Before the signal handling below: this is a one-shot probe in its own
+	// process, not the supervisor, and it supervises nothing.
+	if *healthcheck {
+		os.Exit(sidecar.Healthcheck(context.Background(), *config, os.Stdout))
+	}
 
 	// SIGHUP is the signal this process *sends*, never one it acts on: an
 	// operator who HUPs the container means the gatekeeper, and the default

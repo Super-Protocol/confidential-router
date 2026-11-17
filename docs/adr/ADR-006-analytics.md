@@ -43,12 +43,23 @@ No `posthog-js` in the console bundle, no request from a customer's browser to `
   creation, first request, model request, feedback grant. `router-api` knows each of them at the moment
   it commits the row, with `posthog-node` and an idempotency `uuid` taken from that row.
 - The remaining two (`signup_started`, `feedback_form_opened`) are posted by the browser to a
-  first-party ingest on `router-api`, which validates the event name and every property against the
-  taxonomy allow-list (`libs/types/src/analytics/events.ts`) and forwards it. A public ingest that did
-  not allow-list would be a way to write arbitrary rows into our analytics.
+  first-party ingest on `router-api` — `POST /v1/console-events` — which validates the event name and
+  every property against the taxonomy allow-list (`libs/types/src/analytics/events.ts`) and forwards it.
+  A public ingest that did not allow-list would be a way to write arbitrary rows into our analytics.
 - What this buys: the console's `connect-src` stays `'self'`, the answer to "what third parties does
-  your console talk to?" is "none", the numbers are not subject to blocklists, and the ingest key never
-  reaches a browser.
+  your console talk to?" is "none", and the ingest key never reaches a browser.
+- **What it does not buy: immunity from blocklists.** First-party defeats a blocker's *domain* rules; it
+  does nothing about its *path* rules, which apply to our own origin as readily as to a tracker's. This
+  ingest shipped as `POST /v1/analytics/events` and matched EasyPrivacy's unanchored `/analytics/event`
+  pattern, whose only exemption is `app.diagrams.net` — and EasyPrivacy is enabled by default in uBlock
+  Origin, Brave Shields and AdGuard. So for a large part of a developer audience `signup_started` was
+  cancelled in the browser and never existed, while this document claimed the numbers were not subject
+  to blocklists (SUP-463). The route is now named away from the words those rules are written with
+  (`analytics`, `/event`, `track`, `collect`, `telemetry`, `pixel`, `beacon`, `stats`), and because a
+  path that is clear today is not clear forever, the durable protection is a test on the route constant
+  (`console-events-path.spec.ts`) rather than the cleverness of the name. The browser-side half stays
+  the least trustworthy number we have: unblockable it is not, and anything that must be counted exactly
+  is counted server-side.
 - What it costs: one small endpoint in SUP-145, and no client-side events beyond the two listed. That
   is the right trade — everything else worth counting is something the server commits anyway.
 
@@ -104,10 +115,11 @@ joins the two, and where they disagree the database is right.
   `POSTHOG_PROJECT_KEY` / `POSTHOG_HOST` at deploy time. With no key configured, capture is a no-op —
   the compose demo and every e2e run must not post to a real project.
 - Emission never blocks a request and never fails one: a capture is fire-and-forget behind the response,
-  and an analytics outage is invisible to a user.
-- The first-party ingest (`POST /v1/telemetry`, SUP-145) is unauthenticated for `signup_started` and
-  session-authenticated for `feedback_form_opened`; both are rate-limited per IP and validated against
-  the allow-list.
+  and an analytics outage is invisible to a user. The ingest controller broke that half of the promise by
+  awaiting its own capture before answering `202`, and no longer does (SUP-463).
+- The first-party ingest (`POST /v1/console-events`, SUP-145; the superseded `/v1/analytics/events` is
+  served alongside it for one release) is unauthenticated for `signup_started` and session-authenticated
+  for `feedback_form_opened`; both are rate-limited per IP and validated against the allow-list.
 - SUP-150's `/privacy` page states: the two tools, what each collects, 12-month PostHog retention,
   legitimate interest, the sub-processor list, and that the console stores nothing on the device. The
   taxonomy is public, so the page can link the exact list of events.

@@ -114,6 +114,25 @@ describe('CreditsScreen', () => {
     );
   });
 
+  /*
+   * `--brand` is a fill, and only reaches 3.74:1 as text on the light card —
+   * below AA. Both accents on this screen are text, so both take the emphasis
+   * token (7.80:1 light, 10.31:1 dark). SUP-414.
+   */
+  it('paints its two accents with the token that is readable as text', async () => {
+    render([creditsMock()]);
+    await screen.findByTestId('credit-balance');
+
+    const row = screen.getByRole('row', { name: /Credit purchase/ });
+    const amount = within(row).getByText('+$25.00');
+    expect(amount).toHaveClass('text-brand-emphasis');
+    expect(amount).not.toHaveClass('text-brand');
+
+    const preset = screen.getByRole('button', { name: '$25' });
+    expect(preset).toHaveClass('aria-pressed:text-brand-emphasis');
+    expect(preset).not.toHaveClass('aria-pressed:text-brand');
+  });
+
   it('welcomes an invited account with the grant, above the balance it explains', async () => {
     search.current = new URLSearchParams('welcome=invite');
     vi.stubGlobal('location', { ...window.location, search: '?welcome=invite' });
@@ -356,6 +375,24 @@ describe('CreditsScreen', () => {
     expect(await screen.findByText('-$1.20')).toBeInTheDocument();
     expect(screen.getByText('+$25.00')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('prices a usage row to the fraction of a cent it cost, not to -$0.00', async () => {
+    // One generation is a third of a cent. Rounded to cents, thirty of them were
+    // thirty rows of `−$0.00` and a balance that had moved anyway (SUP-424).
+    const usage = transaction({ id: 'txn-usage', kind: 'USAGE', amountMicros: '-3530', description: null });
+
+    render([creditsMock(BALANCE, [usage])]);
+
+    expect(await screen.findByText('-$0.0035')).toBeInTheDocument();
+  });
+
+  it('shows an amount finer than four decimals rather than rounding it away', async () => {
+    const dust = transaction({ id: 'txn-dust', kind: 'USAGE', amountMicros: '-7', description: null });
+
+    render([creditsMock(BALANCE, [dust])]);
+
+    expect(await screen.findByText('-$0.000007')).toBeInTheDocument();
   });
 
   it('shows an invitation grant as a credit, naming the campaign it came from', async () => {

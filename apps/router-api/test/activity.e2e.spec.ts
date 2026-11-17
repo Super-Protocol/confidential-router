@@ -2,7 +2,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from './app-harness.js';
 import { type ConsoleSession, dataSourceOf, expectData, graphql, signIn } from './console.js';
-import { type Catalog, seedCatalog, seedGeneration } from './seed.js';
+import { type Catalog, seedCatalog, seedExternalEndpoint, seedGeneration } from './seed.js';
 
 /**
  * The Activity and Logs screens against the real module graph: the same guards,
@@ -15,7 +15,7 @@ const TO = '2026-08-31T00:00:00.000Z';
 const SUMMARY = `
   query Summary($workspaceId: ID!, $from: DateTime!, $to: DateTime!) {
     activitySummary(workspaceId: $workspaceId, from: $from, to: $to) {
-      requests coveredRequests promptTokens completionTokens spendMicros evidenceCoverage
+      requests coveredRequests coverableRequests promptTokens completionTokens spendMicros evidenceCoverage
       avgTimeToFirstTokenMs avgTokensPerSecond
     }
   }
@@ -114,12 +114,51 @@ describe('activitySummary', () => {
     expect(data.activitySummary).toEqual({
       requests: 3,
       coveredRequests: 2,
+      coverableRequests: 3,
       promptTokens: 5_564,
       completionTokens: 407,
       spendMicros: '7350',
       evidenceCoverage: 2 / 3,
       avgTimeToFirstTokenMs: 200,
       avgTokensPerSecond: 42,
+    });
+  });
+});
+
+describe('activitySummary, external endpoints only', () => {
+  it('returns a null coverage ratio rather than 0% when no request was coverable', async () => {
+    // SUP-421: every generation of this workspace was served by an external
+    // endpoint, which publishes no bundle of ours — so `coverableRequests` is 0
+    // and there is no ratio. The console read the old `0` next to `requests` as
+    // "0 of 3 generations were served with published evidence", which is the
+    // product's own promise reported as never kept.
+    const dataSource = dataSourceOf(harness);
+    const externalSession = await signIn(harness, 'external-only@example.com');
+    const externalCatalog = { ...(await seedCatalog(dataSource)), workspaceId: externalSession.workspaceId };
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified', withModel: false });
+
+    for (const hour of [9, 10, 11]) {
+      await seedGeneration(dataSource, externalCatalog, {
+        createdAt: new Date(Date.UTC(2026, 7, 28, hour)),
+        // Carries the digest the router's own verdict observed, exactly as
+        // production does: `evidenceSnapshotId` stays null because there is no
+        // bundle of ours, not because the request went unattested.
+        covered: true,
+        externalEndpointId: endpoint.id,
+      });
+    }
+
+    const data = await expectData(externalSession, SUMMARY, {
+      workspaceId: externalSession.workspaceId,
+      from: FROM,
+      to: TO,
+    });
+
+    expect(data.activitySummary).toMatchObject({
+      requests: 3,
+      coveredRequests: 0,
+      coverableRequests: 0,
+      evidenceCoverage: null,
     });
   });
 });

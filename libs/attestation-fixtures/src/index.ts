@@ -3,7 +3,7 @@
  *
  * The vectors themselves are plain JSON and are the contract: the TypeScript
  * verifier (`@confidential-router/attestation`) and the Go verifier
- * (`apps/gatekeeper/pkg/attestation`) must produce the same verdict for every
+ * (`libs/swarm-evidence-go/attestation`) must produce the same verdict for every
  * case. This module is only the convenience wrapper the TypeScript side uses;
  * Go reads the same files with `go:embed`.
  *
@@ -84,7 +84,29 @@ export interface CaseResponse {
   bodyText?: string;
 }
 
-export type CaseExpectation =
+/** The claim-set vocabulary a denial is reported in, beside the claims. */
+export type ClaimStage = 'options' | 'blob' | 'pki-chain' | 'root-quote' | 'binding' | 'envelope' | 'statement';
+
+/**
+ * What the claim core must establish for a case, beside the verdict.
+ *
+ * The two are different assertions. A verdict is about the bundle pipeline,
+ * which both verifiers implement; `claims` is about the `SwarmClaims` document
+ * a relying party's policy is written against, and a case can be a sound
+ * bundle whose claim set is a denial.
+ *
+ * In `document`, `quote_appraiser` is the placeholder `<appraiser>` and
+ * resolves to whichever appraiser replayed the case; a denial's
+ * `denial.reason` is not pinned, only its `stage` and `reasonContains`.
+ */
+export interface ClaimsExpectation {
+  ok: boolean;
+  stage?: ClaimStage;
+  reasonContains?: string;
+  document: Record<string, unknown>;
+}
+
+export type CaseVerdict =
   | {
       ok: true;
       kind: EvidenceKind;
@@ -105,6 +127,8 @@ export type CaseExpectation =
        */
       reasonContains: string;
     };
+
+export type CaseExpectation = CaseVerdict & { claims: ClaimsExpectation };
 
 export interface ConformanceCase {
   id: string;
@@ -196,4 +220,199 @@ export function makeCaseFetcher(testCase: ConformanceCase): typeof fetch {
     }
     return new Response(bodyText ?? '', { status, headers: { 'content-type': 'text/plain' } });
   };
+}
+
+// ---------------------------------------------------------------------------
+// The composite-evidence corpus
+// ---------------------------------------------------------------------------
+
+/**
+ * The composite corpus (`vectors/composite/`) pins the other form of Super
+ * Swarm evidence: a RATS CMW collection carrying the hardware quote, the PKI
+ * membership chain, the leader's workload statement and the node's request
+ * envelope, appraised into `SwarmClaims`.
+ *
+ * TypeScript has no composite appraiser today — `@confidential-router/attestation`
+ * implements the `/.well-known/swarm-evidence` bundle form — so these loaders
+ * exist so that one can be held to the same corpus when it is written, and so
+ * that the corpus is checked for self-consistency from this side meanwhile.
+ * The Go harness that replays it lives in `libs/swarm-evidence-go/conformance`.
+ */
+export const COMPOSITE_DIR = 'composite';
+
+export type SwarmPlatform = 'tdx-qemu' | 'tdx-gcp' | 'tdx-azure' | 'snp-qemu' | 'snp-azure';
+
+/** A pinned verification key of an EAT-emitting appraiser. */
+export interface EatKey {
+  kid: string;
+  pem: string;
+}
+
+/**
+ * Where one Verifier's token carries the values a delegated appraisal needs,
+ * and how that Verifier spells them.
+ *
+ * A claim path is a sequence of JSON member names rather than a dotted
+ * string, because claim names contain dots: a Veraison EAR nests its evidence
+ * inside a member called `ear.veraison.annotated-evidence`.
+ */
+export interface ClaimMapping {
+  tdattributes: string[];
+  mrtd: string[];
+  rtmr0: string[];
+  rtmr1: string[];
+  rtmr2: string[];
+  rtmr3: string[];
+  seamsvn?: string[];
+  tcb_status?: string[];
+  binding_data?: string[];
+  encoding?: 'hex' | 'base64' | 'base64url';
+  binding_data_encoding?: 'hex' | 'base64' | 'base64url';
+}
+
+/**
+ * One quote appraiser the corpus is replayed through.
+ *
+ * Everything that distinguishes one Verifier from another is here and nothing
+ * is in code: the token format, the issuer, the key and the claim mapping.
+ * Two profiles that differ in all of them must appraise the corpus into the
+ * same claim sets — which is what "the Verifier is swappable by
+ * configuration" means, stated as data. An `eat` profile configures the
+ * production delegated appraiser, so what the corpus exercises is the adapter
+ * a relying party runs.
+ */
+export interface AppraiserProfile {
+  name: string;
+  description: string;
+  kind: 'recorded' | 'eat';
+  tokenFormat?: 'jwt';
+  issuer?: string;
+  verificationKey?: EatKey;
+  claimMapping?: ClaimMapping;
+  /** The attester platforms this appraiser covers. */
+  platforms?: SwarmPlatform[];
+  /** What it answers for evidence outside that coverage. */
+  outsideCoverage?: { stage: ClaimStage; reason: string };
+}
+
+export interface CompositeRequest {
+  /** Hex; the octets the attester was challenged with, verbatim. */
+  freshnessInput: string;
+  /** Unpadded base64url of the prepared Target octets. */
+  target: string;
+  /** Unpadded base64url of the retrieval subject (DER SubjectPublicKeyInfo). */
+  subject: string;
+  trustedRoots: string[];
+  now: string;
+  /** Milliseconds; absent disables the signed-object freshness check. */
+  maxEvidenceAge?: number;
+  /** Image identities the relying party accepts besides the registry's. */
+  referenceValues?: string[];
+  /**
+   * Image identities Super Protocol's signed-measurement registry vouches
+   * for. An appraiser that derives the identity itself has to ask who vouches
+   * for it, so the case answers rather than the appraiser assuming.
+   */
+  registrySignedMeasurements?: string[];
+}
+
+export interface CompositeExpectation {
+  ok: boolean;
+  stage?: ClaimStage;
+  reasonContains?: string;
+  /** The whole `SwarmClaims` document, compared member by member. */
+  claims: Record<string, unknown>;
+  /** Why a per-profile override differs. Documentation, never asserted. */
+  note?: string;
+  /** Overrides for the named appraiser profiles; absent means "the same". */
+  appraisers?: Record<string, CompositeExpectation>;
+}
+
+export interface CompositeCase {
+  id: string;
+  description: string;
+  request: CompositeRequest;
+  /** Path under `vectors/` of the CMW collection this case presents. */
+  evidenceFile: string;
+  /** Path under `vectors/` of the recorded quote appraisal. */
+  appraisalFile: string;
+  expect: CompositeExpectation;
+}
+
+export interface CompositeManifest {
+  version: string;
+  description: string;
+  generator: string;
+  referenceNow: string;
+  rootsFile: string;
+  appraisers: AppraiserProfile[];
+  cases: CompositeCase[];
+}
+
+/** A quote appraisal in the claim set's own spelling. */
+export interface RecordedAppraisal {
+  /** Set when the appraiser could not reach an answer; nothing else counts then. */
+  error?: string;
+  platform?: SwarmPlatform;
+  quote_verified: boolean;
+  tcb_status?: string;
+  collateral_checked: boolean;
+  key_binding: boolean;
+  network_type?: string;
+  /** Hex of the guest-chosen field, and which field it was read from. */
+  binding_data?: string;
+  binding_data_source?: 'report-data' | 'hcl-user-data';
+  measurements?: Record<string, string>;
+  platform_security?: Record<string, unknown>;
+  mrenclave?: string;
+  mrenclave_approved: boolean;
+  mrenclave_source?: string;
+  spvm_build?: string;
+}
+
+export interface CompositeAppraisalFile {
+  description: string;
+  root: RecordedAppraisal;
+  quote: RecordedAppraisal;
+  /**
+   * Per appraiser profile, that Verifier's own answer about this case's
+   * quote, keyed by the lowercase hex SHA-256 of the serialised TeeEvidence
+   * it appraises. An empty map is a coverage limit: the delegated path denies
+   * before it asks a Verifier anything.
+   *
+   * Only the per-request quote is recorded. The membership root's embedded
+   * quote is appraised offline on the delegated path too — it is part of the
+   * Super Swarm chain rather than of the credential request.
+   */
+  eat?: Record<string, { tokens: Record<string, string> }>;
+}
+
+/** The recorded root-quote appraisal the bundle corpus's `claims` are written against. */
+export interface RootQuoteAppraisalFile {
+  version: string;
+  description: string;
+  appraiser: string;
+  appraisal: RecordedAppraisal;
+}
+
+export function loadCompositeManifest(): CompositeManifest {
+  return readVector<CompositeManifest>(`${COMPOSITE_DIR}/manifest.json`);
+}
+
+export function loadCompositeTrustedRoots(): TrustedRootVector[] {
+  return readVector<TrustedRootsFile>(`${COMPOSITE_DIR}/roots.json`).roots;
+}
+
+/** The CMW collection a composite case presents, exactly as the file carries it. */
+export function loadCompositeEvidence(testCase: CompositeCase): Record<string, unknown> {
+  return readVector<Record<string, unknown>>(testCase.evidenceFile);
+}
+
+/** The recorded quote appraisal a composite case is appraised against. */
+export function loadCompositeAppraisal(testCase: CompositeCase): CompositeAppraisalFile {
+  return readVector<CompositeAppraisalFile>(testCase.appraisalFile);
+}
+
+export function loadRootQuoteAppraisal(): RootQuoteAppraisalFile {
+  return readVector<RootQuoteAppraisalFile>('root-quote-appraisal.json');
 }
