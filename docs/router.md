@@ -1291,7 +1291,7 @@ built for the request that asked for it and kept nowhere on the server:
 | --- | --- |
 | `users` | id, address, name, `emailVerified`, sign-up date; plus `origin` (invite / bootstrap / open), `invitedByCodeId` and `role`, which are informational |
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
-| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
+| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
 | `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
@@ -1308,7 +1308,8 @@ mismatch — but nothing in the bundle proves who wrote it. The file is trusted
 because of where it was downloaded from and who carried it, not because of what
 it contains. Do not describe an export as signed.
 
-**Left behind, by design:** chats and messages, generations and activity,
+**Left behind, by design:** chats and messages, generations and activity (see
+`creditLedger` above for what that means for the spend they were charged for),
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
 read); and the upstream API key of an external endpoint, which is sealed under
@@ -1367,6 +1368,15 @@ Three things about what it writes:
   against, so a key that had $0.50 of its cap left still has $0.50; and a revoked
   key arrives revoked. The report says how many came across and how many of them
   are still live.
+- **Spend made before the migration arrives as one ledger entry per month.**
+  The money is identical to the micro-dollar; what is gone is the per-request
+  breakdown, which lived in the generation log the file does not carry — the
+  monthly shape survives, so a bill for a month before the migration is still
+  answerable. Activity and Logs on the new deployment therefore count only the
+  traffic it has served itself, and the Credits screen says in words where the
+  rest was spent. A file from a build before SUP-446 still carries the
+  per-request debits: the dry run reports how many, and the import collapses
+  them on the way in.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.
