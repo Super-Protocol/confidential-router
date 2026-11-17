@@ -53,7 +53,7 @@ function routeFetch(handlers: { invite?: unknown; send?: Response; signUp?: Resp
     if (String(url).includes('/v1/invites/')) {
       return Promise.resolve(jsonResponse(handlers.invite ?? { valid: false, reason: 'unavailable' }));
     }
-    if (String(url).includes('/v1/analytics/events')) {
+    if (String(url).includes('/v1/console-events')) {
       return Promise.resolve(jsonResponse({}, true, 202));
     }
     if (String(url).includes(SEND)) {
@@ -74,6 +74,7 @@ function optionsMock(
     emailCode: boolean;
     emailCodeLength: number;
     inviteRequired: boolean;
+    supportEmail: string | null;
   }> = {},
 ) {
   return {
@@ -90,6 +91,7 @@ function optionsMock(
           emailCodeLength: 6,
           magicLink: false,
           inviteRequired: false,
+          supportEmail: null,
           ...overrides,
         },
       },
@@ -348,8 +350,8 @@ describe('an invitation in the URL', () => {
     renderForm();
 
     await screen.findByTestId('invite-grant-pending');
-    await waitFor(() => expect(callTo('/v1/analytics/events')).toBeDefined());
-    expect(bodyOf('/v1/analytics/events')).toEqual({
+    await waitFor(() => expect(callTo('/v1/console-events')).toBeDefined());
+    expect(bodyOf('/v1/console-events')).toEqual({
       event: 'signup_started',
       properties: {
         has_invite: true,
@@ -408,8 +410,8 @@ describe('a visitor who lost the link', () => {
     routeFetch({});
     renderForm();
 
-    await waitFor(() => expect(callTo('/v1/analytics/events')).toBeDefined());
-    expect(bodyOf('/v1/analytics/events')).toEqual({
+    await waitFor(() => expect(callTo('/v1/console-events')).toBeDefined());
+    expect(bodyOf('/v1/console-events')).toEqual({
       event: 'signup_started',
       properties: { has_invite: false, entry: 'direct' },
     });
@@ -570,7 +572,7 @@ describe('a deployment where registration is by invitation', () => {
       if (String(url).includes('/v1/invites/')) {
         return Promise.resolve(jsonResponse({ valid: true, grantMicros: GRANT_MICROS, campaign: 'launch' }));
       }
-      if (String(url).includes('/v1/analytics/events')) {
+      if (String(url).includes('/v1/console-events')) {
         return Promise.resolve(jsonResponse({}, true, 202));
       }
       if (String(url).includes(SEND)) {

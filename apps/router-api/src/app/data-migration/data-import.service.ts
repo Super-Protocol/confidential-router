@@ -369,6 +369,16 @@ function endpointRow(endpoint: ExportData['externalEndpoints'][number], now: Dat
     pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
     pinnedCertFingerprint: null,
     observedCertFingerprint: null,
+    // The failure run is a verdict projection like the columns above it, so the
+    // bundle carries none of it and an import lands it empty (SUP-517).
+    // `notServingSince` is null rather than `now` because the row arrives
+    // `disabled`: nothing is expected of it until an operator enters a key and
+    // switches it on, and that write starts the clock.
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    notServingSince: null,
+    consecutiveFailures: 0,
+    upstreamUnreachable: null,
     apiKeyCiphertext: '',
     apiKeyPrefix: '',
     createdByUserId: endpoint.createdByUserId,

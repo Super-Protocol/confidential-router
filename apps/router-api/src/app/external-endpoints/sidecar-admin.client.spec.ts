@@ -67,6 +67,31 @@ describe('fetchSidecarVerdicts', () => {
     await expect(fetchSidecarVerdicts(listen)).rejects.toThrow(/not JSON/);
   });
 
+  it('opens its own socket per poll and never reuses a pooled one (SUP-583)', async () => {
+    // The regression, stated as the property that prevents it rather than as the
+    // five-second wait that exposes it.
+    //
+    // With the default agent the socket is pooled, and the request's `timeout`
+    // is armed on that socket and pooled with it: it fires while the socket is
+    // idle, the next poll inherits it and is destroyed milliseconds in with
+    // "it did not answer within 5000 ms" — about a sidecar that answered. On
+    // production that discarded every second poll for days. A socket this
+    // client never hands back cannot carry a timer into the next poll, so the
+    // check is that two polls arrive on two sockets.
+    const sockets = new Set<number>();
+    const listen = await serving((request, response) => {
+      if (request.socket.remotePort !== undefined) {
+        sockets.add(request.socket.remotePort);
+      }
+      response.end(JSON.stringify([VERDICT]));
+    });
+
+    await expect(fetchSidecarVerdicts(listen)).resolves.toEqual([VERDICT]);
+    await expect(fetchSidecarVerdicts(listen)).resolves.toEqual([VERDICT]);
+
+    expect(sockets.size).toBe(2);
+  });
+
   it('reports a sidecar that is not listening at all', async () => {
     // The ordinary state while the sidecar container is still starting. It has to
     // surface as a named failure, because the poller's job is to log it once and

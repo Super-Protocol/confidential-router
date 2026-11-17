@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { loadCaseBody, loadConformanceManifest } from '@confidential-router/attestation-fixtures';
+import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createTestDataSource } from '../../../test/seed.js';
+import type { routerConfig } from '../config.js';
+import { RouterConfigSchema } from '../config.schema.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint, type ExternalEndpointStatus } from '../db/entities/external-endpoint.entity.js';
 import { parseEvidenceBundle } from '../evidence/index.js';
@@ -34,9 +38,44 @@ function digestOf(raw: Record<string, unknown> = bundle()): string {
   return parseEvidenceBundle(raw, HOSTNAME).digest.canonical;
 }
 
+/** The clock the fixture bundles were signed under, so "fresh" is a real state here. */
+const SIGNED_AT = new Date('2026-01-15T11:55:00.000Z');
+
+/**
+ * The same deployment, published again — the shape of SUP-615.
+ *
+ * A producer republishes on a timer: the payload is byte-for-byte the previous
+ * one but for `issuedAt`, so the digest, the chain and the leaf are unchanged
+ * (verified against production: the copy this router had relayed for 37 hours
+ * and the copy the upstream was serving differed in `issuedAt` and in nothing
+ * else). The re-signed JWS is not re-signed here, and does not need to be: this
+ * service files what an upstream published and never forms an opinion about its
+ * cryptography — `jws-bad-signature` above is filed for the same reason.
+ */
+function reissued(issuedAt: Date, id = 'valid-rsa-deployment'): Record<string, unknown> {
+  const raw = bundle(id);
+  const [header, payload, signature] = String(raw.jws).split('.');
+  const claims = JSON.parse(Buffer.from(payload ?? '', 'base64url').toString('utf8'));
+  const resigned = Buffer.from(JSON.stringify({ ...claims, issuedAt: issuedAt.toISOString() })).toString('base64url');
+  return { ...raw, issuedAt: issuedAt.toISOString(), jws: `${header}.${resigned}.${signature}` };
+}
+
+/** `issuedAt` plus `minutes`, for a test that chooses how old the relayed copy is. */
+function at(minutes: number): Date {
+  return new Date(SIGNED_AT.getTime() + minutes * 60_000);
+}
+
 let dataSource: DataSource;
 let service: ExternalEvidenceService;
+let alerts: RecordingOperatorAlerts;
 let fetcher: ReturnType<typeof vi.fn>;
+
+function config(overrides: Record<string, unknown> = {}): ConfigType<typeof routerConfig> {
+  return RouterConfigSchema.parse({
+    auth: { secret: 'a'.repeat(32) },
+    externalEndpoints: overrides,
+  }) as ConfigType<typeof routerConfig>;
+}
 
 /**
  * Stands in for the upstream's `/.well-known/swarm-evidence`.
@@ -85,7 +124,8 @@ async function endpoint(overrides: Partial<ExternalEndpoint> = {}): Promise<Exte
 
 beforeEach(async () => {
   dataSource = await createTestDataSource();
-  service = new ExternalEvidenceService(dataSource);
+  alerts = new RecordingOperatorAlerts();
+  service = new ExternalEvidenceService(dataSource, config(), alerts.asService());
   fetcher = serving(bundle());
   vi.stubGlobal('fetch', fetcher);
 });
@@ -101,7 +141,7 @@ describe('filing an upstream’s published bundle', () => {
 
     const report = await service.refreshAll();
 
-    expect(report).toEqual({ polled: 1, stored: 1, failed: 0 });
+    expect(report).toEqual({ polled: 1, stored: 1, failed: 0, stale: 0 });
     const [stored] = await dataSource.getRepository(EvidenceSnapshot).find();
     expect(stored).toMatchObject({
       // Filed under the upstream, never under one of our own endpoints: the two
@@ -173,7 +213,7 @@ describe('which upstreams are polled at all', () => {
       observedCertFingerprint: null,
     });
 
-    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0, stale: 0 });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -203,7 +243,7 @@ describe('which upstreams are polled at all', () => {
       observedCertFingerprint: leafOf(),
     });
 
-    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0, stale: 0 });
     const [stored] = await dataSource.getRepository(EvidenceSnapshot).find();
     expect(stored).toMatchObject({ externalEndpointId: pending.id, evidenceDigest: digestOf() });
   });
@@ -213,7 +253,7 @@ describe('which upstreams are polled at all', () => {
     await service.refreshAll();
     fetcher.mockClear();
 
-    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0, stale: 0 });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -221,10 +261,10 @@ describe('which upstreams are polled at all', () => {
     vi.stubGlobal('fetch', serving({ not: 'a bundle' }));
     const row = await endpoint();
 
-    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1 });
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1, stale: 0 });
     // A minute later, and the upstream is still publishing the same thing: the
     // poll would otherwise retry a broken publication for ever.
-    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0, stale: 0 });
 
     // A new verdict digest is a new question, so it is worth asking again.
     vi.stubGlobal('fetch', serving(bundle()));
@@ -241,13 +281,13 @@ describe('which upstreams are polled at all', () => {
     );
     await endpoint();
 
-    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1 });
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1, stale: 0 });
     // An upstream mid-restart is unreachable, not wrong: one 503 must not
     // suppress its summary until it next redeploys under a new digest.
-    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1 });
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 0, failed: 1, stale: 0 });
 
     vi.stubGlobal('fetch', serving(bundle()));
-    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0, stale: 0 });
   });
 
   it('stops asking once the upstream has moved past the publication the verdict names', async () => {
@@ -257,10 +297,10 @@ describe('which upstreams are polled at all', () => {
     // so a fetch can only ever return the newer one.
     await endpoint({ evidenceDigestSeen: 'sha256/what-the-last-verdict-saw' });
 
-    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 1, stored: 1, failed: 0, stale: 0 });
     // Asking again cannot produce the publication the verdict named; the next
     // verdict will name the one that is actually being served.
-    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0 });
+    expect(await service.refreshAll()).toEqual({ polled: 0, stored: 0, failed: 0, stale: 0 });
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
@@ -288,10 +328,101 @@ describe('which upstreams are polled at all', () => {
       ),
     );
 
-    expect(await service.refreshAll()).toEqual({ polled: 2, stored: 1, failed: 1 });
+    expect(await service.refreshAll()).toEqual({ polled: 2, stored: 1, failed: 1, stale: 0 });
     expect(
       await dataSource.getRepository(EvidenceSnapshot).findOne({ where: { externalEndpointId: reachable.id } }),
     ).not.toBeNull();
+  });
+});
+
+describe('keeping the copy the relay hands out fresh (SUP-615)', () => {
+  it('asks again once the filed copy has aged, though the upstream’s digest has not moved', async () => {
+    const row = await endpoint({ pinnedEvidenceDigest: digestOf() });
+    expect(await service.refreshAll(at(0))).toMatchObject({ polled: 1, stored: 1 });
+
+    // Half an hour on, against the default hour: the upstream has republished
+    // thirty times and nothing is asked, because nothing has aged yet.
+    expect(await service.refreshAll(at(30))).toMatchObject({ polled: 0, stored: 0 });
+
+    vi.stubGlobal('fetch', serving(reissued(at(61))));
+    expect(await service.refreshAll(at(61))).toMatchObject({ polled: 1, stored: 1 });
+
+    // The whole point of asking: what the relay hands out moved forward. Before
+    // this, one publication was filed on the day an endpoint was approved and
+    // relayed until the deployment changed — which is 37 hours of a console
+    // telling users their evidence did not check out, correctly.
+    const relayed = await service.latestAdmitted(row);
+    expect(relayed?.issuedAt.toISOString()).toBe(at(61).toISOString());
+    // One row per publication, as the identity key implies: the superseded copy
+    // is history, not a thing to overwrite.
+    expect(await dataSource.getRepository(EvidenceSnapshot).count()).toBe(2);
+  });
+
+  it('declares the relayed copy stale once, naming the age rather than the document', async () => {
+    await endpoint({ pinnedEvidenceDigest: digestOf() });
+    await service.refreshAll(at(0));
+    // Nothing can refresh it now, which is the state production was in: the
+    // upstream was serving fine and this router's fetch of its bundle was not.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Promise.reject(new Error('connect ECONNREFUSED'))),
+    );
+
+    expect(await service.refreshAll(at(6 * 60))).toMatchObject({ stale: 1 });
+
+    const alert = alerts.one('has stopped advancing');
+    expect(RecordingOperatorAlerts.factsOf(alert)).toMatchObject({
+      Endpoint: 'partner-cloud',
+      'Relayed copy signed': SIGNED_AT.toISOString(),
+      Age: '6h00m',
+    });
+    // Nothing a forwarded mail should not carry: the upstream's hostname and the
+    // approved digest stay behind a session (SUP-221 ruling 3).
+    expect(JSON.stringify(alert)).not.toContain(HOSTNAME);
+    expect(JSON.stringify(alert)).not.toContain(digestOf());
+
+    // Still stale a minute later, and still the same publication: one message per
+    // run, or the mailbox grows a filter and the next alert is lost for good.
+    expect(await service.refreshAll(at(6 * 60 + 1))).toMatchObject({ stale: 1 });
+    expect(alerts.raised).toHaveLength(1);
+  });
+
+  it('closes the declaration, past the interval, when a refresh lands', async () => {
+    await endpoint({ pinnedEvidenceDigest: digestOf() });
+    await service.refreshAll(at(0));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Promise.reject(new Error('connect ECONNREFUSED'))),
+    );
+    await service.refreshAll(at(6 * 60));
+
+    vi.stubGlobal('fetch', serving(reissued(at(400))));
+    expect(await service.refreshAll(at(400))).toMatchObject({ polled: 1, stored: 1, stale: 0 });
+
+    // Urgent, like an outage's recovery: an operator who was woken is owed the
+    // line that closes it.
+    expect(alerts.raised.map((entry) => entry.urgent)).toEqual([false, true]);
+    expect(RecordingOperatorAlerts.factsOf(alerts.one('is current again'))).toMatchObject({ Age: '0m' });
+  });
+
+  it('declares nothing for an endpoint whose publication the relay would not hand out', async () => {
+    // No approved digest: `GET /v1/evidence/{endpoint}` answers the typed 503 and
+    // there is no relayed document to be stale. Declaring one would page an
+    // operator at the moment they register an upstream.
+    await endpoint();
+    await service.refreshAll(at(0));
+
+    expect(await service.refreshAll(at(48 * 60))).toMatchObject({ stale: 0 });
+    expect(alerts.raised).toHaveLength(0);
+  });
+
+  it('raises nothing when the threshold is turned off', async () => {
+    service = new ExternalEvidenceService(dataSource, config({ evidenceStaleAfter: 0 }), alerts.asService());
+    await endpoint({ pinnedEvidenceDigest: digestOf() });
+    await service.refreshAll(at(0));
+
+    expect(await service.refreshAll(at(48 * 60))).toMatchObject({ stale: 0 });
+    expect(alerts.raised).toHaveLength(0);
   });
 });
 

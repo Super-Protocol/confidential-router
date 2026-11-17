@@ -6,7 +6,7 @@ import { SecretEnvelopeService } from '../../secrets/index.js';
 import type { ExternalRoute, RoutedModel } from './gateway.types.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import type { StreamFailure } from './stream-relay.js';
-import { readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
+import { describeUpstreamError, readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 import { postToUpstream } from './upstream-fetch.js';
 
 export interface ExternalUpstreamRequest {
@@ -126,6 +126,10 @@ export class ExternalUpstreamClient {
    * about. But a 4xx it raised about the request body now reaches the client as a
    * 4xx carrying the upstream's wording (SUP-448): the request has to change, and
    * only the upstream knows what about it.
+   *
+   * The client, not the log. An external endpoint is someone else's model server
+   * and the least predictable quoter of the request there is, so the log line
+   * gets `describeUpstreamError`'s content-free summary (SUP-497).
    */
   async mapFailure(model: RoutedModel, upstream: Response): Promise<OpenAiApiError> {
     const detail = await readUpstreamError(upstream);
@@ -140,7 +144,9 @@ export class ExternalUpstreamClient {
       );
     }
 
-    this.logger.warn(`External endpoint "${model.endpoint.name}" answered ${upstream.status}: ${detail.text || '—'}.`);
+    this.logger.warn(
+      `External endpoint "${model.endpoint.name}" answered ${upstream.status}: ${describeUpstreamError(detail)}.`,
+    );
     return upstreamFailureOf('The external model endpoint', upstream, detail);
   }
 
