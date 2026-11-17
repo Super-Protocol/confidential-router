@@ -27,6 +27,7 @@ import { fetchSidecarVerdicts, type SidecarVerdict } from './sidecar-admin.clien
 import {
   clip,
   expireVerdict,
+  MAX_REASON_LENGTH,
   type ProjectedVerdict,
   projectVerdict,
   verdictAttestWindowMs,
@@ -341,7 +342,7 @@ export class ExternalEndpointStatusService {
    * key rotation, an approved digest, a withdrawn one. `evidenceDigest` is what a
    * `digest_pinned` event approved, or what a `digest_unpinned` one stopped
    * approving; `reason` is the operator's explanation where the kind alone does
-   * not carry it, clipped to the column the way a projected verdict's is.
+   * not carry it, bounded the way a projected verdict's is.
    *
    * `manager` writes it on the caller's transaction, which is what a mutation
    * whose row change and whose timeline entry are the same fact passes — for the
@@ -371,7 +372,7 @@ export class ExternalEndpointStatusService {
       at: now,
       kind,
       stage: clip(stage, 32),
-      reason: clip(reason, 255),
+      reason: clip(reason, MAX_REASON_LENGTH),
       measurement: null,
       evidenceDigest,
     });

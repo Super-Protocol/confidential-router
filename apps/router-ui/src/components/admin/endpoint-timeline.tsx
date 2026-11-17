@@ -42,7 +42,14 @@ export function EndpointTimeline({ events }: EndpointTimelineProps) {
               ) : null}
             </div>
 
-            {event.reason ? <p className="mt-1 text-sm">{event.reason}</p> : null}
+            {/*
+              The verdict's own words, in full — the timeline is where an operator
+              reads why, and a trust explanation cut in half leaves them with the
+              half they already believed (SUP-243). `wrap-anywhere` because the
+              measurement inside the sentence is one 64-character token, and only
+              that breaks it without widening the box it sits in.
+            */}
+            {event.reason ? <p className="mt-1 wrap-anywhere text-sm">{event.reason}</p> : null}
 
             <dl className="mt-1.5 grid gap-x-4 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr]">
               {event.measurement ? (

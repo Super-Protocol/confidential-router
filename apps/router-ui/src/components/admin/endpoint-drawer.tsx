@@ -93,7 +93,19 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
                   <span className="font-mono text-xs">{endpoint.lastStage}</span>
                 </Field>
               ) : null}
-              {endpoint.lastReason ? <Field label="Reason">{endpoint.lastReason}</Field> : null}
+              {endpoint.lastReason ? (
+                <Field label="Reason">
+                  {/*
+                    Whole, and wrapping: the denial worth reading is a 332-character
+                    sentence with a 64-character measurement in the middle of it
+                    (SUP-243). `wrap-anywhere` rather than `break-words` because
+                    only the former shrinks the element's min-content width, and
+                    without that the hex sizes this `1fr` track to ~64ch and
+                    overflows the sheet.
+                  */}
+                  <span className="min-w-0 wrap-anywhere">{endpoint.lastReason}</span>
+                </Field>
+              ) : null}
               {source ? <Field label="Measurement anchor">{source}</Field> : null}
               <Field label="Pinned certificate">
                 {endpoint.pinnedCertFingerprint ? (

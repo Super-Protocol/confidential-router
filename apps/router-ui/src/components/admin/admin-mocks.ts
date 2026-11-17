@@ -169,6 +169,33 @@ export const DENIED_ENDPOINT = {
   ],
 };
 
+/**
+ * The denial SUP-243 is about, exactly as the gatekeeper composes it: a cloud
+ * image the Super Protocol registry *does* sign, refused because for an external
+ * endpoint the admin trust list is the sole authority (SUP-221 ruling 2).
+ *
+ * Written out at its real length — 332 characters — because that is the point.
+ * `lastReason` was `varchar(255)`, so the console showed "…the Super Protocol
+ * registry does sign it, but in this mode the …" and clipped the correction the
+ * core put there to pre-empt exactly that misreading.
+ */
+export const FULL_MEASUREMENT_DENIAL =
+  'policy: the built-in pin policy (gatekeeper.default) denied ' +
+  `(measurement ${MEASUREMENT_ROGUE} is not listed in attestedRoots.trustedMeasurements — the Super Protocol ` +
+  'registry does sign it, but in this mode the list is the sole authority and a registry signature admits ' +
+  'nothing on its own)';
+
+/** A registry-signed cloud the trust list does not admit, carrying the whole sentence. */
+export const REGISTRY_DENIED_ENDPOINT = {
+  ...DENIED_ENDPOINT,
+  id: 'ext-7',
+  name: 'gemma-registry-signed',
+  measurementSource: 'REGISTRY' as const,
+  measurementInRegistry: true,
+  lastReason: FULL_MEASUREMENT_DENIAL,
+  events: [{ ...DENIED_ENDPOINT.events[0], id: 'evt-11', reason: FULL_MEASUREMENT_DENIAL }],
+};
+
 export const PENDING_ENDPOINT = {
   ...VERIFIED_ENDPOINT,
   id: 'ext-3',
