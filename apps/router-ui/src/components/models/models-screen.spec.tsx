@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalogueQuery } from '../../generated/graphql';
-import { catalogueData, externalModel, verifiedUpstream } from '../../test-fixtures';
+import { catalogueData, externalModel, snpConfigModel, verifiedUpstream } from '../../test-fixtures';
 import { renderWithApollo } from '../../test-utils';
 import { MODEL_CATALOGUE_QUERY, ModelsScreen } from './models-screen';
 
@@ -72,14 +72,28 @@ describe('ModelsScreen', () => {
     expect(screen.getByText(/1 of 2 models/)).toBeInTheDocument();
   });
 
-  it('narrows the catalogue to one TEE', async () => {
+  /*
+   * A chip exists for each TEE the catalogue's endpoints publish evidence from
+   * (SUP-260), so narrowing to one also hides the row whose endpoint has
+   * published nothing — it is under no chip at all, and there is no declared
+   * label that would have put it under one.
+   */
+  it('narrows the catalogue to one TEE, by the label the evidence names', async () => {
     const user = userEvent.setup();
-    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData())] });
+    const models = [...catalogueData().models, snpConfigModel()];
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData({ models }))] });
 
-    await user.click(await screen.findByRole('tab', { name: 'AMD SEV-SNP' }));
+    // A chip per TEE the catalogue's endpoints publish evidence from, and none
+    // for the label the chart used to declare on every deployment.
+    expect(await screen.findByRole('tab', { name: 'AMD SEV-SNP (Azure)' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Intel TDX + H100 CC' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }));
 
     await waitFor(() => expect(screen.queryByText('Llama 3.3 70B Instruct')).not.toBeInTheDocument());
-    expect(screen.getByText('Qwen2.5 72B Instruct')).toBeInTheDocument();
+    expect(screen.getByText('DeepSeek-V3')).toBeInTheDocument();
+    // Its endpoint has published nothing, so it is under no chip at all.
+    expect(screen.queryByText('Qwen2.5 72B Instruct')).not.toBeInTheDocument();
   });
 
   it('says so when a filter matches nothing', async () => {
@@ -125,14 +139,15 @@ describe('ModelsScreen, external models', () => {
     });
   }
 
-  it('badges the external row and leaves the built-in rows unbadged', async () => {
+  it('shows no "External" tag on any row — the serving topology is not the user’s concern', async () => {
     renderWithApollo(<ModelsScreen />, { mocks: [mixed()] });
     await screen.findByRole('table', { name: 'Model catalogue' });
 
-    expect(within(externalRow()).getByText('External')).toBeInTheDocument();
-    // One badge in the whole table: a label on the common case is a label nobody
-    // reads, and the information is "this one is different".
-    expect(screen.getAllByText('External')).toHaveLength(1);
+    // The row is still distinguishable by its attestation cell, which carries
+    // the external vocabulary; an origin tag beside the name told a user where
+    // the weights live, which is the admin section's business (SUP-255).
+    expect(screen.queryByText('External', { exact: true })).not.toBeInTheDocument();
+    expect(within(externalRow()).getByText('Verified by this router')).toBeInTheDocument();
   });
 
   it('carries the external vocabulary, and the own-endpoint vocabulary carries on beside it', async () => {
@@ -172,10 +187,10 @@ describe('ModelsScreen, external models', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent('This router verified this upstream');
-    // The two caveats that make the verdict readable: whose verdict it is, and
-    // that a measurement admits a cloud rather than a deployment.
+    // The two things that make the verdict readable: whose verdict it is, and
+    // that it covers the deployment its operator approved, not only the cloud.
     expect(dialog).toHaveTextContent(/not by you/);
-    expect(dialog).toHaveTextContent(/admits a cloud/);
+    expect(dialog).toHaveTextContent(/the one its operator approved/);
     expect(within(dialog).getByText('partner-cloud')).toBeInTheDocument();
   });
 
@@ -188,6 +203,7 @@ describe('ModelsScreen, external models', () => {
             status: 'DENIED_BY_THIS_ROUTER',
             measurementSeen: null,
             evidenceDigestSeen: null,
+            evidenceDigestSeenHex: null,
           }),
         }),
       ],
@@ -212,17 +228,20 @@ describe('ModelsScreen, external models', () => {
     expect(row).not.toHaveTextContent('partner.example');
   });
 
-  it('leaves the TEE cell and filter alone: an external row declares no label', async () => {
+  it('leaves the TEE cell and filter alone: this router reads no TEE for an upstream', async () => {
     const user = userEvent.setup();
-    renderWithApollo(<ModelsScreen />, { mocks: [mixed()] });
+    // Two built-in TEEs, so there is a filter to narrow at all, plus the
+    // external row this test is about.
+    const models = [...catalogueData().models, snpConfigModel(), externalModel()];
+    renderWithApollo(<ModelsScreen />, { mocks: [catalogueMock(catalogueData({ models }))] });
     await screen.findByRole('table', { name: 'Model catalogue' });
 
     expect(within(externalRow()).getAllByText('—').length).toBeGreaterThan(0);
 
     // Narrowing to a TEE hides the external rows, which is the filter being
-    // honest rather than losing them: it narrows on a declaration about this
-    // deployment's hardware.
-    await user.click(screen.getByRole('tab', { name: 'AMD SEV-SNP' }));
+    // honest rather than losing them: it narrows on what this deployment's own
+    // endpoints publish, and nothing publishes for someone else's hardware.
+    await user.click(screen.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }));
     await waitFor(() => expect(screen.queryByText('Llama 3.3 70B (partner)')).not.toBeInTheDocument());
   });
 

@@ -62,6 +62,20 @@ const EVENTS = `
     externalEndpoint(id: $id) { events { id kind at stage reason } }
   }
 `;
+const PIN_DIGEST = `
+  mutation Pin($id: ID!, $input: PinExternalEndpointDigestInput!) {
+    pinExternalEndpointDigest(id: $id, input: $input) { id status pinnedEvidenceDigest events { kind evidenceDigest } }
+  }
+`;
+const DIGEST = 'sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490';
+const UPDATE_PIN = `
+  mutation Update($id: ID!, $input: UpdateExternalEndpointInput!) {
+    updateExternalEndpoint(id: $id, input: $input) {
+      id baseUrl status pinnedEvidenceDigest
+      events { kind evidenceDigest reason }
+    }
+  }
+`;
 const ADD_MEASUREMENT = `
   mutation Add($input: AddTrustedMeasurementInput!) {
     addTrustedMeasurement(input: $input) { id measurement note addedByEmail admits }
@@ -182,7 +196,9 @@ describe('registering an upstream', () => {
     const rendered = readFileSync(configFile, 'utf8');
     expect(rendered).toContain('name: partner-cloud');
     expect(rendered).toContain('upstream: https://partner.example:8443');
-    expect(rendered).toContain('trust: cloud-measurement');
+    expect(rendered).toContain('trust: measurement-and-digest');
+    // Registered, nothing approved yet: the pin list is present and empty.
+    expect(rendered).toContain('trustedEvidence: []');
     expect(rendered).toContain('failMode: closed');
     // The one standing check on this file: the upstream key is injected by the
     // egress leg, never written where the sidecar could read it.
@@ -311,6 +327,130 @@ describe('the trust list', () => {
   });
 });
 
+describe('pinning a deployment (SUP-252 — two-factor trust)', () => {
+  it('pins the digest an operator approves, renders it as the endpoint’s pin, and records it', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+    expect(readFileSync(configFile, 'utf8')).toContain('trustedEvidence: []');
+
+    // The console copies `sha256:<hex>`; the pin is stored and rendered canonical.
+    const hex = `sha256:${Buffer.from(DIGEST.slice('sha256/'.length), 'base64url').toString('hex')}`;
+    const body = await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: hex } });
+
+    expect(body.errors, JSON.stringify(body.errors)).toBeUndefined();
+    const pinned = body.data.pinExternalEndpointDigest;
+    expect(pinned.pinnedEvidenceDigest).toBe(DIGEST);
+    // Still pending: a pin is an approval, not a verdict — the sidecar has to see it.
+    expect(pinned.status).toBe('PENDING');
+    expect(pinned.events).toContainEqual({ kind: 'DIGEST_PINNED', evidenceDigest: DIGEST });
+    expect(readFileSync(configFile, 'utf8')).toContain(`trustedEvidence:\n      - ${DIGEST}`);
+  });
+
+  it('refuses something that is not a digest, with a sentence the console can quote', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+
+    const body = await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: 'deadbeef' } });
+
+    expect(body.errors?.[0].extensions.code).toBe('BAD_REQUEST');
+    expect(body.errors?.[0].message).toContain('is not an evidence digest');
+  });
+
+  it('carries the approval through a re-point when the edit states it (SUP-435)', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+    await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: DIGEST } });
+
+    const body = await graphql(ops, UPDATE_PIN, {
+      id: endpoint.id,
+      input: { baseUrl: 'https://elsewhere.example', evidenceDigest: DIGEST },
+    });
+
+    expect(body.errors, JSON.stringify(body.errors)).toBeUndefined();
+    const updated = body.data.updateExternalEndpoint;
+    // The verdict resets, because nothing has attested the new URL — but the
+    // approval is still there, so the next check can admit instead of refusing
+    // at `digest-not-pinned` until someone pins the same digest again.
+    expect(updated).toMatchObject({
+      baseUrl: 'https://elsewhere.example',
+      status: 'PENDING',
+      pinnedEvidenceDigest: DIGEST,
+    });
+    expect(updated.events.map((event: { kind: string }) => event.kind)).not.toContain('DIGEST_UNPINNED');
+    const rendered = readFileSync(configFile, 'utf8');
+    expect(rendered).toContain('upstream: https://elsewhere.example');
+    expect(rendered).toContain(`trustedEvidence:\n      - ${DIGEST}`);
+  });
+
+  it('re-pointing without one withdraws the approval, and the timeline says so', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+    await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: DIGEST } });
+
+    const body = await graphql(ops, UPDATE_PIN, {
+      id: endpoint.id,
+      input: { baseUrl: 'https://elsewhere.example' },
+    });
+
+    expect(body.data.updateExternalEndpoint.pinnedEvidenceDigest).toBeNull();
+    expect(readFileSync(configFile, 'utf8')).toContain('trustedEvidence: []');
+    // The entry is what makes the next check's `digest-not-pinned` legible: the
+    // endpoint had an approval, and this edit is where it went (SUP-435).
+    const withdrawal = body.data.updateExternalEndpoint.events.find(
+      (event: { kind: string }) => event.kind === 'DIGEST_UNPINNED',
+    );
+    expect(withdrawal).toMatchObject({ evidenceDigest: DIGEST });
+    expect(withdrawal.reason).toContain('https://elsewhere.example');
+  });
+
+  it('carries the failure run beside the verdict, from registration on (SUP-517)', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+
+    const body = await graphql(
+      ops,
+      `{ externalEndpoints { id status liveness {
+           reachability notServingSince lastSuccessAt lastFailureAt consecutiveFailures outage
+         } } }`,
+    );
+
+    expect(body.errors).toBeUndefined();
+    // A fresh registration: nothing checked, nothing approved, so nothing has
+    // failed and nothing is an outage — but it is already on the clock, which is
+    // what "advertised and not serving" needs to be answerable.
+    expect(body.data.externalEndpoints).toEqual([
+      {
+        id: endpoint.id,
+        status: 'PENDING',
+        liveness: {
+          reachability: 'UNKNOWN',
+          notServingSince: expect.any(String),
+          lastSuccessAt: null,
+          lastFailureAt: null,
+          consecutiveFailures: 0,
+          outage: false,
+        },
+      },
+    ]);
+  });
+
+  it('shows the pin to a signed-in non-admin: the approved deployment is part of the transparency surface', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+    await graphql(ops, PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: DIGEST } });
+
+    const body = await graphql(
+      await member(),
+      '{ externalEndpoints { id pinnedEvidenceDigest pinnedEvidence { snapshotId } } }',
+    );
+
+    expect(body.errors).toBeUndefined();
+    expect(body.data.externalEndpoints).toEqual([
+      { id: endpoint.id, pinnedEvidenceDigest: DIGEST, pinnedEvidence: null },
+    ]);
+  });
+});
+
 describe('transparency scoping (ruling 3)', () => {
   it('lets a signed-in non-admin read the endpoints, the trust list and the timeline', async () => {
     const ops = await operator();
@@ -369,6 +509,7 @@ describe('transparency scoping (ruling 3)', () => {
         { input: { id: 'whatever', note: 'mine now' } },
       ],
       ['mutation Remove($id: ID!) { removeTrustedMeasurement(id: $id) }', { id: 'whatever' }],
+      [PIN_DIGEST, { id: endpoint.id, input: { evidenceDigest: DIGEST } }],
     ];
     const refusals = [];
     for (const [document, variables] of mutations) {
@@ -383,6 +524,7 @@ describe('transparency scoping (ruling 3)', () => {
     );
     // Nothing happened: a refused mutation must not have rendered a config either.
     expect(readFileSync(configFile, 'utf8')).not.toContain(MEASUREMENT);
+    expect(readFileSync(configFile, 'utf8')).not.toContain(DIGEST);
   });
 
   it('refuses an anonymous caller before it refuses a non-operator', async () => {
@@ -554,7 +696,9 @@ describe('the evidence summary (SUP-221 ruling 1)', () => {
       fetchedAt: new Date('2026-10-06T12:00:00.000Z'),
       issuedAt: new Date('2026-10-06T11:50:00.000Z'),
       evidenceDigest,
-      evidenceDigestHex: 'a'.repeat(64),
+      // The hex of the digest itself. It used to be `MEASUREMENT`, which the trust
+      // list now refuses as a known evidence digest (SUP-251).
+      evidenceDigestHex: Buffer.from(evidenceDigest.slice('sha256/'.length), 'base64url').toString('hex'),
       certFingerprint: LEAF,
       quoteFormat: 'intel-tdx-quote-v5',
       containerImages: [image],

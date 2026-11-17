@@ -24,6 +24,13 @@ export interface ExportEvidenceCardProps {
  * followed, and the link is signed and short-lived so it can be handed to
  * someone with no console session. It carries no verdict; whoever receives it
  * verifies it with the gatekeeper.
+ *
+ * None of that paragraph belongs on the screen, and until SUP-295 item 3 the
+ * expiry half of it was: the reader presses a button and gets a file, so a
+ * sentence about a link that expires described something they never see and
+ * sounded like a deadline they had to beat. The same goes for naming the
+ * archive's parts — "bundles, JWS payloads and digests" is the format, not the
+ * point. If a copyable-link mode is ever offered, the expiry note belongs on it.
  */
 export function ExportEvidenceCard({ workspaceId }: ExportEvidenceCardProps) {
   const [values, setValues] = React.useState<ExportRangeValues>(() => defaultExportRange());
@@ -58,8 +65,8 @@ export function ExportEvidenceCard({ workspaceId }: ExportEvidenceCardProps) {
       <CardHeader>
         <CardTitle>Export evidence bundle</CardTitle>
         <CardDescription>
-          A zip of the bundles, JWS payloads and digests the endpoints published for this workspace's generations in a
-          period — for an auditor. The link expires in 15 minutes.
+          A zip of the cryptographic evidence behind this workspace's generations in a period — what the endpoints that
+          served them published, for an auditor to check.
         </CardDescription>
       </CardHeader>
       <CardContent>

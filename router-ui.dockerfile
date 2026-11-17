@@ -67,9 +67,11 @@ RUN addgroup --system --gid 1001 nodejs \
 # `output: 'standalone'` with `outputFileTracingRoot` at the workspace root emits
 # a self-contained tree that keeps the monorepo layout: the server and its traced
 # `node_modules` land under `apps/router-ui/`. Static assets are not traced and
-# are copied separately, next to the server that serves them.
+# are copied separately, next to the server that serves them — and so is
+# `public/` (the favicon, SUP-263), which the standalone tree omits as well.
 COPY --from=builder --chown=nextjs:nodejs /app/apps/router-ui/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/router-ui/.next/static ./apps/router-ui/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/apps/router-ui/public ./apps/router-ui/public
 
 USER nextjs
 EXPOSE 3001

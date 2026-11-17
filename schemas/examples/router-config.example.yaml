@@ -7,6 +7,15 @@ server:
   publicBaseUrl: https://console.tee.swarm.cloud
   validClientOrigins:
     - https://console.tee.swarm.cloud
+  # Largest /v1 body, in bytes. Sized against the widest context window the
+  # catalogue below advertises — a 262 144-token prompt is ~1.6 MiB of JSON.
+  maxInferenceRequestBytes: 8388608
+  # How long a streamed /v1 request may wait in silence before the router opens
+  # its event stream and heartbeats into it. Keep it below the read timeout of
+  # the ingress in front of this deployment — nginx and OpenResty default to 60s
+  # — so a slow model endpoint ends in the router's error envelope rather than
+  # the ingress's HTML page (SUP-449).
+  streamKeepAliveAfter: 15s
 
 database:
   type: postgres
@@ -108,6 +117,9 @@ externalEndpoints:
   listenPortRange: 256
   reattestInterval: 10m                         # bounded to [1m, 1h]
   statusPollInterval: 5s
+  outage:                                       # when a run of failed checks becomes a page
+    afterFailures: 3                            # distinct checks in a row; 0 disables
+    afterNoSuccess: 15m                         # since last known to serve; 0 disables
   connectTimeout: 5s                            # loopback: a refusal means the listener is not up yet
   readTimeout: 120s                             # patience for an upstream in another cloud
 
@@ -120,18 +132,22 @@ auth:
   secret: ${CR_API_AUTH_SECRET}
   github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   google: { clientId: ${CR_API_GOOGLE_CLIENT_ID}, clientSecret: ${CR_API_GOOGLE_CLIENT_SECRET} }
+  # How long a session lives without being used; a session in use is extended.
+  sessionMaxAge: 2160h             # 90 days
+  # Sign-in is a one-time code mailed to the address — there are no passwords.
+  # On while `mail` below has a provider.
+  emailCode:
+    ttl: 10m                       # single-use either way
+    attempts: 3                    # wrong guesses before a code is void
+    requestsPerMinute: 10          # per source address; asking and trying counted apart
+    mailsPerAddressPerHour: 10     # per recipient, silently — the answer never changes
+  # A one-time *link* beside the code. On while there is a mailer unless switched
+  # off, which is what the marketplace listing does.
   magicLink:
-    mailer: resend                 # `none` on a deployment with no mail provider at all
-    from: no-reply@tee.swarm.cloud
-    resendApiKey: ${CR_API_RESEND_KEY}
-  # Email and password, for a deployment with no mail delivery at all. Off here
-  # because this example has a mailer; the marketplace listing turns it on.
-  # No verification mail, no reset mail — see docs/router.md.
-  password:
     enabled: false
-    minLength: 12
-  # First sign-in where there is no mailer and no OAuth app: while this is set
-  # and no user exists, POST /auth/bootstrap trades it for the first account.
+  # The deployment's own token. While no user exists, POST /auth/bootstrap trades
+  # it for the first account; afterwards it signs back into that account and no
+  # other — the administrator's way in when no code can be mailed.
   # See docs/router.md, "First sign-in on a fresh deployment".
   bootstrapToken: ${CR_API_BOOTSTRAP_TOKEN}
   bootstrapEmail: admin@tee.swarm.cloud
@@ -140,6 +156,28 @@ auth:
   # because Better Auth owns the user table (ADR-004).
   adminEmails:
     - admin@tee.swarm.cloud
+
+# Outbound mail: sign-in codes and the welcome mail (SUP-269).
+# `none` sends nothing and hides every flow that needs mail. The sender domain
+# needs SPF and DKIM records for any of it to reach an inbox.
+mail:
+  provider: smtp                   # none | console (not in production) | resend | smtp
+  from: no-reply@tee.swarm.cloud
+  fromName: Confidential Router
+  replyTo: support@tee.swarm.cloud   # where a reply goes; `from` receives nothing
+  # consoleUrl defaults to the first entry of server.validClientOrigins.
+  smtp:
+    host: smtp.example.com
+    port: 587
+    security: starttls             # starttls | tls (port 465) | none
+    user: no-reply@tee.swarm.cloud
+    password: ${CR_API_SMTP_PASSWORD}
+  # resendApiKey: ${CR_API_RESEND_KEY}   # with `provider: resend` instead
+  # What the provider says became of a message once it accepted it (SUP-551).
+  # Without this the route is a 404 and a suppressed address stays invisible:
+  # the send succeeds and the message is discarded. Read whatever `provider` is
+  # — the events belong to the mail account, not to the transport.
+  webhookSecret: ${CR_API_MAIL__WEBHOOK_SECRET}   # the provider's signing secret, `whsec_…`
 
 billing:
   # `auto` is Stripe when the block below is set. The manual provider it otherwise
@@ -150,6 +188,7 @@ billing:
   minTopUpMicros: 5000000        # $5
   maxTopUpMicros: 10000000000    # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0
+  signupGrantMicros: 0           # credit every new account gets at registration; stacks with an invitation grant
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h          # floor between two automatic top-ups of one workspace
   stripe:
@@ -164,7 +203,7 @@ invites:
   lookupsPerMinute: 30
 
 # Product analytics (ADR-006). The console makes no third-party request: its two
-# browser events are posted to POST /v1/analytics/events here, and the six the
+# browser events are posted to POST /v1/console-events here, and the six the
 # database already knows are captured server-side. `projectKey` normally arrives
 # as POSTHOG_PROJECT_KEY; with no key every event is discarded.
 analytics:
@@ -186,6 +225,13 @@ feedback:
     provider: typeform
     url: https://superprotocol.typeform.com/to/REPLACE_ME
     webhookSecret: ${CR_FEEDBACK_WEBHOOK_SECRET}
+
+# Where an outage alert goes so a human reads it. Nothing here has to be set:
+# `emails` falls back to auth.adminEmails.
+alerts:
+  email: true                                   # the outbound path; the log line and /health are unaffected
+  emails: []                                    # empty -> auth.adminEmails
+  minInterval: 15m                              # least gap between two alerts; a recovery ignores it
 
 log:
   level: info

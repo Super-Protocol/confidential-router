@@ -30,7 +30,6 @@ function open(state: VerificationState = verification(), declaredImages = DECLAR
       onOpenChange={vi.fn()}
       verification={state}
       hostname={HOSTNAME}
-      teeLabel="Intel TDX + H100 CC"
       declaredImages={declaredImages}
     />,
   );
@@ -38,8 +37,8 @@ function open(state: VerificationState = verification(), declaredImages = DECLAR
 
 /**
  * The same panel over an external upstream's relayed bundle, with the props the
- * chat passes for one: no TEE label and no allow-list, because nobody declared
- * either for another deployment (ADR-008 §7).
+ * chat passes for one: no allow-list, because nobody declared what another
+ * deployment runs (ADR-008 §7).
  */
 const UPSTREAM_HOSTNAME = 'llama-33-70b.partner.example';
 
@@ -50,11 +49,24 @@ function openExternal(state: VerificationState = verification({ gate: relayedGat
       onOpenChange={vi.fn()}
       verification={state}
       hostname={UPSTREAM_HOSTNAME}
-      teeLabel={null}
       declaredImages={null}
       endpointKind="external"
     />,
   );
+}
+
+/** The relayed bundle, failing a check this page can make. */
+function failedRelay() {
+  return verification({
+    gate: {
+      unlocked: false,
+      checks: [{ id: 'signature' as const, status: 'fail' as const, detail: 'The signature did not verify.' }],
+      registry: null,
+      evidence: null,
+    },
+    pageState: 'fail' as const,
+    unlocked: false,
+  });
 }
 
 /** The gate result the external path produces: same checks, `source: 'router'`. */
@@ -105,14 +117,16 @@ describe('the measurements panel', () => {
     expect(fieldValue('VMPL / report version')).toHaveTextContent('0 / v5');
   });
 
-  it('renders fingerprints in hex, the spelling the rest of the console uses', () => {
+  it('renders fingerprints in hex only, the spelling the rest of the console uses', () => {
     // SUP-115: every user-facing surface prints `sha256:<hex>`. The canonical
-    // base64url form is kept beside it, because that is what the bundle carries.
+    // base64url form is what the bundle carries, and it stays there: a second
+    // spelling beside the first was the leak SUP-255 closed.
     open();
     const digest = fieldValue('Evidence digest');
 
-    expect(digest).toHaveTextContent('sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs');
     expect(digest.querySelector('.font-mono')?.textContent).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(digest).not.toHaveTextContent('sha256/');
+    expect(fieldValue('Certificate fingerprint')).not.toHaveTextContent('sha256/');
   });
 
   it('offers a copy button per value rather than one for the panel', async () => {
@@ -123,11 +137,20 @@ describe('the measurements panel', () => {
     expect(await screen.findByRole('button', { name: /Copy the signed evidence/ })).toBeInTheDocument();
   });
 
-  it('refuses to call the operator’s TEE label a check', () => {
-    // The one field most likely to be read as hardware attestation. It is config.
+  /*
+   * The row that used to print the router configuration's label, which the chart
+   * defaulted to "Intel TDX + H100 CC" on every deployment (SUP-260). It reads
+   * the TEE out of the verified document now, and still says in words that
+   * reading is not checking.
+   */
+  it('names the TEE from the evidence, and still calls it no verdict', () => {
     open();
 
-    expect(fieldValue('TEE, as the operator declares it')).toHaveTextContent('nothing on this page checks it');
+    const tee = fieldValue('TEE, as the evidence names it');
+    expect(tee).toHaveTextContent('AMD SEV-SNP (QEMU)');
+    expect(tee).toHaveTextContent('never a verdict');
+    expect(screen.queryByText('TEE, as the operator declares it')).not.toBeInTheDocument();
+    expect(tee).not.toHaveTextContent('Intel TDX + H100 CC');
   });
 
   it('lists every image the signed evidence carries, with its verdict', () => {
@@ -304,12 +327,17 @@ describe('an external upstream’s evidence', () => {
     expect(fieldValue('Bundle came from')).toHaveTextContent(/signature was checked here/);
   });
 
-  it('declares no TEE label rather than borrowing one', () => {
+  /*
+   * The upstream's own document is relayed and verified in this page, so its
+   * root names its hardware here exactly as this deployment's does — read from
+   * the evidence, never declared and never borrowed from the catalogue.
+   */
+  it('names the upstream’s TEE from the upstream’s own evidence', () => {
     openExternal();
 
-    const tee = fieldValue('TEE, as the operator declares it');
-    expect(tee).toHaveTextContent(/Nobody declares one for another deployment/);
-    expect(tee).not.toHaveTextContent('Intel TDX');
+    const tee = fieldValue('TEE, as the evidence names it');
+    expect(tee).toHaveTextContent('AMD SEV-SNP (QEMU)');
+    expect(tee).toHaveTextContent(/Nobody declares it/);
   });
 
   it('says whose channel the pinned certificate is about', () => {
@@ -345,21 +373,50 @@ describe('an external upstream’s evidence', () => {
   });
 
   it('refuses to draw anything when the relayed bundle did not check out', () => {
-    openExternal(
-      verification({
-        gate: {
-          unlocked: false,
-          checks: [{ id: 'signature', status: 'fail', detail: 'The signature did not verify.' }],
-          registry: null,
-          evidence: null,
-        },
-        pageState: 'fail',
-        unlocked: false,
-      }),
-    );
+    openExternal(failedRelay());
 
-    expect(screen.getByText(/Nothing below is drawn from this endpoint’s evidence/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing below is drawn from this upstream’s relayed evidence/)).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Deployment graph' })).not.toBeInTheDocument();
+  });
+
+  /*
+   * SUP-618. The panel used to render tier 1's failure copy here, which says the
+   * composer stays locked — a lock this panel does not apply and cannot observe,
+   * because the composer is gated by the chat's own tier 1 over `routerEndpoint`.
+   * On production 0.19.8 that sentence was on screen while the composer answered
+   * a real turn, and it sent a round of triage at the wrong deployment.
+   */
+  it('says nothing about the composer when the relayed bundle fails', () => {
+    openExternal(failedRelay());
+
+    expect(screen.queryByText(/composer/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Nothing is sent to a deployment whose evidence does not verify/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says instead what is true of it: that it gates nothing, and what pins the hop', () => {
+    openExternal(failedRelay());
+
+    expect(screen.getByRole('heading', { name: 'Attestation for this external upstream' })).toBeInTheDocument();
+    expect(screen.getByText(/unlocks nothing and locks nothing/i)).toBeInTheDocument();
+    expect(screen.getByText(/its egress attested and pinned/i)).toBeInTheDocument();
+    expect(screen.getByText(/not by itself a verdict on the channel/i)).toBeInTheDocument();
+    expect(screen.getByText('The signature did not verify.')).toBeInTheDocument();
+  });
+
+  it('badges the upstream’s own tier rather than the endpoint’s', () => {
+    openExternal(failedRelay());
+
+    expect(screen.getByText('Upstream evidence did not check out')).toBeInTheDocument();
+    expect(screen.queryByText('Evidence did not check out')).not.toBeInTheDocument();
+  });
+
+  it('keeps the stale-copy warning on a pass, and still claims nothing for the composer', () => {
+    openExternal();
+
+    expect(screen.getByText(/older than what its own host serves/i)).toBeInTheDocument();
+    expect(screen.queryByText(/composer/i)).not.toBeInTheDocument();
   });
 
   it('says it is relaying while tier 1 is outstanding', () => {

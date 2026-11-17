@@ -2,7 +2,7 @@ import { ArgsType, Field, Float, ID, Int, ObjectType, registerEnumType } from '@
 import { IsDate, IsOptional, IsString } from 'class-validator';
 import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { Coverage, DigestChange } from '../../../evidence/index.js';
-import { type EvidenceState, fingerprintHex, quoteAgeMs } from '../../../evidence/index.js';
+import { type EvidenceState, fingerprintHex, quoteAgeMs, teeLabelOfBundle } from '../../../evidence/index.js';
 import { PageInfoModel } from '../common/page-info.model.js';
 import { JSONObject } from '../scalars/json.scalar.js';
 
@@ -86,6 +86,15 @@ export class EvidenceSnapshotModel {
   @Field(() => String, { nullable: true, description: 'rootCaTeeQuote.format, e.g. intel-tdx-quote-v5.' })
   quoteFormat!: string | null;
 
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The TEE the published evidence names — the hardware branch of the TeeEvidence in the root ' +
+      'certificate of the chain, e.g. "AMD SEV-SNP (Azure)". Read, never verified; null when the root ' +
+      'carries no evidence this router recognises.',
+  })
+  tee!: string | null;
+
   @Field(() => [String], { description: 'Enclave image digests from the canonical snapshot.' })
   containerImages!: string[];
 
@@ -116,6 +125,9 @@ export class EvidenceSnapshotModel {
       // fingerprint (SUP-115).
       certFingerprintHex: fingerprintHex(snapshot.certFingerprint),
       quoteFormat: snapshot.quoteFormat,
+      // Derived from the stored bundle rather than a column, like the hex
+      // spellings above: the root certificate is already in the row (SUP-270).
+      tee: teeLabelOfBundle(snapshot.bundle),
       containerImages: snapshot.containerImages,
       chain: snapshot.chainSummary.map((certificate, index) => ({
         ...certificate,
@@ -194,18 +206,27 @@ export class DigestChangeModel {
 
 @ObjectType('EvidenceCoverage', {
   description:
-    'Of the generations served in a window, how many were served while the platform had a fresh bundle ' +
-    'published for the endpoint that served them. A fact about publication, not a verification rate.',
+    'Of the generations this deployment’s own endpoints served in a window, how many were served while ' +
+    'the platform had a fresh bundle published for the endpoint that served them. A fact about ' +
+    'publication, not a verification rate. Generations routed to an external endpoint are outside the ' +
+    'question entirely — they are in neither `requests` nor `covered` — because this platform publishes ' +
+    'no bundle for one; the router verified that upstream itself and reports it as “verified by this ' +
+    'router” (ADR-008 §4).',
 })
 export class EvidenceCoverageModel {
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Generations this deployment’s own endpoints served — not the workspace’s total.' })
   requests!: number;
 
   @Field(() => Int)
   covered!: number;
 
-  @Field(() => Float, { description: 'covered / requests; 0 when nothing was served.' })
-  ratio!: number;
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'covered / requests. Null when `requests` is 0: nothing in the window could have been covered, so ' +
+      'there is no ratio — render it as “not applicable”, never as 0%.',
+  })
+  ratio!: number | null;
 
   static from(coverage: Coverage): EvidenceCoverageModel {
     return coverage;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DataSource } from 'typeorm';
+import { type DataSource, IsNull } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDataSource, seedCatalog, testConfig } from '../../../test/seed.js';
 import { LedgerService } from '../billing/ledger.service.js';
@@ -121,6 +121,46 @@ describe('withdrawing one code', () => {
     const result = await withdrawals.withdraw({ code: 'ZZZZ-ZZZZ-ZZZZ' });
 
     expect(result).toMatchObject({ matched: 0, withdrawn: 0 });
+  });
+});
+
+describe('withdrawing one code by its id', () => {
+  it('stops the code without the caller ever sending it, and echoes the id rather than the code', async () => {
+    const [generated] = await generateInvites(dataSource, {
+      count: 2,
+      grantMicros: GRANT_MICROS,
+      campaign: CAMPAIGN,
+      maxRedemptions: 1,
+      expiresAt: null,
+      note: null,
+      landingBaseUrl: 'https://router.superprotocol.com',
+    });
+
+    const result = await withdrawals.withdraw({ id: generated.id, unspentOnly: true });
+
+    expect(result).toEqual({
+      target: `invitation ${generated.id}`,
+      matched: 1,
+      withdrawn: 1,
+      alreadyWithdrawn: 0,
+      spent: 0,
+    });
+    expect((await stored(generated.code))?.disabledAt).toBeInstanceOf(Date);
+    expect(await dataSource.getRepository(InviteCode).countBy({ disabledAt: IsNull() })).toBe(1);
+  });
+
+  it('leaves a spent code alone when asked for unspent codes only', async () => {
+    const [code] = await issue(1);
+    await redeem(code);
+    const { id } = (await stored(code)) as InviteCode;
+
+    const result = await withdrawals.withdraw({ id, unspentOnly: true });
+
+    expect(result).toMatchObject({ matched: 1, withdrawn: 0, spent: 1 });
+  });
+
+  it('refuses an id together with another target', async () => {
+    await expect(withdrawals.withdraw({ id: 'x', campaign: CAMPAIGN })).rejects.toThrow(InviteTargetError);
   });
 });
 

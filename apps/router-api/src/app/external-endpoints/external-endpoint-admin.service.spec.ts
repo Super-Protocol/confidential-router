@@ -2,11 +2,15 @@ import { BadRequestException, ConflictException, NotFoundException, ServiceUnava
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createTestDataSource } from '../../../test/seed.js';
 import type { routerConfig } from '../config.js';
 import { RouterConfigSchema } from '../config.schema.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
-import { ExternalEndpointEvent } from '../db/entities/external-endpoint-event.entity.js';
+import {
+  ExternalEndpointEvent,
+  type ExternalEndpointEventKind,
+} from '../db/entities/external-endpoint-event.entity.js';
 import { Model } from '../db/entities/model.entity.js';
 import { TrustedMeasurement } from '../db/entities/trusted-measurement.entity.js';
 import { SECRETS_KEY_ENV, SecretEnvelopeService } from '../secrets/index.js';
@@ -16,6 +20,7 @@ import {
   ExternalEndpointAdminService,
   type ExternalModelSpec,
 } from './external-endpoint-admin.service.js';
+import { ExternalEndpointHealth } from './external-endpoint-health.js';
 import { ExternalEndpointStatusService } from './external-endpoint-status.service.js';
 import type { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 
@@ -70,7 +75,13 @@ beforeEach(async () => {
     new SecretEnvelopeService(),
     { render } as unknown as SidecarConfigWriterService,
     catalog,
-    new ExternalEndpointStatusService(config(), dataSource, catalog),
+    new ExternalEndpointStatusService(
+      config(),
+      dataSource,
+      catalog,
+      new ExternalEndpointHealth(),
+      new RecordingOperatorAlerts().asService(),
+    ),
   );
 });
 
@@ -155,7 +166,6 @@ describe('registering an external endpoint', () => {
       capabilities: ['chat'],
       promptPer1mMicros: 1,
       completionPer1mMicros: 1,
-      tee: 'Intel TDX',
       enabled: true,
       updatedAt: new Date(),
     });
@@ -318,6 +328,206 @@ describe('rotating the upstream key', () => {
   });
 });
 
+describe('pinning a deployment’s evidence digest (SUP-252)', () => {
+  const DIGEST = 'sha256/SwSl8nkqLsNHn9rsW7Dfek9mGTeDePm8MsHPQ3Z-490';
+  const DIGEST_HEX = `sha256:${Buffer.from(DIGEST.slice('sha256/'.length), 'base64url').toString('hex')}`;
+  const NEW_DIGEST = `sha256/${Buffer.alloc(32, 3).toString('base64url')}`;
+
+  it('starts with nothing approved', async () => {
+    const { endpoint } = await register();
+
+    expect(endpoint.pinnedEvidenceDigest).toBeNull();
+  });
+
+  it('pins the digest in its canonical spelling, records it, and re-renders at once', async () => {
+    const { endpoint } = await register();
+    render.mockClear();
+
+    // The console shows and copies `sha256:<hex>`; the verdict reports the
+    // canonical form. The pin has to compare like with like in the sidecar.
+    const pinned = await service.pinDigest(endpoint.id, DIGEST_HEX);
+
+    expect(pinned.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+    // The render is the "re-attest (immediate)": the sidecar reloads and
+    // force-re-attests rather than waiting for the TTL.
+    expect(render).toHaveBeenCalledTimes(1);
+    const events = await dataSource.getRepository(ExternalEndpointEvent).find({ order: { at: 'ASC' } });
+    expect(events.map((event) => [event.kind, event.evidenceDigest])).toContainEqual(['digest_pinned', DIGEST]);
+  });
+
+  it('approving a new digest replaces the old one — one approved deployment per endpoint', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const approved = await service.pinDigest(endpoint.id, NEW_DIGEST);
+
+    expect(approved.endpoint.pinnedEvidenceDigest).toBe(NEW_DIGEST);
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins).toHaveLength(2);
+  });
+
+  it('is a no-op for the digest already pinned: no event, no reload', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+    render.mockClear();
+
+    await service.pinDigest(endpoint.id, DIGEST_HEX);
+
+    expect(render).not.toHaveBeenCalled();
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins).toHaveLength(1);
+  });
+
+  it('refuses something that is not a digest, and says what it wants', async () => {
+    const { endpoint } = await register();
+
+    await expect(service.pinDigest(endpoint.id, 'a'.repeat(63))).rejects.toThrow(BadRequestException);
+    await expect(service.pinDigest(endpoint.id, 'not a digest')).rejects.toThrow(/sha256:<64 hex>/);
+  });
+
+  it('is a 404 for an endpoint that is not there', async () => {
+    await expect(service.pinDigest('missing', DIGEST)).rejects.toThrow(NotFoundException);
+  });
+
+  it('re-pointing the endpoint withdraws the approval: the new upstream has not been looked at', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const repointed = await service.update({ id: endpoint.id, baseUrl: 'https://elsewhere.example' });
+
+    expect(repointed.endpoint.pinnedEvidenceDigest).toBeNull();
+  });
+
+  it('records the withdrawal, so the endpoint’s own history says why it stopped serving (SUP-435)', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    await service.update({ id: endpoint.id, baseUrl: 'https://elsewhere.example' });
+
+    // The digest that is no longer approved, not the one that is: there is none.
+    // Without this entry the only trace of the withdrawal is the next check's
+    // `digest-not-pinned`, which reads as an endpoint nobody ever approved.
+    const withdrawals = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_unpinned',
+    );
+    expect(withdrawals.map((event) => event.evidenceDigest)).toEqual([DIGEST]);
+    expect(withdrawals[0].reason).toContain('https://partner.example:8443');
+    expect(withdrawals[0].reason).toContain('https://elsewhere.example');
+  });
+
+  it('re-points and keeps the approval in one write when the edit carries it (SUP-435)', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+    render.mockClear();
+
+    // The production shape: an operator correcting a URL who knows which
+    // deployment stays approved. Without the digest here the endpoint passes
+    // through `digest-not-pinned` — out of service — until a second call pins it.
+    const repointed = await service.update({
+      id: endpoint.id,
+      baseUrl: 'https://elsewhere.example',
+      evidenceDigest: DIGEST_HEX,
+    });
+
+    expect(repointed.endpoint.baseUrl).toBe('https://elsewhere.example');
+    expect(repointed.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+    // The verdict still resets — the pin is an approval, not a verdict, and
+    // nothing has attested the new URL yet.
+    expect(repointed.endpoint.status).toBe('pending');
+    expect(render).toHaveBeenCalledTimes(1);
+    const kinds = (await dataSource.getRepository(ExternalEndpointEvent).find()).map((event) => event.kind);
+    expect(kinds).not.toContain('digest_unpinned');
+  });
+
+  it('approves a new deployment from inside an edit, in the canonical spelling', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const approved = await service.update({ id: endpoint.id, evidenceDigest: NEW_DIGEST });
+
+    expect(approved.endpoint.pinnedEvidenceDigest).toBe(NEW_DIGEST);
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins.map((event) => event.evidenceDigest)).toEqual([DIGEST, NEW_DIGEST]);
+  });
+
+  it('re-sending the digest already approved approves nothing new', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    await service.update({ id: endpoint.id, models: [model({ promptPer1mMicros: 1 })], evidenceDigest: DIGEST_HEX });
+
+    const pins = (await dataSource.getRepository(ExternalEndpointEvent).find()).filter(
+      (event) => event.kind === 'digest_pinned',
+    );
+    expect(pins).toHaveLength(1);
+  });
+
+  it('reads a stated null as saying nothing about the pin', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    // What a GraphQL caller sends when it re-sends the endpoint's own
+    // `pinnedEvidenceDigest` and there is none: the field is nullable, so the
+    // value arrives as null rather than absent.
+    const updated = await service.update({ id: endpoint.id, models: [model()], evidenceDigest: null });
+
+    expect(updated.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+  });
+
+  it('refuses a digest it cannot read before it writes anything', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    await expect(
+      service.update({
+        id: endpoint.id,
+        baseUrl: 'https://elsewhere.example',
+        models: [model({ promptPer1mMicros: 1 })],
+        evidenceDigest: 'not a digest',
+      }),
+    ).rejects.toThrow(/sha256:<64 hex>/);
+
+    // Nothing of the edit landed: an approval the parser refused must not leave
+    // the endpoint re-pointed with its pin gone.
+    const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });
+    expect([row.baseUrl, row.pinnedEvidenceDigest]).toEqual(['https://partner.example:8443', DIGEST]);
+    expect((await dataSource.getRepository(Model).findOneByOrFail({ id: model().id })).promptPer1mMicros).toBe(400_000);
+  });
+
+  it('re-pricing keeps the approval: a price does not change which deployment answers', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+
+    const repriced = await service.update({ id: endpoint.id, models: [model({ promptPer1mMicros: 1 })] });
+
+    expect(repriced.endpoint.pinnedEvidenceDigest).toBe(DIGEST);
+  });
+
+  it('survives a boot reset: the pin is trust, not a verdict', async () => {
+    const { endpoint } = await register();
+    await service.pinDigest(endpoint.id, DIGEST);
+    await dataSource.getRepository(ExternalEndpoint).update({ id: endpoint.id }, { status: 'verified' });
+
+    await new ExternalEndpointStatusService(
+      config(),
+      dataSource,
+      catalog,
+      new ExternalEndpointHealth(),
+      new RecordingOperatorAlerts().asService(),
+    ).resetToPending();
+
+    const row = await dataSource.getRepository(ExternalEndpoint).findOneByOrFail({ id: endpoint.id });
+    expect(row.status).toBe('pending');
+    expect(row.pinnedEvidenceDigest).toBe(DIGEST);
+  });
+});
+
 describe('the trust list', () => {
   it('normalises on the way in, so one cloud is one row', async () => {
     const added = await service.addMeasurement(`0x${MEASUREMENT.toUpperCase()}`, '  Partner cloud  ', 'user-1');
@@ -336,6 +546,31 @@ describe('the trust list', () => {
 
   it('refuses something that is not a measurement', async () => {
     await expect(service.addMeasurement('not-a-measurement', null, null)).rejects.toThrow(BadRequestException);
+  });
+
+  it('refuses an evidence digest or certificate fingerprint it has seen, however it is spelled', async () => {
+    // SUP-251: both are SHA-256 and pass the shape check, and the console copies
+    // them as `sha256:<hex>` — but trusting one admits nothing, silently.
+    const digestHex = 'd'.repeat(64);
+    const leafHex = 'e'.repeat(64);
+    const canonical = (hex: string) => `sha256/${Buffer.from(hex, 'hex').toString('base64url')}`;
+    const view = await register();
+    await dataSource
+      .getRepository(ExternalEndpoint)
+      .update(
+        { id: view.endpoint.id },
+        { evidenceDigestSeen: canonical(digestHex), pinnedCertFingerprint: canonical(leafHex) },
+      );
+
+    await expect(service.addMeasurement(`sha256:${digestHex}`, null, 'user-1')).rejects.toThrow(/an evidence digest/);
+    await expect(service.addMeasurement(leafHex.toUpperCase(), null, 'user-1')).rejects.toThrow(
+      /a certificate fingerprint/,
+    );
+    expect(await dataSource.getRepository(TrustedMeasurement).count()).toBe(0);
+    // A measurement the router has seen as a measurement is still accepted.
+    await expect(service.addMeasurement(MEASUREMENT, null, 'user-1')).resolves.toMatchObject({
+      measurement: MEASUREMENT,
+    });
   });
 
   it('rewrites the note, and a blank note clears it', async () => {
@@ -381,6 +616,15 @@ describe('reads', () => {
     const second = await register({ name: 'second', models: [model({ id: 'partner/second:snp' })] });
     await service.rotateKey(first.endpoint.id, 'sk-two');
     await service.setEnabled(first.endpoint.id, false);
+    // Aged apart on purpose. The timeline is ordered by `at`, and all three
+    // writes land in the same millisecond on a machine this fast — at which
+    // point the order is the random tiebreak on a UUID primary key, and this
+    // case passed or failed by luck. Sub-millisecond ordering is not something
+    // the table promises, nor anything an operator could read off a screen, so
+    // the fix belongs here rather than in a sequence column: the assertion is
+    // about "newest first" and "bounded", so give it events whose ages differ.
+    await age(first.endpoint.id, 'registered', 2_000);
+    await age(first.endpoint.id, 'key_rotated', 1_000);
 
     const timelines = await service.eventsFor([first.endpoint.id, second.endpoint.id], 2);
 
@@ -389,6 +633,13 @@ describe('reads', () => {
     expect(timelines.get(first.endpoint.id)?.map((event) => event.kind)).toEqual(['disabled', 'key_rotated']);
     expect(timelines.get(second.endpoint.id)?.map((event) => event.kind)).toEqual(['registered']);
   });
+
+  /** Moves one endpoint's event of a kind `ms` into the past. */
+  async function age(externalEndpointId: string, kind: ExternalEndpointEventKind, ms: number): Promise<void> {
+    await dataSource
+      .getRepository(ExternalEndpointEvent)
+      .update({ externalEndpointId, kind }, { at: new Date(Date.now() - ms) });
+  }
 
   it('answers an id with no timeline with an empty one rather than an error', async () => {
     // An entry per id asked for, so a caller never has to tell "no events" from

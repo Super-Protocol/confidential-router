@@ -129,7 +129,9 @@ describe('the public model catalogue', () => {
     expect(models[0]).toMatchObject({
       id: 'meta/llama-3.3-70b-instruct:tdx',
       slug: 'meta/llama-3.3-70b-instruct:tdx',
-      tee: 'Intel TDX + H100 CC',
+      // Nothing is published for the endpoint, so nothing names a TEE — and
+      // there is no config label to print instead (SUP-260).
+      tee: null,
       pricing: { promptPer1m: '280000', completionPer1m: '420000' },
     });
     expect(models[0].endpoint).toMatchObject({

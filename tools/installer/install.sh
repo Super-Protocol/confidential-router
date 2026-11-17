@@ -16,6 +16,7 @@
 #   --base-url <url>    GATEKEEPER_BASE_URL      release download root; https:// or file:// (a mirror, or an
 #                                                offline copy of the release directory)
 #   --api-url <url>     GATEKEEPER_API_URL       default: https://api.github.com
+#   --no-modify-path    GATEKEEPER_NO_MODIFY_PATH  do not touch any shell startup file
 #   --help
 #
 # GITHUB_TOKEN, if set, authenticates the one API call that resolves "latest",
@@ -30,6 +31,7 @@ GATEKEEPER_API_URL="${GATEKEEPER_API_URL:-https://api.github.com}"
 GATEKEEPER_VERSION="${GATEKEEPER_VERSION:-}"
 GATEKEEPER_INSTALL_DIR="${GATEKEEPER_INSTALL_DIR:-}"
 GATEKEEPER_BASE_URL="${GATEKEEPER_BASE_URL:-}"
+GATEKEEPER_NO_MODIFY_PATH="${GATEKEEPER_NO_MODIFY_PATH:-}"
 
 # Releases are tagged `gatekeeper-v<semver>`: this is a monorepo and the router
 # will get tags of its own.
@@ -58,6 +60,7 @@ Options (flag, or the matching environment variable):
   --repo <owner/repo> GATEKEEPER_REPO          default: Super-Protocol/confidential-router
   --base-url <url>    GATEKEEPER_BASE_URL      release download root; https:// or file://
   --api-url <url>     GATEKEEPER_API_URL       default: https://api.github.com
+  --no-modify-path    GATEKEEPER_NO_MODIFY_PATH  do not touch any shell startup file
   -h, --help
 
 GITHUB_TOKEN, if set, authenticates the one API call that resolves "latest".
@@ -217,23 +220,114 @@ verify_checksum() {
 
 # --- install destination ------------------------------------------------------
 
-# default_install_dir prefers a system-wide bin the caller can actually write
-# to, and otherwise the per-user one. Nothing here escalates: an install that
-# silently asked for sudo would be a worse surprise than one that lands in
-# ~/.local/bin.
-default_install_dir() {
-  if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
-    printf '/usr/local/bin'
-  else
-    printf '%s/.local/bin' "${HOME:-/tmp}"
-  fi
-}
-
 on_path() {
   case ":${PATH}:" in
     *":$1:"*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# writable_dir is true for a directory that takes a write, whether it exists
+# already or has to be created: `mkdir -p` is coming either way, and a candidate
+# is only worth preferring if that will succeed.
+writable_dir() {
+  if [ -d "$1" ]; then
+    [ -w "$1" ]
+  else
+    parent="$(dirname "$1")"
+    [ -d "$parent" ] && [ -w "$parent" ]
+  fi
+}
+
+# default_install_dir prefers a writable directory the shell *already searches*,
+# and only then the per-user one.
+#
+# Preferring the PATH is the whole of SUP-295 item 1. On macOS /usr/local/bin is
+# root-owned on a machine without Homebrew, so the install fell through to
+# ~/.local/bin — which zsh's default PATH does not contain. `curl | sh` then
+# reported success and `gatekeeper init`, the very next line of the console's
+# copy-paste block, was command-not-found.
+#
+# Nothing here escalates: an install that silently asked for sudo would be a
+# worse surprise than one that lands in ~/.local/bin and says so.
+default_install_dir() {
+  for candidate in /usr/local/bin "${HOME:-/tmp}/.local/bin" "${HOME:-/tmp}/bin"; do
+    if on_path "$candidate" && writable_dir "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  printf '%s/.local/bin' "${HOME:-/tmp}"
+}
+
+# --- PATH ---------------------------------------------------------------------
+
+# The line that marks our own addition, so a second install can recognise it and
+# a reader knows who wrote it.
+PATH_MARKER='# added by the Confidential Router gatekeeper installer'
+
+# rc_file_for names the startup file the given login shell reads, or nothing
+# when this script has no business guessing.
+#
+# bash reads a different file per platform and the difference is not cosmetic:
+# macOS Terminal opens a *login* shell, which reads .bash_profile and never
+# .bashrc; a Linux terminal opens an interactive non-login one, which reads
+# .bashrc and never .bash_profile. Writing to the other one is writing to
+# nowhere.
+rc_file_for() {
+  case "${1##*/}" in
+    zsh) printf '%s/.zshrc' "${HOME:-}" ;;
+    bash)
+      if [ "$(uname -s)" = Darwin ]; then
+        printf '%s/.bash_profile' "${HOME:-}"
+      else
+        printf '%s/.bashrc' "${HOME:-}"
+      fi
+      ;;
+    *) printf '' ;;
+  esac
+}
+
+# rc_has_dir is true when the startup file already puts this directory on the
+# PATH — ours or the reader's own line, because a second copy of either is
+# noise rather than a fix.
+rc_has_dir() {
+  # Two fixed-string passes rather than one pattern: an install directory is a
+  # path, and its dots would match any character as a regex.
+  [ -f "$1" ] && grep -F "$2" "$1" 2>/dev/null | grep -q 'PATH'
+}
+
+# report_path closes the install the way rustup does: say where the binary went,
+# make it permanent for the next terminal, and hand over the one line that makes
+# it work in *this* one. A shell cannot export into its parent, so no installer
+# run through a pipe can skip that last part.
+report_path() {
+  dir="$1"
+  if on_path "$dir"; then
+    return 0
+  fi
+
+  rc=''
+  if [ -z "$GATEKEEPER_NO_MODIFY_PATH" ]; then
+    rc="$(rc_file_for "${SHELL:-}")"
+  fi
+
+  log ""
+  log "$dir is not on your PATH."
+  if [ -n "$rc" ] && rc_has_dir "$rc" "$dir"; then
+    log "$rc already adds it, so new terminals will find gatekeeper."
+  elif [ -n "$rc" ]; then
+    # `$PATH` stays literal: the startup file has to expand it at shell start,
+    # not now.
+    printf '\n%s\n%s\n' "$PATH_MARKER" "export PATH=\"$dir:\$PATH\"" >> "$rc" &&
+      log "Added it to $rc, so new terminals will find gatekeeper." ||
+      log "Could not write to $rc; add the line below to it yourself."
+  else
+    log "Add the line below to your shell's startup file to make that permanent."
+  fi
+  log ""
+  log "To use gatekeeper in this terminal, run:"
+  log "  export PATH=\"$dir:\$PATH\""
 }
 
 # --- main ---------------------------------------------------------------------
@@ -251,6 +345,7 @@ parse_args() {
       --base-url=*) GATEKEEPER_BASE_URL="${1#*=}"; shift ;;
       --api-url) [ "$#" -ge 2 ] || die 'missing value for --api-url' 2; GATEKEEPER_API_URL="$2"; shift 2 ;;
       --api-url=*) GATEKEEPER_API_URL="${1#*=}"; shift ;;
+      --no-modify-path) GATEKEEPER_NO_MODIFY_PATH=1; shift ;;
       -h | --help) usage; exit 0 ;;
       *) die "unknown option: $1 (try --help)" 2 ;;
     esac
@@ -308,11 +403,7 @@ main() {
   log "Installed $dir/gatekeeper"
   "$dir/gatekeeper" version || die 'the installed binary did not run'
 
-  if ! on_path "$dir"; then
-    log ""
-    log "$dir is not on your PATH. Add it:"
-    log "  export PATH=\"$dir:\$PATH\""
-  fi
+  report_path "$dir"
 }
 
 # Sourced by install.test.sh (next to this file), which calls the functions above

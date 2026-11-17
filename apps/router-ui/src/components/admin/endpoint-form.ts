@@ -61,7 +61,9 @@ function validateModel(model: ModelFormValues, index: number, seen: Set<string>)
   if (model.upstreamModel.trim() === '') errors[at('upstreamModel')] = 'The upstream’s own model id is required.';
 
   const contextLength = Number(model.contextLength);
-  if (!Number.isInteger(contextLength) || contextLength <= 0) {
+  if (model.contextLength.trim() === '') {
+    errors[at('contextLength')] = 'A context length is required.';
+  } else if (!Number.isInteger(contextLength) || contextLength <= 0) {
     errors[at('contextLength')] = 'Context length must be a whole number of tokens.';
   }
 
@@ -104,19 +106,26 @@ export function validateEndpointForm(values: EndpointFormValues, { requireKey = 
 
   if (requireKey && values.apiKey.trim() === '') errors.apiKey = 'The upstream’s API key is required.';
 
-  if (values.models.length === 0) {
-    errors.models = 'Register at least one model.';
-  } else {
-    const seen = new Set<string>();
-    for (const [index, model] of values.models.entries()) {
-      Object.assign(errors, validateModel(model, index, seen));
-    }
-  }
+  Object.assign(errors, validateModels(values.models));
 
   return errors;
 }
 
-function toModelInput(model: ModelFormValues): ExternalModelInput {
+/**
+ * The model rows alone, keyed `models.<index>.<field>` — shared by the typed
+ * form and the discovery picker, which register the same `ExternalModelInput`.
+ */
+export function validateModels(models: readonly ModelFormValues[]): EndpointFormErrors {
+  if (models.length === 0) return { models: 'Register at least one model.' };
+  const errors: EndpointFormErrors = {};
+  const seen = new Set<string>();
+  for (const [index, model] of models.entries()) {
+    Object.assign(errors, validateModel(model, index, seen));
+  }
+  return errors;
+}
+
+export function toModelInput(model: ModelFormValues): ExternalModelInput {
   return {
     id: model.id.trim(),
     name: model.name.trim(),

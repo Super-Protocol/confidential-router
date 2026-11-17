@@ -37,6 +37,7 @@ export function evidenceSnapshot(
     fetchedAt: '2026-08-31T09:28:12.000Z',
     quoteAgeSeconds: 12,
     quoteFormat: 'intel-tdx-quote-v5',
+    tee: 'Intel TDX (GCP)',
     evidenceDigest: 'sha256/9Xk2fT1pQvA7BdE4rL0eQm3XkTpZ8vNc1YsWuHgJoAs',
     evidenceDigestHex: 'f579367d3d6942f03b05d138acbd1e426dd7913a59f2f35cd58b16b87809a00b',
     certFingerprint: 'sha256/PmQ7dR2xWvB9CkE5sM1fTnZ4aYh6UbLp0GjXoIeVwNs',
@@ -77,7 +78,6 @@ export function publishedEndpoint(
     id: 'ep-1',
     name: 'Llama 3.3 70B',
     hostname: 'llama-33-70b.tee.swarm.cloud',
-    tee: 'Intel TDX + H100 CC',
     evidenceState: 'PUBLISHED' as const,
     declaredImages: DECLARED_IMAGES.map((image) => typed('DeclaredImage', image)),
     latestEvidence: evidenceSnapshot(),
@@ -266,7 +266,6 @@ export function unpublishedEndpoint(
     id: 'ep-3',
     name: 'Qwen2.5 72B',
     hostname: 'qwen25-72b.tee.swarm.cloud',
-    tee: 'AMD SEV-SNP',
     evidenceState: 'NOT_PUBLISHED',
     latestEvidence: null,
     ...overrides,
@@ -281,6 +280,7 @@ export function overviewData(overrides: Partial<OverviewQuery> = {}): OverviewQu
       promptTokens: 700_000_000,
       completionTokens: 80_300_000,
       coveredRequests: 10_900,
+      coverableRequests: 10_900,
       evidenceCoverage: 1,
     }),
     activitySeries: [
@@ -329,6 +329,7 @@ export function verifiedUpstream(
     lastCheckedAt: '2026-10-06T11:58:00.000Z',
     measurementSeen: 'a'.repeat(64),
     evidenceDigestSeen: 'sha256/Qd4sB7nR1wYvT9xQmL2aZc3Ef5JhUpGi7NrXoVeSbAo',
+    evidenceDigestSeenHex: '41de2c0789d1db062f4fac5098bd1a65cf447f52615291a2dcdad7a157926c0a',
     ...overrides,
   });
 }
@@ -336,19 +337,40 @@ export function verifiedUpstream(
 type CatalogueModelFixture = ModelCatalogueQuery['models'][number];
 
 /** A model in this deployment's own cluster space. */
-function configModel(
+export function configModel(
   overrides: Partial<CatalogueModelFixture> & Pick<CatalogueModelFixture, 'id'>,
 ): CatalogueModelFixture {
   return typed('Model', {
     slug: overrides.id,
     name: 'Llama 3.3 70B Instruct',
     contextLength: 128_000,
-    tee: 'Intel TDX + H100 CC',
+    // `Model.tee` is the serving endpoint's `latestEvidence.tee` (SUP-260), so a
+    // fixture that disagreed with its own endpoint would describe a state the API
+    // cannot produce.
+    tee: 'Intel TDX (GCP)',
     origin: 'CONFIG' as const,
     available: true,
     pricing: typed('Pricing', { promptPer1m: '280000', completionPer1m: '420000' }),
     endpoint: publishedEndpoint(),
     externalUpstream: null,
+    ...overrides,
+  });
+}
+
+/**
+ * A second built-in model whose endpoint publishes evidence naming another TEE.
+ *
+ * The console's TEE chips are the labels the catalogue's endpoints publish
+ * (SUP-260), so one published endpoint is no filter at all — and the label on
+ * the row is its endpoint's, because the API derives one from the other.
+ */
+export function snpConfigModel(overrides: Partial<CatalogueModelFixture> = {}): CatalogueModelFixture {
+  const latestEvidence = evidenceSnapshot({ id: 'snap-2', endpointId: 'ep-2', tee: 'AMD SEV-SNP (Azure)' });
+  return configModel({
+    id: 'deepseek/deepseek-v3:tdx',
+    name: 'DeepSeek-V3',
+    tee: latestEvidence.tee,
+    endpoint: rotatingEndpoint({ latestEvidence }),
     ...overrides,
   });
 }
@@ -384,7 +406,8 @@ export function catalogueData(overrides: Partial<ModelCatalogueQuery> = {}): Mod
       configModel({
         id: 'alibaba/qwen2.5-72b-instruct:snp',
         name: 'Qwen2.5 72B Instruct',
-        tee: 'AMD SEV-SNP',
+        // Its endpoint has published nothing, so no evidence names a TEE.
+        tee: null,
         pricing: typed('Pricing', { promptPer1m: '240000', completionPer1m: '360000' }),
         endpoint: unpublishedEndpoint(),
       }),

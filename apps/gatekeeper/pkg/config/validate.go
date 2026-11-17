@@ -284,13 +284,16 @@ func (c *Config) validateEndpoints(p *problems) {
 }
 
 // validateEndpointTrust enforces the one-mode rule: an endpoint declares what
-// it trusts either by pinning evidence digests or by `trust:
-// cloud-measurement`, never both and never neither.
+// it trusts by pinning evidence digests, by `trust: cloud-measurement`, or by
+// both factors at once under `trust: measurement-and-digest` — never by a pin
+// beside a mode that would not enforce it, and never by nothing.
 //
-// "Both" is a hard error rather than a precedence rule. The two modes ask
-// different questions, and a file that answers both leaves a reader unable to
-// say which one is enforced — a pin that looks authoritative while a cloud-wide
-// rule actually admits the traffic is exactly the misreading this refuses.
+// A pin under `cloud-measurement` is a hard error rather than a precedence
+// rule. The two modes ask different questions, and a file that answers both
+// leaves a reader unable to say which one is enforced — a pin that looks
+// authoritative while a cloud-wide rule actually admits the traffic is exactly
+// the misreading this refuses. `measurement-and-digest` is the mode that asks
+// both questions, and says so.
 //
 // It reports whether this endpoint needs `attestedRoots.trustedMeasurements` to
 // be non-empty, which the caller checks once for the whole file.
@@ -300,7 +303,8 @@ func (c *Config) validateEndpointTrust(p *problems, path string, ep Endpoint) bo
 		return false
 	}
 
-	if ep.TrustMode() != TrustCloudMeasurement {
+	mode := ep.TrustMode()
+	if mode == TrustEvidenceDigest {
 		if len(ep.TrustedEvidence) == 0 {
 			p.addIncompletef(path+".trustedEvidence",
 				"at least one pinned evidenceDigest is required — there is no trust-on-first-use")
@@ -308,20 +312,26 @@ func (c *Config) validateEndpointTrust(p *problems, path string, ep Endpoint) bo
 		return false
 	}
 
-	if len(ep.TrustedEvidence) > 0 {
+	if mode == TrustCloudMeasurement && len(ep.TrustedEvidence) > 0 {
 		p.addf(path+".trustedEvidence",
 			"must be empty when trust is %s: that mode admits any deployment on a trusted cloud, "+
-				"so a pin listed here would not be enforced — pick one mode", TrustCloudMeasurement)
+				"so a pin listed here would not be enforced — use trust: %s to require both",
+			TrustCloudMeasurement, TrustMeasurementAndDigest)
 	}
-	// The mode *is* the attested-root check plus a measurement list, so a file
-	// that disables the anchor can never admit this endpoint. Reported here,
-	// where the contradiction is, rather than as a silent deny at request time.
+	// Both cloud modes *are* the attested-root check plus a measurement list,
+	// so a file that disables the anchor can never admit this endpoint.
+	// Reported here, where the contradiction is, rather than as a silent deny
+	// at request time.
 	if !c.AttestedRootsEnabled() {
 		p.addf(path+".trust",
 			"%s requires the attested-root anchor, but attestedRoots.enabled is false — "+
-				"this endpoint could never admit traffic", TrustCloudMeasurement)
+				"this endpoint could never admit traffic", mode)
 	}
-	return true
+	// Two-factor trust is approved from what a verification has seen, so it
+	// runs before either factor is configured: the verdict names what is
+	// missing (TrustMeasurementAndDigest). Only the measurement-only mode
+	// makes an empty list a configuration that cannot start.
+	return mode == TrustCloudMeasurement
 }
 
 func (c *Config) validateObservability(p *problems) {

@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 /**
  * Visual review surface for `@confidential-router/ui`: every primitive, every
- * variant, in one scroll, under whichever theme and accent are selected.
+ * variant, in one scroll, under whichever theme is selected.
  *
  * A page rather than Storybook because Storybook is a second build, a second
  * dependency tree and a second place for the tokens to be configured — and this

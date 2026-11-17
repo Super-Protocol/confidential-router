@@ -1,6 +1,7 @@
 import { Badge } from '@confidential-router/ui/components/badge';
 import type { ExternalEndpointFieldsFragment } from '../../generated/graphql';
 import { formatTimestamp, shortenDigest } from '../../lib/format';
+import { DigestValue } from '../evidence/digest-value';
 import { eventPresentation, showsEvidenceSummary } from './endpoint-status';
 import { EvidenceSummary } from './evidence-summary';
 
@@ -54,9 +55,16 @@ export function EndpointTimeline({ events }: EndpointTimelineProps) {
               ) : null}
               {event.evidenceDigest ? (
                 <div className="contents">
-                  <dt className="text-muted-foreground">Digest seen</dt>
-                  <dd className="font-mono" title={event.evidenceDigest}>
-                    {shortenDigest(event.evidenceDigest, 8)}
+                  {/*
+                    A withdrawal's digest is what *was* approved, not something
+                    this router observed; labelling it "Digest seen" would read as
+                    a publication (SUP-435).
+                  */}
+                  <dt className="text-muted-foreground">
+                    {event.kind === 'DIGEST_UNPINNED' ? 'No longer approved' : 'Digest seen'}
+                  </dt>
+                  <dd className="font-mono">
+                    <DigestValue hex={event.evidenceDigestHex ?? ''} canonical={event.evidenceDigest} keep={8} />
                   </dd>
                 </div>
               ) : null}

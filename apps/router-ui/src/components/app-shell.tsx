@@ -10,6 +10,7 @@ import { BrandMark } from './brand-mark';
 import { AppBreadcrumbs } from './breadcrumbs';
 import { FeedbackPrompt } from './feedback/feedback-prompt';
 import { SidebarNav } from './sidebar-nav';
+import { SuperProtocolLogo } from './super-protocol-logo';
 import { ThemeToggle } from './theme-toggle';
 import { UserMenu } from './user-menu';
 
@@ -83,13 +84,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </SheetContent>
           </Sheet>
 
+          {/* The wordmark is 20px tall inside the 52px header, so it adds no height. */}
+          <Link
+            href="/"
+            aria-label="Super Protocol — console home"
+            className="flex shrink-0 items-center rounded-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            <SuperProtocolLogo className="h-5 w-[89px]" />
+          </Link>
+          <span aria-hidden="true" className="hidden h-5 w-px shrink-0 bg-border sm:block" />
+
           <AppBreadcrumbs />
 
           <div className="ml-auto flex items-center gap-1.5">
             <Button variant="outline" size="sm" asChild className="hidden sm:inline-flex">
-              <Link href="/gatekeeper">
+              <Link href="/keys#how-to-connect">
                 <BrandMark className="size-3.5 text-brand-emphasis" />
-                Verify with Gatekeeper
+                Connect a client
               </Link>
             </Button>
             <ThemeToggle />

@@ -9,13 +9,21 @@ pnpm exec tsx tools/demo/src/main.ts --verbose
 
 ```
 OpenAI SDK ─▶ gatekeeper ─▶ mock-evidence-host (TLS) ─▶ router-api ─▶ mock-litellm
-                  │                  │
-                  └── verifies ──────┘  /.well-known/swarm-evidence
+                  │                  │                       │
+                  └── verifies ──────┘                       │  /.well-known/swarm-evidence
+                                                             ▼
+                              gatekeeper-sidecar ═ TLS, pinned leaf ═▶ mock-evidence-host
+                              (the router's egress)                    + mock-litellm
+                                                                       "another cloud"
 ```
+
+The same verification, twice, in opposite directions: the user's gatekeeper
+verifies the router, and the router verifies a model endpoint in someone else's
+deployment (ADR-008).
 
 ## What the story asserts
 
-Nine steps, each checked; the script exits non-zero at the first one that does
+Twelve steps, each checked; the script exits non-zero at the first one that does
 not hold, so the demo someone watches and the check CI runs are the same thing.
 
 1. the stack comes up — the built `router-api`, the model backend, the publisher
@@ -28,11 +36,17 @@ not hold, so the demo someone watches and the check CI runs are the same thing.
 7. the deployment is rotated — same cloud, same signature, different digest
 8. **the next call is refused**: 503, `stage: policy`, with the reason
 9. the new digest is pinned, `SIGHUP`, and traffic resumes
+10. an admin registers a model endpoint in **another cloud** and lists that
+    cloud's measurement; the router attests it itself and publishes its model
+11. a call reaches that model — the user verified the router, the router
+    verified the upstream, and the upstream saw its own API key
+12. **that cloud redeploys on an image nobody listed**: the model leaves
+    `/v1/models` and the next call is refused, fail-closed again
 
-Step 8 is why this exists. Everything before it is a happy path a dozen unit
-tests already cover; a proxy that *stops* when the thing it verified changes
-underneath it is the property the whole product rests on, and nothing short of a
-live rotation demonstrates it.
+Steps 8 and 12 are why this exists, and they are one property seen from both
+sides: a proxy that *stops* when the thing it verified changes underneath it.
+Everything else is a happy path a dozen unit tests already cover, and nothing
+short of a live rotation demonstrates either.
 
 ## The pieces
 
@@ -42,11 +56,26 @@ live rotation demonstrates it.
 | `console-client.ts` | a headless console session — magic-link sign-in, top-up, key minting, GraphQL |
 | `stack.ts` | `startRouterStack()`: the two stand-ins, the router behind them, a signed-in session with credits and a key |
 | `gatekeeper.ts` | the real `apps/gatekeeper/bin/gatekeeper`, one command at a time, plus `run --headless` |
-| `story.ts` | the nine steps above |
+| `external-stand.ts` | `startExternalStand()`: an upstream in another cloud, the real egress sidecar over it, and the admin API that registers one |
+| `story.ts` | the twelve steps above |
 | `serve.ts` | the stack as a long-lived server, for the browser-driven suite |
 
-`startRouterStack()` is also what `apps/router-api-e2e` runs against, which is
-the reason this is a library and not one script.
+`startRouterStack()` and `startExternalStand()` are also what
+`apps/router-api-e2e` runs against, which is the reason this is a library and not
+one script.
+
+## The one thing that is not real
+
+`external-stand.ts` runs the shipped `gatekeeper-sidecar` over
+`apps/gatekeeper/cmd/gatekeeper-teststand` — the gatekeeper with its
+attested-root *hardware* leg read from a JSON file. A SEV-SNP report is signed by
+AMD and its `reportData` commits to the issuing CA's public key, so no mock can
+mint one and no stand can issue leaves from the one real fixture the repository
+holds. The build tag keeps that file out of every release build; everything else
+in the chain — the rendered config, the evidence fetch, JWS and chain
+verification, the channel binding, the Rego policy set, the trust store, the
+forced re-attestation, the fail-closed drop of in-flight connections — is the
+production code path, and the substitution says so in the verdict's own logs.
 
 ## Why the sign-in goes through the product
 
@@ -71,6 +100,21 @@ elsewhere afterwards), and the deny-path controls are exposed under `/__mock`.
 Whatever a browser cannot discover over HTTP — the session cookie, the workspace
 id, the plaintext key, the trusted root — is written to
 `test-output/demo-stack.json`. `docs/quickstart.md` drives it by hand.
+
+`CR_DEMO_EXTERNAL=1` additionally stands up an upstream in another deployment,
+the real egress sidecar that attests it, and a registered external model, and
+waits until a browser could actually inspect it — which is three waits in a row:
+the verdict, the digest that verdict named, and the evidence poller's pass over
+it. The handoff then carries an `external` block. It is a flag rather than the
+default because it costs two more processes and puts a second model in
+`/v1/models` and in the chat picker; only `playwright.secure.config.ts` asks for
+it, and every other suite's stack is unchanged.
+
+The handoff file is deleted before anything starts as well as on the way out. It
+is what a browser-driven suite waits on — Playwright's own readiness probe is the
+router's `/health`, which is true long before this script has finished — so a
+leftover file from a crashed run would satisfy that wait instantly with every
+value in it wrong.
 
 ## Timing
 

@@ -78,8 +78,7 @@ func newTrustRootsListCommand(g *globals) *cobra.Command {
 		p := g.printer(cmd, *asJSON)
 		return p.emit(views, func(w io.Writer) {
 			if len(views) == 0 {
-				fmt.Fprintln(w, "No trusted roots. Nothing can be verified until one is added:")
-				fmt.Fprintln(w, "  gatekeeper trust roots add <name> --pem-file <root.pem>")
+				printNoRoots(w, store.Path(), g.attestedRootsOn())
 				return
 			}
 			rows := make([][]string, 0, len(views))
@@ -94,6 +93,37 @@ func newTrustRootsListCommand(g *globals) *cobra.Command {
 		})
 	}
 	return cmd
+}
+
+// printNoRoots explains an empty trustedRoots list, which is two completely
+// different situations.
+//
+// With the attested-root anchor on — the default — an empty list is the normal,
+// finished state: a Swarm cloud's CA is accepted on its own TEE evidence, so
+// 99% of readers never add a root at all. This is the one place that note
+// belongs. `gatekeeper init` used to print it on its success path, where it was
+// the entire output of a command whose own result it never mentioned (SUP-300);
+// the starter file it writes carries the same explanation as a comment, next to
+// the `trustedRoots: []` it is about.
+//
+// With the anchor off, an empty list really does mean nothing can ever be
+// verified, and saying so is the whole point of the message.
+func printNoRoots(w io.Writer, path string, attestedRootsOn bool) {
+	if !attestedRootsOn {
+		fmt.Fprintf(w, "No trusted roots in %s, and attestedRoots is off.\n", path)
+		fmt.Fprintln(w, "Every endpoint is denied at the untrusted-root stage until one is added.")
+		nextStep(w, "trust the cloud's root certificate",
+			"gatekeeper trust roots add <name> --pem-file <root.pem>")
+		return
+	}
+	fmt.Fprintf(w, "No manually trusted roots in %s.\n", path)
+	// Wrapped on its own rather than around the path: the path's length is not
+	// known here, and a sentence broken to fit one machine reads broken on the
+	// next.
+	fmt.Fprintln(w, "\nA Swarm cloud needs none — its certificate authority is accepted on its own TEE")
+	fmt.Fprintln(w, "evidence (attestedRoots). Add a root only to pin one particular cloud, or to trust")
+	fmt.Fprintln(w, "a CA that publishes no evidence:")
+	fmt.Fprintln(w, "  gatekeeper trust roots add <name> --pem-file <root.pem>")
 }
 
 func newTrustRootsAddCommand(g *globals) *cobra.Command {
@@ -131,11 +161,14 @@ func newTrustRootsAddCommand(g *globals) *cobra.Command {
 		if !added {
 			fingerprint, _ := trust.FingerprintPEM(pemBytes)
 			existing, _ := store.RootByFingerprint(fingerprint)
-			fmt.Fprintf(out, "Already trusted as %q (%s); nothing to do\n", existing.Name, fingerprint.Display())
+			fmt.Fprintf(out, "Already trusted as %q (%s) in %s; nothing to do.\n",
+				existing.Name, fingerprint.Display(), store.Path())
 			return nil
 		}
 		fingerprint, _ := trust.FingerprintPEM(pemBytes)
 		fmt.Fprintf(out, "Added trusted root %q (%s) to %s\n", name, fingerprint.Display(), store.Path())
+		nextStep(out, "check that the endpoint it vouches for now verifies",
+			"gatekeeper verify <endpoint>")
 		return nil
 	}
 	return cmd
@@ -167,11 +200,7 @@ func newTrustRootsRemoveCommand(g *globals) *cobra.Command {
 		// real operation — but what is left behind differs enough to be worth
 		// saying out loud rather than discovering at runtime.
 		if len(store.Roots()) == 0 {
-			// A config that no longer parses cannot be reported on, and the
-			// removal itself already succeeded; assume the default (on), which
-			// is what an unreadable config would run with anyway.
-			cfg, cfgErr := g.loadEditable()
-			if cfgErr != nil || cfg.AttestedRootsEnabled() {
+			if g.attestedRootsOn() {
 				fmt.Fprintln(cmd.ErrOrStderr(),
 					"warning: no trusted roots remain; only roots that prove they are Super Swarm roots "+
 						"will be accepted (attestedRoots)")

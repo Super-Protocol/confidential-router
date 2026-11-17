@@ -212,7 +212,7 @@ describe('gatekeeper-config rules', () => {
       expect(errorsOf(validate)).toContain('trustedEvidence');
     });
 
-    it('only allows the two named modes, and `evidence-digest` stays the default', () => {
+    it('only allows the named modes, and `evidence-digest` stays the default', () => {
       const cfg = base();
       cfg.endpoints[0].trust = 'evidence-digest';
       expect(validate(cfg), errorsOf(validate)).toBe(true);
@@ -222,6 +222,33 @@ describe('gatekeeper-config rules', () => {
         broken.endpoints[0].trust = bad;
         expect(validate(broken), bad).toBe(false);
       }
+    });
+  });
+
+  // SUP-252: two-factor trust — the cloud by measurement and the deployment by a pinned digest.
+  // Approved from what a verification has seen, so the pins may be absent, empty or present.
+  describe('trust: measurement-and-digest', () => {
+    const twoFactorEndpoint = () => {
+      const cfg = base();
+      cfg.endpoints[0].trust = 'measurement-and-digest';
+      delete cfg.endpoints[0].trustedEvidence;
+      return cfg;
+    };
+
+    it('accepts an endpoint with neither factor approved yet', () => {
+      expect(validate(twoFactorEndpoint()), errorsOf(validate)).toBe(true);
+      const empty = twoFactorEndpoint();
+      empty.endpoints[0].trustedEvidence = [];
+      expect(validate(empty), errorsOf(validate)).toBe(true);
+    });
+
+    it('accepts a pinned digest as the second factor, and still checks its shape', () => {
+      const cfg = twoFactorEndpoint();
+      cfg.endpoints[0].trustedEvidence = [`sha256:${'a'.repeat(64)}`];
+      expect(validate(cfg), errorsOf(validate)).toBe(true);
+
+      cfg.endpoints[0].trustedEvidence = ['not-a-digest'];
+      expect(validate(cfg)).toBe(false);
     });
   });
 });
@@ -354,6 +381,29 @@ describe('router-config rules', () => {
     const cfg = base();
     cfg.models[0].pricing.promptPer1mMicros = 0.28;
     expect(validate(cfg)).toBe(false);
+  });
+
+  /**
+   * SUP-449: the keep-alive delay is the only duration in this file with a floor,
+   * because the two values below one second are each a different bug — `0s` makes
+   * the heartbeat a busy loop, and any sub-second value opens the event stream
+   * before the backend could plausibly have answered, costing every streamed
+   * failure its status code.
+   */
+  it('refuses a stream keep-alive delay under a second, however it is spelled', () => {
+    for (const bad of ['0s', '0ms', '100ms', '999ms', '0m', '0h500ms']) {
+      const cfg = base();
+      cfg.server.streamKeepAliveAfter = bad;
+      expect(validate(cfg), bad).toBe(false);
+    }
+  });
+
+  it('accepts a keep-alive delay of a second or more', () => {
+    for (const good of ['1s', '15s', '1000ms', '1s500ms', '2m', '1h30m']) {
+      const cfg = base();
+      cfg.server.streamKeepAliveAfter = good;
+      expect(validate(cfg), `${good}: ${errorsOf(validate)}`).toBe(true);
+    }
   });
 
   it('a declared image must be pinned by a sha256 digest, not by a tag', () => {

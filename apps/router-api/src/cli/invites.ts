@@ -11,15 +11,16 @@
  *
  * It talks to the same database as the service, through the same configuration
  * (`CR_API_*`, `conf/router.yaml`) — there is no second source of truth for where
- * the codes live. Generation is the only way codes come into existence: there is
- * deliberately no API for it, because an endpoint that mints credit is a thing to
- * be attacked and a CLI behind an operator's database access is not.
+ * the codes live.
  *
- * Withdrawal is the one operation that also has an API — the admin-gated
- * `disableInviteCodes` mutation. The asymmetry is deliberate and runs in the safe
- * direction: minting creates credit, withdrawing only stops it, and a deployment
- * whose cluster space is published has no shell to run this CLI in when a code
- * turns up on a mailing list (SUP-159).
+ * Generation used to be CLI-only, on the grounds that an endpoint which mints
+ * credit is a thing to be attacked. A production deployment that is invite-only
+ * and published has no shell to run this in, so the console now mints too —
+ * behind `auth.adminEmails`, capped per call, and recorded against the operator
+ * (`issueInviteCodes`, SUP-268). Both surfaces call the same `generateInvites`.
+ * Withdrawal has had the admin-gated `disableInviteCodes` mutation since SUP-159,
+ * for the same reason: a deployment whose cluster space is published has no
+ * shell to run this CLI in when a code turns up on a mailing list.
  */
 import 'reflect-metadata';
 import { existsSync, writeFileSync } from 'node:fs';
@@ -27,6 +28,7 @@ import { DataSource } from 'typeorm';
 import { InvalidMicroAmountError, usdToMicros } from '../app/billing/money.js';
 import { loadRouterConfig } from '../app/config.js';
 import { buildDataSourceOptions, ensureSqliteDirectory } from '../app/db/data-source.js';
+import { isInviteCampaignTag } from '../app/invites/invite-code.js';
 import { generateInvites, invitesCsv } from '../app/invites/invite-generator.js';
 import { InviteStatsService } from '../app/invites/invite-stats.service.js';
 import {
@@ -198,7 +200,7 @@ function grantOf(value: string): number {
  * numbers into two rows.
  */
 function campaignTag(value: string): string {
-  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) {
+  if (!isInviteCampaignTag(value)) {
     throw new UsageError(
       `--campaign must be a lowercase tag such as "launch-2026-10-devs", got “${value}”. ` +
         'It is grouped on, so two spellings would be two campaigns.',

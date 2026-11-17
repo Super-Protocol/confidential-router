@@ -1,14 +1,11 @@
-import type { MockLink } from '@apollo/client/testing';
-import { MockedProvider } from '@apollo/client/testing/react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PUBLIC_CONFIG_GLOBAL, type PublicConfig } from '../../lib/public-config';
 import { verificationState } from '../../test-fixtures';
 import { VerificationPanel } from '../chat/verification-panel';
-import { GatekeeperScreen } from './gatekeeper-screen';
+import { HowToConnect } from '../keys/how-to-connect';
 import { INSTALL_COMMANDS } from './install-commands';
-import { GATEKEEPER_RELEASE_QUERY } from './operations';
 import { setupScript } from './setup-commands';
 
 /**
@@ -25,19 +22,18 @@ const CONFIG: PublicConfig = {
 
 const injected = globalThis as unknown as Record<string, unknown>;
 
-function releaseMock(): MockLink.MockedResponse {
-  return {
-    request: { query: GATEKEEPER_RELEASE_QUERY },
-    result: { data: { gatekeeperRelease: null } },
-    maxUsageCount: Number.POSITIVE_INFINITY,
-  };
-}
-
-/** Every command the block currently renders, in order, wherever it is mounted. */
+/** Every command of the numbered sequence, in order, wherever the block is mounted. */
 function renderedCommands(): string[] {
   const block = document.querySelector('[data-testid="gatekeeper-setup"]');
   expect(block).not.toBeNull();
-  return [...(block?.querySelectorAll('pre code') ?? [])].map((node) => node.textContent ?? '');
+  return [...(block?.querySelectorAll('ol pre code') ?? [])].map((node) => node.textContent ?? '');
+}
+
+/** The commands of the collapsed test-build section. */
+function testBuildCommands(): string[] {
+  const section = document.querySelector('[data-testid="gatekeeper-setup-test-builds"]');
+  expect(section).not.toBeNull();
+  return [...(section?.querySelectorAll('pre code') ?? [])].map((node) => node.textContent ?? '');
 }
 
 beforeEach(() => {
@@ -54,31 +50,47 @@ afterEach(() => {
 
 describe('GatekeeperSetupBlock', () => {
   it('renders every command with this deployment’s own values and no placeholder', () => {
-    render(
-      <MockedProvider mocks={[releaseMock()]}>
-        <GatekeeperScreen />
-      </MockedProvider>,
-    );
+    render(<HowToConnect />);
 
     const commands = renderedCommands();
 
-    expect(commands).toHaveLength(6);
-    for (const command of commands) {
+    expect(commands).toHaveLength(5);
+    for (const command of [...commands, ...testBuildCommands()]) {
       expect(command).toMatch(/^[^<>]*$/);
     }
     expect(commands.some((command) => command.includes(`--upstream ${CONFIG.apiOrigin}`))).toBe(true);
-    expect(commands.some((command) => command.includes(CONFIG.swarmRootPemUrl))).toBe(true);
+  });
+
+  // SUP-253: a cloud built by the release flow is admitted on its signed
+  // measurement, so the default path has nothing to paste about trust. The
+  // root certificate is still one click away, for a build the registry never
+  // signed — and it is not in the copy-all script.
+  it('keeps the root certificate out of the default sequence and in the collapsed test-build section', () => {
+    render(<HowToConnect />);
+
+    const commands = renderedCommands();
+    expect(commands.some((command) => command.includes('trust roots add'))).toBe(false);
+    expect(commands.some((command) => command.includes(CONFIG.swarmRootPemUrl))).toBe(false);
+
+    const section = screen.getByTestId('gatekeeper-setup-test-builds');
+    expect(section.tagName).toBe('DETAILS');
+    expect((section as HTMLDetailsElement).open).toBe(false);
+    expect(section).toHaveTextContent('Optional: test or unsigned builds');
+    expect(section).toHaveTextContent('not signed in the Super Protocol registry');
+    expect(section).toHaveTextContent('without a restart');
+
+    const optional = testBuildCommands();
+    expect(optional).toEqual([
+      'gatekeeper trust measurements add --from-upstream router',
+      `curl -fsSL ${CONFIG.swarmRootPemUrl} | gatekeeper trust roots add swarm-prod --pem-file -`,
+    ]);
   });
 
   // SUP-153/165 were catalogue copies drifting apart; this is the same failure
   // waiting to happen to the commands, so the block is shared and the two
   // surfaces are asserted against each other rather than against a literal.
-  it('gives the chat panel and the Gatekeeper page the same sequence for the same deployment', () => {
-    const page = render(
-      <MockedProvider mocks={[releaseMock()]}>
-        <GatekeeperScreen />
-      </MockedProvider>,
-    );
+  it('gives the chat panel and the API Keys page the same sequence for the same deployment', () => {
+    const page = render(<HowToConnect />);
     const fromPage = renderedCommands();
     page.unmount();
 
@@ -113,11 +125,7 @@ describe('GatekeeperSetupBlock', () => {
   });
 
   it('copies the whole sequence as one script for the shell the reader picked', async () => {
-    render(
-      <MockedProvider mocks={[releaseMock()]}>
-        <GatekeeperScreen />
-      </MockedProvider>,
-    );
+    render(<HowToConnect />);
 
     // Held by reference: the button renames itself to "Copied" for two seconds
     // after a copy, and the second press is the same control.

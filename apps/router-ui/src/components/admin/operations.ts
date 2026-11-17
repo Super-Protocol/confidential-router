@@ -52,7 +52,11 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
     lastReason
     measurementSeen
     measurementSource
+    measurementInRegistry
     evidenceDigestSeen
+    evidenceDigestSeenHex
+    pinnedEvidenceDigest
+    pinnedEvidenceDigestHex
     pinnedCertFingerprint
     apiKeyPrefix
     createdAt
@@ -71,6 +75,9 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
     latestEvidence {
       ...ExternalEndpointEvidenceFields
     }
+    pinnedEvidence {
+      ...ExternalEndpointEvidenceFields
+    }
     events {
       id
       at
@@ -79,6 +86,7 @@ export const EXTERNAL_ENDPOINT_FIELDS = graphql(`
       reason
       measurement
       evidenceDigest
+      evidenceDigestHex
       evidence {
         ...ExternalEndpointEvidenceFields
       }
@@ -97,6 +105,80 @@ export const EXTERNAL_ENDPOINTS_QUERY = graphql(`
 export const REGISTER_EXTERNAL_ENDPOINT = graphql(`
   mutation RegisterExternalEndpoint($input: RegisterExternalEndpointInput!) {
     registerExternalEndpoint(input: $input) {
+      ...ExternalEndpointFields
+    }
+  }
+`);
+
+export const UPDATE_EXTERNAL_ENDPOINT = graphql(`
+  mutation UpdateExternalEndpoint($id: ID!, $input: UpdateExternalEndpointInput!) {
+    updateExternalEndpoint(id: $id, input: $input) {
+      ...ExternalEndpointFields
+    }
+  }
+`);
+
+/**
+ * What the register dialog polls while the router attests a freshly registered
+ * upstream (SUP-249): status and the stage/reason of the last check, the two
+ * trust factors the check saw and what is approved (SUP-252), plus the
+ * models the endpoint publishes *now* — `updateExternalEndpoint` replaces the
+ * set, so the picker re-reads them before it writes rather than trusting a list
+ * fetched minutes ago. The evidence summary arrives with the list once the dialog
+ * hands over to the drawer.
+ */
+export const EXTERNAL_ENDPOINT_VERDICT_QUERY = graphql(`
+  query ExternalEndpointVerdict($id: ID!) {
+    externalEndpoint(id: $id) {
+      id
+      status
+      lastCheckedAt
+      lastStage
+      lastReason
+      measurementSeen
+      measurementSource
+      measurementInRegistry
+      evidenceDigestSeen
+      evidenceDigestSeenHex
+      pinnedEvidenceDigest
+      pinnedEvidenceDigestHex
+      pinnedCertFingerprint
+      models {
+        id
+        name
+        upstreamModel
+        contextLength
+        capabilities
+        pricing {
+          promptPer1m
+          completionPer1m
+        }
+      }
+    }
+  }
+`);
+
+/** The upstream's own `GET /v1/models`, asked through the attested egress — only once it is verified. */
+export const DISCOVER_EXTERNAL_MODELS = graphql(`
+  query DiscoverExternalModels($id: ID!) {
+    discoverExternalModels(id: $id) {
+      upstreamModel
+      name
+      contextLength
+      promptPer1mMicros
+      completionPer1mMicros
+      registeredAs
+    }
+  }
+`);
+
+/**
+ * Approves one deployment — the second trust factor (SUP-252). Also how a redeploy
+ * is approved: the same call with the new digest. The sidecar re-attests at once.
+ */
+export const PIN_EXTERNAL_ENDPOINT_DIGEST = graphql(`
+  mutation PinExternalEndpointDigest($id: ID!, $input: PinExternalEndpointDigestInput!) {
+    pinExternalEndpointDigest(id: $id, input: $input) {
       ...ExternalEndpointFields
     }
   }

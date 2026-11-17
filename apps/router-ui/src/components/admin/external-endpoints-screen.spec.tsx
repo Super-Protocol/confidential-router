@@ -3,9 +3,27 @@ import { configure, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { isAdminMock, renderWithSession, sessionMock } from '../../test-utils';
-import { ALL_ENDPOINTS, DENIED_ENDPOINT, endpointsMock, PENDING_ENDPOINT, VERIFIED_ENDPOINT } from './admin-mocks';
+import {
+  ALL_ENDPOINTS,
+  DENIED_ENDPOINT,
+  DIGEST_APPROVED,
+  DIGEST_APPROVED_HEX,
+  discoverMock,
+  endpointsMock,
+  MEASUREMENT_ROGUE,
+  measurementsMock,
+  PENDING_ENDPOINT,
+  TRUSTED,
+  VERIFIED_ENDPOINT,
+  verdictMock,
+} from './admin-mocks';
 import { ExternalEndpointsScreen, sortEndpoints } from './external-endpoints-screen';
-import { REGISTER_EXTERNAL_ENDPOINT, ROTATE_EXTERNAL_ENDPOINT_KEY, SET_EXTERNAL_ENDPOINT_ENABLED } from './operations';
+import {
+  REGISTER_EXTERNAL_ENDPOINT,
+  ROTATE_EXTERNAL_ENDPOINT_KEY,
+  SET_EXTERNAL_ENDPOINT_ENABLED,
+  UPDATE_EXTERNAL_ENDPOINT,
+} from './operations';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/admin/endpoints',
@@ -29,7 +47,8 @@ function renderScreen({
   mocks?: MockLink.MockedResponse[];
 } = {}) {
   return renderWithSession(<ExternalEndpointsScreen />, {
-    mocks: [sessionMock(), isAdminMock(admin), ...mocks],
+    // A test's own trust list comes first and wins; otherwise the list is not empty.
+    mocks: [sessionMock(), isAdminMock(admin), ...mocks, measurementsMock()],
   });
 }
 
@@ -119,6 +138,68 @@ describe('ExternalEndpointsScreen', () => {
   });
 
   describe('the drawer', () => {
+    /**
+     * SUP-251: an operator facing a denial needs the measurement in the form the
+     * trust list takes, and the registry signal beside it — without the signal
+     * turning into a way round the list.
+     */
+    describe('the measurement a denial saw', () => {
+      const signedDenial = {
+        ...DENIED_ENDPOINT,
+        lastStage: 'untrusted-root',
+        measurementSource: null,
+        measurementInRegistry: true,
+      };
+
+      /*
+       * SUP-251 put the copy button and the registry badge beside the measurement;
+       * SUP-252 moved both into the trust-factors section and — Denis's newer
+       * ruling — added the one-click "Add to trust list" the SUP-251 ruling had
+       * kept out. The badge still admits nothing; the button is an explicit trust
+       * action, not a shortcut taken by the badge.
+       */
+      it('offers the whole measurement for copying, a registry badge that admits nothing, and an explicit trust action', async () => {
+        const user = userEvent.setup();
+        renderScreen({ mocks: [endpointsMock([signedDenial]), measurementsMock([TRUSTED])] });
+        const drawer = await openDrawer('gemma-2-2b');
+        const measurement = within(drawer).getByTestId('trust-factor-measurement');
+
+        await user.click(
+          within(measurement).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
+        );
+        await expect(navigator.clipboard.readText()).resolves.toBe(MEASUREMENT_ROGUE);
+
+        expect(within(measurement).getByText('Registry-signed')).toHaveAttribute(
+          'title',
+          expect.stringContaining('only the trust list admits'),
+        );
+        expect(await within(measurement).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
+      });
+
+      it('shows no registry badge for a measurement the registry does not sign', async () => {
+        renderScreen({ mocks: [endpointsMock([{ ...signedDenial, measurementInRegistry: false }])] });
+        const drawer = await openDrawer('gemma-2-2b');
+        const measurement = within(drawer).getByTestId('trust-factor-measurement');
+
+        expect(
+          within(measurement).getByRole('button', { name: 'Copy the measurement gemma-2-2b presented' }),
+        ).toBeInTheDocument();
+        expect(within(measurement).queryByText('Registry-signed')).not.toBeInTheDocument();
+      });
+
+      it('offers neither when no measurement was derived', async () => {
+        renderScreen({
+          mocks: [endpointsMock([{ ...signedDenial, measurementSeen: null, measurementInRegistry: null }])],
+        });
+        const drawer = await openDrawer('gemma-2-2b');
+        const measurement = within(drawer).getByTestId('trust-factor-measurement');
+
+        expect(within(measurement).queryByRole('button', { name: /^Copy the measurement/ })).not.toBeInTheDocument();
+        expect(within(measurement).queryByText('Registry-signed')).not.toBeInTheDocument();
+        expect(within(measurement).queryByRole('button', { name: 'Add to trust list' })).not.toBeInTheDocument();
+      });
+    });
+
     it('renders the verdict, the stage and the pinned certificate', async () => {
       renderScreen();
       const drawer = await openDrawer('gemma-2-2b');
@@ -142,7 +223,7 @@ describe('ExternalEndpointsScreen', () => {
       const entries = [...timeline.querySelectorAll(':scope > li')];
 
       expect(entries).toHaveLength(3);
-      expect(entries[0]).toHaveTextContent('Image digest changed');
+      expect(entries[0]).toHaveTextContent('Deployment digest changed');
       expect(entries[1]).toHaveTextContent('Verified by this router');
       expect(entries[2]).toHaveTextContent('Registered');
     });
@@ -167,11 +248,25 @@ describe('ExternalEndpointsScreen', () => {
       expect(within(current).getByText(/ghcr.io\/example\/vllm@sha256:1111/)).toBeInTheDocument();
     });
 
-    it('says the summary is informational, so a green chip is never read as approval', async () => {
+    it('says the summary is what a pinned digest approves, so it is read before approving', async () => {
       renderScreen();
       const drawer = await openDrawer('qwen3-coder');
 
-      expect(within(drawer).getAllByText(/Informational, not a gate/)[0]).toBeInTheDocument();
+      // Behind the ⓘ on the summary's heading since SUP-262, in the same words;
+      // the popover is portalled, so it is read from the document, not the drawer.
+      expect(within(drawer).queryByText(/this is what a pin approves/)).not.toBeInTheDocument();
+      await userEvent.click(within(drawer).getAllByRole('button', { name: 'What this summary is for' })[0]);
+      expect(await screen.findByText(/this is what a pin approves/)).toBeInTheDocument();
+    });
+
+    it('keeps the two-factor explainer one press from its heading', async () => {
+      renderScreen();
+      const drawer = await openDrawer('qwen3-coder');
+
+      expect(within(drawer).getByText('Trust — both factors required')).toBeInTheDocument();
+      expect(within(drawer).queryByText(/Either one alone admits nothing/)).not.toBeInTheDocument();
+      await userEvent.click(within(drawer).getByRole('button', { name: 'How the two factors admit an endpoint' }));
+      expect(await screen.findByText(/Either one alone admits nothing/)).toBeInTheDocument();
     });
 
     it('shows the digest a change brought in, not only the one in force', async () => {
@@ -195,6 +290,16 @@ describe('ExternalEndpointsScreen', () => {
   });
 
   describe('registering an endpoint', () => {
+    const SOURCE = /Endpoint URL or connection link/;
+
+    async function openDialogAndPaste(text: string) {
+      await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
+      // Pasted, not typed: a connection link arrives whole, and the field reacts
+      // to what it holds — typing it would pass through every half-link on the way.
+      await userEvent.click(await screen.findByLabelText(SOURCE));
+      await userEvent.paste(text);
+    }
+
     /**
      * The mock's `variables` are the assertion: a mutation sent with anything
      * else finds no mock, fails, and the dialog shows its error instead of
@@ -232,10 +337,12 @@ describe('ExternalEndpointsScreen', () => {
         ],
       });
 
-      await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
+      await openDialogAndPaste('https://new.swarm.example');
+      await userEvent.click(screen.getByRole('button', { name: 'Enter the models by hand instead' }));
 
+      await userEvent.clear(screen.getByLabelText('Name'));
       await userEvent.type(screen.getByLabelText('Name'), 'new-upstream');
-      await userEvent.type(screen.getByLabelText('Base URL'), 'https://new.swarm.example');
+      expect(screen.getByLabelText('Base URL')).toHaveValue('https://new.swarm.example');
       await userEvent.type(screen.getByLabelText('Upstream API key'), 'sk-up-secret');
       await userEvent.type(screen.getByLabelText('Model id on this router'), 'new-model');
       await userEvent.type(screen.getByLabelText('Model id upstream'), 'new-model-upstream');
@@ -255,10 +362,17 @@ describe('ExternalEndpointsScreen', () => {
       ).toBeInTheDocument();
     });
 
-    it('takes the key write-only — the field is masked and nothing reads it back', async () => {
+    it('says where a connection link lives, because nobody will find it otherwise', async () => {
       renderScreen();
 
       await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
+
+      expect(await screen.findByLabelText(SOURCE)).toHaveAccessibleDescription(/Outputs.*panel/);
+    });
+
+    it('takes the key write-only — the field is masked and nothing reads it back', async () => {
+      renderScreen();
+      await openDialogAndPaste('https://llama.swarm.example/v1');
 
       const field = await screen.findByLabelText('Upstream API key');
       expect(field).toHaveAttribute('type', 'password');
@@ -268,10 +382,12 @@ describe('ExternalEndpointsScreen', () => {
 
     it('refuses a form the server would only reject, next to the field at fault', async () => {
       renderScreen();
+      await openDialogAndPaste('https://new.swarm.example');
+      await userEvent.click(screen.getByRole('button', { name: 'Enter the models by hand instead' }));
 
-      await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
-      await screen.findByLabelText('Name');
+      await userEvent.clear(screen.getByLabelText('Name'));
       await userEvent.type(screen.getByLabelText('Name'), 'Not Kebab Case');
+      await userEvent.clear(screen.getByLabelText('Base URL'));
       await userEvent.type(screen.getByLabelText('Base URL'), 'http://insecure.example');
       await userEvent.click(screen.getByRole('button', { name: 'Register endpoint' }));
 
@@ -280,13 +396,291 @@ describe('ExternalEndpointsScreen', () => {
       expect(screen.getByText('The upstream’s API key is required.')).toBeInTheDocument();
     });
 
-    describe('the connection-link fast path', () => {
-      async function openDialogAndPaste(link: string) {
-        await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
-        await userEvent.type(await screen.findByLabelText(/Paste a connection link/), link);
-        await userEvent.click(screen.getByRole('button', { name: 'Fill in' }));
+    describe('model discovery from a bare URL (SUP-249)', () => {
+      const NEW = { ...PENDING_ENDPOINT, id: 'ext-new', name: 'llama-example', models: [] };
+
+      function registerBareMock(): MockLink.MockedResponse {
+        return {
+          request: {
+            query: REGISTER_EXTERNAL_ENDPOINT,
+            variables: {
+              input: { name: 'llama-example', baseUrl: 'https://llama.example', apiKey: 'sk-bare', models: [] },
+            },
+          },
+          result: { data: { registerExternalEndpoint: NEW } },
+        };
       }
 
+      async function verifyAndDiscover() {
+        await openDialogAndPaste('https://llama.example/v1');
+        expect(screen.getByLabelText('Name')).toHaveValue('llama-example');
+        expect(screen.getByLabelText('Base URL')).toHaveValue('https://llama.example');
+        await userEvent.type(screen.getByLabelText('Upstream API key'), 'sk-bare');
+        await userEvent.click(screen.getByRole('button', { name: 'Verify and discover models' }));
+      }
+
+      it('registers with no models, waits for the verdict, then lists and publishes the ticked one', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock([{ ...VERIFIED_ENDPOINT, id: 'ext-new', name: 'llama-example' }]),
+            registerBareMock(),
+            verdictMock('ext-new', 'VERIFIED_BY_THIS_ROUTER'),
+            discoverMock('ext-new', [
+              {
+                upstreamModel: 'meta/llama-3.2-3b',
+                name: 'Llama 3.2 3B',
+                contextLength: 131072,
+                promptPer1mMicros: '100000',
+                completionPer1mMicros: '200000',
+              },
+            ]),
+            {
+              request: {
+                query: UPDATE_EXTERNAL_ENDPOINT,
+                variables: {
+                  id: 'ext-new',
+                  input: {
+                    models: [
+                      {
+                        id: 'meta/llama-3.2-3b',
+                        name: 'Llama 3.2 3B',
+                        upstreamModel: 'meta/llama-3.2-3b',
+                        contextLength: 131072,
+                        promptPer1mMicros: '150000',
+                        completionPer1mMicros: '200000',
+                      },
+                    ],
+                  },
+                },
+              },
+              result: {
+                data: { updateExternalEndpoint: { ...VERIFIED_ENDPOINT, id: 'ext-new', name: 'llama-example' } },
+              },
+            } satisfies MockLink.MockedResponse,
+          ],
+        });
+
+        await verifyAndDiscover();
+
+        const stages = await screen.findByRole('list', { name: 'Verification stages' });
+        expect(await within(stages).findByText('Verified by this router')).toBeInTheDocument();
+        // One model, so it starts ticked, with the upstream's own price as a starting point.
+        const checkbox = await screen.findByRole('checkbox', { name: /meta\/llama-3.2-3b/ });
+        expect(checkbox).toBeChecked();
+        expect(screen.getByLabelText('Prompt, USD / 1M')).toHaveValue('0.1');
+        await userEvent.clear(screen.getByLabelText('Prompt, USD / 1M'));
+        await userEvent.type(screen.getByLabelText('Prompt, USD / 1M'), '0.15');
+
+        await userEvent.click(screen.getByRole('button', { name: 'Publish selected models' }));
+
+        await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('llama-example'));
+        expect(
+          within(screen.getByRole('dialog')).getByRole('region', { name: 'Evidence summary (current)' }),
+        ).toBeInTheDocument();
+      });
+
+      it('shows the refusal and points at the trust list, and lists nothing', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            registerBareMock(),
+            verdictMock('ext-new', 'DENIED_BY_THIS_ROUTER', {
+              lastStage: 'policy',
+              lastReason: 'measurement not on the trust list',
+              measurementSeen: MEASUREMENT_ROGUE,
+            }),
+          ],
+        });
+
+        await verifyAndDiscover();
+
+        const stages = await screen.findByRole('list', { name: 'Verification stages' });
+        expect(await within(stages).findByText('Denied by this router')).toBeInTheDocument();
+        expect(within(stages).getByRole('alert')).toHaveTextContent('policy: measurement not on the trust list');
+        expect(within(stages).getByRole('link', { name: 'trust list' })).toHaveAttribute('href', '/admin/trust');
+        expect(within(stages).getByText(/not one request goes upstream before it/)).toBeInTheDocument();
+        expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      });
+      /**
+       * SUP-252: under two-factor trust a fresh endpoint is never admitted until
+       * an admin approves what the first check saw, so the approvals appear in
+       * the stage that waits for them — one click each, no second screen.
+       */
+      it('offers both approvals in the attest stage while the deployment awaits them', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            registerBareMock(),
+            measurementsMock([TRUSTED]),
+            verdictMock('ext-new', 'PENDING', {
+              lastCheckedAt: '2026-10-08T14:00:00.000Z',
+              lastStage: 'digest-not-pinned',
+              lastReason: 'no evidenceDigest is pinned',
+              measurementSeen: MEASUREMENT_ROGUE,
+              measurementSource: 'REGISTRY',
+              evidenceDigestSeen: DIGEST_APPROVED,
+              evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+            }),
+          ],
+        });
+
+        await verifyAndDiscover();
+
+        const stages = await screen.findByRole('list', { name: 'Verification stages' });
+        expect(await within(stages).findByText(/Approve the cloud and this deployment below/)).toBeInTheDocument();
+        const factors = within(stages).getByTestId('trust-factors');
+        expect(await within(factors).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
+        expect(within(factors).getByRole('button', { name: 'Pin this digest' })).toBeInTheDocument();
+        // Nothing is listed before the verdict: the order is the selling point.
+        expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      });
+    });
+
+    describe('what the panel says while nothing can be checked (SUP-249 QA)', () => {
+      const NEW = { ...PENDING_ENDPOINT, id: 'ext-new', name: 'llama-example', models: [] };
+      const register: MockLink.MockedResponse = {
+        request: {
+          query: REGISTER_EXTERNAL_ENDPOINT,
+          variables: {
+            input: { name: 'llama-example', baseUrl: 'https://llama.example', apiKey: 'sk-bare', models: [] },
+          },
+        },
+        result: { data: { registerExternalEndpoint: NEW } },
+      };
+
+      async function start() {
+        await userEvent.click(await screen.findByRole('button', { name: 'Add external endpoint' }));
+        await userEvent.click(await screen.findByLabelText(/Endpoint URL or connection link/));
+        await userEvent.paste('https://llama.example/v1');
+        await userEvent.type(screen.getByLabelText('Upstream API key'), 'sk-bare');
+        await userEvent.click(screen.getByRole('button', { name: 'Verify and discover models' }));
+        return screen.findByRole('list', { name: 'Verification stages' });
+      }
+
+      /*
+       * SUP-249 QA found the egress ran no check at all while the trust list was
+       * empty. Under two-factor trust (SUP-252) it does: `measurement-and-digest`
+       * starts with neither factor approved, so the first check reports both and
+       * the panel offers to trust the cloud instead of waiting for it.
+       */
+      it('checks with an empty trust list, and offers the measurement it saw for trusting', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            measurementsMock([]),
+            register,
+            verdictMock('ext-new', 'PENDING', {
+              lastCheckedAt: '2026-10-08T14:00:00.000Z',
+              lastStage: 'digest-not-pinned',
+              measurementSeen: MEASUREMENT_ROGUE,
+              evidenceDigestSeen: DIGEST_APPROVED,
+              evidenceDigestSeenHex: DIGEST_APPROVED_HEX,
+            }),
+          ],
+        });
+
+        const stages = await start();
+
+        expect(await within(stages).findByRole('button', { name: 'Add to trust list' })).toBeInTheDocument();
+        expect(within(stages).queryByText(/The trust list is empty/)).not.toBeInTheDocument();
+      });
+
+      it('does not send the admin to the trust list for a failure it cannot fix', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            register,
+            verdictMock('ext-new', 'DENIED_BY_THIS_ROUTER', {
+              lastStage: 'fetch',
+              lastReason: 'dial tcp: lookup llama.example: no such host',
+              measurementSeen: null,
+            }),
+          ],
+        });
+
+        const stages = await start();
+
+        expect(await within(stages).findByRole('alert')).toHaveTextContent(/no such host.*The next check tries again/);
+        expect(within(stages).queryByRole('link', { name: 'trust list' })).not.toBeInTheDocument();
+      });
+
+      it('does not call a pending row unchecked just because the trust list is empty', async () => {
+        renderScreen({ mocks: [endpointsMock(), measurementsMock([])] });
+
+        expect(await screen.findByText('llama-3-2-3b')).toBeInTheDocument();
+        expect(screen.queryByText(/Not checked/)).not.toBeInTheDocument();
+      });
+    });
+
+    describe('discovering more models on a registered endpoint', () => {
+      const PUBLISHED = VERIFIED_ENDPOINT.models[0];
+      /** Published by another admin after this screen loaded its list. */
+      const MEANWHILE = { ...PUBLISHED, id: 'meanwhile:tdx', name: 'Meanwhile', upstreamModel: 'meanwhile' };
+
+      it('keeps every model published so far — including one added since the list loaded', async () => {
+        renderScreen({
+          mocks: [
+            endpointsMock(),
+            verdictMock(VERIFIED_ENDPOINT.id, 'VERIFIED_BY_THIS_ROUTER', { models: [PUBLISHED, MEANWHILE] }),
+            discoverMock(VERIFIED_ENDPOINT.id, [
+              { upstreamModel: 'qwen3-coder-30b', registeredAs: PUBLISHED.id },
+              { upstreamModel: 'qwen3-next', contextLength: 65536 },
+            ]),
+            {
+              request: {
+                query: UPDATE_EXTERNAL_ENDPOINT,
+                variables: {
+                  id: VERIFIED_ENDPOINT.id,
+                  input: {
+                    models: [
+                      ...[PUBLISHED, MEANWHILE].map((model) => ({
+                        id: model.id,
+                        name: model.name,
+                        upstreamModel: model.upstreamModel,
+                        contextLength: model.contextLength,
+                        capabilities: model.capabilities,
+                        promptPer1mMicros: model.pricing.promptPer1m,
+                        completionPer1mMicros: model.pricing.completionPer1m,
+                      })),
+                      {
+                        id: 'qwen3-next',
+                        name: 'qwen3-next',
+                        upstreamModel: 'qwen3-next',
+                        contextLength: 65536,
+                        promptPer1mMicros: '200000',
+                        completionPer1mMicros: '400000',
+                      },
+                    ],
+                  },
+                },
+              },
+              result: { data: { updateExternalEndpoint: VERIFIED_ENDPOINT } },
+            } satisfies MockLink.MockedResponse,
+          ],
+        });
+
+        await userEvent.click(await screen.findByRole('button', { name: 'Discover models on qwen3-coder' }));
+
+        // The one it already publishes is shown, not offered again.
+        const published = await screen.findByRole('checkbox', { name: /qwen3-coder-30b/ });
+        expect(published).toBeChecked();
+        expect(published).toBeDisabled();
+        const fresh = screen.getByRole('checkbox', { name: /qwen3-next/ });
+        expect(fresh).not.toBeChecked();
+        await userEvent.click(fresh);
+        await userEvent.type(screen.getByLabelText('Prompt, USD / 1M'), '0.20');
+        await userEvent.type(screen.getByLabelText('Completion, USD / 1M'), '0.40');
+        await userEvent.click(screen.getByRole('button', { name: 'Publish selected models' }));
+
+        // The drawer opening is the proof the mutation matched — MEANWHILE included.
+        await waitFor(() =>
+          expect(screen.queryByRole('button', { name: 'Publish selected models' })).not.toBeInTheDocument(),
+        );
+        expect(await screen.findByRole('region', { name: 'Evidence summary (current)' })).toBeInTheDocument();
+      });
+    });
+
+    describe('the connection-link fast path', () => {
       it('fills the name, base URL, model and key from one paste', async () => {
         renderScreen();
         await openDialogAndPaste('https://pasted.swarm.example/v1#key=sk-up-pasted&model=qwen3-coder-30b');
@@ -308,11 +702,12 @@ describe('ExternalEndpointsScreen', () => {
         expect(screen.getByRole('button', { name: 'Register endpoint' })).toBeEnabled();
       });
 
-      it('clears the pasted link, so the credential does not sit in the form', async () => {
+      it('takes the pasted link out of the form, so the credential does not sit in it', async () => {
         renderScreen();
         await openDialogAndPaste('https://pasted.swarm.example/v1#key=sk-up-pasted&model=m');
 
-        expect(screen.getByLabelText(/Paste a connection link/)).toHaveValue('');
+        expect(screen.queryByLabelText(SOURCE)).not.toBeInTheDocument();
+        expect(screen.queryByDisplayValue(/#key=/)).not.toBeInTheDocument();
       });
 
       it('refuses a link that leaked its key into the query string, and says to rotate it', async () => {
@@ -320,7 +715,7 @@ describe('ExternalEndpointsScreen', () => {
         await openDialogAndPaste('https://pasted.swarm.example/v1?key=sk-leaked#model=m');
 
         expect(screen.getByRole('alert')).toHaveTextContent(/rotate that key upstream|rotate it upstream/i);
-        expect(screen.getByLabelText('Base URL')).toHaveValue('');
+        expect(screen.queryByLabelText('Base URL')).not.toBeInTheDocument();
       });
 
       it('refuses an http link, because a pinned certificate is the whole point', async () => {

@@ -77,6 +77,7 @@ export class SidecarConfigWriterService implements OnApplicationBootstrap {
         name: endpoint.name,
         baseUrl: endpoint.baseUrl,
         listenPort: endpoint.listenPort,
+        pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
       })),
       trustedMeasurements: measurements.map((row) => row.measurement),
       adminListen: this.config.externalEndpoints.adminListen,

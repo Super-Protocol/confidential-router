@@ -67,7 +67,7 @@ defaults:
 # evidenceDigest — there is no trust-on-first-use.
 #
 #   gatekeeper endpoint add llama-33-70b \
-#     --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
+#     --upstream https://llama-33-70b.tee.swarm.cloud --listen 127.0.0.1:8787
 #   gatekeeper endpoint discover llama-33-70b     # review what it publishes
 #   gatekeeper endpoint trust add llama-33-70b --from-upstream
 endpoints:

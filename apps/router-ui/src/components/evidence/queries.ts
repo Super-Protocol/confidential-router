@@ -16,6 +16,7 @@ export const EVIDENCE_SNAPSHOT_FIELDS = graphql(`
     fetchedAt
     quoteAgeSeconds
     quoteFormat
+    tee
     evidenceDigest
     evidenceDigestHex
     certFingerprint
@@ -47,7 +48,6 @@ export const ENDPOINT_EVIDENCE_FIELDS = graphql(`
     id
     name
     hostname
-    tee
     evidenceState
     declaredImages {
       name

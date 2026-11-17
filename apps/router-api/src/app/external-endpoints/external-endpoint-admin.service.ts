@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { InvalidEvidenceDigestError, normalizeEvidenceDigest } from '@confidential-router/types';
 import {
   BadRequestException,
   ConflictException,
@@ -12,6 +13,7 @@ import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, Not } from 'typeorm';
 import { routerConfig } from '../config.js';
+import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { ExternalEndpointEvent } from '../db/entities/external-endpoint-event.entity.js';
 import { Model, type ModelCapability } from '../db/entities/model.entity.js';
@@ -25,17 +27,6 @@ import { SidecarConfigWriterService } from './sidecar-config-writer.service.js';
 
 /** The sidecar's endpoint key is a Rego key: `schemas/gatekeeper-config.schema.json` `$defs/name`. */
 export const EXTERNAL_ENDPOINT_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-/**
- * What an external catalogue row records under `models.tee`.
- *
- * Empty, because nobody is in a position to fill it: the admin does not declare
- * an upstream's hardware (the API has no field for it) and the router cannot
- * observe it. `/v1/models` omits the key rather than publishing a blank, and
- * `ExternalEndpoint.measurementSeen` is where the console reads what the verdict
- * actually saw.
- */
-export const EXTERNAL_MODEL_TEE = '';
 
 /** One model an admin registers on an external endpoint, with the prices the ledger will freeze. */
 export interface ExternalModelSpec {
@@ -64,6 +55,14 @@ export interface UpdateExternalEndpointSpec {
   baseUrl?: string;
   /** Replaces the registered set. A model dropped here is retired, never deleted. */
   models?: readonly ExternalModelSpec[];
+  /**
+   * The deployment this edit approves — the approval {@link
+   * ExternalEndpointAdminService.pinDigest} takes, stated inside the edit so a
+   * re-point does not have to pass through an unapproved endpoint (SUP-435).
+   * Omitted — or stated as null, which is what a GraphQL caller re-sending an
+   * unpinned endpoint's own pin sends — says nothing about the pin.
+   */
+  evidenceDigest?: string | null;
 }
 
 /**
@@ -81,9 +80,30 @@ const PENDING_VERDICT = {
   lastReason: null,
   measurementSeen: null,
   measurementSource: null,
+  measurementInRegistry: null,
   evidenceDigestSeen: null,
   pinnedCertFingerprint: null,
+  observedCertFingerprint: null,
+  // The failure run goes with the verdict (SUP-517): a re-point is a different
+  // upstream, so the old one's run of denials is not this one's. `notServingSince`
+  // is not here because it needs a clock — see {@link notServingFrom}.
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  consecutiveFailures: 0,
+  upstreamUnreachable: null,
 } as const satisfies Partial<ExternalEndpoint>;
+
+/**
+ * `notServingSince` for a row that just had its verdict cleared.
+ *
+ * `now` while the endpoint is on — it is not serving as of this moment, and
+ * that is what the outage thresholds measure from. Null while it is off: a row
+ * an operator took out of service is not failing to serve, it has been withdrawn,
+ * and a clock running on it would be counting a non-event.
+ */
+function notServingFrom(enabled: boolean, now: Date): Date | null {
+  return enabled ? now : null;
+}
 
 /** The four values both catalogue writes need, grouped so neither takes four positional arguments. */
 interface ModelWrite {
@@ -231,8 +251,20 @@ export class ExternalEndpointAdminService {
         lastReason: null,
         measurementSeen: null,
         measurementSource: null,
+        measurementInRegistry: null,
         evidenceDigestSeen: null,
+        // Nothing approved yet: the first check reports the digest to pin.
+        pinnedEvidenceDigest: null,
         pinnedCertFingerprint: null,
+        observedCertFingerprint: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        // Registered and not serving as of now. It stays that way until an admin
+        // approves the deployment the first check reports, which is why a fresh
+        // registration is exempt from the outage thresholds (`expectedToServe`).
+        notServingSince: now,
+        consecutiveFailures: 0,
+        upstreamUnreachable: null,
         apiKeyCiphertext: sealed.ciphertext,
         apiKeyPrefix: sealed.prefix,
         createdByUserId: spec.createdByUserId,
@@ -242,7 +274,7 @@ export class ExternalEndpointAdminService {
       await this.writeModels({ manager, externalEndpointId: id, models: spec.models, now });
     });
 
-    await this.status.recordEvent(id, 'registered', now);
+    await this.status.recordEvent(id, 'registered', { now });
     await this.publish();
     return this.view(id);
   }
@@ -260,6 +292,23 @@ export class ExternalEndpointAdminService {
    * goes back to `pending` with its verdict columns cleared, the same reset a
    * restart and a re-enable do.
    *
+   * Re-pointing also **withdraws the approved deployment** (SUP-252): the pin is
+   * an admin's approval of the deployment that answered at the old URL, and the
+   * new one has not been looked at. The endpoint comes back `digest-not-pinned`,
+   * which says exactly that, rather than `digest-mismatch`, which would read as a
+   * redeploy of the old upstream.
+   *
+   * Which is why the edit can carry an approval with it (`evidenceDigest`,
+   * SUP-435). An operator correcting a URL usually knows which deployment they
+   * mean to keep approved, and without a way to say so the only route is
+   * re-point, watch the endpoint fall to `digest-not-pinned`, then pin again —
+   * an outage of every model on it for as long as those two calls are apart,
+   * which on production was 28 minutes. Stating the digest here makes the edit
+   * and the approval one write; omitting it leaves the pin exactly as the
+   * paragraph above describes, and the withdrawal is recorded as
+   * `digest_unpinned` and logged at WARN rather than only showing up as the next
+   * check's refusal.
+   *
    * The name is **not** among the things this changes, and the contract says so
    * out loud (`UpdateExternalEndpointInput` has no `name`): it is also the
    * sidecar's key for the upstream and the id the rendered config, the allocated
@@ -269,6 +318,12 @@ export class ExternalEndpointAdminService {
   async update(spec: UpdateExternalEndpointSpec): Promise<ExternalEndpointView> {
     const endpoint = await this.require(spec.id);
     const baseUrl = spec.baseUrl === undefined ? endpoint.baseUrl : canonicalBaseUrl(spec.baseUrl);
+    // Before the transaction: a digest the parser refuses must not leave the
+    // models re-priced and the approval half-written. A null is "said nothing"
+    // rather than a value, because the generated client types the optional field
+    // as `string | null | undefined` and a console re-sending an unpinned
+    // endpoint's own pin sends exactly that.
+    const approved = spec.evidenceDigest == null ? undefined : this.requireDigest(spec.evidenceDigest);
 
     if (spec.models) {
       assertDistinctModelIds(spec.models);
@@ -277,6 +332,8 @@ export class ExternalEndpointAdminService {
 
     const now = new Date();
     const repointed = baseUrl !== endpoint.baseUrl;
+    const pinned = approved ?? (repointed ? null : endpoint.pinnedEvidenceDigest);
+    const withdrawn = endpoint.pinnedEvidenceDigest !== null && pinned === null;
     await this.dataSource.transaction(async (manager) => {
       await manager.update(
         ExternalEndpoint,
@@ -284,7 +341,8 @@ export class ExternalEndpointAdminService {
         {
           baseUrl,
           hostname: new URL(baseUrl).hostname,
-          ...(repointed && endpoint.enabled ? PENDING_VERDICT : {}),
+          ...(repointed && endpoint.enabled ? { ...PENDING_VERDICT, notServingSince: notServingFrom(true, now) } : {}),
+          ...(pinned === endpoint.pinnedEvidenceDigest ? {} : { pinnedEvidenceDigest: pinned }),
           updatedAt: now,
         },
       );
@@ -293,7 +351,36 @@ export class ExternalEndpointAdminService {
         await this.writeModels(write);
         await this.retireModels(write);
       }
+      // On the same transaction as the column they are about: an approval that
+      // changed with no entry behind it is the state SUP-435 is about — an
+      // endpoint out of service and nothing saying why. Both entries are written
+      // on a change of the pin's *value*, not on every edit that mentions it, so
+      // re-sending the digest an endpoint already holds records nothing: it
+      // approves nothing new.
+      if (pinned !== null && pinned !== endpoint.pinnedEvidenceDigest) {
+        await this.status.recordEvent(endpoint.id, 'digest_pinned', { now, evidenceDigest: pinned, manager });
+      }
+      if (withdrawn) {
+        await this.status.recordEvent(endpoint.id, 'digest_unpinned', {
+          now,
+          evidenceDigest: endpoint.pinnedEvidenceDigest,
+          reason: `Re-pointed to ${baseUrl}; the approval was of the deployment that answered at ${endpoint.baseUrl}.`,
+          manager,
+        });
+      }
     });
+
+    if (withdrawn) {
+      // WARN, because nothing else about this call says the endpoint has stopped
+      // serving: it answers with the row it wrote, and the refusal only arrives
+      // at the next check (SUP-435).
+      this.logger.warn(
+        `External endpoint "${endpoint.name}" lost its approved deployment ${endpoint.pinnedEvidenceDigest}: ` +
+          `the update re-points it from ${endpoint.baseUrl} to ${baseUrl}, and the pin approved the deployment ` +
+          'that answered at the old URL. It will serve nothing until a digest is pinned again — pass ' +
+          'evidenceDigest on the update, or call pinExternalEndpointDigest.',
+      );
+    }
 
     await this.publish();
     return this.view(endpoint.id);
@@ -315,10 +402,16 @@ export class ExternalEndpointAdminService {
     const now = new Date();
     await this.endpoints().update(
       { id },
-      { ...PENDING_VERDICT, enabled, status: enabled ? 'pending' : 'disabled', updatedAt: now },
+      {
+        ...PENDING_VERDICT,
+        enabled,
+        status: enabled ? 'pending' : 'disabled',
+        notServingSince: notServingFrom(enabled, now),
+        updatedAt: now,
+      },
     );
     if (!enabled) {
-      await this.status.recordEvent(id, 'disabled', now);
+      await this.status.recordEvent(id, 'disabled', { now });
     }
     await this.publish();
     return this.view(id);
@@ -345,7 +438,40 @@ export class ExternalEndpointAdminService {
       { id },
       { apiKeyCiphertext: sealed.ciphertext, apiKeyPrefix: sealed.prefix, updatedAt: now },
     );
-    await this.status.recordEvent(id, 'key_rotated', now);
+    await this.status.recordEvent(id, 'key_rotated', { now });
+    return this.view(id);
+  }
+
+  /**
+   * Approves one deployment: the second trust factor (SUP-252).
+   *
+   * The endpoint is admitted only while the evidence digest its upstream publishes
+   * equals this pin *and* its cloud's measurement is on the trust list. Pinning
+   * replaces any earlier pin — there is one approved deployment per endpoint — so
+   * "approve the new digest" after a redeploy is this same call with the digest
+   * the dossier shows as seen.
+   *
+   * The digest is not required to be the one the last verdict saw. An admin may
+   * approve a deployment ahead of a redeploy, from the upstream operator's own
+   * published value; whatever is pinned, the sidecar still has to observe it
+   * before anything is admitted. Every accepted spelling is normalised to the
+   * canonical `sha256/<base64url>` the verdict reports, so the render compares like
+   * with like.
+   *
+   * The render is part of the call, as for every trust edit: the sidecar reloads,
+   * discards its cached verdict and re-attests at once — the "re-attest
+   * (immediate)" the console's approval loop relies on.
+   */
+  async pinDigest(id: string, evidenceDigest: string): Promise<ExternalEndpointView> {
+    const endpoint = await this.require(id);
+    const digest = this.requireDigest(evidenceDigest);
+    if (endpoint.pinnedEvidenceDigest === digest) {
+      return this.view(id);
+    }
+    const now = new Date();
+    await this.endpoints().update({ id }, { pinnedEvidenceDigest: digest, updatedAt: now });
+    await this.status.recordEvent(id, 'digest_pinned', { now, evidenceDigest: digest });
+    await this.publish();
     return this.view(id);
   }
 
@@ -396,7 +522,13 @@ export class ExternalEndpointAdminService {
     addedByUserId: string | null,
   ): Promise<TrustedMeasurement> {
     const normalised = this.requireMeasurement(measurement);
+    await this.refuseKnownDigest(normalised);
     if (await this.measurements().findOne({ where: { measurement: normalised }, select: { id: true } })) {
+      // Refusing a repeat is right — a second row for one measurement is nothing
+      // an operator can want. Mind the wording, though: `tools/demo`'s stand
+      // matches on "is already on the trust list" to make its own setup
+      // idempotent, and nothing but this comment ties the two together. A
+      // reword with no change there restores the e2e cascade SUP-528 closed.
       throw new ConflictException(`The measurement ${normalised} is already on the trust list.`);
     }
     const row: TrustedMeasurement = {
@@ -497,6 +629,53 @@ export class ExternalEndpointAdminService {
     }
   }
 
+  private requireDigest(value: string): string {
+    try {
+      return normalizeEvidenceDigest(value);
+    } catch (error) {
+      if (error instanceof InvalidEvidenceDigestError) {
+        throw new BadRequestException(
+          `"${value}" is not an evidence digest. Expected sha256:<64 hex> — the form the console shows — ` +
+            'or sha256/<base64url>.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Refuses a value this router already knows to be a digest rather than a
+   * measurement (SUP-251).
+   *
+   * Shape alone cannot tell them apart: an evidence digest and a certificate
+   * fingerprint are SHA-256 too, and the console offers both for copying in the
+   * same `sha256:<hex>` spelling a measurement is pasted in. Trusting one adds an
+   * entry that can never match any cloud — the endpoint stays denied at
+   * `untrusted-root` and the list looks correct. A SHA-256 collision between an
+   * image measurement and a digest is not a case worth admitting, so a match here
+   * is always a mistake.
+   */
+  private async refuseKnownDigest(hex: string): Promise<void> {
+    const spellings = [hex, `sha256:${hex}`, `sha256/${Buffer.from(hex, 'hex').toString('base64url')}`];
+    const snapshots = this.dataSource.getRepository(EvidenceSnapshot);
+    const isEvidenceDigest =
+      (await snapshots.exists({ where: { evidenceDigestHex: hex } })) ||
+      (await this.endpoints().exists({ where: { evidenceDigestSeen: In(spellings) } })) ||
+      (await this.endpoints().exists({ where: { pinnedEvidenceDigest: In(spellings) } }));
+    const isCertFingerprint =
+      (await snapshots.exists({ where: { certFingerprint: In(spellings) } })) ||
+      (await this.endpoints().exists({ where: { pinnedCertFingerprint: In(spellings) } })) ||
+      (await this.endpoints().exists({ where: { observedCertFingerprint: In(spellings) } }));
+    if (!isEvidenceDigest && !isCertFingerprint) {
+      return;
+    }
+    const what = isEvidenceDigest ? 'an evidence digest' : 'a certificate fingerprint';
+    throw new BadRequestException(
+      `${hex} is ${what} this router has seen, not a cloud launch measurement. Trust the measurement the router ` +
+        'derived from the cloud’s root CA attestation instead — an endpoint’s “Measurement seen”.',
+    );
+  }
+
   private requireSecretsKey(): void {
     if (!this.secrets.available()) {
       // 503 rather than 500: the deployment is missing configuration, and the
@@ -551,13 +730,6 @@ export class ExternalEndpointAdminService {
         capabilities: model.capabilities,
         promptPer1mMicros: model.promptPer1mMicros,
         completionPer1mMicros: model.completionPer1mMicros,
-        // Blank, and deliberately: an external model's hardware is not something
-        // an admin declares (the contract's `ExternalModelInput` has no `tee`) or
-        // this router can know. What it *can* say about the upstream is the
-        // measurement a verdict saw, which is a column on the endpoint. A label
-        // invented here would read as a claim on `/v1/models`, so the field is
-        // omitted there instead (`models.controller.ts`).
-        tee: EXTERNAL_MODEL_TEE,
         enabled: true,
         updatedAt: now,
       });

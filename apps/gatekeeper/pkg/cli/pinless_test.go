@@ -39,8 +39,8 @@ func TestPinlessEndpointFollowsTheWarningsOwnScript(t *testing.T) {
 	h.mustRun("trust", "roots", "add", "swarm-cloud-test", "--pem-file", h.write("root.pem", host.RootPEM))
 
 	added := h.mustRun("endpoint", "add", "router", "--listen", "127.0.0.1:8443", "--upstream", host.Upstream())
-	if !strings.Contains(added.stderr, "endpoint trust add router --from-upstream") {
-		t.Fatalf("stderr = %q, want the warning that names the next command", added.stderr)
+	if !strings.Contains(added.stdout, "endpoint trust add router --from-upstream") {
+		t.Fatalf("stdout = %q, want the result to name the next command", added.stdout)
 	}
 
 	// Everything that only reads or inspects has to work on the file that

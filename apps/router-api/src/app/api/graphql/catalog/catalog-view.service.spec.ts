@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { CatalogModel, CatalogService } from '../../../catalog/catalog.service.js';
 import type { Endpoint } from '../../../db/entities/endpoint.entity.js';
+import type { EvidenceSnapshot } from '../../../db/entities/evidence-snapshot.entity.js';
 import type { EvidenceCoverageStatsService, EvidenceService } from '../../../evidence/index.js';
 import type { ExternalCatalogService, ExternalCatalogueEntry } from '../../../external-endpoints/index.js';
 import { CatalogViewService } from './catalog-view.service.js';
@@ -19,8 +21,8 @@ import { ModelOriginEnum } from './model.model.js';
  *
  * The services under it are stubs rather than a database: what is being checked
  * is the projection — which fields are populated for which origin, what an
- * anonymous caller is handed, and what the TEE filter does to a model that has no
- * TEE label. Where the rows come from is `external-catalog.service.spec.ts`'s
+ * anonymous caller is handed, where a row's TEE label comes from, and what the
+ * TEE filter does to a model that has none. Where the rows come from is `external-catalog.service.spec.ts`'s
  * subject, and it runs against a migrated database.
  */
 
@@ -28,7 +30,6 @@ const OWN_ENDPOINT = {
   id: 'ep-1',
   name: 'demo-tee',
   hostname: 'router.example.test',
-  tee: 'Intel TDX + H100 CC',
   declaredImages: null,
   enabled: true,
   updatedAt: new Date('2026-10-01T00:00:00.000Z'),
@@ -47,7 +48,6 @@ function configModel(overrides: Partial<CatalogModel> = {}): CatalogModel {
       id: OWN_ENDPOINT.id,
       name: OWN_ENDPOINT.name,
       hostname: OWN_ENDPOINT.hostname,
-      tee: OWN_ENDPOINT.tee,
       declaredImages: null,
     },
     updatedAt: new Date('2026-10-01T00:00:00.000Z'),
@@ -70,28 +70,78 @@ function externalEntry(overrides: Partial<ExternalCatalogueEntry> = {}): Externa
       hostname: 'partner.example.test',
       status: 'verified',
       lastCheckedAt: new Date('2026-10-06T12:00:00.000Z'),
+      notServingSince: null,
       measurementSeen: 'a'.repeat(64),
       evidenceDigestSeen: 'sha256/upstream',
+      evidenceDigestSeenHex: null,
     },
     ...overrides,
   };
 }
 
 function build(
-  options: { config?: CatalogModel[]; external?: ExternalCatalogueEntry[]; own?: Endpoint | null } = {},
+  options: {
+    config?: CatalogModel[];
+    external?: ExternalCatalogueEntry[];
+    own?: Endpoint | null;
+    latest?: EvidenceSnapshot[];
+  } = {},
 ): CatalogViewService {
   return new CatalogViewService(
     { list: () => options.config ?? [configModel()] } as unknown as CatalogService,
     { listCatalogue: () => options.external ?? [externalEntry()] } as unknown as ExternalCatalogService,
     {
       activeEndpoints: vi.fn().mockResolvedValue([OWN_ENDPOINT]),
-      latestForMany: vi.fn().mockResolvedValue(new Map()),
-      stateOfSnapshot: () => 'NOT_PUBLISHED',
+      latestForMany: vi
+        .fn()
+        .mockResolvedValue(new Map((options.latest ?? []).map((snapshot) => [snapshot.endpointId, snapshot]))),
+      stateOfSnapshot: (snapshot: EvidenceSnapshot | null) => (snapshot ? 'PUBLISHED' : 'NOT_PUBLISHED'),
       ownEndpoint: vi.fn().mockResolvedValue(options.own === undefined ? OWN_ENDPOINT : options.own),
     } as unknown as EvidenceService,
     { tokensByEndpoint: vi.fn().mockResolvedValue(new Map()) } as unknown as EvidenceCoverageStatsService,
   );
 }
+
+/** A stored publication of {@link OWN_ENDPOINT} whose chain ends in `rootPem`. */
+function snapshotWithRoot(rootPem: string): EvidenceSnapshot {
+  return {
+    id: 'snap-1',
+    endpointId: OWN_ENDPOINT.id,
+    externalEndpointId: null,
+    fetchedAt: new Date('2026-10-09T22:00:00.000Z'),
+    issuedAt: new Date('2026-10-09T21:59:00.000Z'),
+    evidenceDigest: `sha256/${'A'.repeat(43)}`,
+    evidenceDigestHex: '0'.repeat(64),
+    certFingerprint: `sha256/${'B'.repeat(43)}`,
+    quoteFormat: null,
+    containerImages: [],
+    chainSummary: [],
+    workloads: null,
+    measurements: null,
+    jws: 'a.b.c',
+    bundle: { certChain: [rootPem] },
+  } as EvidenceSnapshot;
+}
+
+const testdata = (file: string) => readFileSync(new URL(`../../../evidence/testdata/${file}`, import.meta.url), 'utf8');
+
+describe('endpointViews', () => {
+  it('labels the endpoint with the TEE its evidence names (SUP-270)', async () => {
+    const [view] = await build({
+      latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))],
+    }).endpointViews(null, new Date('2026-10-09T22:00:00.000Z'));
+
+    expect(view?.latestEvidence?.tee).toBe('AMD SEV-SNP (Azure)');
+  });
+
+  it('labels a TDX deployment with its own branch', async () => {
+    const [view] = await build({
+      latest: [snapshotWithRoot(testdata('synthetic-tdx-azure-root.pem'))],
+    }).endpointViews(null, new Date('2026-10-09T22:00:00.000Z'));
+
+    expect(view?.latestEvidence?.tee).toBe('Intel TDX (Azure)');
+  });
+});
 
 describe('modelViews', () => {
   it('lists the config models first, then the external ones', async () => {
@@ -105,8 +155,30 @@ describe('modelViews', () => {
 
     expect(view?.endpoint?.hostname).toBe('router.example.test');
     expect(view?.externalUpstream).toBeNull();
-    expect(view?.tee).toBe('Intel TDX + H100 CC');
     expect(view?.available).toBe(true);
+  });
+
+  /*
+   * The row's label and its endpoint's are one value read from one place — the
+   * root of the published chain — so the Models table and the Overview cannot
+   * disagree about a deployment's hardware (SUP-260). The chart's old config
+   * default is deliberately the thing this fixture does not carry.
+   */
+  it('labels a config model with the TEE its endpoint’s evidence names', async () => {
+    const [view] = await build({
+      external: [],
+      latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))],
+    }).modelViews({ workspaceId: null, signedIn: true });
+
+    expect(view?.tee).toBe('AMD SEV-SNP (Azure)');
+    expect(view?.tee).toBe(view?.endpoint?.latestEvidence?.tee);
+  });
+
+  it('labels a config model null while its endpoint has published nothing', async () => {
+    const [view] = await build({ external: [] }).modelViews({ workspaceId: null, signedIn: true });
+
+    expect(view?.endpoint?.latestEvidence).toBeNull();
+    expect(view?.tee).toBeNull();
   });
 
   /*
@@ -156,10 +228,16 @@ describe('modelViews', () => {
     );
   });
 
-  it('excludes external models from a TEE filter, because they declare none', async () => {
-    const views = await build().modelViews({ workspaceId: null, signedIn: true, tee: 'Intel TDX + H100 CC' });
+  it('narrows on the TEE the evidence names, and excludes external models, which have none', async () => {
+    const service = build({ latest: [snapshotWithRoot(testdata('prod-router-azure-sev-snp-root.pem'))] });
 
-    expect(views.map((view) => view.origin)).toEqual([ModelOriginEnum.CONFIG]);
+    const matching = await service.modelViews({ workspaceId: null, signedIn: true, tee: 'AMD SEV-SNP (Azure)' });
+    expect(matching.map((view) => view.origin)).toEqual([ModelOriginEnum.CONFIG]);
+
+    // The label the chart used to declare for every deployment matches nothing:
+    // no evidence names it, and nothing else is consulted.
+    const declared = await service.modelViews({ workspaceId: null, signedIn: true, tee: 'Intel TDX + H100 CC' });
+    expect(declared).toEqual([]);
   });
 
   it('prices an external model in the same shape as a built-in', async () => {

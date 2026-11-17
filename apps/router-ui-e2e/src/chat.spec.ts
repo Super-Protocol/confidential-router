@@ -29,7 +29,6 @@ const CHAT_ENDPOINT = {
   id: 'ep-1',
   name: 'confidential-router',
   hostname: ENDPOINT_HOST,
-  tee: 'Intel TDX + H100 CC',
   evidenceState: 'PUBLISHED',
   latestEvidence: null,
 };
@@ -58,7 +57,9 @@ function chatOperations(overrides: { chatSettings?: Record<string, unknown> } = 
           name: 'Llama 3.3 70B Instruct',
           contextLength: 128_000,
           capabilities: ['CHAT', 'COMPLETIONS'],
-          tee: 'Intel TDX + H100 CC',
+          // Nothing is published for the endpoint in this fixture, so no
+          // evidence names a TEE (SUP-260).
+          tee: null,
           origin: 'CONFIG',
           pricing: { __typename: 'Pricing', promptPer1m: '280000', completionPer1m: '420000' },
           endpoint: CHAT_ENDPOINT,
@@ -140,6 +141,9 @@ test.describe('Chat', () => {
   test('reports the same thing in the verification panel, per check', async ({ page, baseURL }) => {
     await openChat(page, baseURL as string);
 
+    // The pill opens the tier's caveat; the full report is one press further
+    // (SUP-262). Both are read from the toolbar's one row.
+    await page.getByRole('button', { name: /what this means$/i }).click();
     await page.getByRole('button', { name: /what has been verified/i }).click();
 
     const dialog = page.getByRole('dialog');

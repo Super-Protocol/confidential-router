@@ -106,6 +106,13 @@ export function loadRouterConfig(options: LoadRouterConfigOptions = {}): RouterC
 
   const config = validatedConfiguration<RouterConfig>(layers, RouterConfigSchema)();
 
+  if (config.auth.password !== undefined) {
+    warn(
+      'auth.password is set and ignored: password sign-in was removed (SUP-269). Accounts sign in with a code ' +
+        'mailed to their address; remove the key from the configuration.',
+    );
+  }
+
   if (config.models.length === 0) {
     warn('No models are configured — /v1 will answer every request with model_not_found.');
   }

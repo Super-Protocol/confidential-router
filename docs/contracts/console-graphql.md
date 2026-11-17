@@ -38,7 +38,7 @@ type Query {
 
 # ---------- models & endpoints ----------
 type Endpoint {
-  id: ID!, name: String!, hostname: String!, tee: String!            # tee = operator-declared label from router config
+  id: ID!, name: String!, hostname: String!                          # no declared TEE label: the TEE is latestEvidence.tee, read from what the endpoint publishes (SUP-260)
   latestEvidence: EvidenceSnapshot                                   # what the platform currently publishes (may be null)
   evidenceState: EvidenceState!                                      # PUBLISHED | STALE | NOT_PUBLISHED (freshness only)
   tokensRouted30d: Int!
@@ -50,6 +50,7 @@ type EvidenceSnapshot {
   evidenceDigest: String!, evidenceDigestHex: String!                 # canonical wire form + the hex the console shows
   certFingerprint: String!, certFingerprintHex: String!
   quoteFormat: String                                                # rootCaTeeQuote.format, e.g. intel-tdx-quote-v5
+  tee: String                                                        # TEE the root cert's TeeEvidence branch names, e.g. "AMD SEV-SNP (Azure)"; read, never verified (SUP-270)
   containerImages: [String!]!
   chain: [CertSummary!]!                                             # subject / issuer / notAfter / sha256 per cert
   measurements: [Measurement!]!                                      # MRTD / RTMR* / GPU when present in the snapshot
@@ -60,13 +61,18 @@ type CertSummary { subject: String!, issuer: String!, notAfter: DateTime!, finge
 type Measurement { name: String!, value: String! }
 type Model {
   id: ID!, slug: String!, name: String!, contextLength: Int!, capabilities: [ModelCapability!]!
-  pricing: Pricing!, endpoint: Endpoint!, tee: String!
+  pricing: Pricing!, endpoint: Endpoint!, tee: String                 # = endpoint.latestEvidence.tee (SUP-260)
 }
-enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS }
+# What the router serves, derived from the declared routes (SUP-450): COMPLETIONS
+# appears for a chat model too, because the surface translates that route, and
+# TOOLS / STREAMING are facts about the surface rather than routes.
+enum ModelCapability { CHAT COMPLETIONS EMBEDDINGS TOOLS STREAMING }
+# What an operator declares the upstream serves itself; the editable value.
+enum RouteCapability { CHAT COMPLETIONS EMBEDDINGS }
 type Pricing { promptPer1m: Micros!, completionPer1m: Micros! }
 
 type EvidenceDigestChange { evidenceDigest: String!, evidenceDigestHex: String!, firstIssuedAt: DateTime!, lastIssuedAt: DateTime!, snapshots: Int! }
-type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float! }
+type EvidenceCoverage { requests: Int!, covered: Int!, ratio: Float }   # requests = own-endpoint generations only; ratio is null when that is 0
 
 extend type Query {
   models(tee: String): [Model!]!
@@ -108,8 +114,9 @@ input GenerationFilter { from: DateTime, to: DateTime, modelIds: [ID!], apiKeyId
 extend type Query { generations(workspaceId: ID!, filter: GenerationFilter, first: Int = 50, after: String): GenerationConnection! }
 
 # ---------- activity aggregates ----------
-type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, evidenceCoverage: Float!, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float }
-type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, evidenceCoverage: Float! }
+type ActivitySummary { spend: Micros!, requests: Int!, promptTokens: Int!, completionTokens: Int!, coverableRequests: Int!, evidenceCoverage: Float, avgTimeToFirstTokenMs: Int, avgTokensPerSecond: Float, timedRequests: Int!, ratedRequests: Int! }
+# evidenceCoverage is null when coverableRequests is 0 — no ratio, not 0%. timedRequests / ratedRequests are the samples the two averages are over; ratedRequests <= timedRequests.
+type ActivityPoint { bucket: DateTime!, spend: Micros!, requests: Int!, tokens: Int!, coverableRequests: Int!, evidenceCoverage: Float }
 type KeyUsage { apiKey: ApiKey!, spend: Micros!, requests: Int! }
 type ModelUsage { model: Model!, spend: Micros!, requests: Int!, tokens: Int! }
 enum Bucket { HOUR DAY }
@@ -179,10 +186,10 @@ input DisableInviteCodesInput { code: String, campaign: String, unspentOnly: Boo
 # Mutation.disableInviteCodes(input: DisableInviteCodesInput!): InviteWithdrawal!
 # Mutation.restoreInviteCodes(input: RestoreInviteCodesInput!): InviteRestoration!   # both session + admin
 #
-# There is deliberately no redeem mutation and no generate mutation: a code is
-# spent inside account creation and nowhere else, and minting is a CLI behind an
-# operator's database access, so there is nothing here a client could replay and
-# nothing here that creates credit.
+# There is deliberately no redeem mutation: a code is spent inside account
+# creation and nowhere else, so there is nothing here a client could replay.
+# Minting was CLI-only until SUP-268; the admin Invitations section below now
+# mints too, behind auth.adminEmails.
 #
 # The two operator mutations run the other way — they only ever *stop* credit —
 # and they exist because a deployment whose cluster space is published has no
@@ -200,6 +207,36 @@ input DisableInviteCodesInput { code: String, campaign: String, unspentOnly: Boo
 # to leak, and `ALREADY_REDEEMED` (this account has a grant already, from another
 # code) is only answerable where the account is known. It spends the same
 # `invites.lookupsPerMinute` budget as the public lookup, keyed by account.
+
+# ---------- the admin Invitations section (SUP-268) — all session + admin ----------
+
+enum InviteCodeStatus { ACTIVE, REDEEMED, EXPIRED, WITHDRAWN }   # WITHDRAWN wins; a spent code reads REDEEMED even once expired
+enum SignUpOrigin { INVITE, BOOTSTRAP, OPEN }
+type AdminInviteCode {
+  id: ID!  code: String!  url: String!  campaign: String!  grantMicros: String!
+  maxRedemptions: Int!  redemptionCount: Int!  status: InviteCodeStatus!
+  createdAt: DateTime!  expiresAt: DateTime  withdrawnAt: DateTime  note: String
+  issuedByEmail: String                 # null: minted by the CLI
+  redeemers: [InviteCodeRedeemer!]!     # { userId, email, redeemedAt, carried }, oldest first; `carried` is a
+                                        # redemption a CSV import brought from another deployment, and its
+                                        # `userId` is null until that address has an account here (SUP-272)
+}
+type AdminSignUp {
+  userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
+  inviteCodeId: ID  inviteCode: String  campaign: String  redeemedAt: DateTime   # set exactly when origin = INVITE
+}
+type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: [InviteCampaignStats!]! }
+# Query.adminInviteCodes(campaign, status, offset = 0, limit = 50 ≤ 200): AdminInviteCodePage!   { totalCount, nodes }
+# Query.adminSignUps(origin, offset = 0, limit = 50 ≤ 200): AdminSignUpPage!
+# Query.inviteStatistics(days = 30 ≤ 366): InviteStatistics!    # daily is every UTC day of the window, zeros included
+# Mutation.issueInviteCodes(input: { count ≤ 1000, grantMicros ≤ $10,000, campaign (slug), maxRedemptions = 1,
+#   expiresAt?, note? }): IssuedInviteCodes!                     # { campaign, grantMicros, expiresAt, codes { id code url } }
+# Mutation.withdrawInviteCode(id: ID!): InviteWithdrawal!        # unspent only, by row id — the code never travels back
+#
+# BOOTSTRAP is derived, not stored: `/auth/bootstrap` only ever creates the first
+# account, under `auth.bootstrapEmail`, so it is the earliest account iff it has
+# that address. Codes are answered in full (issuing them is the section's job);
+# the console masks them until revealed, and no resolver logs one.
 
 # ---------- the second grant, for feedback ----------
 
@@ -272,15 +309,46 @@ and small:
   id and the payload travel together — that pair is what the membership check reads.
 - **`generations` gains `sort:`**, and `usageByModel` an optional `limit:` (which is the "top models by
   spend" list).
-- **`activitySummary`/`activitySeries` also return `coveredRequests`**, so a client can render the ratio
-  and its numerator without a second query.
+- **`activitySummary`/`activitySeries` also return `coveredRequests` and `coverableRequests`**, so a
+  client can render the ratio with both of its own halves and without a second query — and
+  `evidenceCoverage` is **nullable**. `coverableRequests` is the denominator: generations this
+  deployment's own endpoints served. An external-endpoint generation counts in `requests`, tokens and
+  spend, and in neither half of the ratio (ADR-008 §4) — it has no bundle of ours to have been covered
+  by, and the router verified that upstream itself, which is reported in the other vocabulary. So a
+  window with no coverable request has **no ratio** (`null`), never `0`: pairing `coveredRequests` with
+  `requests` is what made the console tell a production account "0 of 34 generations were served with
+  published evidence" about 34 generations each carrying a verified endpoint's digest (SUP-421).
 - **Downloads are REST, not GraphQL**, because a download is a browser navigation with a filename and a
   content type:
   - `GET /activity/generations.csv?workspaceId=&from=&to=&modelIds=&apiKeyIds=&status=` — session
     cookie, same filters as `generations`, oldest first;
+  - `GET /admin/invite-codes/export.csv?campaign=&status=` — session cookie + `auth.adminEmails`; the
+    Codes tab as a file, same two filters (`status` lower-case), full code values. Its counterpart
+    `POST /admin/invite-codes/import[?apply=true&expect=<sha256>]` takes that file as a `text/csv` body
+    and answers a JSON report; see `router.md`, "Moving codes between deployments" (SUP-272);
   - `GET /exports/evidence.zip?token=…` — the link `exportEvidence` mints. Signed with `auth.secret` and
     valid for 15 minutes, because the point of the export is that it can be handed to an auditor who has
-    no console session. Membership is re-checked when the link is followed.
+    no console session. Membership is re-checked when the link is followed. The archive holds
+    `manifest.json` plus `snapshots/<id>/{bundle.json,evidence.jws}` per publication, and covers **both
+    origins**: a generation this deployment's own endpoint served is reached through its
+    `evidenceSnapshotId`, and one an external upstream served through `(externalEndpointId,
+    evidenceDigest)` — it carries no snapshot id, because there is no row to stamp when it is recorded
+    (SUP-295). Each manifest entry says which with `origin: own | external`, and the manifest's `origins`
+    legend says what that means for the reader: who published the document, and what matched it to the
+    generations it covers — an `own` entry is this deployment's own publication, matched by the snapshot
+    stamped at serve time; an `external` one is the upstream's, matched by the digest the egress leg
+    observed when it verified that upstream. Neither is a verdict, which is what `note` says. Digests
+    whose bundle this router never retrieved are listed under `unretrieved`, and
+    `generations: { served, covered }` is what tells an empty archive apart from a quiet period.
+  - `GET /admin/data/export` — the deployment export (SUP-271), a gzipped JSON document. Session cookie
+    **and** `auth.adminEmails`; deliberately *not* a signed link, because this file is not for handing on.
+    `Cache-Control: no-store`; `X-Export-Sha256` carries the bundle's content hash.
+  - `POST /admin/data/import[?apply=true&expect=<sha256>]` — the same file as the request body,
+    `Content-Type: application/gzip`. Without `apply` it is a dry run and writes nothing; with it,
+    `expect` must be the `contentSha256` the dry run reported. Answers an `ImportReport` (`applied`, `ok`,
+    `refusals[]`, per-section `inBundle` / `toCreate` / `alreadyPresent` / `conflicts[]`, `notes[]`) with
+    200 whether or not the bundle can be taken, and 400 for a file that is not a readable export. The
+    format and the rules are in `docs/router.md`, *Moving a deployment's data across a redeploy*.
 - **`updateProfile` and `deleteAccount`** are not implemented yet; they are account lifecycle rather than
   preferences.
 
@@ -321,13 +389,27 @@ SUP-75 deltas above, these are the differences between this document's outline a
   `tokensRouted30d` on the same query; an anonymous one gets `0`, because there is no workspace to
   attribute usage to.
 - **`signInOptions`** — new (SUP-95), and public, like `models`. Which sign-in paths this deployment
-  offers: `bootstrap`, `github`, `google`, `magicLink`, `password` (SUP-112), plus `passwordMinLength`.
-  The console asks before it has a session, so it can render only the paths that can work — a deployment
-  with no OAuth app and no mailer would otherwise show two buttons and a form that all end in an error.
-  `bootstrap` is the only one that is not configuration alone: it is true while `auth.bootstrapToken` is
-  set *and* the deployment has no user, which is the window `POST /auth/bootstrap` is open in. Neither the
-  token nor any password is ever reported; `passwordMinLength` is a rule, not a secret, and reporting it
-  is what keeps the sign-up form from advertising a floor the router refuses.
+  offers: `emailCode` with `emailCodeLength` (SUP-269 — a one-time code mailed to the address, which is
+  how accounts sign in and how they are created), `magicLink`, `github`, `google`, `bootstrap` and
+  `adminRecovery`. The console asks before it has a session, so it can render only the paths that can
+  work — a deployment with no OAuth app and no mailer would otherwise show two buttons and a form that all
+  end in an error. `bootstrap` and `adminRecovery` are the two that are not configuration alone:
+  `bootstrap` is true while `auth.bootstrapToken` is set *and* the deployment has no user, and
+  `adminRecovery` while it is set and the account it created exists — the two states in which
+  `POST /auth/bootstrap` does something. The token itself is never reported. `password`,
+  `passwordMinLength`, `me.hasPassword` and the `setPassword` mutation were removed with password sign-in
+  (SUP-269): there is nothing left for them to describe. `supportEmail` (SUP-556) is `mail.replyTo`, null
+  where the deployment configured none: not a sign-in path but the thing to offer when none can work, since
+  an address the provider has suppressed can never be mailed a code again and the person holding it has no
+  other way to reach the operator.
+- **`signInMailState(email)`** — new (SUP-551), and public for the same reason: the code-entry screen asks
+  it before there is a session. `state` is `UNKNOWN` | `REJECTING` | `DELAYED` | `DELIVERING`, from what
+  the mail provider reported after it accepted the message, and only `REJECTING` changes what the screen
+  says — for an address on the provider's suppression list every clause of "check spam, a new code may be
+  slow" is false. **Not an account-existence oracle**: the answer is about the mailbox, an address with an
+  account and one without answer identically, and the same fact is obtainable by anyone who mails the
+  address and reads the refusal. It spends `mail.stateLookupsPerMinute` per source address, which is what
+  stops it being walked down a list of addresses.
 - **`gatekeeperRelease`** — new, and the Gatekeeper screen's only query. Version, notes URL, checksum
   manifest and one `GatekeeperDownload` per platform, read from GitHub Releases and cached
   (`gatekeeper.*` in the router config). `stale: true` means GitHub could not be reached and these are the
@@ -356,6 +438,15 @@ exceptions are mapped in one place (`src/app/api/graphql/errors.ts`):
 `graphql.introspection` off — the production default — an `INTERNAL_SERVER_ERROR` loses its message and
 its stack trace.
 
+**`extensions.fields`** is present when the global `ValidationPipe` refused the input: a map of the
+input property to the first constraint message about it, e.g.
+`{ "spendLimitMicros": "spendLimitMicros must match /^\\d{1,15}$/ regular expression" }`. The error's
+`message` carries the same messages joined. Both exist because neither used to (SUP-295): the array the
+pipe produces lives inside `extensions.originalError`, which production deletes, and
+`HttpException.message` for a response object is the literal string *"Bad Request Exception"* — so a
+console could not say which field it had got wrong. A client shows each message under the input it
+names; a property the client does not render is one it should report outright instead.
+
 `503` is mapped because one refusal is policy rather than a fault (SUP-171): on a deployment with
 `billing.provider: disabled`, `createCheckout` answers `SERVICE_UNAVAILABLE` with *"Buying credits is
 switched off on this deployment."* — a sentence a client may quote. It was the only 5xx the router raises
@@ -364,7 +455,7 @@ error."* and could not tell a deliberate refusal from an outage.
 
 ### Screen → operations, as shipped
 
-**Sign in** `signInOptions` (public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
+**Sign in** `signInOptions` + `signInMailState` (both public); **Overview** `activitySummary + endpoints + creditBalance`; **Models**
 `models` (public) `+ endpoints`;
 **Evidence modal** `endpoint.latestEvidence` / `evidenceSnapshots` / `evidenceDigestHistory` +
 `refreshEvidence`; **API Keys** `apiKeys` + `createApiKey` / `updateApiKey` / `revokeApiKey`; **Activity**
@@ -372,7 +463,16 @@ error."* and could not tell a deliberate refusal from an outage.
 download); **Credits** `creditBalance` / `creditTransactions` / `createCheckout` / `setAutoTopUp`;
 **Gatekeeper** `gatekeeperRelease`; **Chat** `chatSettings` (public) `+ models` `+ chatThreads` / `chatThread` `+ chatCredential` / `createChatThread` / `setChatThreadModel` / `appendChatMessage` / `deleteChatThread`; **Profile** `me` (with `createdAt`) `+ activitySeries` /
 `usageByModel` / `signedResponseDays` + `updateProfile`; **Preferences** `me { preferences }` +
-`updatePreferences` / `exportEvidence`.
+`updatePreferences` / `exportEvidence`;
+**Admin — external endpoints** `externalEndpoints` / `externalEndpoint` / `discoverExternalModels` `+
+registerExternalEndpoint` / `updateExternalEndpoint` / `setExternalEndpointEnabled` / `rotateExternalEndpointKey`;
+**Admin — trust list** `trustedMeasurements` `+ addTrustedMeasurement` / `updateTrustedMeasurement` /
+`removeTrustedMeasurement`.
+
+The two Admin reads are session-scoped and the mutations are not: every screen in the nav is reachable
+by any signed-in member, and the Admin entry is reachable by one in `auth.adminEmails` — `me { isAdmin }`
+is what the browser gates it on. The reads being wider than the nav entry is deliberate (ruling 3, ADR-008
+§7), and the API is where it is enforced; the nav is sidebar hygiene.
 
 ## As shipped (SUP-180) — the console chat
 
@@ -479,17 +579,19 @@ open until their cached secret expired. Clients should still treat a `401` of co
 `api_key_expired` or `invalid_api_key` as "mint again and retry once" — that is what the console does,
 and it is the only reason a caller needs to read those codes.
 
-## As shipped (SUP-225) — the admin section
+## As shipped (SUP-225, SUP-226) — the admin section
 
 The external-endpoint control plane (ADR-008 §7), split across two issues that code against this
-block and nothing else: **SUP-225** implements the resolvers in router-api, **SUP-226** the console
-screens. While SUP-225 is in flight the committed `schema.graphql` cannot carry these types — it is
-emitted from the resolvers — so the same SDL also lives at
-[`apps/router-ui/schema.contract-pending.graphql`](../../apps/router-ui/schema.contract-pending.graphql),
-which router-ui's codegen reads as an overlay. `apps/router-ui/src/components/admin/schema-contract.spec.ts`
-asserts the two are byte-identical and fails with a delete-the-overlay instruction the moment the real
-schema defines `externalEndpoints`. A contract change lands **here first**, and both sides follow. Since SUP-237 that is enforced, not
-asked: CI fails any pull request whose `schema.graphql` does not satisfy this block.
+block and nothing else: **SUP-225** implemented the resolvers in router-api, **SUP-226** the console
+screens. Both have landed, so the SDL below is now in the committed
+[`apps/router-api/schema.graphql`](../../apps/router-api/schema.graphql) and that file is what
+router-ui's codegen reads. The overlay the console was built against while the resolvers were in
+flight is gone with it; `apps/router-ui/src/components/admin/schema-contract.spec.ts` keeps the two
+guards that are about the schema rather than about the overlay — the external vocabulary never
+collapses into the own-endpoint one, and nothing readable can carry the upstream key (threat T15).
+A contract change still lands **here first**, and both sides follow — and since SUP-237 that rule is
+enforced rather than asked: CI fails any pull request whose `schema.graphql` does not satisfy this
+block.
 
 Three decisions in this block are worth reading before the SDL:
 
@@ -497,11 +599,13 @@ Three decisions in this block are worth reading before the SDL:
    router's own endpoints because it never verifies itself. An external upstream is the mirror case —
    there is a verifier, and it is this router — so the enum says `VERIFIED_BY_THIS_ROUTER` /
    `DENIED_BY_THIS_ROUTER` and never a bare `verified` (ADR-008 §1).
-2. **`ExternalEndpointEvidence` is informational, never gating** (SUP-221 ruling 1). Admission is the
-   measurement check alone, which admits a *cloud* and cannot see which deployment on it answered
-   (threat T13). The console therefore renders the upstream's workloads and image digests for every
-   registered endpoint and on every change — `ExternalEndpointEvent.evidence` is what makes "on every
-   change" a field rather than a convention.
+2. **`ExternalEndpointEvidence` is what a pinned digest stands for** (SUP-221 ruling 1, as amended by
+   SUP-252). Admission was first the measurement check alone, which admits a *cloud* and cannot see
+   which deployment on it answered (threat T13); it is now two-factor — the measurement *and* the
+   evidence digest an admin pinned for the endpoint — and this summary is what the admin reads before
+   pinning. The console renders the upstream's workloads and image digests for every registered
+   endpoint, before every approval and on every change — `ExternalEndpointEvent.evidence` is what makes
+   "on every change" a field rather than a convention. See [As shipped (SUP-252)](#as-shipped-sup-252--two-factor-endpoint-trust).
 3. **The two reads are session-scoped, not admin-scoped** (ruling 3, ADR-008 §7). A non-admin gets the
    same rows with `apiKeyPrefix` and `upstreamModel` null; every mutation is `AdminGuard`. The nav
    entry is admin-only, which is sidebar hygiene and not the access control.
@@ -604,6 +708,10 @@ type ExternalEndpointEvent {
   measurement: String
   evidenceDigest: String
   """
+  `evidenceDigest` as 64 hex characters — the spelling every screen shows (SUP-115).
+  """
+  evidenceDigestHex: String
+  """
   The evidence summary in force at this event, so ruling 1's "at registration and
   on every change" is literally what the timeline renders. Null when no snapshot
   was stored for it.
@@ -620,7 +728,11 @@ type ExternalEndpointModel {
   upstreamModel: String
   contextLength: Int!
   pricing: Pricing!
-  capabilities: [ModelCapability!]!
+  """
+  The declared routes of the upstream — the editable value, not the wider list
+  `Model.capabilities` reports (SUP-450).
+  """
+  capabilities: [RouteCapability!]!
 }
 
 """
@@ -690,7 +802,12 @@ input ExternalModelInput {
   contextLength: Int!
   promptPer1mMicros: String!
   completionPer1mMicros: String!
-  capabilities: [ModelCapability!]
+  """
+  Which routes the upstream serves itself; defaults to `[CHAT]`. Add
+  `COMPLETIONS` when it serves the legacy route natively, which forwards that
+  route verbatim instead of translating it (SUP-450).
+  """
+  capabilities: [RouteCapability!]
 }
 
 input RegisterExternalEndpointInput {
@@ -760,6 +877,139 @@ extend type Mutation {
 }
 ```
 
+## As shipped (SUP-252) — two-factor endpoint trust
+
+Denis's design change superseding ADR-008 §10 ruling 1: an external endpoint is
+`VERIFIED_BY_THIS_ROUTER` only while its cloud's launch measurement is on the trust list **and** the
+evidence digest it publishes equals the one an admin pinned for it. The additions to the block above:
+
+- **`ExternalEndpoint.pinnedEvidenceDigest`** (+ `…Hex`) — the approved deployment, readable by any
+  signed-in user (ruling 3). Null means nothing is approved yet: the endpoint stays `PENDING` with
+  `lastStage: digest-not-pinned`. **`pinnedEvidence`** is the summary behind it, for the old-vs-new
+  diff. **`evidenceDigestSeenHex`** is the spelling every screen shows and copies (SUP-115).
+- **`lastStage`** gains the three factor codes the sidecar reports for a built-in two-factor denial:
+  `digest-not-pinned` (`PENDING` — waiting for an approval, not a refusal), `measurement-not-trusted`
+  and `digest-mismatch` (both `DENIED_BY_THIS_ROUTER`; the latter is a redeploy nobody approved, and
+  fails closed — models dropped, in-flight connections closed).
+- **`DIGEST_PINNED`** joins the event kinds (carrying the digest approved); **`DIGEST_CHANGED`** is now
+  gating — on an admitted endpoint it arrives with the denial a mismatched pin causes.
+- **`latestEvidence`** is filed whenever the last report's cryptography held, admitted or refused only by
+  a trust factor, so the summary exists *before* the approval it informs.
+- **`pinExternalEndpointDigest`** — `AdminGuard`, one input object like every mutation here. Accepts
+  `sha256:<hex>` or `sha256/<base64url>`, stores the canonical form, replaces any earlier pin (approving
+  a redeploy is this call with the new digest), records `DIGEST_PINNED`, writes a WARN naming the
+  operator, and re-renders the sidecar config so the endpoint is re-checked at once.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  DIGEST_PINNED
+}
+
+extend type ExternalEndpoint {
+  evidenceDigestSeenHex: String
+  pinnedEvidenceDigest: String
+  pinnedEvidenceDigestHex: String
+  pinnedEvidence: ExternalEndpointEvidence
+}
+
+input PinExternalEndpointDigestInput {
+  evidenceDigest: String!
+}
+
+extend type Mutation {
+  pinExternalEndpointDigest(id: ID!, input: PinExternalEndpointDigestInput!): ExternalEndpoint!
+}
+```
+
+The console's dossier (`apps/router-ui/src/components/admin/trust-factors.tsx`) is the
+TOFU-with-approval loop: *Measurement seen* with the registry-signed badge and "Add to trust list"
+(`addTrustedMeasurement`), *Digest seen* with "Pin this digest"; after a redeploy, the approved and the
+new digest with the evidence diff and "Approve new digest". The register dialog shows the same two
+approvals in the stage that waits for them.
+
+## As shipped (SUP-435) — an edit can carry the approval it would otherwise drop
+
+Re-pointing an endpoint withdraws its pin, which is SUP-252 being fail-closed: the approval was of
+the deployment that answered at the old URL. What it was missing is a way to say otherwise, and any
+trace of having happened. `UpdateExternalEndpointInput` carried `baseUrl` and `models` only, so the
+one mutation an operator reaches for to correct an upstream URL left the endpoint `PENDING` /
+`digest-not-pinned` with every model on it answering 503 until someone pinned the same digest again
+— on production, 28 minutes of it, and nothing in the response or the timeline said the approval had
+gone.
+
+- **`UpdateExternalEndpointInput.evidenceDigest`** — optional, the same value and spellings
+  `pinExternalEndpointDigest` takes. Stating it makes the edit and the approval one write, so a
+  re-point does not pass through an unapproved endpoint; it also pins on an edit that re-points
+  nothing, which is `pinExternalEndpointDigest` reached from inside an edit. Omitting it says nothing
+  about the pin: the approval survives an edit that leaves `baseUrl` alone, and a re-point still
+  withdraws it. A digest the parser refuses fails the whole mutation before any of it is written.
+- **`DIGEST_UNPINNED`** joins the event kinds — an approval an edit withdrew, carrying the digest that
+  is no longer approved and the reason (which URL it was re-pointed to from where). The withdrawal is
+  also a WARN naming the endpoint, the digest and both URLs, because the mutation itself answers with
+  the row it wrote and the refusal only arrives at the next check. An approval *carried* records
+  `DIGEST_PINNED` as a pin always does, and re-sending the digest the endpoint already holds records
+  nothing: it approves nothing new.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  DIGEST_UNPINNED
+}
+
+input UpdateExternalEndpointInput {
+  # …as above, plus:
+  evidenceDigest: String
+}
+```
+
+## As shipped (SUP-249) — model discovery, attest-then-list
+
+The register dialog's primary path is now *paste a URL and a key*, not *type every model*. The
+order is the point: the endpoint is registered with `models: []` (which `RegisterExternalEndpointInput`
+already allowed), the egress sidecar attests it like any other, and only once the row says
+`VERIFIED_BY_THIS_ROUTER` does the API make its first request upstream — `GET /v1/models` through the
+endpoint's attested, certificate-pinned loopback listener, with the stored key injected by router-api.
+An endpoint that is not verified is refused with `CONFLICT` and nothing is sent; a sidecar that
+withdrew its verdict in the meantime answers its fail-closed 503, which comes back as a `CONFLICT`
+naming the stage and reason. The admin ticks models and sets prices; the result is registered with
+the ordinary `updateExternalEndpoint`, so there is no second write path.
+
+```graphql
+"""
+One model an attested upstream lists on its own GET /v1/models. Hints only — the operator chooses
+the public id, the name and the prices when registering it.
+"""
+type DiscoveredExternalModel {
+  upstreamModel: String!
+  name: String
+  contextLength: Int
+  "Micro-USD per 1M tokens, when the upstream publishes a price (another router does)."
+  promptPer1mMicros: String
+  completionPer1mMicros: String
+  "The public model id this endpoint already publishes it under, or null."
+  registeredAs: String
+}
+
+extend type Query {
+  """
+  Admin, not session: the call spends the stored upstream key. Read-only — it writes no row.
+  """
+  discoverExternalModels(id: ID!): [DiscoveredExternalModel!]!
+}
+```
+
+The hints are read leniently from the fields the upstreams we know of publish — `context_length` and
+`pricing.*_per_1m_micros` (another Confidential Router), `max_model_len` (vLLM). The body is read up to
+2 MB and the list capped at 100 entries: it is another operator's answer, and it does not get to size
+this process's memory. A `401`/`403` is reported as a refused key, a `404`/`405` as an upstream without a
+model list (the dialog offers to type the models instead), and a stored key this deployment's
+`CR_API_SECRETS_KEY` can no longer open as `SERVICE_UNAVAILABLE` — not as a network failure worth retrying.
+The console's picker re-reads the endpoint's published models immediately before it writes, because
+`updateExternalEndpoint` replaces the set and a model another admin published meanwhile must survive. A price hint is a starting point in the form; what this router charges stays
+the operator's decision (decision 4). The connection link remains the one-paste fast path; the
+dialog tells the two apart by shape (`apps/router-ui/src/lib/endpoint-source.ts`).
+
 ## As shipped (SUP-227) — external models on the public catalogue
 
 The user-facing half of ADR-008 §7. The admin section above is where an external endpoint is
@@ -776,11 +1026,11 @@ Three decisions, and the first two are schema changes to a type that was already
    so the console cannot mix the two vocabularies even by accident (ADR-008 §1).
 2. **`Model.endpoint` and `Model.tee` are nullable now.** Both were non-null before ADR-008 and
    both are facts about *this* deployment: there is no `endpoints` row for someone else's
-   deployment, this router publishes no evidence for its hostname, and nobody declares a TEE label
-   for its hardware. A synthetic endpoint row would have carried an `evidenceState` about a hostname
-   this deployment does not publish, which is exactly the blend decision 1 forbids; a relayed TEE
-   label would have been this router asserting a fact it has no source for. A measurement admits a
-   *cloud* and does not name its silicon.
+   deployment, this router publishes no evidence for its hostname, and reads none for its hardware
+   (`Model.tee` is the endpoint's `latestEvidence.tee`, SUP-260). A synthetic endpoint row would
+   have carried an `evidenceState` about a hostname this deployment does not publish, which is
+   exactly the blend decision 1 forbids; a relayed TEE label would have been this router asserting
+   a fact it has no source for. A measurement admits a *cloud* and does not name its silicon.
 3. **`Model.externalUpstream` is session-scoped, the whole field** (SUP-221 ruling 3). An anonymous
    caller gets name, price and `available` — no endpoint URLs and no verdict detail — and `null`
    rather than a populated object with nulls in it: "there is an upstream and here is nothing about
@@ -826,6 +1076,11 @@ type ExternalUpstream {
   lastCheckedAt: DateTime
   measurementSeen: String
   evidenceDigestSeen: String
+  """
+  `evidenceDigestSeen` as 64 hex characters — the spelling every screen shows and
+  copies (SUP-115); null when there is no digest or it does not parse.
+  """
+  evidenceDigestSeenHex: String
 }
 
 extend type Model {
@@ -842,7 +1097,11 @@ extend type Model {
   endpoint: Endpoint
   """Null for a CONFIG model, and null for an anonymous caller (ruling 3)."""
   externalUpstream: ExternalUpstream
-  """Null for an EXTERNAL model: nobody declares one for another deployment."""
+  """
+  The TEE the serving endpoint's published evidence names — `endpoint.latestEvidence.tee`,
+  carried here so a list needs no second lookup (SUP-260). Null while nothing recognisable is
+  published, and null for an EXTERNAL model: this router reads none for another deployment.
+  """
   tee: String
 }
 
@@ -860,7 +1119,8 @@ extend type Query {
 ```
 
 A `tee:` argument on `models` excludes every external model, which is the filter being honest rather
-than losing rows: it narrows on an operator's declaration about this deployment's own hardware.
+than losing rows: it narrows on the TEE this deployment's own endpoints publish evidence from, and
+this router reads none for someone else's hardware.
 
 ### Screen → operations, SUP-227
 
@@ -868,3 +1128,132 @@ than losing rows: it narrows on an operator's declaration about this deployment'
 | --- | --- | --- |
 | Models | `models` | One table. The origin badge comes from `origin`; the attestation column renders `EvidenceBadge` for a row with an `endpoint`, `ExternalAttestationBadge` for one with an `externalUpstream`, and `available` alone for an anonymous reader. The two badges share no component and no label. |
 | Chat | `chatSettings`, `routerEndpoint`, `models` | `chatModelIds` contains an external model only while its endpoint holds a live admitting verdict, and is also the scope every chat credential is minted with — so the picker and the key cannot disagree. The gate runs on `routerEndpoint`; `externalUpstream` drives the second inspect panel. |
+
+## As shipped (SUP-517) — the failure run beside the verdict
+
+A published upstream lost the gateway route for its hostname at 2026-10-23 06:11 UTC and this router
+answered `503 gatekeeper_error` / `attestation_failed` for 30 hours. Every individual behaviour was
+right: the verdict flipped to `DENIED_BY_THIS_ROUTER`, the model left `/v1/models`, the public
+catalogue carried `available: false`. What no surface could answer was *how long*, *how many checks*
+and *did the upstream answer at all* — so a dark upstream and a registration awaiting its first
+approval rendered identically, and nobody was told about either.
+
+- **`ExternalEndpoint.liveness`** — the run behind the latest verdict, grouped rather than flattened
+  because a console row reads them together: `reachability`, `notServingSince`, `lastSuccessAt`,
+  `lastFailureAt`, `consecutiveFailures`, `outage`. Readable by any signed-in user, like the rest of the
+  verdict (ruling 3). Every field is a projection of live verification and is reset on boot (ADR-008 §8).
+- **`ExternalEndpointReachability`** — `UNREACHABLE` when the sidecar reported that the dial, the
+  handshake or the read failed (`Report.unreachable`, SUP-422), `REACHABLE` when something answered and
+  verification or policy refused it, `UNKNOWN` before the first check. The distinction the outage turned
+  on: `UNREACHABLE` is "go look at the cloud", `REACHABLE`-and-denied is "open this drawer and approve a
+  deployment". **Read from the sidecar, not inferred from the stage** — `fetch` is wider than the flag,
+  and an upstream whose ingress is up while `/.well-known/swarm-evidence` 502s stops at `fetch` having
+  answered. Calling that one `UNREACHABLE` would be this field's own mis-direction pointing the other way.
+- **`liveness.consecutiveFailures`** counts *distinct checks*, not polls. The status poll re-reads the
+  sidecar every 5 s against a re-attestation every 10 minutes, so counting readings would make the
+  threshold a number of seconds wearing a different name.
+- **`liveness.outage`** is whether the run has crossed `externalEndpoints.outage.afterFailures` or
+  `.afterNoSuccess` and been alerted on. It is always false for an endpoint an operator disabled, and
+  for one whose deployment has never been approved (`pinnedEvidenceDigest: null`) — that is a
+  registration half-finished, not an upstream that went dark, and the two must not share an alarm.
+- **`OUTAGE`** / **`RECOVERED`** join the event kinds, one per run in each direction. They are not
+  `DENIED_BY_THIS_ROUTER` / `VERIFIED_BY_THIS_ROUTER` under another name: a denial is one check that
+  refused, an `OUTAGE` is this router declaring the run of them worth waking somebody for.
+- **`ExternalUpstream.notServingSince`** — the same clock on the public catalogue's reduced upstream
+  type, so `available: false` on a fresh registration and `available: false` on a model that has been
+  dark for a day are finally different answers. Still null for an anonymous caller, like the rest of
+  `externalUpstream`.
+
+```graphql
+enum ExternalEndpointEventKind {
+  # …as above, plus:
+  OUTAGE
+  RECOVERED
+}
+
+"""
+Whether the last check got a document back, as distinct from whether this router
+admitted what it got.
+"""
+enum ExternalEndpointReachability {
+  REACHABLE
+  UNREACHABLE
+  UNKNOWN
+}
+
+"""
+How long this upstream has been dark, and whether that has passed this router's
+outage threshold. A projection of live verification, reset on boot like the
+verdict itself.
+"""
+type ExternalEndpointLiveness {
+  reachability: ExternalEndpointReachability!
+  """
+  Since when it has not been known to serve — a denial, an operator switching it
+  back on, or this process starting. Null while it is serving.
+  """
+  notServingSince: DateTime
+  lastSuccessAt: DateTime
+  """
+  Kept across a recovery, so flapping is visible on the row.
+  """
+  lastFailureAt: DateTime
+  consecutiveFailures: Int!
+  outage: Boolean!
+}
+
+extend type ExternalEndpoint {
+  liveness: ExternalEndpointLiveness!
+}
+
+extend type ExternalUpstream {
+  notServingSince: DateTime
+}
+```
+
+The unauthenticated half of the same answer is `GET /health`'s `externalEndpoints` block
+(`docs/contracts/router-api.md`), which is counts and a word — no endpoint identity, because ruling 3
+holds there too.
+
+## As shipped (SUP-535) — proving the alert reaches a human
+
+The alert above now leaves the process by mail (`docs/router.md`, *Where an alert goes*). The one
+thing an operator cannot read off configuration is whether a message actually arrives, so there is a
+mutation that sends one.
+
+```graphql
+"""
+What one test of the alert channel did. `delivered` is a count, not a list: the
+operator asking already knows which inbox they are watching, and the addresses
+an alert goes to are configuration an authenticated-but-curious reader has no
+claim on.
+"""
+type OperatorAlertTest {
+  sent: Boolean!
+  delivered: Int!
+  """
+  Addresses the provider refused. Each one is in the container log.
+  """
+  failed: Int!
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER or NO_RECIPIENTS.
+  """
+  skipped: String
+}
+
+extend type Mutation {
+  """
+  Restricted to auth.adminEmails. Sends past alerts.minInterval, to every
+  configured recipient, with a body that says nothing is wrong.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+}
+```
+
+Admin-only, and logged with the name of whoever asked: it writes to every address the deployment
+alerts to, which is a thing to be accountable for rather than a read. It exists because the
+acceptance criterion for an alerting path is a message that *arrived*, and inducing a real outage on
+a live deployment to watch the mail go out is what cost 28 minutes once already.
+
+The unauthenticated half of the same answer is `GET /health`'s `alerts` block — a state and a count
+of recipients, never an address.

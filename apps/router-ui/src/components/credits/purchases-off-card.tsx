@@ -22,8 +22,9 @@ export function PurchasesOffCard() {
         <div className="text-muted-foreground flex gap-3 text-sm">
           <Gift className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <p>
-            Credit arrives as a grant: an invitation code redeemed at sign-up, or the one offered in exchange for
-            feedback. Both land on the balance above and in the ledger below.
+            Credit arrives as a grant: the sign-up credit this deployment may give every new account, an invitation code
+            redeemed at sign-up, or the one offered in exchange for feedback. Each lands on the balance above and in the
+            ledger below.
           </p>
         </div>
       </CardContent>

@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
   CONSOLE_OPERATIONS,
+  EXTERNAL_ONLY_CONSOLE_OPERATIONS,
   MIXED_CATALOGUE_DATA,
   PUBLISHED_DIGEST_HEX,
   PUBLISHED_HOST,
@@ -41,6 +42,23 @@ test.describe('Overview', () => {
     const table = page.getByRole('table', { name: 'Confidential endpoints' });
     await expect(table.getByRole('row', { name: new RegExp(PUBLISHED_HOST) })).toContainText('598M');
     await expect(page.getByRole('button', { name: `Evidence for ${ROTATING_HOST}: Stale` })).toBeVisible();
+  });
+
+  test('does not report 0% coverage for a week served entirely by external endpoints', async ({ page, baseURL }) => {
+    // SUP-421: coverage is about bundles *this* platform published, and an
+    // external endpoint has none — the router verified it instead. With no
+    // coverable request in the week there is no ratio, and "0%" on this tile
+    // reads as the product's own promise never once kept.
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, EXTERNAL_ONLY_CONSOLE_OPERATIONS);
+    await page.goto('/');
+
+    const tile = page.getByRole('group', { name: 'Evidence coverage' });
+
+    await expect(tile).toContainText('coverage does not apply here');
+    await expect(tile).toContainText('all 34 generations were served by external endpoints');
+    await expect(tile).toContainText('verified by this router');
+    await expect(tile).not.toContainText('0%');
   });
 
   test('copies the digest a gatekeeper pins', async ({ page, baseURL }) => {
@@ -101,10 +119,22 @@ test.describe('Models', () => {
   test('narrows the catalogue to one TEE', async ({ page, baseURL }) => {
     await enterConsole(page, baseURL as string, '/models');
 
-    await page.getByRole('tab', { name: 'AMD SEV-SNP' }).click();
+    // The chips are the TEEs the deployment's own endpoints publish evidence
+    // from (SUP-260), so this narrows on a label read off a root certificate.
+    await page.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }).click();
 
-    await expect(page.getByText('Qwen2.5 72B Instruct')).toBeVisible();
-    await expect(page.getByText('Llama 3.3 70B Instruct')).toHaveCount(0);
+    /*
+     * Rows rather than bare text: a model's name is a substring of its own slug
+     * and of its endpoint's hostname — "DeepSeek-V3" is in
+     * `deepseek/deepseek-v3:tdx` and in `deepseek-v3.tee.swarm.cloud` — so
+     * `getByText` matches three nodes and trips strict mode. The row's
+     * accessible name covers every cell, which is what the test means anyway.
+     */
+    const table = page.getByRole('table', { name: 'Model catalogue' });
+    await expect(table.getByRole('row', { name: /DeepSeek-V3/ })).toBeVisible();
+    await expect(table.getByRole('row', { name: /Llama 3\.3 70B Instruct/ })).toHaveCount(0);
+    // Its endpoint publishes nothing, so it is under no TEE chip at all.
+    await expect(table.getByRole('row', { name: /Qwen2\.5 72B Instruct/ })).toHaveCount(0);
   });
 
   test('opens the same evidence modal and copies the JWS', async ({ page, baseURL }) => {
@@ -149,15 +179,26 @@ test.describe('Models, with an external endpoint', () => {
       .getByRole('row', { name: /Llama 3\.3 70B \(partner\)/ });
   }
 
-  test('badges the external row and nothing else', async ({ page, baseURL }) => {
+  test('tags no row as external — the serving topology is not shown to a user', async ({ page, baseURL }) => {
     await mockClipboard(page);
     await signIn(page, baseURL as string, mixed);
     await page.goto('/models');
 
-    await expect(externalRow(page).getByText('External')).toBeVisible();
-    // One badge in the whole table: the information is "this one is different",
-    // which an absent badge on everything else is what makes legible.
-    await expect(page.getByText('External', { exact: true })).toHaveCount(1);
+    await expect(externalRow(page)).toBeVisible();
+    await expect(page.getByText('External', { exact: true })).toHaveCount(0);
+  });
+
+  test('spells the upstream’s evidence digest in hex, never in the base64 wire form', async ({ page, baseURL }) => {
+    await mockClipboard(page);
+    await signIn(page, baseURL as string, mixed);
+    await page.goto('/models');
+
+    await page.getByRole('button', { name: `Attestation of ${UPSTREAM_HOST}: Verified by this router` }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText(/^sha256:41de2c07/)).toBeVisible();
+    // The canonical `sha256/<base64url>` form is the wire format and stays
+    // there (SUP-115); this dialog is where it leaked in 0.15.0 (SUP-255).
+    await expect(dialog).not.toContainText(/sha256\//);
   });
 
   test('renders both vocabularies in one table, neither borrowing the other’s words', async ({ page, baseURL }) => {
@@ -182,7 +223,7 @@ test.describe('Models, with an external endpoint', () => {
     await expect(ownRow.getByText(/by this router/)).toHaveCount(0);
   });
 
-  test('says whose verdict it is, and what a measurement does not pin', async ({ page, baseURL }) => {
+  test('says whose verdict it is, and that it covers the approved deployment', async ({ page, baseURL }) => {
     await mockClipboard(page);
     await signIn(page, baseURL as string, mixed);
     await page.goto('/models');
@@ -192,17 +233,19 @@ test.describe('Models, with an external endpoint', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'This router verified this upstream' })).toBeVisible();
     await expect(dialog).toContainText('not by you');
-    await expect(dialog).toContainText('admits a cloud');
+    // Two-factor trust (SUP-252): the cloud by measurement and the deployment by
+    // the digest its operator approved — not the cloud alone.
+    await expect(dialog).toContainText('the one its operator approved');
   });
 
-  test('declares no TEE label for another deployment’s hardware', async ({ page, baseURL }) => {
+  test('names no TEE for another deployment’s hardware', async ({ page, baseURL }) => {
     await mockClipboard(page);
     await signIn(page, baseURL as string, mixed);
     await page.goto('/models');
 
-    // The TEE filter narrows on an operator's declaration about *this*
-    // deployment, so selecting one hides the external row rather than guessing.
-    await page.getByRole('tab', { name: 'AMD SEV-SNP' }).click();
+    // The TEE filter narrows on what *this* deployment's endpoints publish, so
+    // selecting one hides the external row rather than guessing at its silicon.
+    await page.getByRole('tab', { name: 'AMD SEV-SNP (Azure)' }).click();
     await expect(page.getByText('Llama 3.3 70B (partner)')).toHaveCount(0);
   });
 });

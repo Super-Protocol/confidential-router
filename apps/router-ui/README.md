@@ -47,7 +47,7 @@ sign-in screen.
 | Route                                       | Owner   | State |
 | ------------------------------------------- | ------- | ----- |
 | `/`, `/models`                              | SUP-78  | built |
-| `/keys`, `/gatekeeper`                      | SUP-79  | built |
+| `/keys` (with “How to connect”; `/gatekeeper` redirects there) | SUP-79  | built |
 | `/activity`, `/logs`                        | SUP-80  | built |
 | `/credits`, `/profile`, `/preferences`      | SUP-81  | built |
 | `/chat`                                     | SUP-180 | built |
@@ -158,9 +158,11 @@ rotating" state — a bundle exists but is outside the freshness window.
 
 ## Session handling
 
-Sign-in is Better Auth on router-api (ADR-004): OAuth (GitHub / Google), an
-emailed magic link, a password, and the one-shot bootstrap token. `src/lib/auth.ts`
-posts to `<api>/auth/*`; the API sets an HttpOnly session cookie **on its own
+Sign-in is Better Auth on router-api (ADR-004): OAuth (GitHub / Google), a
+one-time code mailed to the address — which is also how an account is created;
+there are no passwords — an emailed magic link where the deployment offers one,
+and the bootstrap token, which creates the first account and afterwards signs
+the administrator back in. `src/lib/auth.ts` posts to `<api>/auth/*`; the API sets an HttpOnly session cookie **on its own
 origin**, so every request from the console goes out with `credentials: 'include'`.
 
 That cookie is invisible here. A deployment puts the console and the API on

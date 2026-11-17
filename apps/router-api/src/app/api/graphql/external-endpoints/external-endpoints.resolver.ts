@@ -1,6 +1,8 @@
+import { evidenceDigestHex } from '@confidential-router/types';
 import { Inject, Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { OperatorAlertsService } from '../../../alerts/operator-alerts.service.js';
 import {
   AdminGuard,
   CurrentUser,
@@ -19,16 +21,23 @@ import {
   ExternalEndpointAdminService,
   type ExternalEndpointView,
   ExternalEvidenceService,
+  ExternalModelDiscoveryService,
   type ExternalModelSpec,
+  livenessOf,
+  type OutageThresholds,
 } from '../../../external-endpoints/index.js';
 import {
   AddTrustedMeasurementInputModel,
+  DiscoveredExternalModelModel,
   ExternalEndpointEventModel,
   ExternalEndpointEvidenceModel,
+  type ExternalEndpointLivenessModel,
   ExternalEndpointModel,
   type ExternalModelInputModel,
   ExternalModelModel,
   measurementSourceOf,
+  OperatorAlertTestModel,
+  PinExternalEndpointDigestInputModel,
   RegisterExternalEndpointInputModel,
   RotateExternalEndpointKeyInputModel,
   SetExternalEndpointEnabledInputModel,
@@ -47,7 +56,18 @@ import {
  */
 const EVENT_LIMIT = 50;
 
-/** Every OpenAI-compatible upstream serves chat; the rest an operator states. */
+/**
+ * Every OpenAI-compatible upstream serves chat; the rest an operator states.
+ *
+ * Still only `chat`, and that no longer understates the model: what the
+ * catalogue reports is derived from this list rather than equal to it, so a
+ * model registered without a word about its routes is listed — correctly — as
+ * serving chat, the legacy completions route, streaming and tool calling
+ * (`catalog/served-capabilities.ts`, SUP-450). Declaring `completions` as well
+ * is a statement about the *upstream* — that it serves the legacy route itself —
+ * and the only thing it changes is that the route is forwarded rather than
+ * translated.
+ */
 const DEFAULT_CAPABILITIES = ['chat'] as const;
 
 /**
@@ -85,7 +105,9 @@ export class ExternalEndpointsResolver {
   constructor(
     private readonly admin: ExternalEndpointAdminService,
     private readonly evidence: ExternalEvidenceService,
+    private readonly discovery: ExternalModelDiscoveryService,
     private readonly profiles: UserProfileService,
+    private readonly alerts: OperatorAlertsService,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
 
@@ -133,6 +155,24 @@ export class ExternalEndpointsResolver {
     return rows.map((row) => measurementModel(row, emails, usage));
   }
 
+  @Query(() => [DiscoveredExternalModelModel], {
+    name: 'discoverExternalModels',
+    description:
+      'Asks a VERIFIED_BY_THIS_ROUTER endpoint for its own GET /v1/models, through the attested egress — never ' +
+      'before the verdict: an endpoint that is not verified is refused with CONFLICT and nothing is sent. ' +
+      'Read-only; register the chosen models with updateExternalEndpoint. Restricted to auth.adminEmails, ' +
+      'because the call carries the stored upstream key.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async discoverExternalModels(@Args('id', { type: () => ID }) id: string): Promise<DiscoveredExternalModelModel[]> {
+    const models = await this.discovery.discover(id);
+    return models.map((model) => ({
+      ...model,
+      promptPer1mMicros: model.promptPer1mMicros === null ? null : String(model.promptPer1mMicros),
+      completionPer1mMicros: model.completionPer1mMicros === null ? null : String(model.completionPer1mMicros),
+    }));
+  }
+
   @Mutation(() => ExternalEndpointModel, {
     description:
       'Registers an upstream. It serves nothing until the egress sidecar reports a verdict admitting it, so the ' +
@@ -162,7 +202,8 @@ export class ExternalEndpointsResolver {
   @Mutation(() => ExternalEndpointModel, {
     description:
       'Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. ' +
-      'Restricted to auth.adminEmails.',
+      'Re-pointing withdraws the approved deployment, so an edit that means to keep one carries it as ' +
+      'evidenceDigest. Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
   async updateExternalEndpoint(
@@ -174,10 +215,14 @@ export class ExternalEndpointsResolver {
       id,
       baseUrl: input.baseUrl,
       models: input.models?.map(modelSpec),
+      evidenceDigest: input.evidenceDigest,
     });
     this.logger.warn(
       `External endpoint "${view.endpoint.name}" updated by ${user.email} — ${view.endpoint.baseUrl}, ` +
-        `${view.models.filter((model) => model.enabled).length} model(s) listed.`,
+        `${view.models.filter((model) => model.enabled).length} model(s) listed` +
+        // An approval is attributable, so the line that names the operator is the
+        // line that names the digest they approved — as `pinExternalEndpointDigest` does.
+        `${input.evidenceDigest ? `, deployment ${view.endpoint.pinnedEvidenceDigest} approved` : ''}.`,
     );
     return this.presentOne(view, user);
   }
@@ -217,9 +262,30 @@ export class ExternalEndpointsResolver {
     return this.presentOne(view, user);
   }
 
+  @Mutation(() => ExternalEndpointModel, {
+    description:
+      'Approves one deployment: pins the evidence digest this endpoint must publish, the second trust factor ' +
+      'beside the cloud measurement. Replaces any earlier pin — approving a redeploy is this call with the new ' +
+      'digest. Takes effect on the next check, which the sidecar runs at once. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async pinExternalEndpointDigest(
+    @CurrentUser() user: SessionUser,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: PinExternalEndpointDigestInputModel,
+  ): Promise<ExternalEndpointModel> {
+    const view = await this.admin.pinDigest(id, input.evidenceDigest);
+    this.logger.warn(
+      `External endpoint "${view.endpoint.name}" evidence digest ${view.endpoint.pinnedEvidenceDigest} pinned by ` +
+        `${user.email}.`,
+    );
+    return this.presentOne(view, user);
+  }
+
   @Mutation(() => TrustedMeasurementModel, {
     description:
-      'Admits one more cloud. It admits a cloud, never a deployment — any TEE on it satisfies the check. ' +
+      'Admits one more cloud — one of the two trust factors; each endpoint also needs its own deployment digest ' +
+      'pinned (pinExternalEndpointDigest). ' +
       'Takes effect on the next check, not after the re-attest interval. Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
@@ -271,6 +337,39 @@ export class ExternalEndpointsResolver {
     return true;
   }
 
+  /**
+   * Sends one alert now, so an operator can prove the channel works (SUP-535).
+   *
+   * The acceptance criterion for an alerting path is a message that arrived, and
+   * the only honest way to produce one on a live deployment is to ask it to send
+   * one: inducing a real outage on production to watch the mail go out is what
+   * cost 28 minutes once already. The message says in its own body that nothing is
+   * wrong, so an operator who finds it later cannot mistake it for an incident.
+   *
+   * Admin-only and logged with the name of whoever asked — it writes to every
+   * address the deployment alerts to, which is a thing to be accountable for
+   * rather than a read.
+   */
+  @Mutation(() => OperatorAlertTestModel, {
+    description:
+      'Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would ' +
+      'arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async sendOperatorAlertTest(@CurrentUser() user: SessionUser): Promise<OperatorAlertTestModel> {
+    const delivery = await this.alerts.sendTest(user.email);
+    this.logger.warn(
+      `Operator alert channel tested by ${user.email}: ${delivery.delivered.length} delivered, ` +
+        `${delivery.failed.length} refused${delivery.skipped ? `, skipped (${delivery.skipped})` : ''}.`,
+    );
+    return {
+      sent: delivery.delivered.length > 0,
+      delivered: delivery.delivered.length,
+      failed: delivery.failed.length,
+      skipped: delivery.skipped ? delivery.skipped.toUpperCase() : null,
+    };
+  }
+
   private async presentOne(view: ExternalEndpointView, user: SessionUser): Promise<ExternalEndpointModel> {
     const [presented] = await this.present([view], user);
     if (!presented) {
@@ -300,6 +399,10 @@ export class ExternalEndpointsResolver {
     );
     const summaries = await this.evidence.summariesFor(wantedDigests(views, timelines));
 
+    // One clock for the whole page: two rows of the same table saying "31h" and
+    // "31h01m" because the map took a millisecond would be a difference nobody
+    // meant to publish.
+    const now = new Date();
     return views.map(({ endpoint, models }) => {
       const forEndpoint = summaries.get(endpoint.id);
       const events = timelines.get(endpoint.id) ?? [];
@@ -313,9 +416,15 @@ export class ExternalEndpointsResolver {
         lastCheckedAt: endpoint.lastCheckedAt,
         lastStage: endpoint.lastStage,
         lastReason: endpoint.lastReason,
+        liveness: livenessModel(endpoint, this.config.externalEndpoints.outage, now),
         measurementSeen: endpoint.measurementSeen,
         measurementSource: measurementSourceOf(endpoint.measurementSource),
+        measurementInRegistry: endpoint.measurementInRegistry,
         evidenceDigestSeen: endpoint.evidenceDigestSeen,
+        evidenceDigestSeenHex: hexOf(endpoint.evidenceDigestSeen),
+        pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
+        pinnedEvidenceDigestHex: hexOf(endpoint.pinnedEvidenceDigest),
+        pinnedEvidence: evidenceOf(forEndpoint, endpoint.pinnedEvidenceDigest),
         pinnedCertFingerprint: endpoint.pinnedCertFingerprint,
         apiKeyPrefix: admin ? endpoint.apiKeyPrefix : null,
         // Retired rows stay in the catalogue so past generations keep their
@@ -352,7 +461,7 @@ export class ExternalEndpointsResolver {
 
 /**
  * Every (endpoint, digest) pair the page will render: each endpoint's current
- * digest, plus the digest on every timeline entry.
+ * digest, its pinned one, plus the digest on every timeline entry.
  *
  * Asked for by digest rather than "the latest snapshot per endpoint" because a
  * timeline entry has to show the evidence *that* verdict saw, which is a
@@ -368,6 +477,9 @@ function wantedDigests(
   for (const { endpoint } of views) {
     if (endpoint.evidenceDigestSeen) {
       wanted.push({ externalEndpointId: endpoint.id, evidenceDigest: endpoint.evidenceDigestSeen });
+    }
+    if (endpoint.pinnedEvidenceDigest) {
+      wanted.push({ externalEndpointId: endpoint.id, evidenceDigest: endpoint.pinnedEvidenceDigest });
     }
     for (const event of timelines.get(endpoint.id) ?? []) {
       if (event.evidenceDigest) {
@@ -411,6 +523,21 @@ function evidenceModel(snapshot: EvidenceSnapshot): ExternalEndpointEvidenceMode
   };
 }
 
+/**
+ * A stored digest as hex, or null. A value the parser refuses comes back null
+ * rather than failing the page — the console then shows the canonical column
+ * instead: it is the sidecar's report, and a screen that cannot render one row is
+ * worse than one that renders it in the other form.
+ */
+function hexOf(digest: string | null): string | null {
+  if (!digest) return null;
+  try {
+    return evidenceDigestHex(digest);
+  } catch {
+    return null;
+  }
+}
+
 function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {
   return {
     id: input.id,
@@ -420,6 +547,31 @@ function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {
     capabilities: input.capabilities ?? [...DEFAULT_CAPABILITIES],
     promptPer1mMicros: Number(input.promptPer1mMicros),
     completionPer1mMicros: Number(input.completionPer1mMicros),
+  };
+}
+
+/**
+ * The failure-run block, from the same pure rules the alert and `/health` use
+ * (SUP-517).
+ *
+ * Derived here rather than stored as a block, so a console row and a log line
+ * cannot drift: `livenessOf` is the one implementation of "is it serving, since
+ * when, and does that count as an outage", and the thresholds come from the same
+ * configuration the alerting reads.
+ */
+function livenessModel(
+  endpoint: ExternalEndpointView['endpoint'],
+  thresholds: OutageThresholds,
+  now: Date,
+): ExternalEndpointLivenessModel {
+  const liveness = livenessOf(endpoint, thresholds, now);
+  return {
+    reachability: liveness.reachability,
+    notServingSince: liveness.notServingSince,
+    lastSuccessAt: liveness.lastSuccessAt,
+    lastFailureAt: endpoint.lastFailureAt,
+    consecutiveFailures: liveness.consecutiveFailures,
+    outage: liveness.outage,
   };
 }
 
@@ -451,6 +603,7 @@ function eventModel(
     reason: row.reason,
     measurement: row.measurement,
     evidenceDigest: row.evidenceDigest,
+    evidenceDigestHex: hexOf(row.evidenceDigest),
     evidence,
   };
 }

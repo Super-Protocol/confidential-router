@@ -62,9 +62,8 @@
   /*
    * The brand accent is the one hue the product owns. It is a separate token
    * from `--primary` on purpose: `--primary` is the neutral high-contrast
-   * button colour, `--brand` is the identity, and the two must be swappable
-   * independently. `data-accent` on <html> picks one of the four curated
-   * accents from the prototype; the default is the prototype's default.
+   * button colour, `--brand` is the identity. There is exactly one accent
+   * (indigo); the prototype's alternative accents were design exploration.
    */
   --brand: oklch(0.62 0.19 264);
   --brand-foreground: oklch(0.145 0 0);
@@ -120,54 +119,6 @@
   --brand-border: oklch(0.34 0.07 264);
 
   color-scheme: dark;
-}
-
-/*
- * The four curated accents from the prototype's `Look → accent` control.
- * Each also carries the muted/border pair used by the attestation callouts,
- * because deriving them at runtime with `color-mix` costs contrast control.
- */
-[data-accent="emerald"] {
-  --brand: oklch(0.72 0.17 162);
-  --brand-foreground: oklch(0.145 0 0);
-  --brand-emphasis: oklch(0.42 0.11 162);
-  --brand-muted: oklch(0.95 0.03 162);
-  --brand-border: oklch(0.85 0.07 162);
-}
-
-.dark[data-accent="emerald"] {
-  --brand-emphasis: oklch(0.88 0.12 162);
-  --brand-muted: oklch(0.21 0.03 162);
-  --brand-border: oklch(0.32 0.06 162);
-}
-
-[data-accent="lime"] {
-  --brand: oklch(0.72 0.18 118);
-  --brand-foreground: oklch(0.145 0 0);
-  --brand-emphasis: oklch(0.42 0.12 118);
-  --brand-muted: oklch(0.95 0.04 118);
-  --brand-border: oklch(0.85 0.09 118);
-}
-
-.dark[data-accent="lime"] {
-  --brand: oklch(0.85 0.2 118);
-  --brand-emphasis: oklch(0.9 0.14 118);
-  --brand-muted: oklch(0.23 0.04 118);
-  --brand-border: oklch(0.34 0.08 118);
-}
-
-[data-accent="violet"] {
-  --brand: oklch(0.62 0.2 300);
-  --brand-foreground: oklch(0.145 0 0);
-  --brand-emphasis: oklch(0.45 0.19 300);
-  --brand-muted: oklch(0.95 0.03 300);
-  --brand-border: oklch(0.86 0.07 300);
-}
-
-.dark[data-accent="violet"] {
-  --brand-emphasis: oklch(0.83 0.13 300);
-  --brand-muted: oklch(0.24 0.05 300);
-  --brand-border: oklch(0.34 0.08 300);
 }
 
 @theme inline {

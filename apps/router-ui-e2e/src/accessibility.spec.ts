@@ -31,11 +31,12 @@ async function signInOptions(
   page: import('@playwright/test').Page,
   offers: Partial<{
     bootstrap: boolean;
+    adminRecovery: boolean;
     github: boolean;
     google: boolean;
+    emailCode: boolean;
+    emailCodeLength: number;
     magicLink: boolean;
-    password: boolean;
-    passwordMinLength: number;
     inviteRequired: boolean;
   }>,
 ): Promise<void> {
@@ -44,11 +45,12 @@ async function signInOptions(
       signInOptions: {
         __typename: 'SignInOptions',
         bootstrap: false,
+        adminRecovery: false,
         github: true,
         google: true,
+        emailCode: false,
+        emailCodeLength: 6,
         magicLink: false,
-        password: false,
-        passwordMinLength: 12,
         inviteRequired: false,
         ...offers,
       },
@@ -71,10 +73,40 @@ test.describe('accessibility', () => {
   }
 
   test('the sign-in screen has no serious axe violations', async ({ page }) => {
-    await signInOptions(page, { magicLink: true });
+    // Everything the card can show at once: both providers, both mail paths
+    // and the administrator's token.
+    await signInOptions(page, { emailCode: true, magicLink: true, adminRecovery: true });
 
     await page.goto('/login');
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Email me a code' })).toBeVisible();
+
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
+
+  test('the code step has no serious axe violations', async ({ page }) => {
+    // Where every sign-in by mail ends up, and every sign-up too (SUP-269).
+    await signInOptions(page, { emailCode: true });
+    await page.route('**/auth/email-otp/send-verification-otp', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' }),
+    );
+
+    await page.goto('/login');
+    await page.getByLabel('Email').fill('developer@example.com');
+    await page.getByRole('button', { name: 'Email me a code' }).click();
+    await expect(page.getByLabel('Code', { exact: true })).toBeVisible();
+
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
+
+  test('the administrator sign-in screen has no serious axe violations', async ({ page }) => {
+    await signInOptions(page, { adminRecovery: true });
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Administrator: use the first-sign-in token' }).click();
+    await expect(page.getByLabel('First-sign-in token')).toBeVisible();
 
     const violations = await auditPage(page);
     expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
@@ -93,9 +125,8 @@ test.describe('accessibility', () => {
   });
 
   test('the sign-up screen has no serious axe violations', async ({ page }) => {
-    // The screen everyone after the first account uses on a mailer-less
-    // deployment, and the only one in the console with two labelled secrets.
-    await signInOptions(page, { github: false, google: false, password: true });
+    // The screen an invitation link opens, and the one "Create one" leads to.
+    await signInOptions(page, { github: false, google: false, emailCode: true });
 
     await page.goto('/signup');
     await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();
@@ -147,7 +178,7 @@ test.describe('accessibility', () => {
        */
       await page.addInitScript((value) => window.localStorage.setItem('theme', value), theme);
       await page.goto('/dev/attestation');
-      await page.getByRole('button', { name: 'Inspect upstream attestation' }).click();
+      await page.getByRole('button', { name: 'Inspect upstream attestation' }).first().click();
 
       const dialog = page.getByRole('dialog', { name: /Attestation for this external upstream/i });
       await expect(dialog).toBeVisible();
@@ -161,6 +192,40 @@ test.describe('accessibility', () => {
       expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
     });
   }
+
+  test('a failing upstream panel claims nothing about the composer', async ({ page }) => {
+    /*
+     * SUP-618, in a browser. The panel used to render tier 1's failure copy —
+     * "so the composer stays locked" — over an upstream whose panel gates
+     * nothing, and on production 0.19.8 it printed that while the composer
+     * answered a real turn. The state is unreachable on any stand (the relay
+     * serves only a publication this router already verified), so the review
+     * route is where it can be looked at at all.
+     */
+    await page.goto('/dev/attestation');
+    await page.getByRole('button', { name: 'Inspect upstream attestation' }).last().click();
+
+    const dialog = page.getByRole('dialog', { name: /Attestation for this external upstream/i });
+    await expect(dialog.getByText('Upstream evidence did not check out')).toBeVisible();
+    await expect(dialog.getByText(/composer/i)).toHaveCount(0);
+
+    // And what is true instead: the panel gates nothing, the egress pinned the
+    // hop, and the check that actually failed says so in its own words.
+    await expect(dialog.getByText(/unlocks nothing and locks nothing/)).toBeVisible();
+    await expect(dialog.getByText(/its egress attested and pinned/)).toBeVisible();
+    await expect(dialog.getByText(/outside the 24-hour window/)).toBeVisible();
+    await expect(dialog.getByRole('tab', { name: 'Deployment graph' })).toHaveCount(0);
+
+    /*
+     * Audited too, because this state is where the panel's scrolling body holds
+     * nothing focusable — no tabs, no graph, just the checks that explain the
+     * failure — and a keyboard reader has to be able to reach them. The longer
+     * caveat above is what first pushed the list past the fold and made
+     * `scrollable-region-focusable` fire; `inspector.tsx` carries the tab stop.
+     */
+    const violations = await auditPage(page);
+    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+  });
 
   test('the deployment graph is walkable with the keyboard, node by node', async ({ page }) => {
     await page.goto('/dev/attestation');

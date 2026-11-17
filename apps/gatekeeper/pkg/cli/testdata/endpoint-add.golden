@@ -1,0 +1,6 @@
+Added endpoint "router" (127.0.0.1:8787 → https://api.router.example.com) to $TMP/config.yaml
+
+It has no pinned evidenceDigest, so it cannot admit traffic yet.
+
+Next: review what the endpoint publishes, then pin it
+  gatekeeper endpoint trust add router --from-upstream

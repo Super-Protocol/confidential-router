@@ -98,6 +98,19 @@ The artboard ships two diagrams and the breakpoint decides; this is how we learn
 | `variant` | string | yes | `horizontal` `vertical` | Which of the artboard's two diagrams is rendered at this width. |
 | `viewport_bucket` | string | yes | `mobile` `tablet` `desktop` `wide` | Coarse width bucket at the moment the diagram appeared: mobile <768, tablet <1024, desktop <1440, wide otherwise. Buckets, not pixels — a pixel width is a high-cardinality property and a weak fingerprinting signal. |
 
+### `explainer_video_opened`
+
+**Fires when** the explainer's click-to-load facade is activated (click, or Enter on the focused link) — **before the player is created**, so at the moment it is recorded nothing has been requested from YouTube.
+
+**Owner** SUP-542 · **transport** `browser`
+
+The click is ours; the playback is YouTube's and is not measured. No player API is loaded, so there is no progress, no completion and no watch time anywhere in this — and nothing goes looking for any. Firing before the swap is deliberate twice over: it is the moment the visitor asked, and it is the moment before anything leaves for a third party, which is the boundary `/privacy`'s YouTube row discloses.
+
+| Property | Type | Required | Values | Meaning |
+| --- | --- | --- | --- | --- |
+| `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
+| `player` | string | yes | `inline` `youtube` | Where the visitor ended up watching. `inline` is the `youtube-nocookie.com` embed the page swaps in; `youtube` is the watch page a modified click (⌘/Ctrl/Shift/middle) opened in a new tab instead — that click is left to the browser, as it always was, but it is still a visitor choosing to watch, and counting only the inline case would undercount a habit this audience has. |
+
 ### `code_copied`
 
 **Fires when** a copy button on a code sample succeeds (the clipboard write resolved), or the sample is copied with the keyboard from inside its container.
@@ -107,7 +120,7 @@ The artboard ships two diagrams and the breakpoint decides; this is how we learn
 | Property | Type | Required | Values | Meaning |
 | --- | --- | --- | --- | --- |
 | `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
-| `snippet` | string | yes | `openai_sdk` `curl` `python` `node` `gatekeeper_sdk` `install` `gatekeeper_setup` `gatekeeper_verdict` | Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value. Named from the landing page as built (SUP-144): the hero's OpenAI SDK example, the four code tabs (`curl`, Python, Node, and the same call through a local Gatekeeper), the Gatekeeper install one-liner, its three setup commands, and its verdict output. The original list was written before the page existed and named two blocks — the base URL and a model slug — that carry no copy button. |
+| `snippet` | string | yes | `openai_sdk` `curl` `python` `node` `gatekeeper_sdk` `install` `gatekeeper_setup` `gatekeeper_test_build` `gatekeeper_verdict` | Which sample was copied. The closed set is the samples the page ships; adding a sample adds a value. Named from the landing page as built (SUP-144): the hero's OpenAI SDK example, the four code tabs (`curl`, Python, Node, and the same call through a local Gatekeeper), the Gatekeeper install one-liner, its setup commands, and its verdict output. SUP-253 added `gatekeeper_test_build`, the collapsed block for a cloud the Super Protocol registry has not signed. The original list was written before the page existed and named two blocks — the base URL and a model slug — that carry no copy button. |
 
 ### `faq_opened`
 
@@ -131,6 +144,18 @@ Plausible's outbound-link extension would report these as `Outbound Link: Click`
 | --- | --- | --- | --- | --- |
 | `position` *(shared)* | string | yes | `nav` `hero` `how_it_works` `verify` `models` `pricing` `faq` `closing` `footer` | [As above](#shared-properties). |
 | `destination` | string | yes | `docs` `api_reference` `github` `attestation` `status` `superprotocol` | Which property the link leads to. Closed set: an unrecognised host is not sent at all rather than widening the breakdown. |
+
+### `waitlist_click`
+
+**Fires when** the waitlist link is activated on the invite-only build of the landing page.
+
+**Owner** SUP-202 · **transport** `browser`
+
+Listed here by SUP-542 to close a gap, not because the emission is new: the landing has been sending this event since SUP-202 and the taxonomy did not name it. The address it opens is a `mailto:`, which is why `docs_link_click` never fires on it — `destinationOf` cannot read a destination out of one — and why the anchor is marked instead.
+
+| Property | Type | Required | Values | Meaning |
+| --- | --- | --- | --- | --- |
+| `position` *(shared)* | string | yes | `nav` `hero` `how_it_works` `verify` `models` `pricing` `faq` `closing` `footer` | [As above](#shared-properties). |
 
 ## Console — PostHog, through router-api
 
@@ -176,7 +201,7 @@ The first identified event: `distinct_id` is the account's UUID. No email, no na
 | --- | --- | --- | --- | --- |
 | `has_invite` *(shared)* | boolean | yes | — | [As above](#shared-properties). |
 | `campaign` *(shared)* | string | no | — | [As above](#shared-properties). |
-| `method` | string | yes | `password` `magic_link` `github` `google` | Which of ADR-004's three paths created the account. |
+| `method` | string | yes | `password` `email_code` `magic_link` `github` `google` | Which sign-in path created the account. `email_code` (SUP-269) is the emailed one-time code; `password` is no longer a sign-up path and remains for accounts already reported under it and for the bootstrap account. |
 
 ### `invite_redeemed`
 
@@ -219,19 +244,98 @@ The event the whole campaign is judged on: an account that redeemed $100 and nev
 | `model_slug` | string | yes | — | The catalogue slug of the model the first request went to — a closed set in practice, since it can only be a model the router serves. |
 | `hours_since_signup` | integer | yes | — | Whole hours between account creation and this request, floored. Hours rather than a timestamp difference computed in the tool, so the number survives export. |
 | `had_invite_grant` | boolean | yes | — | Whether this workspace's ledger holds an invitation grant — the split that says whether the $100 did anything. |
+| `client` | string | yes | `vscode-chat` `cline` `roo` `continue` `cursor` `claude-code` `openai-python` `openai-node` `litellm` `langchain` `curl` `other` | Which client sent the activating request. [The closed set below](#the-client-dimension); anything unrecognised is `other`. |
+
+### The `client` dimension
+
+A closed set of twelve values, derived in the `/v1` gateway and stored on `generations.client` as well as
+carried on `first_request_sent` (SUP-466). It exists because SUP-447 spent two days establishing which
+editor a tester was using from screenshots, while the answer was in a header on every request he sent —
+and because behaviour differs sharply between these clients, some of them failing in ways the user never
+reports.
+
+**The raw `User-Agent` is never stored and never sent.** It is a fingerprinting vector, and this
+repository already treats it as one: `invite_redemptions.userAgentHash` keeps a salted hash for abuse
+review and the address itself never lands. What the column and the event hold is a label with no version
+in it — `cline`, not `cline/3.2.1` — no operating system, no architecture, no editor build and no locale.
+There is no `other_raw` escape hatch, deliberately: that would be the agent string with extra steps.
+
+| Value | Matched on | A real string that produces it |
+| --- | --- | --- |
+| `vscode-chat` | `copilotchat` | `GitHubCopilotChat/0.69.0` |
+| `cline` | `cline` | `Cline/SDK` |
+| `roo` | `roocode` | `RooCode/3.54.0` |
+| `continue` | `continue/` | `Continue/IDE` |
+| `cursor` | `cursor/` | `Cursor/1.0` |
+| `claude-code` | `claudecli/`, `claudecode/` | `claude-cli/2.1.291 (external, sdk-cli)` |
+| `openai-python` | `openai/python` | `OpenAI/Python 3.35.1` |
+| `openai-node` | `openai/js` | `OpenAI/JS 5.23.2` |
+| `litellm` | `litellm` | `litellm/1.106.2` |
+| `langchain` | `langchain` | `langchainjs-openai/1.0.0 ((node/v22.23.2; linux; x64))` |
+| `curl` | `curl/` | `curl/8.5.0` |
+| `other` | nothing above | `node`, `axios/1.20.0`, no `User-Agent` at all |
+
+Three rules make the table readable, and `client-dimension.spec.ts` holds every string above with the
+capture it came from:
+
+1. **Unrecognised is `other`, and so is absent.** A request with no `User-Agent` is classified, not
+   skipped — `other` is a countable population, where null would mean "nobody looked". The column is
+   nullable only for the rows written before the dimension existed.
+2. **Extend by pull request, never by passthrough.** A large `other` bucket is the signal to add a row;
+   its size alone is the evidence, so nothing needs to be kept to find out.
+3. **Needles are matched normalised** — lower case, `-`, `_` and spaces removed — and the first match
+   wins. `roo` is tried before `cline` because Roo Code is a Cline fork that still carries `Roo-Cline` in
+   its strings; `langchain` and `litellm` before the OpenAI SDKs, because they wrap them. The needles are
+   as narrow as the captured strings allow: `copilotchat`, not `copilot`, so a future Copilot that is not
+   VS Code's chat lands in `other` rather than under a label that is wrong about it.
+
+Which headers are read, and how much of each, is part of the rule:
+
+- **`User-Agent` and `X-OnBehalf-Extension-Id`** are written by the client's own HTTP stack — a product
+  string rather than free text — so a needle matches anywhere inside them. The second is VS Code's, not
+  the caller's: it carries `github.copilot-chat/<version>` and survives an agent string the editor's
+  fetch chose rather than the editor itself.
+- **`X-Title`** is the OpenRouter-convention app name, and the **caller picks its value**. It is matched
+  only when the whole value *is* a label — `X-Title: Cline`, `X-Title: Roo Code` — never as a substring,
+  because a substring rule would read `X-Title: Declined requests` as `cline` and `X-Title: My Copilot
+  Dashboard` as `vscode-chat`. A wrong label is worse than an honest `other`, by the same argument that
+  keeps the agent string out of the column. Taking the value at face value when it names a client exactly
+  is not a risk of the same kind — that is the caller telling us what it is, and it is the only signal
+  Cline gives on the path where it sets the header at all.
+- **`HTTP-Referer`** is read by nothing, though these clients send it: Roo Code's value is
+  `https://github.com/RooVetGit/Roo-Cline`, which names the editor it was forked from rather than itself.
+
+Three of the twelve are reachable only from some configurations, which is a fact about the clients rather
+than about the mapping, and the `other` bucket is where the difference goes:
+
+- **Cline 4.1.25** sends `user-agent: node` or an `ai-sdk/openai-compatible/…` string against an
+  OpenAI-compatible endpoint, naming neither itself nor its editor. It identifies itself only on its own
+  routing provider, which is where `Cline/SDK` and `X-Title: Cline` come from.
+- **Continue 2.0.0** sends `OpenAI/JS 5.23.2` — it is the OpenAI Node SDK, and is counted as
+  `openai-node`. `Continue/IDE` is sent only to one specific provider.
+- **LiteLLM** and **LangChain Python** both announce themselves as `OpenAI/Python` on the path most
+  people use; LiteLLM sends `litellm/<version>` only from its own HTTP handler, and only LangChain **JS**
+  carries a `langchain` token.
+
+Nothing in this derivation reads the request body. Those clients *are* distinguishable by their system
+prompts, and that is exactly why we do not look: a label concluded from prompt text is a conclusion
+drawn from content, which is the one thing the metering path does not do.
 
 ### `model_requested`
 
-**Fires when** the `requestModel` mutation has committed a row.
+**Fires when** a `/v1` request names a model and the router has decided whether it will serve it — once per request, before anything is forwarded, on the success path and on every refusal alike. A request that names no model at all sends nothing: there is no demand to record.
 
-**Owner** SUP-146 · **transport** `server`
+**Owner** SUP-542 · **transport** `server`
 
-The requested model name and any note stay in our database, where SUP-146's admin aggregation and CSV export read them. They are not event properties: free text is a breakdown with one row per request, and it is the one field on either surface where a visitor could type something personal.
+Re-pointed by SUP-542 from the never-shipped `requestModel` console form (SUP-146) to the `/v1` path, which is where the question is actually answered: which model people ask for, how often, and whether anyone asks for one we do not serve. Nothing here is read from the request body beyond the `model` field — no prompt, no completion, no system text. Idempotency `uuid` is derived from the generation id the router mints for the request, so the per-request event stays exactly once per request.
 
 | Property | Type | Required | Values | Meaning |
 | --- | --- | --- | --- | --- |
-| `source` | string | yes | `models_page` `empty_state` `dashboard` | Which screen the request was raised from. |
-| `has_details` | boolean | yes | — | Whether the requester wrote anything in the free-text field — how much the field earns its place, without reading it. |
+| `model_slug` | string | yes | — | The model the request asked for, as it asked — lower-cased, trimmed, capped at 64 characters, and only when it has a model identifier's shape (`[a-z0-9]`, then any of `. _ : / + -`). Anything else is reported as `unparseable` rather than passed through. |
+| `result` | string | yes | `served` `unknown_model` `out_of_key_scope` `not_verified` `unsupported_route` | What the router decided. `unknown_model` is the roadmap signal — somebody asked for a model we do not have. `not_verified` is fail-closed working rather than demand. |
+| `route` | string | yes | `chat` `completions` `embeddings` | Which OpenAI-compatible route the request came in on. |
+
+**On `model_slug` and convention 2.** It is the one property in this list whose value a caller supplies, so it is bounded rather than trusted: the shape check above, a 64-character cap, and a single `unparseable` row for everything else. In practice a client's own configuration writes this field, so the breakdown is the handful of ids the OpenAI ecosystem uses — and that is precisely the breakdown the question needs. A caller who puts prose there buys one row called `unparseable`, not a row of their own.
 
 ### `feedback_grant_applied`
 
@@ -278,11 +382,19 @@ Settings the events assume. They are UI state, not repository state, so they are
 
 **Plausible** — site `router.superprotocol.com`, EU-hosted, cookieless.
 
-- Script variant: `script.pageview-props.tagged-events.js`. `pageview-props` is what carries the
-  properties on `landing_view` without a second request; `tagged-events` is what lets the markup declare
-  a custom event with a class rather than shipping a handler per button.
+- Script variant: **`script.manual.js`**, which is what the landing ships and what
+  `router.superprotocol.com` serves today — not the `pageview-props.tagged-events` variant this
+  paragraph named until SUP-542 checked it. The manual variant is required rather than preferred:
+  `landing_view` must not be sent until the invitation code has left the URL (ADR-002 §3), and an
+  automatic pageview fires before any script of ours can take it out. Properties ride the manual call's
+  own second argument, so `pageview-props` buys nothing here; `tagged-events` buys nothing either,
+  because every event on this page is sent by `public/enhance.js` rather than declared with a class.
+- **Custom properties have to be allowed in the site's settings**, one by one, or Plausible counts the
+  event and silently drops the properties. That is UI state no deploy can carry, and it is the one
+  setting that makes `has_invite`, `campaign`, the `utm_*` set, `player` and `snippet` readable rather
+  than merely sent.
 - Goals, created from the names in this document: `cta_click`, `code_copied`, `faq_opened`,
-  `docs_link_click`, `diagram_variant_shown`.
+  `docs_link_click`, `diagram_variant_shown`, `explainer_video_opened`, `waitlist_click`.
 - Outbound-link tracking stays **off**: `docs_link_click` reports a closed set of destinations, where the
   extension would report one row per URL.
 - Optional, recommended to SUP-147: proxy `/js/script.js` and `/api/event` through the landing's ingress
@@ -319,6 +431,16 @@ configured in Plausible's UI.
 Note that `POSTHOG_PROJECT_KEY` is read by `router-api`, not by the browser — with the console reaching
 PostHog only through our own server (ADR-006 §3), it never needs to travel in the console's runtime
 public config (SUP-100). It stays a deployment value rather than an image build argument either way.
+
+Which means a deployment can be rebuilt without it, so **whether it arrived is checkable**:
+`GET /health` reports `analytics: { status: "configured" | "disabled", dropped: <count> }` — the sink the
+process actually built, plus a monotonic count of events lost since boot (SUP-464). A deployment that
+should be capturing and reads `disabled` is missing the variable; `dropped` climbing while `configured` is
+PostHog refusing or unreachable. Neither ever makes `/health` fail — see `docs/contracts/router-api.md`,
+`GET /health`.
+
+The chart does not publish `/health`, so on a deployment this is read through `GET /admin/health` — the
+same document behind the operator's session (SUP-479).
 
 ## Verification (SUP-148)
 

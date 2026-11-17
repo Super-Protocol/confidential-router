@@ -123,12 +123,16 @@ describe('the evidence export', () => {
     expect(names).toContain(`snapshots/${catalog.snapshotId}/bundle.json`);
   });
 
-  it('says in the archive that the router never verified any of it', async () => {
+  it('says in the archive that nothing in it is a verdict, and who published what', async () => {
     const response = await download(await link());
     const archive = await JSZip.loadAsync(response.body);
     const manifest = JSON.parse((await archive.file('manifest.json')?.async('string')) ?? '{}');
 
-    expect(manifest.note).toMatch(/never verifies/);
+    expect(manifest.note).toMatch(/not a verdict/);
+    // The period's generations went through one of this deployment's own
+    // endpoints, so that is the only provenance the archive has to explain.
+    expect(Object.keys(manifest.origins)).toEqual(['own']);
+    expect(manifest.origins.own).toMatch(/Published by this deployment/);
   });
 
   it('refuses a request with no token, and one with a forged token', async () => {

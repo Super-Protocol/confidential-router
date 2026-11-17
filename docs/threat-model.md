@@ -1,7 +1,8 @@
 # Threat model
 
 Scope: Confidential Router (router-api, router-ui, LiteLLM + model servers in one Swarm Cloud cluster
-space) and the user-side Gatekeeper. Companion to ADR-002 and ADR-003.
+space), the user-side Gatekeeper, and — since ADR-008 — the router's **attesting egress** toward model
+endpoints registered at runtime in other deployments. Companion to ADR-002, ADR-003 and ADR-008.
 
 How the pieces this reasons about are configured and run:
 [`gatekeeper.md`](gatekeeper.md) (trusted roots, pins, policies, denials),
@@ -18,6 +19,7 @@ digest — from a clean clone in ten minutes.
 | API keys, session cookies | user | secrecy |
 | Credit balance, metering counters | user & operator | integrity |
 | Platform PKI root key, TLS private keys | platform | secrecy — never leave the TEE |
+| The upstream API key of a registered external endpoint | router operator | secrecy — usable for proxying, never readable back (ADR-008, T15) |
 
 ## Trust boundaries
 
@@ -28,6 +30,18 @@ digest — from a clean clone in ten minutes.
 └────────────────────────────────┘      └─────────────────────────────────────────────────────────────┘
                                                    ▲ evidence signed by platform PKI (TEE-attested root)
 ```
+
+Since ADR-008 there is a second boundary, with the router on the verifying side of it:
+
+```
+┌─ this cluster space ─────────────────────────┐      ┌─ another deployment, another cloud ──────┐
+│ router-api ──▶ egress sidecar (verifier) ────│ TLS  │ ingress ─▶ an OpenAI-compatible model    │
+│                admin trust list, pinned leaf │─────▶│ /.well-known/swarm-evidence              │
+└──────────────────────────────────────────────┘      └──────────────────────────────────────────┘
+```
+
+It is crossed only by traffic for a model an admin registered, and only while this router holds a live
+verdict about the deployment on the other side of it.
 
 Roots of trust the user accepts, explicitly, in the gatekeeper config:
 
@@ -49,8 +63,13 @@ handshakes with `InsecureSkipVerify` and relies on channel binding to the publis
   written to the database, logs, metrics or error reports. This property is part of the canonical
   snapshot the user pins (router image digest + config), i.e. it is verifiable, not promised. Enforced in
   code by: streaming passthrough without buffering beyond token counting; a log sanitiser that drops
-  `messages`, `prompt`, `input`, `choices`, `delta`; and a unit test that fails if a `Generation` column
-  can hold content.
+  `messages`, `prompt`, `input`, `content`, `choices`, `delta`, `text`, `completion` and `embedding`
+  (`DEFAULT_CONTENT_KEYS` in `libs/server-common/src/lib/logging/redact.ts`, a second list beside the
+  credential redactor and matched on the whole key so that `contextLength` and `contentType` survive); a
+  log line about an upstream's error body that carries the error class, the field path and the body's
+  size but never its text (`describeUpstreamError` in `apps/router-api/src/app/api/v1/upstream-failure.ts`
+  — a model server refusing a request is the one party on this path that quotes it back); and a unit test
+  that fails if a `Generation` column can hold content.
 - Its own published evidence (fetched bundle) — a fact about the platform, stored as `EvidenceSnapshot`.
 
 ## What the router cannot see (by construction)
@@ -58,12 +77,15 @@ handshakes with `InsecureSkipVerify` and relies on channel binding to the publis
 - **Whether a gatekeeper exists**, how many, where, or what they concluded. There is no registration
   endpoint, no verdict header, no callback, no "verified" flag in any table. The gatekeeper only ever
   sends the user's original HTTP request upstream (ADR-003 §6).
-- Verification results of anyone, including itself: it decodes but never verifies its own bundle
-  (ADR-002).
+- Verification results **about itself**: it decodes but never verifies its own bundle (ADR-002), and no
+  table holds a verdict about one of its own endpoints. Since ADR-008 it does hold verdicts about
+  *other* deployments — the external endpoints an admin registered, which it is the paying client of.
+  That is the gatekeeper's own position, in the other direction, and it changes nothing here: a verdict
+  about someone else is no oracle about this deployment's own verification.
 - TLS private keys — terminated by the platform ingress inside the TEE; the router pod holds none.
 - The platform's signing key — evidence is produced by the platform, the router cannot forge it.
 
-## Why verdicts never reach the router
+## Why verdicts about this deployment never reach the router
 
 1. **Incentive separation.** The party that meters and bills must not be the party that reports
    trustworthiness; otherwise "verified ✓" is a marketing claim by the seller. The proof is produced on
@@ -83,19 +105,35 @@ handshakes with `InsecureSkipVerify` and relies on channel binding to the publis
 | T3 | Replay of an old bundle for a since-changed deployment | `issuedAt` freshness (`maxBundleAge`, default 24 h) + cert rotation invalidates old `certFingerprint` | window ≤ maxBundleAge for a deployment whose cert did not rotate |
 | T4 | Rogue/compromised platform PKI root | Only user-listed roots are trusted; roots are named and fingerprinted; rotation = user action | trust in the platform root is an explicit assumption (see roots 1–2) |
 | T5 | Router compromise (bug, malicious operator code) | Router holds no signing key ⇒ cannot mint evidence; compromise changes the image ⇒ digest changes; prompt content is not stored ⇒ no data at rest | in-memory access to live prompts while the compromised image runs — detectable only if the user re-checks the digest |
-| T6 | Unattested model backend | Backends live in the same snapshot as the router; pinning covers their images and config (ADR-002 §4) | a backend outside the cluster space is out of scope and must not be configured |
+| T6 | Unattested model backend | Backends live in the same snapshot as the router; pinning covers their images and config (ADR-002 §4) | **Deliberately reversed for external endpoints (ADR-008 §9).** A backend outside the cluster space used to be out of scope and forbidden; an admin may now register one, and what stands in for the user's pin is that *the router itself* attests it before proxying — verified evidence, a measurement on the admin's list, a pinned certificate, fail-closed re-attestation. The user's own pin does **not** reach it; that residual is T14. For a backend nobody registered, the original rule stands |
 | T7 | Gatekeeper misconfiguration (empty pins, wrong root) | Schema validation (`minItems`), fail-closed default, `policy test` offline, TUI shows stage of failure | fail-open is a documented foot-gun |
 | T8 | Gatekeeper fed a poisoned policy that always allows | Default pin policy is built in and ANDed; user policies can only narrow | none |
 | T9 | API key theft | Keys stored hashed (SHA-256) with a displayable prefix; per-key model scope, spend limit, expiry; revoke | client-side secret hygiene |
-| T10 | Prompt leakage via logs/metrics/errors | Log sanitiser; content-free `Generation`; error bodies never echo input | LiteLLM/model server logging is the operator's config and is inside the pinned snapshot |
+| T10 | Prompt leakage via logs/metrics/errors | Log sanitiser (a content key list beside the credential one, SUP-497); content-free `Generation`; an upstream's error body is summarised into a log line, never written to one — its wording still reaches the caller, which is where SUP-448 needed it | LiteLLM/model server logging is the operator's config and is inside the pinned snapshot |
 | T11 | Billing manipulation | Ledger append-only with idempotency keys; Stripe webhook signature; prices frozen per generation | — |
 | T12 | Evidence poller as SSRF vector | `evidenceUrl` override is config-only (operator), never user input | — |
 
+### The attesting egress (ADR-008 §9)
+
+Toward an external upstream the router occupies exactly the position the gatekeeper occupies toward the
+router: a paying client that fetches the upstream's evidence, verifies it, binds the channel, and refuses
+to send traffic without a valid verdict. These are the threats that creates, as ADR-008 §9 tables them —
+that table and the SUP-221 rulings are the review of record.
+
+| # | Threat | Mitigation | Residual |
+| --- | --- | --- | --- |
+| T13 | Malicious or compromised deployment on a *trusted cloud* registers as an upstream (a measurement admits a cloud, never a deployment) | **Closed by SUP-252: trust is two-factor.** The cloud's measurement must be on the list *and* the deployment's evidence digest must equal the one an admin pinned for that endpoint, so a trusted cloud no longer admits every deployment on it. A redeploy fails closed at `digest-mismatch` until the new digest is approved from the old-vs-new evidence diff | The admin approving a digest is trusted to read what it stands for — the same trust they hold for the list (T16) |
+| T14 | Prompt confidentiality now extends to the upstream: the router forwards content to another operator's TEE | Evidence verified and channel pinned before any byte; external models labelled everywhere; the upstream's evidence relayed for the user's own in-browser verification; upstream logging behaviour is inside *its* attested snapshot | Users do not pin upstream digests; they trust the admin's list and the admin's pin |
+| T15 | Upstream API key theft | Encrypted at rest (AES-256-GCM) under a Secret-fed key, write-only API, prefix display, rotation; egress only through the loopback sidecar to the pinned upstream | Plaintext in router-api memory while proxying — the same class as T5 |
+| T16 | Admin abuse of the trust list or a pin (adds a rogue cloud's measurement, approves a rogue deployment) | Every trust mutation — a measurement added or withdrawn, a digest pinned — is an event and a WARN log naming the operator; the external-endpoint list with each pinned digest, and the trust list, are read-only to any signed-in user (SUP-221 ruling 3) | An admin is already trusted for invitations; this raises the stakes |
+| T17 | Evidence replay / stale upstream bundle | The same bounds as the user-side gatekeeper: `maxBundleAge` 24 h, forced re-attest ≤ TTL, and a certificate rotation re-binds through the platform's re-signed bundle | Window ≤ min(TTL, bundle age), as in T3 |
+
 ## How these are exercised
 
-T1, T2, T4 and T7 are not left as prose. `tools/mock-evidence-host` can rotate the deployment, rotate
-the certificate without re-signing the binding, or re-chain to a root the user never trusted, on
-demand; the suites hold each of them to the stage that must refuse it:
+T1, T2, T4, T7 and the egress threats are not left as prose. `tools/mock-evidence-host` can rotate the
+deployment, rotate the certificate without re-signing the binding, or re-chain to a root the user never
+trusted, on demand, and `tools/demo`'s external stand can move an upstream cloud's launch measurement or
+withdraw its hardware report; the suites hold each of them to the stage that must refuse it:
 
 | Threat | Made to happen by | Asserted in |
 | --- | --- | --- |
@@ -104,7 +142,14 @@ demand; the suites hold each of them to the stage that must refuse it:
 | T3 stale bundle | `issuedAtSkewMs` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: jws`) |
 | T4 wrong root | `useOtherCloud()` | `tools/mock-evidence-host/src/server.spec.ts` (`stage: untrusted-root`) |
 | T7 empty pins | a fresh `gatekeeper init` | `apps/gatekeeper/pkg/cli` (`config validate`, "never admits") |
-| T10 prompt leakage | — | `apps/router-api` (`Generation` column test, log sanitiser) |
+| T10 prompt leakage | an upstream 400 quoting the rejected field | `libs/server-common/src/lib/logging/redact.spec.ts` (one test per content field name), `apps/router-api/src/app/api/v1/upstream-failure.spec.ts` (`describeUpstreamError`), `apps/router-api/test/v1-limits.e2e.spec.ts` (the wording reaches the client and not the log), `apps/router-api` (`Generation` column test) |
+| T13 a cloud, not a deployment | a listed cloud with no deployment approved | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`PENDING` at `digest-not-pinned` with the cloud trusted), `apps/gatekeeper/pkg/verifier` and `pkg/policy` (`twofactor_test.go`) |
+| T13 the deployment redeploys on a trusted cloud | `evidenceHost.rotateDeployment()` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`stage: digest-mismatch`, models dropped, approve-new-digest readmits) |
+| the cloud redeploys on an unlisted image | `sidecar.rotateMeasurement()` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`stage: measurement-not-trusted`), `tools/demo/src/story.ts` (step 12 — the model leaves `/v1/models`) |
+| T16 trust withdrawn live | `removeTrustedMeasurement` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (denied on the next forced check; an in-flight stream ends `attestation_revoked`) |
+| T15 key never read back | registration + the egress leg | `apps/router-api/src/app/secrets`, `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (only the upstream ever sees the bearer) |
+| T17 / the anchor below the list | `sidecar.denyAttestation()` | `apps/router-api-e2e/src/external-endpoints.e2e.spec.ts` (`stage: untrusted-root` — with no attested root there is no measurement, and the admin's list cannot rescue it) |
+| T14 the user checks the other end | a registered upstream, relayed through `GET /v1/evidence/{endpoint}` | `apps/router-ui-e2e/src/secure-origin.spec.ts` — a real browser runs its own tier 1 over the upstream's publication and draws its graph, on the only origin where `crypto.subtle` exists. T14's residual is that users do not pin upstream digests; this is what they get instead, so it is asserted rather than described |
 
 ## Out of scope for v1
 

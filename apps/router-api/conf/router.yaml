@@ -15,6 +15,9 @@ server:
   publicBaseUrl: http://localhost:3000
   validClientOrigins:
     - http://localhost:4200
+  # /v1 only. The console surfaces keep 1 MiB; a prompt sized against an
+  # advertised context window needs megabytes (SUP-339).
+  maxInferenceRequestBytes: 8388608
 
 database:
   type: sqlite
@@ -58,11 +61,6 @@ auth:
   baseUrl: http://localhost:3000
   # No secret here on purpose: outside production the process mints an ephemeral
   # one and says so. Set CR_API_AUTH__SECRET for a stable dev session.
-  magicLink:
-    # `none` switches magic-link sign-in off, for a deployment with no mail
-    # provider at all — which is the only way such a one can boot in production.
-    mailer: console
-    from: no-reply@confidential-router.local
   # OAuth is optional in development; magic link alone is enough to sign in.
   # github: { clientId: ${CR_API_GITHUB_CLIENT_ID}, clientSecret: ${CR_API_GITHUB_CLIENT_SECRET} }
   # First sign-in where there is neither. Unset here — a laptop reads its magic
@@ -72,6 +70,17 @@ auth:
   # unredeemed invitation code. Off here and everywhere by default — a launch
   # running grants-only turns it on. See docs/router.md, "Invite-only registration".
   # requireInviteForSignUp: true
+
+# Outbound mail (SUP-269). `console` writes every message — sign-in links, reset
+# links, the welcome mail — to the log, which is how a laptop reads them; it is
+# refused in production. `none` switches every flow that needs mail off.
+mail:
+  provider: console
+  from: no-reply@confidential-router.local
+  # No `webhookSecret` here on purpose: with none, POST /v1/webhooks/resend is a
+  # 404, which is what a laptop wants. A deployment sets it to the provider's
+  # signing secret so that an address the provider is dropping mail to becomes
+  # visible instead of silent (SUP-551).
 
 # Invitation codes that grant credit. Nothing here switches the feature on: with
 # no codes generated it is inert. `landingBaseUrl` is only read by the generation

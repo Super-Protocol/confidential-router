@@ -1,8 +1,9 @@
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { AnalyticsSink } from '../src/app/analytics/index.js';
 import { LedgerService } from '../src/app/billing/index.js';
 import { generateInvites } from '../src/app/invites/index.js';
-import { createHarness, type Harness, pathOf } from './app-harness.js';
+import { createHarness, type Harness, pathOf, signUpWithCode } from './app-harness.js';
 import { dataSourceOf, expectData, graphql } from './console.js';
 import { bearer, routerConfigFor } from './gateway-fixture.js';
 import { MockLiteLlm } from './mock-litellm.js';
@@ -27,9 +28,18 @@ import { MockLiteLlm } from './mock-litellm.js';
  *    spent looks identical to one nobody opened unless refusals are counted.
  */
 
+/**
+ * The ingest, by the path the console actually posts to.
+ *
+ * Not `/v1/analytics/events`, which EasyPrivacy blocks by default — the rename
+ * and the reason are in `console-events-path.spec.ts`, and `the legacy ingest
+ * path` below covers the alias (SUP-463).
+ */
+const INGEST = '/v1/console-events';
+const LEGACY_INGEST = '/v1/analytics/events';
+
 const GRANT_MICROS = 100_000_000;
 const CAMPAIGN = 'launch-2026-10-devs';
-const PASSWORD = 'correct-horse-battery';
 const CHAT = { model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'Hello there' }] };
 
 const upstream = new MockLiteLlm();
@@ -39,7 +49,7 @@ beforeAll(async () => {
   const baseUrl = await upstream.start();
   harness = await createHarness({
     config: routerConfigFor(baseUrl),
-    env: { CR_API_AUTH__PASSWORD__ENABLED: 'true', CR_API_AUTH__ADMIN_EMAILS: 'ops@example.com' },
+    env: { CR_API_AUTH__ADMIN_EMAILS: 'ops@example.com' },
   });
 }, 60_000);
 
@@ -80,20 +90,21 @@ function cookiesOf(response: request.Response): string[] {
 
 /** One account, created the way the console creates one. */
 async function signUp(email: string, inviteCode?: string): Promise<{ cookies: string[]; workspaceId: string }> {
-  const created = await request(server())
-    .post('/auth/sign-up/email')
-    .send({ email, password: PASSWORD, name: 'Funnel', ...(inviteCode ? { inviteCode } : {}) })
-    .expect(200);
+  const created = await signUpWithCode(harness, {
+    email,
+    name: 'Funnel',
+    ...(inviteCode ? { inviteCode } : {}),
+  }).expect(200);
   const cookies = cookiesOf(created);
   const me = await graphql({ harness, cookies, email, workspaceId: '' }, '{ me { workspaces { id } } }');
   return { cookies, workspaceId: me.data.me.workspaces[0].id };
 }
 
 function post(body: Record<string, unknown>) {
-  return request(server()).post('/v1/analytics/events').send(body);
+  return request(server()).post(INGEST).send(body);
 }
 
-describe('POST /v1/analytics/events', () => {
+describe(`POST ${INGEST}`, () => {
   it('records signup_started anonymously, with the properties the taxonomy declares', async () => {
     await post({
       event: 'signup_started',
@@ -161,19 +172,93 @@ describe('POST /v1/analytics/events', () => {
 
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.text).toBe('');
-    const unknown = await request(server()).post('/v1/analytics/anything-else').send({}).expect(404);
+    const unknown = await request(server()).post('/v1/console-events/anything-else').send({}).expect(404);
     expect(unknown.body.error.code).toBe('not_found');
   });
+});
+
+describe(`POST ${LEGACY_INGEST}`, () => {
+  it('records the same event as the new path, so a split deploy drops nothing', async () => {
+    // The console and router-api deploy separately. Until every browser has the
+    // bundle that posts to `/v1/console-events`, the old path has to keep
+    // answering — whatever a blocker lets through is better than nothing.
+    const response = await request(server())
+      .post(LEGACY_INGEST)
+      .send({ event: 'signup_started', properties: { has_invite: false, entry: 'direct' } })
+      .expect(202);
+
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.text).toBe('');
+    expect(harness.events.one('signup_started')).toMatchObject({
+      anonymous: true,
+      properties: { has_invite: false, entry: 'direct' },
+    });
+  });
+
+  it('refuses exactly what the new path refuses', async () => {
+    // One handler on two paths, so there is no second validation to drift.
+    await request(server()).post(LEGACY_INGEST).send({ event: 'invite_redeemed' }).expect(400);
+    await request(server())
+      .post(LEGACY_INGEST)
+      .send({ event: 'feedback_form_opened', properties: { source: 'credits_page' } })
+      .expect(401);
+
+    expect(harness.events.sent).toEqual([]);
+  });
+});
+
+describe('the 202 and the sink', () => {
+  it('answers before the capture resolves, so a stalled PostHog costs nobody a sign-up screen', async () => {
+    // The defect this covers: `await analytics.capture()` in front of the
+    // response put PostHog's round trip — +162 ms on production, up to
+    // `analytics.posthog.requestTimeout` on a stall — on the sign-up screen,
+    // against ADR-006's "emission never blocks a request" (SUP-463).
+    let release = () => {};
+    const stalled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let captures = 0;
+    const neverResolves: AnalyticsSink = {
+      send: () => {
+        captures += 1;
+        return stalled;
+      },
+    };
+    const slow = await createHarness({ analyticsSink: neverResolves });
+    let timer: NodeJS.Timeout | undefined;
+
+    try {
+      const answered = await Promise.race([
+        request(slow.app.getHttpServer())
+          .post(INGEST)
+          .send({ event: 'signup_started', properties: { entry: 'direct', has_invite: false } })
+          .then((response) => response.status),
+        // A readable failure instead of the suite's timeout, which is what an
+        // awaited capture would turn this into.
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve('still waiting on the sink'), 2_000);
+        }),
+      ]);
+
+      expect(answered).toBe(202);
+      // Accepted means the capture was started, not skipped.
+      expect(captures).toBe(1);
+    } finally {
+      clearTimeout(timer);
+      release();
+      await slow.close();
+    }
+  }, 60_000);
 });
 
 describe('the ingest rate limit', () => {
   it('refuses a caller past its minute budget on a budget of its own', async () => {
     const limited = await createHarness({
-      env: { CR_API_AUTH__PASSWORD__ENABLED: 'true', CR_API_ANALYTICS__INGEST_PER_MINUTE: '2' },
+      env: { CR_API_ANALYTICS__INGEST_PER_MINUTE: '2' },
     });
     try {
       const event = { event: 'signup_started', properties: { entry: 'direct', has_invite: false } };
-      const send = () => request(limited.app.getHttpServer()).post('/v1/analytics/events').send(event);
+      const send = () => request(limited.app.getHttpServer()).post(INGEST).send(event);
 
       await send().expect(202);
       await send().expect(202);
@@ -196,10 +281,10 @@ describe('the sign-up events', () => {
 
     expect(harness.events.one('signup_completed')).toMatchObject({
       anonymous: false,
-      properties: { has_invite: true, campaign: CAMPAIGN, method: 'password' },
+      properties: { has_invite: true, campaign: CAMPAIGN, method: 'email_code' },
       // The first identified event of the account's life, so also where the two
       // allowed person properties are set. No email, no name (ADR-006 §4).
-      person: { campaign: CAMPAIGN, signup_method: 'password' },
+      person: { campaign: CAMPAIGN, signup_method: 'email_code' },
     });
     expect(harness.events.one('invite_redeemed')).toMatchObject({
       properties: { outcome: 'granted', campaign: CAMPAIGN, grant_micros: GRANT_MICROS },
@@ -273,17 +358,25 @@ describe('the activation events', () => {
     await request(server())
       .post('/v1/chat/completions')
       .set(bearer(created.createApiKey.secret))
+      // What Roo Code 3.54.0 sent through SUP-447's proxy, verbatim.
+      .set('user-agent', 'RooCode/3.54.0')
       .send(CHAT)
       .expect(200);
 
-    expect(harness.events.one('first_request_sent')).toMatchObject({
+    const activation = harness.events.one('first_request_sent');
+    expect(activation).toMatchObject({
       properties: {
         campaign: 'activation-campaign',
         had_invite_grant: true,
         model_slug: 'mock/chat:tdx',
         hours_since_signup: 0,
+        // SUP-466: which client the account activated with. A label, never the
+        // agent string — the taxonomy declares the closed set, and an undeclared
+        // property would be dropped here without a word to the caller.
+        client: 'roo',
       },
     });
+    expect(JSON.stringify(activation)).not.toContain('3.54.0');
 
     await request(server())
       .post('/v1/chat/completions')
@@ -352,13 +445,20 @@ describe('the whole funnel, and the code that is spent', () => {
       .send(CHAT)
       .expect(200);
 
-    expect(harness.events.sent.map((event) => event.event)).toEqual([
+    // `model_requested` is excluded from the ordered funnel on purpose: it is the
+    // one event the request does not await (SUP-542), so where it lands in this
+    // list is a race and asserting it would make the rehearsal flaky. That it
+    // arrives at all is `v1-model-demand.e2e.spec.ts`'s subject, and the line
+    // below keeps this suite's hold on it.
+    const funnel = harness.events.sent.map((event) => event.event).filter((event) => event !== 'model_requested');
+    expect(funnel).toEqual([
       'signup_started',
       'signup_completed',
       'invite_redeemed',
       'api_key_created',
       'first_request_sent',
     ]);
+    expect(await harness.events.waitFor('model_requested')).toHaveLength(1);
 
     // The ledger holds the grant and nothing but — the debit for the request is
     // the only other entry.

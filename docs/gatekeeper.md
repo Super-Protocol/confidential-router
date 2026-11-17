@@ -23,7 +23,14 @@ client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:8443/v1")
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Super-Protocol/confidential-router/main/tools/installer/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # only if the installer says it is needed
 ```
+
+The script installs into the first writable directory your shell already
+searches, and otherwise into `~/.local/bin` — which a stock macOS zsh does not
+search. When that happens it adds the directory to your startup file, for the
+terminals you open next, and prints the `export` line above for the one you are
+in. `--no-modify-path` leaves your dotfiles alone and prints the line only.
 
 Or take a static binary and its checksum from
 [Releases](https://github.com/Super-Protocol/confidential-router/releases).
@@ -79,7 +86,11 @@ Every command takes `--json`, and every one exits with a meaningful status:
 
 ## Configuration
 
-`~/.config/confidential-gatekeeper/config.yaml` by default; `--config` or
+`confidential-gatekeeper/config.yaml` under your user configuration directory
+by default — Go's `os.UserConfigDir()`, so `$XDG_CONFIG_HOME` or `~/.config` on
+Linux, `~/Library/Application Support` on macOS and `%AppData%` on Windows.
+**`gatekeeper config path` prints the one this machine resolves**, and every
+command that writes the file prints it back; `--config` or
 `$CR_GATEKEEPER_CONFIG` override it. Normative schema:
 `schemas/gatekeeper-config.schema.json`. The `trust` and `endpoint` commands
 edit this file in place and keep your comments.
@@ -251,6 +262,40 @@ registry does sign it, but in this mode the list is the sole authority and a
 registry signature admits nothing on its own)
 ```
 
+### `trust: measurement-and-digest` — both, approved as they are seen
+
+The mode the router's attested egress renders since SUP-252. It asks both
+questions at once: the cloud's measurement must be on
+`attestedRoots.trustedMeasurements` **and** the deployment's evidenceDigest must
+be pinned in this endpoint's `trustedEvidence`. A trusted cloud therefore no
+longer admits every deployment on it.
+
+```yaml
+endpoints:
+  - name: external-llama
+    listen: 127.0.0.1:8443
+    upstream: https://llama.other-cloud.example
+    trust: measurement-and-digest
+    trustedEvidence: []        # nothing approved yet — legal in this mode
+```
+
+What sets it apart from the other two is that **neither factor has to be
+configured for the file to run**. It exists for a control loop that approves
+what it has *seen* — trust on first use with an operator in the loop — so the
+first verification has to happen before anything is approved. Until both
+factors hold the endpoint admits nothing, and the verdict says which factor is
+missing with a `refusal` code beside the usual stage and reason:
+
+| `refusal` | Means | Fix |
+| --- | --- | --- |
+| `digest-not-pinned` | no evidenceDigest is pinned at all | approve the digest the report shows |
+| `measurement-not-trusted` | the cloud's measurement is not on the list (or there is none to compare) | add the measurement, if you trust that cloud |
+| `digest-mismatch` | a digest is pinned, and the deployment now publishes another — a redeploy | approve the new digest after reading what changed |
+
+The first that applies is the code; the reason names every missing factor. Like
+`cloud-measurement`, it needs the attested-root path and is never written by the
+CLI's own commands.
+
 ## What a verdict is made of
 
 ```
@@ -293,6 +338,18 @@ gatekeeper checks that evidence rather than giving up:
 4. that measurement has to carry a Super Protocol signature, checked against a
    key **pinned in the gatekeeper binary**. Step 4 is what makes the chain
    closed: without it, any tenant of any AMD host could produce steps 1–3.
+
+Roots enrolled on **Azure confidential VMs** (evidence types `Intel TDX (Azure)`
+and `AMD SEV-SNP (Azure)`) are checked the same way, with one layer added. The
+hardware report there belongs to Microsoft's paravisor, so the image is
+measured by the VM's vTPM instead: the hardware report has to commit to the
+paravisor's runtime data, Microsoft's certificate chain has to vouch for the
+vTPM key that data names, that key's quote over PCR4 and PCR9 has to replay
+from the firmware event log, and the runtime data's `user-data` has to commit to
+this certificate's key. The measurement is
+`SHA-256(vm-config flags ‖ PCR4′ ‖ PCR9′)` — the same value the browser
+extension derives. Microsoft Azure Attestation is not consulted; the check stays
+offline.
 
 `gatekeeper verify` prints all of it:
 
@@ -337,9 +394,20 @@ to find there. The denial reads:
 ```
 DENIED — … not in trusted store (attested-root check: measurement bb6962eb… is
 not in the Super Protocol trusted registry, and it is not listed in
-attestedRoots.trustedMeasurements; pin it with `gatekeeper trust measurements add
+attestedRoots.trustedMeasurements — the hardware report verified, so this is
+what an unsigned or test build looks like (see "Optional: test or unsigned
+builds" in the setup guide); pin it with `gatekeeper trust measurements add
 --from-upstream router`, or add the cloud's root with `gatekeeper trust roots add`)
 ```
+
+The console's setup block keeps both commands in that collapsed "Optional: test
+or unsigned builds" section, out of the default sequence.
+
+A running gatekeeper does not need either if the image is signed later: the
+verdict is cached for `attestedRoots.cacheTtl` (10 minutes by default), a denial
+included, and the next re-attestation after that asks the registry again — so a
+newly signed cloud is admitted within `cacheTtl + reattestInterval` (15 minutes
+by default) without a restart, or at once on `SIGHUP`.
 
 The second fix is the older one and it is worse: you fetch that cloud's
 certificate out of band, trust it, and repeat the whole ritual the next time the
@@ -415,7 +483,8 @@ upstream, and any connection the previous verdict admitted is closed.
     "code": "attestation_failed"
   },
   "stage": "policy",
-  "reason": "the built-in pin policy (gatekeeper.default) denied"
+  "reason": "the built-in pin policy (gatekeeper.default) denied",
+  "checkedAt": "2026-10-19T20:05:00Z"
 }
 ```
 
@@ -424,9 +493,24 @@ bare status. `stage` and `reason` sit beside it because "which check failed" is
 the operational question, and it should not require parsing prose. The same
 string is on every response as `X-Gatekeeper-Verdict`.
 
+`checkedAt` is when the verdict being reported was taken, and it is also on the
+response as `X-Gatekeeper-Checked-At`. Read it before you go looking: the
+refusal is answered from the verdict in force, so the reason describes the
+moment of that check and not the moment you read it.
+
+`code` is `attestation_failed` for every check that ran and said no, and
+`attestation_unreachable` when the gatekeeper could not reach the endpoint to
+run one at all — a refused dial, a failed handshake, a truncated read. The
+second is a statement about the network between you and the endpoint, not about
+the endpoint. A request arriving against a denial also re-runs the check
+immediately (at most one every two seconds), so a blip that has already passed
+clears on your next request rather than on the next `reattestInterval` — and
+while the endpoint stays denied the background loop re-checks on the same
+backoff, so it recovers even with no traffic at all.
+
 | `stage` | What happened |
 | --- | --- |
-| `fetch` | the endpoint did not serve a usable bundle |
+| `fetch` | the endpoint did not serve a usable bundle, or could not be reached at all |
 | `cert-chain` | its chain is malformed, expired or does not chain up |
 | `untrusted-root` | the chain ends somewhere you never trusted |
 | `jws` | bad signature, wrong payload, or a stale/future bundle |
@@ -476,6 +560,18 @@ allow if {
   input.attestation.rootAttestation.attested == true
   some measurement in data.gatekeeper.trust.measurements
   measurement == input.attestation.rootAttestation.measurement
+}
+
+# See "`trust: measurement-and-digest`" above: the two clauses at once.
+allow if {
+  input.attestation.verified == true
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "measurement-and-digest"
+  input.attestation.rootAttestation.attested == true
+  some measurement in data.gatekeeper.trust.measurements
+  measurement == input.attestation.rootAttestation.measurement
+  some digest in endpoint.evidence_digests
+  digest == input.evidence.evidenceDigest
 }
 ```
 
@@ -601,6 +697,14 @@ your measurement list. `gatekeeper verify <endpoint>` is what answers for one.
   streams log lines, which is what a container or a systemd unit wants.
 - **SIGHUP** reloads the configuration in place. A reload that fails to load or
   validate changes nothing — a typo must not take the proxy down.
+- **Every endpoint the configuration declares is kept listening.** The
+  supervisor re-checks that, a few times a minute, against what is actually
+  bound, and starts whatever is missing: an endpoint that arrived in a reload, an
+  address that was taken a moment ago, a listener that died on its own. Binding
+  opens nothing — a fresh listener admits no traffic until its own verification
+  completes — so the only state this will not override is a stop you asked for
+  from the dashboard. A bind that keeps failing shows up as `broken` with the
+  reason, rather than as a `stopped` endpoint nothing is retrying (SUP-537).
 - **SIGINT / SIGTERM** drain the listeners (`--drain-timeout`, 30s) and exit.
 - **`gatekeeper status`** reports on a gatekeeper running in another process,
   through the `admin` socket. Without an `admin:` section there is nothing to
@@ -633,13 +737,32 @@ docker run --rm --read-only --user 65532 \
 
 The entrypoint is not the gatekeeper itself but a supervisor, because in this
 shape the configuration is **rendered** rather than edited: it waits for
-`$GATEKEEPER_CONFIG` (default `/etc/gatekeeper/config.yaml`) to appear, runs
-`gatekeeper run --headless`, and sends SIGHUP whenever the file's contents
-change — so an edit by whoever renders it is applied in place, without
+`$GATEKEEPER_CONFIG` (default `/etc/gatekeeper/config.yaml`) to hold a
+configuration the gatekeeper will run, runs `gatekeeper run --headless`, and
+sends SIGHUP whenever the file's contents change — so an edit by whoever renders it is applied in place, without
 `shareProcessNamespace` and without restarting endpoints that did not change.
 `$GATEKEEPER_WATCH_INTERVAL` (default `2s`) tunes the poll. SIGTERM is passed
 through, so the gatekeeper drains its own listeners and the container exits with
 the gatekeeper's status.
+
+It waits for a *runnable* configuration rather than for any readable file
+because `gatekeeper run` refuses an incomplete one — no endpoints, or a
+`trust: cloud-measurement` endpoint with nothing on the measurement list — and
+that is the right answer for a person who typed it. A control loop renders
+exactly that document before anything has been registered, so the container
+would exit at once and back off over a deployment that has done nothing wrong.
+Instead the supervisor keeps waiting and logs what is missing:
+
+```
+sidecar: waiting for /etc/gatekeeper/config.yaml — invalid …: endpoints: at least one endpoint is required
+```
+
+The reverse case is a reload, and there the rule inverts: a rendered
+configuration that admits nothing is an *instruction* — somebody withdrew their
+last trusted cloud — so SIGHUP applies it and every endpoint is denied. Keeping
+the previous configuration would leave the listeners and the verdicts being
+revoked in place, which is the opposite of fail-closed. Malformed values are
+still refused on reload; those are not an instruction.
 
 Two things it will not forward, both of them normal for a rendered file:
 

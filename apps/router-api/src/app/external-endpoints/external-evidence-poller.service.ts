@@ -67,6 +67,16 @@ export class ExternalEvidencePollerService implements OnApplicationBootstrap, On
           `External upstream evidence: ${report.stored}/${report.polled} summarised, ${report.failed} unavailable.`,
         );
       }
+      // Separate from the line above and not conditional on a poll having
+      // happened, which is the point: a relayed copy goes stale on passes where
+      // nothing was fetched at all (SUP-615). The `ERROR` line and the operator
+      // alert are raised per endpoint inside the pass; this is the count.
+      if (report.stale > 0) {
+        this.logger.warn(
+          `External upstream evidence: ${report.stale} endpoint(s) are being relayed a publication past ` +
+            'externalEndpoints.evidenceStaleAfter.',
+        );
+      }
     } catch (error) {
       // A pass that threw is a pass that found the database unavailable; the next
       // one is a minute away and nothing depends on this one having run.

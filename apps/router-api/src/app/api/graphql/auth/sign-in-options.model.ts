@@ -15,22 +15,25 @@ export class SignInOptionsModel {
   @Field({ description: 'A Google OAuth app is configured.' })
   google!: boolean;
 
-  @Field({ description: 'A mailer is configured, so a one-time link can be sent.' })
-  magicLink!: boolean;
+  @Field({
+    description:
+      'The bootstrap token can sign its own account back in: a token is configured and the account it ' +
+      'created exists. The administrator’s way in when no code can be mailed.',
+  })
+  adminRecovery!: boolean;
 
   @Field({
     description:
-      'Email and password sign-in and sign-up are enabled. There is no email verification and no ' +
-      'password reset: this path exists for deployments with no mail delivery at all.',
+      'A mailer is configured, so a one-time sign-in code can be mailed. This is how accounts sign in and ' +
+      'how they are created; there are no passwords.',
   })
-  password!: boolean;
+  emailCode!: boolean;
 
-  @Field(() => Int, {
-    description:
-      'The shortest password this deployment accepts, so the sign-up form can state the rule instead of ' +
-      'discovering it. Meaningless while `password` is false.',
-  })
-  passwordMinLength!: number;
+  @Field(() => Int, { description: 'How many digits a sign-in code has. Meaningless while `emailCode` is false.' })
+  emailCodeLength!: number;
+
+  @Field({ description: 'A one-time sign-in link can be mailed as well as a code.' })
+  magicLink!: boolean;
 
   @Field({
     description:
@@ -38,4 +41,13 @@ export class SignInOptionsModel {
       'invitation code that is valid and unredeemed. Signing in to an existing account is unaffected.',
   })
   inviteRequired!: boolean;
+
+  @Field({
+    nullable: true,
+    description:
+      'A mailbox to write to from a different address when this deployment’s mail cannot reach the one a ' +
+      'viewer is holding (`mail.replyTo`). Null where none is configured. Sign-in is an emailed code, so a ' +
+      'suppressed address has no other way to ask for help.',
+  })
+  supportEmail?: string;
 }

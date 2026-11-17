@@ -30,15 +30,12 @@ backends:
 endpoints:
   - name: llama-33-70b
     hostname: llama-33-70b.tee.swarm.cloud
-    tee: Intel TDX + H100 CC
     evidenceUrl: ${CR_DEMO_EVIDENCE_BASE:-http://127.0.0.1:8081}/llama-33-70b/.well-known/swarm-evidence
   - name: qwen25-72b
     hostname: qwen25-72b.tee.swarm.cloud
-    tee: AMD SEV-SNP
     evidenceUrl: ${CR_DEMO_EVIDENCE_BASE:-http://127.0.0.1:8081}/qwen25-72b/.well-known/swarm-evidence
   - name: deepseek-v3
     hostname: deepseek-v3.tee.swarm.cloud
-    tee: Intel TDX + H100 CC
     evidenceUrl: ${CR_DEMO_EVIDENCE_BASE:-http://127.0.0.1:8081}/deepseek-v3/.well-known/swarm-evidence
 
 # Prices are micro-USD per 1M tokens: $0.28 / 1M prompt tokens is 280000.

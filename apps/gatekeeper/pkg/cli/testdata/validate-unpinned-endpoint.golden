@@ -1,0 +1,7 @@
+$TMP/config.yaml is not ready to run (1 problem):
+  - endpoints[0].trustedEvidence: at least one pinned evidenceDigest is required — there is no trust-on-first-use
+
+Nothing in the file is wrong — it is not finished.
+
+Next: finish the setup
+  gatekeeper endpoint trust add router --from-upstream

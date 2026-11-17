@@ -9,7 +9,7 @@
  * `apps/router-api/dist/main.js` and plain HTTP.
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,12 @@ export interface RouterProcessOptions {
   extraCaFile?: string;
   /** Mirror the router's log to this process's stderr. */
   echoLog?: boolean;
+  /**
+   * Also append the log to this file, truncated first. A browser-driven suite
+   * is a different process from the one holding the log, and the console
+   * mailer writes sign-in codes there — this is how it reads its own mail.
+   */
+  logFile?: string;
 }
 
 export interface RouterProcess {
@@ -81,6 +87,11 @@ export async function startRouterProcess(options: RouterProcessOptions): Promise
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
+  if (options.logFile) {
+    mkdirSync(dirname(options.logFile), { recursive: true });
+    writeFileSync(options.logFile, '', 'utf8');
+  }
+
   const buffer: string[] = [];
   const watchers: { pattern: RegExp; resolve: (match: RegExpMatchArray) => void }[] = [];
   const onChunk = (chunk: Buffer): void => {
@@ -88,6 +99,9 @@ export async function startRouterProcess(options: RouterProcessOptions): Promise
     buffer.push(text);
     if (options.echoLog) {
       process.stderr.write(text);
+    }
+    if (options.logFile) {
+      appendFileSync(options.logFile, text, 'utf8');
     }
     for (let index = watchers.length - 1; index >= 0; index -= 1) {
       const match = text.match(watchers[index].pattern);

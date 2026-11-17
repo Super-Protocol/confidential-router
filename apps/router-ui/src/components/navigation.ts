@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowLeftRight,
   BookText,
   CreditCard,
   Globe,
@@ -10,6 +11,7 @@ import {
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
+  Ticket,
   UserRound,
 } from 'lucide-react';
 
@@ -70,13 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'API Keys',
         href: '/keys',
         icon: KeyRound,
-        summary: 'Issue, scope and revoke keys, and copy the drop-in base-URL snippet.',
-      },
-      {
-        label: 'Gatekeeper',
-        href: '/gatekeeper',
-        icon: ShieldCheck,
-        summary: 'Download the verifying proxy and pin the evidence digests you trust.',
+        summary: 'Issue, scope and revoke keys, and connect a client through the verifying gatekeeper.',
       },
     ],
   },
@@ -112,6 +108,20 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/admin/trust',
         icon: ShieldCheck,
         summary: 'The launch measurements this deployment accepts for an external upstream.',
+        adminOnly: true,
+      },
+      {
+        label: 'Invitations',
+        href: '/admin/invitations',
+        icon: Ticket,
+        summary: 'Invitation codes, who redeemed which, and how sign-ups are going.',
+        adminOnly: true,
+      },
+      {
+        label: 'Export & import',
+        href: '/admin/migration',
+        icon: ArrowLeftRight,
+        summary: 'Carry accounts, credit and invitation codes across a redeploy.',
         adminOnly: true,
       },
     ],

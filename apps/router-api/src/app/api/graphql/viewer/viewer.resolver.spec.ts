@@ -30,6 +30,7 @@ function build(
     preferences?: Partial<PreferencesService>;
     profiles?: Partial<UserProfileService>;
     adminEmails?: string;
+    env?: Record<string, string>;
   } = {},
 ) {
   return new ViewerResolver(
@@ -39,7 +40,10 @@ function build(
     } as unknown as WorkspaceScopeService,
     { get: vi.fn(), ...overrides.preferences } as unknown as PreferencesService,
     { require: vi.fn(), rename: vi.fn(), ...overrides.profiles } as unknown as UserProfileService,
-    testConfig(overrides.adminEmails === undefined ? {} : { CR_API_AUTH__ADMIN_EMAILS: overrides.adminEmails }),
+    testConfig({
+      ...(overrides.adminEmails === undefined ? {} : { CR_API_AUTH__ADMIN_EMAILS: overrides.adminEmails }),
+      ...overrides.env,
+    }),
   );
 }
 

@@ -22,7 +22,6 @@ import { formatContextLength, formatPricePer1m } from '../../lib/format';
 import { EvidenceBadge } from '../evidence/evidence-badge';
 import { ExternalAttestationBadge } from '../external/external-attestation-badge';
 import { EXTERNAL_AVAILABILITY } from '../external/external-vocabulary';
-import { ModelOriginBadge } from '../external/model-origin-badge';
 
 const ALL_TEES = 'all';
 
@@ -84,10 +83,11 @@ export function ModelsScreen() {
   const models = data?.models;
 
   // In config order, so the filter chips do not reshuffle as the catalogue grows.
-  // External models declare no TEE label and therefore contribute no chip — and
-  // selecting one hides them, which is the filter being honest rather than
-  // losing rows: it narrows on an operator's declaration about this deployment's
-  // own hardware, and there is none to make about someone else's.
+  // A chip exists for each TEE the deployment's own endpoints publish evidence
+  // from (SUP-260) — so an endpoint that has published nothing contributes none,
+  // and neither does an external model: selecting a chip hides those, which is
+  // the filter being honest rather than losing rows. This router reads no
+  // evidence for someone else's hardware.
   const tees = React.useMemo(
     () => [...new Set((models ?? []).flatMap((model) => (model.tee ? [model.tee] : [])))],
     [models],
@@ -198,10 +198,7 @@ export function ModelsScreen() {
               {visible.map((model) => (
                 <TableRow key={model.id}>
                   <TableCell className="px-4">
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-medium text-sm">{model.name}</span>
-                      <ModelOriginBadge origin={model.origin} />
-                    </span>
+                    <span className="block font-medium text-sm">{model.name}</span>
                     <span className="block font-mono text-muted-foreground text-xs">{model.slug}</span>
                   </TableCell>
                   <TableCell className="font-mono text-xs">
@@ -234,15 +231,21 @@ export function ModelsScreen() {
               ))}
             </TableBody>
           </Table>
+          {/*
+            Inside the border, as the key table does its count: a line under a
+            table is a footer; the same line a gap below it was a footnote adrift
+            in the page (SUP-262).
+          */}
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t px-4 py-2.5 text-muted-foreground text-xs">
+            <p>
+              {visible.length === models.length
+                ? servedFrom(models.length - externalCount, endpointCount, externalCount)
+                : `${visible.length} of ${models.length} models.`}
+            </p>
+            <p>Prices are in USD per 1M tokens and are billed from credits.</p>
+          </div>
         </div>
       )}
-
-      <p className="text-muted-foreground text-xs">
-        {visible.length === models.length
-          ? servedFrom(models.length - externalCount, endpointCount, externalCount)
-          : `${visible.length} of ${models.length} models.`}{' '}
-        Prices are in USD per 1M tokens and are billed from credits.
-      </p>
     </div>
   );
 }

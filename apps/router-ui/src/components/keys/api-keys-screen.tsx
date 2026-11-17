@@ -2,7 +2,6 @@
 
 import { useQuery } from '@apollo/client/react';
 import { Button } from '@confidential-router/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@confidential-router/ui/components/card';
 import { EmptyState } from '@confidential-router/ui/components/empty-state';
 import { ErrorState } from '@confidential-router/ui/components/error-state';
 import { Skeleton } from '@confidential-router/ui/components/skeleton';
@@ -14,10 +13,10 @@ import { ApiKeyTable } from './api-key-table';
 import { CreateKeyDialog } from './create-key-dialog';
 import { CreatedKeyDialog } from './created-key-dialog';
 import { EditKeyDialog } from './edit-key-dialog';
+import { HowToConnect } from './how-to-connect';
 import { API_KEYS_QUERY } from './operations';
 import { RevokeKeyDialog } from './revoke-key-dialog';
 import type { ApiKeyRow } from './types';
-import { WiringSnippet } from './wiring-snippet';
 
 interface CreatedKey {
   secret: string;
@@ -49,7 +48,9 @@ export function APIKeysScreen() {
   // is listed and answers 503. The scope picker below still offers every model —
   // scoping a key to one that is currently unavailable is a reasonable thing to
   // do, and the key outlives the verdict.
-  const sampleModel = models.find((model) => model.available)?.id;
+  const sample = models.find((model) => model.available);
+  const sampleModel = sample?.id;
+  const sampleContextLength = sample?.contextLength;
   const newestActive = keys.find((apiKey) => apiKey.revokedAt === null);
 
   const header = (
@@ -98,22 +99,11 @@ export function APIKeysScreen() {
         <ApiKeyTable keys={keys} models={models} onEdit={setEditing} onRevoke={setRevoking} />
       )}
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Wiring an agent</CardTitle>
-          <CardDescription>
-            Swap the base URL for your local Gatekeeper address and nothing else changes. It resolves the confidential
-            endpoint, verifies the evidence it publishes, and only then forwards — same SDK, same model slug, same key.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <WiringSnippet apiKey={newestActive ? `${newestActive.prefix}…` : undefined} model={sampleModel} />
-          <p className="mt-3 text-muted-foreground text-xs">
-            Keys are stored hashed, so the snippet carries only the visible prefix. Paste the full key you copied when
-            it was created.
-          </p>
-        </CardContent>
-      </Card>
+      <HowToConnect
+        apiKey={newestActive ? `${newestActive.prefix}…` : undefined}
+        model={sampleModel}
+        contextLength={sampleContextLength}
+      />
 
       {workspaceId ? (
         <CreateKeyDialog
@@ -129,6 +119,7 @@ export function APIKeysScreen() {
         secret={created?.secret ?? null}
         name={created?.name ?? ''}
         model={sampleModel}
+        contextLength={sampleContextLength}
         onClose={() => setCreated(null)}
       />
 

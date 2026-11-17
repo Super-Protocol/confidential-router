@@ -22,6 +22,8 @@ vi.mock('next/navigation', () => ({
 vi.setConfig({ testTimeout: 30_000 });
 configure({ asyncUtilTimeout: 5_000 });
 
+const FIELD = 'Cloud launch measurement (64 hex)';
+
 function renderScreen({
   admin = true,
   mocks = [measurementsMock()],
@@ -40,10 +42,28 @@ describe('normaliseMeasurement', () => {
     expect(measurementError(`0X${'a'.repeat(64)}`)).toBeNull();
   });
 
+  it('folds the `sha256:` spelling onto the bare hex the list stores, as router-api does', () => {
+    // 71 characters in, 64 out — the gatekeeper and the verification report print this form.
+    expect(normaliseMeasurement(`sha256:${'B'.repeat(64)}`)).toBe('b'.repeat(64));
+    expect(measurementError(`SHA256:${'b'.repeat(64)}`)).toBeNull();
+    expect(measurementError('c'.repeat(64))).toBeNull();
+  });
+
   it('refuses anything that is not a 64-character hex value', () => {
-    expect(measurementError('')).toBe('A measurement is required.');
-    expect(measurementError('deadbeef')).toBe('A measurement is 64 hexadecimal characters.');
-    expect(measurementError('z'.repeat(64))).toBe('A measurement is 64 hexadecimal characters.');
+    expect(measurementError('')).toBe('A launch measurement is required.');
+    expect(measurementError('deadbeef')).toBe('A launch measurement is exactly 64 hex characters; this is 8.');
+    expect(measurementError('a'.repeat(63))).toBe('A launch measurement is exactly 64 hex characters; this is 63.');
+    expect(measurementError('z'.repeat(64))).toBe('A launch measurement is 64 hexadecimal characters (0–9, a–f).');
+  });
+
+  it('names an evidence digest or fingerprint in its canonical sha256/<base64url> form (SUP-251)', () => {
+    expect(measurementError('sha256/BvG0Yy3Ir0QKPtC1TrSPuyZZD1sdKq7Gq_a1Mv1Hs0A')).toBe(
+      'That is an evidence digest or certificate fingerprint (sha256/…), not a launch measurement.',
+    );
+  });
+
+  it('names a raw SHA-384 TEE register rather than calling it the wrong length', () => {
+    expect(measurementError('f'.repeat(96))).toMatch(/SHA-384 TEE register/);
   });
 });
 
@@ -130,13 +150,13 @@ describe('TrustListScreen', () => {
 
       await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
       // Upper case with a `0x` prefix is the form a verification report prints.
-      await userEvent.type(await screen.findByLabelText('Launch measurement'), `0x${'A'.repeat(64)}`);
+      await userEvent.type(await screen.findByLabelText(FIELD), `0x${'A'.repeat(64)}`);
       await userEvent.type(screen.getByLabelText('Note'), 'Second cloud');
       await userEvent.click(screen.getByRole('button', { name: 'Trust this measurement' }));
 
       // The dialog closes only on a mutation the mock matched — which is the
       // assertion that the normalised value was what went out.
-      await waitFor(() => expect(screen.queryByLabelText('Launch measurement')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByLabelText(FIELD)).not.toBeInTheDocument());
     });
 
     it('sends no note rather than an empty one', async () => {
@@ -154,21 +174,67 @@ describe('TrustListScreen', () => {
       });
 
       await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
-      await userEvent.type(await screen.findByLabelText('Launch measurement'), 'd'.repeat(64));
+      await userEvent.type(await screen.findByLabelText(FIELD), 'd'.repeat(64));
       await userEvent.click(screen.getByRole('button', { name: 'Trust this measurement' }));
 
-      await waitFor(() => expect(screen.queryByLabelText('Launch measurement')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByLabelText(FIELD)).not.toBeInTheDocument());
     });
 
     it('refuses a value that is not a measurement, next to the field', async () => {
       renderScreen();
 
       await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
-      await userEvent.type(await screen.findByLabelText('Launch measurement'), 'deadbeef');
+      await userEvent.type(await screen.findByLabelText(FIELD), 'deadbeef');
       await userEvent.click(screen.getByRole('button', { name: 'Trust this measurement' }));
 
-      expect(screen.getByRole('alert')).toHaveTextContent('A measurement is 64 hexadecimal characters.');
-      expect(screen.getByLabelText('Launch measurement')).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'A launch measurement is exactly 64 hex characters; this is 8.',
+      );
+      expect(screen.getByLabelText(FIELD)).toHaveAttribute('aria-invalid', 'true');
+    });
+
+    it('says what the field wants and where to copy it from', async () => {
+      renderScreen();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
+      const field = await screen.findByLabelText(FIELD);
+
+      expect(field).toHaveAccessibleDescription(/copy it from an endpoint's “Measurement seen”/);
+      expect(field).toHaveAccessibleDescription(/Not an evidence digest or a certificate fingerprint/);
+    });
+
+    it('names a pasted evidence digest when the field is left, and sends nothing', async () => {
+      // No ADD mock: a mutation that went out would fail the test with an unmatched request.
+      renderScreen();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
+      await userEvent.type(await screen.findByLabelText(FIELD), 'sha256/BvG0Yy3Ir0QKPtC1TrSPuyZZD1sdKq7Gq_a1Mv1Hs0A');
+      await userEvent.tab();
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/evidence digest or certificate fingerprint/);
+      await userEvent.click(screen.getByRole('button', { name: 'Trust this measurement' }));
+      expect(screen.getByLabelText(FIELD)).toHaveAttribute('aria-invalid', 'true');
+    });
+
+    it('sends the bare hex for a `sha256:`-prefixed paste', async () => {
+      renderScreen({
+        mocks: [
+          measurementsMock(),
+          {
+            request: {
+              query: ADD_TRUSTED_MEASUREMENT,
+              variables: { input: { measurement: 'd'.repeat(64), note: null } },
+            },
+            result: { data: { addTrustedMeasurement: { ...TRUSTED_UNUSED, id: 'tm-5' } } },
+          } satisfies MockLink.MockedResponse,
+        ],
+      });
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
+      await userEvent.type(await screen.findByLabelText(FIELD), `sha256:${'D'.repeat(64)}`);
+      await userEvent.click(screen.getByRole('button', { name: 'Trust this measurement' }));
+
+      await waitFor(() => expect(screen.queryByLabelText(FIELD)).not.toBeInTheDocument());
     });
 
     it('shows the server’s refusal rather than closing as though it worked', async () => {
@@ -186,11 +252,11 @@ describe('TrustListScreen', () => {
       });
 
       await userEvent.click(await screen.findByRole('button', { name: 'Trust a measurement' }));
-      await userEvent.type(await screen.findByLabelText('Launch measurement'), 'e'.repeat(64));
+      await userEvent.type(await screen.findByLabelText(FIELD), 'e'.repeat(64));
       await userEvent.click(screen.getByRole('button', { name: 'Trust this measurement' }));
 
       expect(await screen.findByText('That measurement is already trusted.')).toBeInTheDocument();
-      expect(screen.getByLabelText('Launch measurement')).toBeInTheDocument();
+      expect(screen.getByLabelText(FIELD)).toBeInTheDocument();
     });
   });
 

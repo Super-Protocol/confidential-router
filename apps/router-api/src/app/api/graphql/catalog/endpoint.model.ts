@@ -31,9 +31,6 @@ export class EndpointModel {
   @Field()
   hostname!: string;
 
-  @Field(() => String, { description: 'Operator-declared TEE label from the config. Informational, never a claim.' })
-  tee!: string;
-
   @Field(() => [DeclaredImageModel], {
     nullable: true,
     description:

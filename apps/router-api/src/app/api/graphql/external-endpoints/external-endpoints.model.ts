@@ -19,8 +19,9 @@ import {
 import type { ExternalEndpointStatus } from '../../../db/entities/external-endpoint.entity.js';
 import type { ExternalEndpointEventKind } from '../../../db/entities/external-endpoint-event.entity.js';
 import type { ModelCapability } from '../../../db/entities/model.entity.js';
+import type { EndpointReachability } from '../../../external-endpoints/external-endpoint-liveness.js';
 import { MeasurementModel } from '../catalog/evidence.model.js';
-import { ModelCapabilityEnum, PricingModel } from '../catalog/model.model.js';
+import { PricingModel, RouteCapabilityEnum } from '../catalog/model.model.js';
 import { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
 
 export { ExternalEndpointStatusEnum } from './external-endpoint-status.enum.js';
@@ -36,16 +37,29 @@ export const ExternalEndpointEventKindEnum = {
   VERIFIED_BY_THIS_ROUTER: 'verified',
   DENIED_BY_THIS_ROUTER: 'denied',
   DIGEST_CHANGED: 'digest_changed',
+  DIGEST_PINNED: 'digest_pinned',
+  DIGEST_UNPINNED: 'digest_unpinned',
   MEASUREMENT_CHANGED: 'measurement_changed',
   DISABLED: 'disabled',
   KEY_ROTATED: 'key_rotated',
+  OUTAGE: 'outage',
+  RECOVERED: 'recovered',
+  VERDICT_EXPIRED: 'verdict_expired',
 } as const satisfies Record<string, ExternalEndpointEventKind>;
 
 registerEnumType(ExternalEndpointEventKindEnum, {
   name: 'ExternalEndpointEventKind',
   description:
-    'DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud ' +
-    'redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone.',
+    'DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a ' +
+    'DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives ' +
+    'with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the ' +
+    'digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no ' +
+    'longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are ' +
+    'the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this ' +
+    'router declaring that the run of them has passed the configured threshold and alerting on it. ' +
+    'VERDICT_EXPIRED is this router letting go of an admitting verdict because the egress sidecar stopped ' +
+    'confirming it: nothing was judged about the upstream, and the endpoint stopped claiming otherwise ' +
+    '(SUP-583).',
 });
 
 /**
@@ -180,7 +194,12 @@ export class ExternalModelModel {
   @Field(() => PricingModel, { description: 'What this router charges for it, in micro-USD per 1M tokens.' })
   pricing!: PricingModel;
 
-  @Field(() => [ModelCapabilityEnum])
+  /**
+   * What the operator declared this upstream serves itself — the editable value,
+   * not the derived one the catalogue reports. `Model.capabilities` is the wider
+   * list, and this is the one a mutation can set (SUP-450).
+   */
+  @Field(() => [RouteCapabilityEnum], { description: 'Declared routes of the upstream; the editable value.' })
   capabilities!: ModelCapability[];
 }
 
@@ -198,6 +217,79 @@ export class ExternalModelModel {
  * plaintext exists in the mutation that seals it and in the egress leg that
  * injects it, and nowhere in between (ADR-008 §6, threat T15).
  */
+/**
+ * Whether the upstream answered the last check at all, as distinct from whether
+ * this router admitted what it answered with (SUP-517).
+ *
+ * The two refusals it separates ask for opposite actions: UNREACHABLE is "the
+ * upstream is down, go look at the cloud", REACHABLE-and-denied is "open this
+ * drawer and approve a deployment". Before this they rendered identically.
+ */
+export const ExternalEndpointReachabilityEnum = {
+  REACHABLE: 'reachable',
+  UNREACHABLE: 'unreachable',
+  UNKNOWN: 'unknown',
+} as const satisfies Record<string, EndpointReachability>;
+
+registerEnumType(ExternalEndpointReachabilityEnum, {
+  name: 'ExternalEndpointReachability',
+  description:
+    'Whether the last check got a document back. UNREACHABLE: it did not — the upstream is down or unroutable. ' +
+    'REACHABLE: it answered, and any refusal is a judgement about a live upstream. UNKNOWN: nothing checked yet.',
+});
+
+/**
+ * The failure run behind the latest verdict — how long this upstream has been
+ * dark and how many checks have said so (SUP-517).
+ *
+ * Grouped rather than flattened onto {@link ExternalEndpointModel} because they
+ * are one fact read together: a console row shows "not serving for 31h, 4 failed
+ * checks, did not answer", and a reader who took any one of them alone would draw
+ * the wrong conclusion. Every field is a projection of live verification, reset on
+ * boot like the verdict itself (ADR-008 §8).
+ */
+@ObjectType('ExternalEndpointLiveness', {
+  description: 'How long this upstream has been dark, and whether that has passed this router’s outage threshold.',
+})
+export class ExternalEndpointLivenessModel {
+  @Field(() => ExternalEndpointReachabilityEnum)
+  reachability!: EndpointReachability;
+
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description:
+      'Since when this endpoint has not been known to serve — a denial, an operator switching it back on, or this ' +
+      'process starting. Null while it is serving. What the outage threshold is measured from.',
+  })
+  notServingSince!: Date | null;
+
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description: 'When a verdict last admitted it. Null until the first admitting verdict of this process.',
+  })
+  lastSuccessAt!: Date | null;
+
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description: 'When a verdict last denied it. Kept across a recovery, so flapping is visible on the row.',
+  })
+  lastFailureAt!: Date | null;
+
+  @Field(() => Int, {
+    description:
+      'Denied checks in the current run, counted per distinct check rather than per poll. Zero while serving, and ' +
+      'zero while nothing has been checked — “not looked yet” is not a failure.',
+  })
+  consecutiveFailures!: number;
+
+  @Field(() => Boolean, {
+    description:
+      'Whether this run has passed `externalEndpoints.outage.*` and been alerted on. An endpoint an operator ' +
+      'disabled, or one whose deployment has never been approved, is never an outage: nothing is expected of it.',
+  })
+  outage!: boolean;
+}
+
 @ObjectType('ExternalEndpoint', { description: 'A model endpoint in another deployment, attested by this router.' })
 export class ExternalEndpointModel {
   @Field(() => ID)
@@ -225,12 +317,22 @@ export class ExternalEndpointModel {
 
   @Field(() => String, {
     nullable: true,
-    description: 'Stage of the last failure: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy.',
+    description:
+      'Where the last check stopped: a pipeline stage (fetch, cert-chain, untrusted-root, jws, tls-fingerprint, ' +
+      'policy) or the trust factor refused — digest-not-pinned (PENDING: nothing approved yet), ' +
+      'measurement-not-trusted, or digest-mismatch (a redeploy nobody approved).',
   })
   lastStage!: string | null;
 
   @Field(() => String, { nullable: true })
   lastReason!: string | null;
+
+  @Field(() => ExternalEndpointLivenessModel, {
+    description:
+      'The failure run behind the verdict above: since when, how many checks, whether the upstream answered, and ' +
+      'whether this router has declared an outage (SUP-517).',
+  })
+  liveness!: ExternalEndpointLivenessModel;
 
   @Field(() => String, { nullable: true, description: 'The upstream cloud’s root measurement, as the verdict saw it.' })
   measurementSeen!: string | null;
@@ -243,8 +345,43 @@ export class ExternalEndpointModel {
   })
   measurementSource!: string | null;
 
+  @Field(() => Boolean, {
+    nullable: true,
+    description:
+      'Whether the sidecar found the measurement it saw signed in the Super Protocol registry, reported on a ' +
+      'denial too. Informational only: it never admits — the admin trust list is the sole authority. Null when ' +
+      'no measurement was derived.',
+  })
+  measurementInRegistry!: boolean | null;
+
   @Field(() => String, { nullable: true, description: 'Canonical digest of the upstream deployment snapshot.' })
   evidenceDigestSeen!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115).',
+  })
+  evidenceDigestSeenHex!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The deployment an admin approved — the second trust factor beside the cloud measurement. Admission requires ' +
+      'evidenceDigestSeen to equal it. Null: nothing approved yet, so the endpoint stays PENDING. Readable by any ' +
+      'signed-in user, like the trust list.',
+  })
+  pinnedEvidenceDigest!: string | null;
+
+  @Field(() => String, { nullable: true, description: 'pinnedEvidenceDigest as 64 hex characters.' })
+  pinnedEvidenceDigestHex!: string | null;
+
+  @Field(() => ExternalEndpointEvidenceModel, {
+    nullable: true,
+    description:
+      'The evidence summary behind pinnedEvidenceDigest, when this router filed it — what "approve new digest" ' +
+      'compares the current publication against.',
+  })
+  pinnedEvidence!: ExternalEndpointEvidenceModel | null;
 
   @Field(() => String, {
     nullable: true,
@@ -271,8 +408,9 @@ export class ExternalEndpointModel {
   @Field(() => ExternalEndpointEvidenceModel, {
     nullable: true,
     description:
-      'What the upstream publishes right now, as the last verdict saw it. Null until a verdict has admitted the ' +
-      'endpoint and this router has retrieved the publication that verdict names.',
+      'What the upstream publishes right now, as the last verdict saw it. Null until a verdict has verified the ' +
+      'evidence — admitted, or refused only by a trust factor — and this router has retrieved the publication that ' +
+      'verdict names.',
   })
   latestEvidence!: ExternalEndpointEvidenceModel | null;
 
@@ -311,6 +449,12 @@ export class ExternalEndpointEventModel {
 
   @Field(() => String, { nullable: true })
   evidenceDigest!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'evidenceDigest as 64 hex characters — the spelling every screen shows (SUP-115).',
+  })
+  evidenceDigestHex!: string | null;
 
   @Field(() => ExternalEndpointEvidenceModel, {
     nullable: true,
@@ -352,6 +496,37 @@ export class TrustedMeasurementModel {
   admits!: number;
 }
 
+@ObjectType('DiscoveredExternalModel', {
+  description:
+    'One model an attested upstream lists on its own GET /v1/models (SUP-249). Hints only — the operator ' +
+    'chooses the public id, the name and the prices when registering it.',
+})
+export class DiscoveredExternalModelModel {
+  @Field(() => String, { description: 'The upstream’s id for it: what ExternalModelInput.upstreamModel takes.' })
+  upstreamModel!: string;
+
+  @Field(() => String, { nullable: true })
+  name!: string | null;
+
+  @Field(() => Int, { nullable: true })
+  contextLength!: number | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'Micro-USD per 1M prompt tokens, when the upstream publishes a price (another router does).',
+  })
+  promptPer1mMicros!: string | null;
+
+  @Field(() => String, { nullable: true, description: 'Micro-USD per 1M completion tokens, likewise.' })
+  completionPer1mMicros!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'The public model id this endpoint already publishes it under, or null.',
+  })
+  registeredAs!: string | null;
+}
+
 @InputType('ExternalModelInput', {
   description: 'A model on an external endpoint, and what this router charges for it.',
 })
@@ -381,14 +556,18 @@ export class ExternalModelInputModel {
   @Max(100_000_000)
   contextLength!: number;
 
-  @Field(() => [ModelCapabilityEnum], {
+  @Field(() => [RouteCapabilityEnum], {
     nullable: true,
-    description: 'Defaults to CHAT — the one capability every OpenAI-compatible upstream serves.',
+    description:
+      'Which routes the upstream serves itself. Defaults to CHAT — the one every OpenAI-compatible upstream ' +
+      'serves — and the router then serves /v1/completions for it by wrapping the prompt. Add COMPLETIONS when ' +
+      'the upstream serves the legacy route natively (vLLM and SGLang do), which forwards it verbatim and keeps ' +
+      '`suffix` infilling working. What the catalogue ends up reporting is `Model.capabilities`, derived from this.',
   })
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @IsEnum(ModelCapabilityEnum, { each: true })
+  @IsEnum(RouteCapabilityEnum, { each: true })
   capabilities?: ModelCapability[];
 
   @Field(() => String, { description: 'Micro-USD per 1M prompt tokens.' })
@@ -454,6 +633,19 @@ export class UpdateExternalEndpointInputModel {
   @ValidateNested({ each: true })
   @Type(() => ExternalModelInputModel)
   models?: ExternalModelInputModel[];
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'The deployment this edit approves — the same value pinExternalEndpointDigest takes, in either spelling. ' +
+      'Omitted says nothing about the pin: an edit that leaves baseUrl alone keeps the approval, and re-pointing ' +
+      'still withdraws it (SUP-252), which is why a re-point that means to keep its approval states it here ' +
+      'rather than pinning again afterwards with the endpoint out of service in between.',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  evidenceDigest?: string;
 }
 
 @InputType('SetExternalEndpointEnabledInput')
@@ -470,6 +662,18 @@ export class RotateExternalEndpointKeyInputModel {
   @IsNotEmpty()
   @Length(1, 512)
   apiKey!: string;
+}
+
+@InputType('PinExternalEndpointDigestInput')
+export class PinExternalEndpointDigestInputModel {
+  @Field(() => String, {
+    description:
+      'The deployment to approve: sha256:<64 hex> (what the console shows) or sha256/<base64url>. Normalised. ' +
+      'Replaces any earlier pin.',
+  })
+  @IsString()
+  @Length(1, 128)
+  evidenceDigest!: string;
 }
 
 @InputType('AddTrustedMeasurementInput')
@@ -499,4 +703,33 @@ export class UpdateTrustedMeasurementInputModel {
   @IsString()
   @Length(0, 255)
   note?: string;
+}
+
+/**
+ * What one test of the alert channel did (SUP-535).
+ *
+ * `delivered` is a count, not a list: the operator asking already knows which
+ * inbox they are watching, and the addresses an alert goes to are configuration
+ * an authenticated-but-curious reader has no claim on. `failed` carries the
+ * coarse reason so an operator can tell "the mail server refused us" from
+ * "nobody is configured" without opening the container log.
+ */
+@ObjectType('OperatorAlertTest')
+export class OperatorAlertTestModel {
+  @Field(() => Boolean, { description: 'Whether at least one operator was written to.' })
+  sent!: boolean;
+
+  @Field(() => Int, { description: 'Addresses the message was accepted for.' })
+  delivered!: number;
+
+  @Field(() => Int, { description: 'Addresses the provider refused. Each one is in the container log.' })
+  failed!: number;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or ' +
+      'NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).',
+  })
+  skipped!: string | null;
 }

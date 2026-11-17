@@ -33,10 +33,6 @@ export class Endpoint {
   @Column({ type: 'varchar', length: 255 })
   hostname!: string;
 
-  /** Operator-declared TEE label, shown in the console. Never a verdict. */
-  @Column({ type: 'varchar', length: 128 })
-  tee!: string;
-
   @Column({ type: 'varchar', length: 2048, nullable: true })
   evidenceUrl!: string | null;
 

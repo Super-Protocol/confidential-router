@@ -2,13 +2,97 @@ import type { Response as ExpressResponse } from 'express';
 import type { GenerationStatus } from '../../db/entities/generation.entity.js';
 import { computeCostMicros } from '../../metering/pricing.js';
 import { estimatePromptTokens, estimateTokens } from '../../metering/token-estimator.js';
+import { textCompletionChunkOf } from './completions-bridge.js';
 import type { GatewayContext, GenerationOutcome } from './gateway.types.js';
 import { asOpenAiError, type OpenAiApiError } from './openai-error.js';
-import { deltaTextOf, finishReasonOf, readUsage, shapeResponse, type UsageCounts } from './response-shaping.js';
+import {
+  deltaTextOf,
+  finishReasonOf,
+  hasAssistantOutput,
+  readUsage,
+  shapeResponse,
+  type UsageCounts,
+} from './response-shaping.js';
 import { dataPayloadOf, formatDataEvent, SSE_DONE, SSE_HEARTBEAT, splitSseEvents } from './sse.js';
 
 /** `docs/contracts/router-api.md`: a comment line while waiting for the first token. */
 export const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/**
+ * A streaming response the router has committed to before the upstream answered.
+ *
+ * `relayStream` can only start heart-beating once there is a stream to beat
+ * into, and that is one hop too late: the contract's "a comment line every 15 s
+ * while waiting for the first token" has to cover the *prefill* as well, which
+ * is where the silence actually happens.
+ */
+export interface PendingStream {
+  /** True once the 200 and the SSE headers are on the wire and cannot be unsent. */
+  readonly opened: boolean;
+  /** Stops the timers. Headers already written stay written. */
+  stop(): void;
+}
+
+/**
+ * Opens the event stream early, if the upstream is taking too long to answer.
+ *
+ * Seven of 97 agent turns measured against production stalled for exactly 60 s
+ * and ended in a 502 (SUP-449). Three of those 502s were not the router's: the
+ * ingress in front of it hit its own 60 s read timeout first and minted an
+ * openresty HTML page — no `x-request-id`, no error envelope, and no row in Logs,
+ * because the request never came back through the code that writes one. The
+ * router had been silent on that socket since the request arrived.
+ *
+ * So the router stops being silent. After `openAfterMs` of waiting it writes the
+ * 200 and the SSE preamble and starts the same `: ping` the relay sends, which
+ * resets the read deadline of every proxy on the path and keeps the request
+ * ending where the router can account for it.
+ *
+ * The cost is the status line: once the headers are out, a failure before the
+ * first token has to be delivered as a `data:` error event instead of a 502 —
+ * the channel a mid-stream failure already uses. That trade only applies past
+ * `openAfterMs`; every failure fast enough to beat it keeps its status code,
+ * which in the measured window is all but seven of 169 requests.
+ */
+export function openStreamIfSlow(input: {
+  context: GatewayContext;
+  response: ExpressResponse;
+  /** How long the upstream may stay silent before the stream is opened anyway. */
+  openAfterMs: number;
+  /** Overridable so a test does not have to wait a quarter of a minute. */
+  heartbeatIntervalMs?: number;
+}): PendingStream {
+  let opened = false;
+  let beat: NodeJS.Timeout | undefined;
+
+  const ping = (): void => {
+    if (!input.response.writableEnded) {
+      input.response.write(SSE_HEARTBEAT);
+    }
+  };
+  const open = setTimeout(() => {
+    if (input.response.writableEnded || input.response.destroyed) {
+      return;
+    }
+    opened = true;
+    writeStreamHeaders(input.response, input.context);
+    // Immediately, then on the interval: the first gap a proxy measures starts
+    // when the request arrived, not when this timer fired.
+    ping();
+    beat = setInterval(ping, input.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+  }, input.openAfterMs);
+
+  return {
+    get opened(): boolean {
+      return opened;
+    },
+    stop(): void {
+      clearTimeout(open);
+      clearInterval(beat);
+      beat = undefined;
+    },
+  };
+}
 
 /** What a leg makes of a stream that broke after its headers were out. */
 export interface StreamFailure {
@@ -64,14 +148,24 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
   let timeToFirstTokenMs: number | null = null;
   let sawDone = false;
   let aborted = false;
+  /** The client hung up *after* `[DONE]`: the generation ended, the socket did not. */
+  let leftAfterDone = false;
 
+  // Was the stream already open? Then `openStreamIfSlow` has been beating into
+  // it, and the handoff must not add a fresh interval's silence on top of the
+  // gap since its last ping — so this relay beats once before arming its own.
+  const resumed = response.headersSent;
   writeStreamHeaders(response, context);
 
-  let heartbeat: NodeJS.Timeout | undefined = setInterval(() => {
+  const beat = (): void => {
     if (!response.writableEnded) {
       response.write(SSE_HEARTBEAT);
     }
-  }, input.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+  };
+  if (resumed) {
+    beat();
+  }
+  let heartbeat: NodeJS.Timeout | undefined = setInterval(beat, input.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
   const stopHeartbeat = (): void => {
     clearInterval(heartbeat);
     heartbeat = undefined;
@@ -85,11 +179,27 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
 
   // `close` also fires on a clean end; only an unfinished response means the
   // client walked away, and then there is no point in paying for more tokens.
+  //
+  // "Unfinished" is about the *generation*, not about the socket. `[DONE]` is
+  // the last event of a completion, and a client that closes once it has read
+  // one has the whole answer — which is precisely what the `openai` SDK does at
+  // the end of `for await (… of stream)`. Calling that an abort made every
+  // streamed generation from the official client, the console chat included,
+  // land in Logs as `aborted`, and left ruling 5's `aborted` unable to mean what
+  // it is for: a generation policy cut short.
   const onClose = (): void => {
-    if (!response.writableEnded) {
-      aborted = true;
-      abort.abort(new Error('Client closed the connection.'));
+    if (response.writableEnded) {
+      return;
     }
+    if (sawDone) {
+      leftAfterDone = true;
+    } else {
+      aborted = true;
+    }
+    // The upstream fetch is cancelled either way: nothing more will be
+    // forwarded, and a backend that holds the connection open past `[DONE]`
+    // must not keep this relay waiting for its read deadline.
+    abort.abort(new Error('Client closed the connection.'));
   };
   response.on('close', onClose);
 
@@ -111,43 +221,56 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
       return;
     }
 
-    let chunk: unknown;
+    let parsed: unknown;
     try {
-      chunk = JSON.parse(payload);
+      parsed = JSON.parse(payload);
     } catch {
       // Not ours to interpret; the client gets exactly what the backend sent.
       emit(event);
       return;
     }
-    if (!chunk || typeof chunk !== 'object') {
+    if (!parsed || typeof parsed !== 'object') {
       emit(event);
       return;
     }
+    const upstreamChunk = parsed as Record<string, unknown>;
+    // Measured on the upstream chunk, emitted as the translated one (SUP-450).
+    //
+    // Not interchangeable, and the asymmetry is the point: a legacy
+    // `text_completion` chunk can hold assistant *text* and nothing else, so a
+    // `delta.tool_calls` or `delta.reasoning_content` has already collapsed to
+    // `text: ''` by the time the translation is done with it. Measuring there
+    // would leave a bridged tool-call stream with no time to first token at all
+    // and start a thinking model's clock at its first word rather than its first
+    // output — the exact hole SUP-424 closed. The upstream chunk strictly
+    // dominates the translated one for both measurements, and for a non-bridged
+    // request the two are the same object.
+    const chunk: Record<string, unknown> = context.bridged ? textCompletionChunkOf(upstreamChunk) : upstreamChunk;
 
-    const text = deltaTextOf(chunk);
-    if (text.length > 0 && timeToFirstTokenMs === null) {
+    // Any output starts the clock, not only text: a tool call is the first
+    // token of a turn that will never have a `content` delta (SUP-424).
+    if (timeToFirstTokenMs === null && hasAssistantOutput(upstreamChunk)) {
       timeToFirstTokenMs = Date.now() - context.startedAt;
       stopHeartbeat();
     }
-    completionEstimate += estimateTokens(text);
-    finishReason = finishReasonOf(chunk) ?? finishReason;
+    completionEstimate += estimateTokens(deltaTextOf(upstreamChunk));
+    finishReason = finishReasonOf(upstreamChunk) ?? finishReason;
 
-    const reported = readUsage(chunk);
+    // Usage survives the translation untouched, so these two read either one; the
+    // upstream chunk is named here for the same reason as above.
+    const reported = readUsage(upstreamChunk);
     if (reported) {
       usage = reported;
     }
-    if (reported && context.suppressUsageChunk && isUsageOnly(chunk)) {
+    if (reported && context.suppressUsageChunk && isUsageOnly(upstreamChunk)) {
       // The router asked for this chunk, not the client. Counted, not forwarded.
       return;
     }
     // Re-emitted as a single `data:` line: the OpenAI stream format uses no
     // `event:` or `id:` fields, and every event that is not a JSON object has
     // already been forwarded untouched above.
-    const record = chunk as Record<string, unknown>;
     emit(
-      formatDataEvent(
-        JSON.stringify(shapeResponse(record, context, reported ? extensionFor(context, reported) : null)),
-      ),
+      formatDataEvent(JSON.stringify(shapeResponse(chunk, context, reported ? extensionFor(context, reported) : null))),
     );
   };
 
@@ -185,6 +308,12 @@ export async function relayStream(input: StreamRelayInput): Promise<GenerationOu
     clearTimeout(idle);
     stopHeartbeat();
     response.off('close', onClose);
+  }
+
+  if (leftAfterDone) {
+    // The cancellation above surfaces as a read error on the upstream body. It
+    // is this relay's own doing, on a generation that already completed.
+    failure = undefined;
   }
 
   let errorCode: string | null = null;
@@ -232,7 +361,17 @@ function isUsageOnly(chunk: unknown): boolean {
   return Array.isArray(choices) && choices.length === 0;
 }
 
+/**
+ * The SSE preamble, written at most once.
+ *
+ * Idempotent because two callers race for it: {@link openStreamIfSlow} when the
+ * upstream is slow, and {@link relayStream} when it answers. Whichever got there
+ * first owns the headers.
+ */
 function writeStreamHeaders(response: ExpressResponse, context: GatewayContext): void {
+  if (response.headersSent) {
+    return;
+  }
   response.status(200);
   response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   // `no-transform` and the nginx hint together: any proxy that buffers this

@@ -4,13 +4,18 @@ type ActivityPoint {
   bucket: DateTime!
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
   requests: Int!
 
@@ -25,18 +30,33 @@ type ActivitySummary {
   avgTokensPerSecond: Float
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
+
+  """
+  Of `requests`, how many reported a generation rate — the sample `avgTokensPerSecond` averages. Always at most `timedRequests`: a rate also needs a window large enough to divide.
+  """
+  ratedRequests: Int!
   requests: Int!
 
   """Spend in micro-USD."""
   spendMicros: String!
+
+  """
+  Of `requests`, how many reported a first-token time — the sample `avgTimeToFirstTokenMs` averages. A request that was not streamed never reports one.
+  """
+  timedRequests: Int!
 }
 
 input AddTrustedMeasurementInput {
@@ -47,6 +67,64 @@ input AddTrustedMeasurementInput {
 
   """Why this cloud is trusted. Shown beside the entry."""
   note: String
+}
+
+"""One invitation code, as an operator sees it."""
+type AdminInviteCode {
+  campaign: String!
+
+  """Display form, `ABCD-EFGH-JKMN`. The console masks it until asked."""
+  code: String!
+
+  """When the code was issued."""
+  createdAt: DateTime!
+  expiresAt: DateTime
+
+  """Micro-USD one redemption grants."""
+  grantMicros: String!
+  id: ID!
+
+  """The operator who issued it; null for a CLI-issued code."""
+  issuedByEmail: String
+  maxRedemptions: Int!
+  note: String
+
+  """Accounts that redeemed it, oldest first."""
+  redeemers: [InviteCodeRedeemer!]!
+  redemptionCount: Int!
+  status: InviteCodeStatus!
+
+  """The invitation link, on `invites.landingBaseUrl`."""
+  url: String!
+  withdrawnAt: DateTime
+}
+
+type AdminInviteCodePage {
+  nodes: [AdminInviteCode!]!
+
+  """Codes matching the filter, across every page."""
+  totalCount: Int!
+}
+
+"""One account, and how it came to exist."""
+type AdminSignUp {
+  campaign: String
+  createdAt: DateTime!
+  email: String!
+
+  """Its display form. The console masks it until asked."""
+  inviteCode: String
+
+  """The code redeemed. Set exactly when `origin` is INVITE."""
+  inviteCodeId: ID
+  origin: SignUpOrigin!
+  redeemedAt: DateTime
+  userId: ID!
+}
+
+type AdminSignUpPage {
+  nodes: [AdminSignUp!]!
+  totalCount: Int!
 }
 
 """A /v1 credential. The secret itself is returned only at creation."""
@@ -358,6 +436,27 @@ input DisableInviteCodesInput {
 }
 
 """
+One model an attested upstream lists on its own GET /v1/models (SUP-249). Hints only — the operator chooses the public id, the name and the prices when registering it.
+"""
+type DiscoveredExternalModel {
+  """Micro-USD per 1M completion tokens, likewise."""
+  completionPer1mMicros: String
+  contextLength: Int
+  name: String
+
+  """
+  Micro-USD per 1M prompt tokens, when the upstream publishes a price (another router does).
+  """
+  promptPer1mMicros: String
+
+  """The public model id this endpoint already publishes it under, or null."""
+  registeredAs: String
+
+  """The upstream’s id for it: what ExternalModelInput.upstreamModel takes."""
+  upstreamModel: String!
+}
+
+"""
 A router hostname the platform publishes evidence for. Projected from the router config; never created or edited through this API.
 """
 type Endpoint {
@@ -376,24 +475,25 @@ type Endpoint {
   name: String!
 
   """
-  Operator-declared TEE label from the config. Informational, never a claim.
-  """
-  tee: String!
-
-  """
   Prompt + completion tokens the viewer’s workspace routed here in 30 days.
   """
   tokensRouted30d: Int!
 }
 
 """
-Of the generations served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate.
+Of the generations this deployment’s own endpoints served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate. Generations routed to an external endpoint are outside the question entirely — they are in neither `requests` nor `covered` — because this platform publishes no bundle for one; the router verified that upstream itself and reports it as “verified by this router” (ADR-008 §4).
 """
 type EvidenceCoverage {
   covered: Int!
 
-  """covered / requests; 0 when nothing was served."""
-  ratio: Float!
+  """
+  covered / requests. Null when `requests` is 0: nothing in the window could have been covered, so there is no ratio — render it as “not applicable”, never as 0%.
+  """
+  ratio: Float
+
+  """
+  Generations this deployment’s own endpoints served — not the workspace’s total.
+  """
   requests: Int!
 }
 
@@ -462,6 +562,11 @@ type EvidenceSnapshot {
 
   """rootCaTeeQuote.format, e.g. intel-tdx-quote-v5."""
   quoteFormat: String
+
+  """
+  The TEE the published evidence names — the hardware branch of the TeeEvidence in the root certificate of the chain, e.g. "AMD SEV-SNP (Azure)". Read, never verified; null when the root carries no evidence this router recognises.
+  """
+  tee: String
 }
 
 type EvidenceSnapshotConnection {
@@ -518,6 +623,11 @@ type ExternalEndpoint {
   """Canonical digest of the upstream deployment snapshot."""
   evidenceDigestSeen: String
 
+  """
+  evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115).
+  """
+  evidenceDigestSeenHex: String
+
   """Derived from baseUrl; what the evidence is fetched from and bound to."""
   hostname: String!
   id: ID!
@@ -527,14 +637,24 @@ type ExternalEndpoint {
   lastReason: String
 
   """
-  Stage of the last failure: fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy.
+  Where the last check stopped: a pipeline stage (fetch, cert-chain, untrusted-root, jws, tls-fingerprint, policy) or the trust factor refused — digest-not-pinned (PENDING: nothing approved yet), measurement-not-trusted, or digest-mismatch (a redeploy nobody approved).
   """
   lastStage: String
 
   """
-  What the upstream publishes right now, as the last verdict saw it. Null until a verdict has admitted the endpoint and this router has retrieved the publication that verdict names.
+  What the upstream publishes right now, as the last verdict saw it. Null until a verdict has verified the evidence — admitted, or refused only by a trust factor — and this router has retrieved the publication that verdict names.
   """
   latestEvidence: ExternalEndpointEvidence
+
+  """
+  The failure run behind the verdict above: since when, how many checks, whether the upstream answered, and whether this router has declared an outage (SUP-517).
+  """
+  liveness: ExternalEndpointLiveness!
+
+  """
+  Whether the sidecar found the measurement it saw signed in the Super Protocol registry, reported on a denial too. Informational only: it never admits — the admin trust list is the sole authority. Null when no measurement was derived.
+  """
+  measurementInRegistry: Boolean
 
   """The upstream cloud’s root measurement, as the verdict saw it."""
   measurementSeen: String
@@ -558,6 +678,19 @@ type ExternalEndpoint {
   The TLS leaf the egress pinned. Upstream connections verify against this and no CA bundle.
   """
   pinnedCertFingerprint: String
+
+  """
+  The evidence summary behind pinnedEvidenceDigest, when this router filed it — what "approve new digest" compares the current publication against.
+  """
+  pinnedEvidence: ExternalEndpointEvidence
+
+  """
+  The deployment an admin approved — the second trust factor beside the cloud measurement. Admission requires evidenceDigestSeen to equal it. Null: nothing approved yet, so the endpoint stays PENDING. Readable by any signed-in user, like the trust list.
+  """
+  pinnedEvidenceDigest: String
+
+  """pinnedEvidenceDigest as 64 hex characters."""
+  pinnedEvidenceDigestHex: String
   status: ExternalEndpointStatus!
   updatedAt: DateTime!
 }
@@ -573,6 +706,11 @@ type ExternalEndpointEvent {
   """
   evidence: ExternalEndpointEvidence
   evidenceDigest: String
+
+  """
+  evidenceDigest as 64 hex characters — the spelling every screen shows (SUP-115).
+  """
+  evidenceDigestHex: String
   id: ID!
   kind: ExternalEndpointEventKind!
   measurement: String
@@ -585,15 +723,20 @@ type ExternalEndpointEvent {
 }
 
 """
-DIGEST_CHANGED and MEASUREMENT_CHANGED fire even while the endpoint stays verified: the same cloud redeploying a different image is exactly what cloud-granularity trust cannot tell you from the status alone.
+DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this router declaring that the run of them has passed the configured threshold and alerting on it. VERDICT_EXPIRED is this router letting go of an admitting verdict because the egress sidecar stopped confirming it: nothing was judged about the upstream, and the endpoint stopped claiming otherwise (SUP-583).
 """
 enum ExternalEndpointEventKind {
   DENIED_BY_THIS_ROUTER
   DIGEST_CHANGED
+  DIGEST_PINNED
+  DIGEST_UNPINNED
   DISABLED
   KEY_ROTATED
   MEASUREMENT_CHANGED
+  OUTAGE
+  RECOVERED
   REGISTERED
+  VERDICT_EXPIRED
   VERIFIED_BY_THIS_ROUTER
 }
 
@@ -636,10 +779,42 @@ type ExternalEndpointEvidence {
 }
 
 """
+How long this upstream has been dark, and whether that has passed this router’s outage threshold.
+"""
+type ExternalEndpointLiveness {
+  """
+  Denied checks in the current run, counted per distinct check rather than per poll. Zero while serving, and zero while nothing has been checked — “not looked yet” is not a failure.
+  """
+  consecutiveFailures: Int!
+
+  """
+  When a verdict last denied it. Kept across a recovery, so flapping is visible on the row.
+  """
+  lastFailureAt: DateTime
+
+  """
+  When a verdict last admitted it. Null until the first admitting verdict of this process.
+  """
+  lastSuccessAt: DateTime
+
+  """
+  Since when this endpoint has not been known to serve — a denial, an operator switching it back on, or this process starting. Null while it is serving. What the outage threshold is measured from.
+  """
+  notServingSince: DateTime
+
+  """
+  Whether this run has passed `externalEndpoints.outage.*` and been alerted on. An endpoint an operator disabled, or one whose deployment has never been approved, is never an outage: nothing is expected of it.
+  """
+  outage: Boolean!
+  reachability: ExternalEndpointReachability!
+}
+
+"""
 A model an operator registered on an external endpoint, with the prices every generation freezes.
 """
 type ExternalEndpointModel {
-  capabilities: [ModelCapability!]!
+  """Declared routes of the upstream; the editable value."""
+  capabilities: [RouteCapability!]!
   contextLength: Int!
 
   """The public model id, as /v1/models reports it."""
@@ -656,6 +831,15 @@ type ExternalEndpointModel {
 }
 
 """
+Whether the last check got a document back. UNREACHABLE: it did not — the upstream is down or unroutable. REACHABLE: it answered, and any refusal is a judgement about a live upstream. UNKNOWN: nothing checked yet.
+"""
+enum ExternalEndpointReachability {
+  REACHABLE
+  UNKNOWN
+  UNREACHABLE
+}
+
+"""
 What this router currently says about an upstream. Rendered as “verified by this router” / “denied by this router” — never a bare “verified”, which is reserved for nothing in this schema (ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing.
 """
 enum ExternalEndpointStatus {
@@ -668,9 +852,9 @@ enum ExternalEndpointStatus {
 """A model on an external endpoint, and what this router charges for it."""
 input ExternalModelInput {
   """
-  Defaults to CHAT — the one capability every OpenAI-compatible upstream serves.
+  Which routes the upstream serves itself. Defaults to CHAT — the one every OpenAI-compatible upstream serves — and the router then serves /v1/completions for it by wrapping the prompt. Add COMPLETIONS when the upstream serves the legacy route natively (vLLM and SGLang do), which forwards it verbatim and keeps `suffix` infilling working. What the catalogue ends up reporting is `Model.capabilities`, derived from this.
   """
-  capabilities: [ModelCapability!]
+  capabilities: [RouteCapability!]
 
   """Micro-USD per 1M completion tokens."""
   completionPer1mMicros: String!
@@ -698,6 +882,11 @@ type ExternalUpstream {
   """
   evidenceDigestSeen: String
 
+  """
+  evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115). Null when there is no digest, or when the stored value is not one the parser accepts.
+  """
+  evidenceDigestSeenHex: String
+
   """The upstream’s own hostname — what its evidence is bound to."""
   hostname: String!
   id: ID!
@@ -712,6 +901,11 @@ type ExternalUpstream {
   The endpoint name. Also the key of this router’s raw-bundle relay, `GET /v1/evidence/{endpoint}`, which is how a browser reads the upstream’s published evidence and verifies it itself.
   """
   name: String!
+
+  """
+  Since when this upstream has not been known to serve, or null while it is serving (SUP-517). The answer to “is `available: false` a new registration or a model that has been dark for a day” — the question an advertised-but-refusing model left a reader unable to ask.
+  """
+  notServingSince: DateTime
 
   """
   Rendered as “verified by this router” / “denied by this router”, never a bare “verified”.
@@ -902,6 +1096,42 @@ type InviteCampaignStats {
   redemptionRate: Float!
 }
 
+type InviteCodeRedeemer {
+  """Redeemed on another deployment and brought here by a codes CSV import."""
+  carried: Boolean!
+
+  """Null when the account no longer exists."""
+  email: String
+  redeemedAt: DateTime!
+
+  """
+  Null for a redemption imported from another deployment whose address has no account here.
+  """
+  userId: ID
+}
+
+"""
+Where an invitation code stands. A withdrawn code reads as withdrawn whatever else is true of it.
+"""
+enum InviteCodeStatus {
+  ACTIVE
+  EXPIRED
+  REDEEMED
+  WITHDRAWN
+}
+
+"""One UTC day of invitation activity."""
+type InviteDay {
+  codesIssued: Int!
+  codesRedeemed: Int!
+
+  """`YYYY-MM-DD`, UTC."""
+  date: String!
+  signUpsBootstrap: Int!
+  signUpsInvited: Int!
+  signUpsOpen: Int!
+}
+
 """The invitation credit an account received, if it received one."""
 type InviteGrant {
   """Campaign the code belonged to."""
@@ -951,6 +1181,37 @@ type InviteRestoration {
   target: String!
 }
 
+"""Everything the Invitations statistics tab draws, in one round trip."""
+type InviteStatistics {
+  """Per-campaign breakdown, most recently issued first."""
+  campaigns: [InviteCampaignStats!]!
+
+  """Every day of the window, oldest first; empty days are zeros."""
+  daily: [InviteDay!]!
+  totals: InviteTotals!
+}
+
+"""Deployment-wide invitation numbers."""
+type InviteTotals {
+  """Micro-USD granted through invitations."""
+  grantedMicros: String!
+
+  """Codes ever issued."""
+  issued: Int!
+
+  """Redemptions — one per invited account."""
+  redeemed: Int!
+
+  """`redeemed / issued`; 0 when nothing was issued."""
+  redemptionRate: Float!
+
+  """Accounts on the deployment, however they arrived."""
+  signUps: Int!
+
+  """Codes an operator withdrew."""
+  withdrawn: Int!
+}
+
 """How many invitation codes an operator withdrew. Operators only."""
 type InviteWithdrawal {
   """
@@ -975,6 +1236,41 @@ type InviteWithdrawal {
   withdrawn: Int!
 }
 
+input IssueInviteCodesInput {
+  """Campaign tag: a lowercase slug, e.g. `launch-2026-10-devs`."""
+  campaign: String!
+
+  """How many codes, 1–1000."""
+  count: Int!
+
+  """When the codes stop working. Null: never."""
+  expiresAt: DateTime
+
+  """Micro-USD each redemption grants, as an integer string."""
+  grantMicros: String!
+
+  """Accounts that may redeem each code."""
+  maxRedemptions: Int! = 1
+  note: String
+}
+
+type IssuedInviteCode {
+  """Display form, `ABCD-EFGH-JKMN`."""
+  code: String!
+  id: ID!
+  url: String!
+}
+
+"""A freshly issued batch. The console shows it once."""
+type IssuedInviteCodes {
+  campaign: String!
+  codes: [IssuedInviteCode!]!
+  expiresAt: DateTime
+
+  """Micro-USD each code grants."""
+  grantMicros: String!
+}
+
 """Arbitrary JSON, serialised as-is."""
 scalar JSON
 
@@ -984,13 +1280,18 @@ type KeyUsage {
   apiKeyId: ID
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   name: String!
   prefix: String
   promptTokens: Int!
@@ -1020,6 +1321,8 @@ type Model {
   Whether this router will route to it right now. Always true for a CONFIG model; for an EXTERNAL one it is false unless the endpoint holds a live verdict admitting it.
   """
   available: Boolean!
+
+  """What the router serves for this model; derived, not declared."""
   capabilities: [ModelCapability!]!
   contextLength: Int!
 
@@ -1045,15 +1348,20 @@ type Model {
   slug: String!
 
   """
-  Denormalised from the endpoint so a model list needs no join. Null for an EXTERNAL model: the operator declares no TEE label for another deployment’s hardware, and a measurement admits a cloud rather than naming its silicon.
+  The TEE the serving endpoint’s published evidence names — `endpoint.latestEvidence.tee`, carried here so a model list needs no second lookup. Read, never verified. Null while the endpoint has published nothing this router recognises, and null for an EXTERNAL model: this router reads no TEE for another deployment’s hardware, and a measurement admits a cloud rather than naming its silicon.
   """
   tee: String
 }
 
+"""
+Something the router does with this model: a route it accepts (CHAT, COMPLETIONS, EMBEDDINGS), tool definitions forwarded and tool-call deltas relayed untouched (TOOLS), or `stream: true` honoured (STREAMING). Derived from the declared `RouteCapability` list, so it cannot claim what the surface does not serve.
+"""
 enum ModelCapability {
   CHAT
   COMPLETIONS
   EMBEDDINGS
+  STREAMING
+  TOOLS
 }
 
 """
@@ -1068,13 +1376,18 @@ enum ModelOrigin {
 type ModelUsage {
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   modelId: ID!
   name: String!
   promptTokens: Int!
@@ -1086,7 +1399,7 @@ type ModelUsage {
 
 type Mutation {
   """
-  Admits one more cloud. It admits a cloud, never a deployment — any TEE on it satisfies the check. Takes effect on the next check, not after the re-attest interval. Restricted to auth.adminEmails.
+  Admits one more cloud — one of the two trust factors; each endpoint also needs its own deployment digest pinned (pinExternalEndpointDigest). Takes effect on the next check, not after the re-attest interval. Restricted to auth.adminEmails.
   """
   addTrustedMeasurement(input: AddTrustedMeasurementInput!): TrustedMeasurement!
 
@@ -1125,6 +1438,14 @@ type Mutation {
 
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
+
+  """Issues invitation codes. Restricted to auth.adminEmails."""
+  issueInviteCodes(input: IssueInviteCodesInput!): IssuedInviteCodes!
+
+  """
+  Approves one deployment: pins the evidence digest this endpoint must publish, the second trust factor beside the cloud measurement. Replaces any earlier pin — approving a redeploy is this call with the new digest. Takes effect on the next check, which the sidecar runs at once. Restricted to auth.adminEmails.
+  """
+  pinExternalEndpointDigest(id: ID!, input: PinExternalEndpointDigestInput!): ExternalEndpoint!
   refreshEvidence(endpointId: ID!): EvidenceSnapshot
 
   """
@@ -1150,6 +1471,11 @@ type Mutation {
   """
   rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 
+  """
+  Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+
   """Turns automatic top-up on or off."""
   setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
 
@@ -1163,7 +1489,7 @@ type Mutation {
   updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
 
   """
-  Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. Restricted to auth.adminEmails.
+  Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. Re-pointing withdraws the approved deployment, so an edit that means to keep one carries it as evidenceDigest. Restricted to auth.adminEmails.
   """
   updateExternalEndpoint(id: ID!, input: UpdateExternalEndpointInput!): ExternalEndpoint!
 
@@ -1177,12 +1503,40 @@ type Mutation {
   Rewrites the note beside an entry. The measurement itself is immutable. Restricted to auth.adminEmails.
   """
   updateTrustedMeasurement(input: UpdateTrustedMeasurementInput!): TrustedMeasurement!
+
+  """
+  Withdraws one unredeemed invitation code. Restricted to auth.adminEmails.
+  """
+  withdrawInviteCode(id: ID!): InviteWithdrawal!
+}
+
+type OperatorAlertTest {
+  """Addresses the message was accepted for."""
+  delivered: Int!
+
+  """Addresses the provider refused. Each one is in the container log."""
+  failed: Int!
+
+  """Whether at least one operator was written to."""
+  sent: Boolean!
+
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).
+  """
+  skipped: String
 }
 
 type PageInfo {
   """Cursor of the last edge, to pass as `after`."""
   endCursor: String
   hasNextPage: Boolean!
+}
+
+input PinExternalEndpointDigestInput {
+  """
+  The deployment to approve: sha256:<64 hex> (what the console shows) or sha256/<base64url>. Normalised. Replaces any earlier pin.
+  """
+  evidenceDigest: String!
 }
 
 """
@@ -1221,6 +1575,16 @@ type Query {
     workspaceId: ID!
   ): ActivitySummary!
 
+  """
+  Invitation codes, newest first, with who redeemed each. Restricted to auth.adminEmails.
+  """
+  adminInviteCodes(campaign: String, limit: Int! = 50, offset: Int! = 0, status: InviteCodeStatus): AdminInviteCodePage!
+
+  """
+  Accounts, newest first, with how each came to exist. Restricted to auth.adminEmails.
+  """
+  adminSignUps(limit: Int! = 50, offset: Int! = 0, origin: SignUpOrigin): AdminSignUpPage!
+
   """Every key in the workspace, newest first."""
   apiKeys(workspaceId: ID!): [ApiKey!]!
 
@@ -1240,6 +1604,11 @@ type Query {
 
   """The credits ledger, newest first."""
   creditTransactions(after: String, first: Int! = 20, workspaceId: ID!): CreditTransactionConnection!
+
+  """
+  Asks a VERIFIED_BY_THIS_ROUTER endpoint for its own GET /v1/models, through the attested egress — never before the verdict: an endpoint that is not verified is refused with CONFLICT and nothing is sent. Read-only; register the chosen models with updateExternalEndpoint. Restricted to auth.adminEmails, because the call carries the stored upstream key.
+  """
+  discoverExternalModels(id: ID!): [DiscoveredExternalModel!]!
 
   """
   The router hostnames the platform publishes evidence for, with what each currently publishes.
@@ -1300,6 +1669,14 @@ type Query {
     code: String
   ): InviteGrantStatus!
 
+  """
+  Invitation totals, a daily series and the per-campaign breakdown. Restricted to auth.adminEmails.
+  """
+  inviteStatistics(
+    """Days of daily series, ending today (UTC)."""
+    days: Int! = 30
+  ): InviteStatistics!
+
   """The signed-in user, or an error when anonymous."""
   me: User!
 
@@ -1308,7 +1685,7 @@ type Query {
 
   """Routable models, in config order. Public."""
   models(
-    """Narrow to one TEE label."""
+    """Narrow to one TEE label, as `Model.tee` spells it."""
     tee: String
   ): [Model!]!
 
@@ -1316,6 +1693,14 @@ type Query {
   The endpoint this deployment publishes evidence for — the one a browser’s connection terminates at, and therefore the one a page can verify. Null when this router cannot tell which of its endpoints is its own.
   """
   routerEndpoint: Endpoint
+
+  """
+  Whether this deployment’s mail provider is dropping messages to an address. Public, and says nothing about whether an account holds it.
+  """
+  signInMailState(
+    """The address a code was asked for."""
+    email: String!
+  ): SignInMailState!
 
   """The sign-in paths this deployment offers. Public."""
   signInOptions: SignInOptions!
@@ -1388,6 +1773,15 @@ input RotateExternalEndpointKeyInput {
   apiKey: String!
 }
 
+"""
+A route an upstream serves itself, as declared on the model. What the router then serves for it is `ModelCapability`, which is derived from this and never declared (SUP-450).
+"""
+enum RouteCapability {
+  CHAT
+  COMPLETIONS
+  EMBEDDINGS
+}
+
 input SetAutoTopUpInput {
   settings: AutoTopUpInput!
   workspaceId: ID!
@@ -1400,12 +1794,44 @@ input SetExternalEndpointEnabledInput {
   enabled: Boolean!
 }
 
+"""Whether a sign-in code can reach an address at all."""
+type SignInMailState {
+  """
+  When the current state began, as an ISO timestamp. Null while the state is UNKNOWN.
+  """
+  since: String
+  state: SignInMailStateName!
+}
+
+"""What this deployment’s mail provider last reported about an address."""
+enum SignInMailStateName {
+  DELAYED
+  DELIVERING
+  REJECTING
+  UNKNOWN
+}
+
 """Which sign-in paths this deployment offers."""
 type SignInOptions {
+  """
+  The bootstrap token can sign its own account back in: a token is configured and the account it created exists. The administrator’s way in when no code can be mailed.
+  """
+  adminRecovery: Boolean!
+
   """
   A bootstrap token can create the first account right now: one is configured and the deployment has no user yet. False on every deployment that has already been signed into.
   """
   bootstrap: Boolean!
+
+  """
+  A mailer is configured, so a one-time sign-in code can be mailed. This is how accounts sign in and how they are created; there are no passwords.
+  """
+  emailCode: Boolean!
+
+  """
+  How many digits a sign-in code has. Meaningless while `emailCode` is false.
+  """
+  emailCodeLength: Int!
 
   """A GitHub OAuth app is configured."""
   github: Boolean!
@@ -1418,18 +1844,20 @@ type SignInOptions {
   """
   inviteRequired: Boolean!
 
-  """A mailer is configured, so a one-time link can be sent."""
+  """A one-time sign-in link can be mailed as well as a code."""
   magicLink: Boolean!
 
   """
-  Email and password sign-in and sign-up are enabled. There is no email verification and no password reset: this path exists for deployments with no mail delivery at all.
+  A mailbox to write to from a different address when this deployment’s mail cannot reach the one a viewer is holding (`mail.replyTo`). Null where none is configured. Sign-in is an emailed code, so a suppressed address has no other way to ask for help.
   """
-  password: Boolean!
+  supportEmail: String
+}
 
-  """
-  The shortest password this deployment accepts, so the sign-up form can state the rule instead of discovering it. Meaningless while `password` is false.
-  """
-  passwordMinLength: Int!
+"""How an account came to exist."""
+enum SignUpOrigin {
+  BOOTSTRAP
+  INVITE
+  OPEN
 }
 
 enum SortDirection {
@@ -1472,6 +1900,11 @@ input UpdateApiKeyInput {
 
 input UpdateExternalEndpointInput {
   baseUrl: String
+
+  """
+  The deployment this edit approves — the same value pinExternalEndpointDigest takes, in either spelling. Omitted says nothing about the pin: an edit that leaves baseUrl alone keeps the approval, and re-pointing still withdraws it (SUP-252), which is why a re-point that means to keep its approval states it here rather than pinning again afterwards with the endpoint out of service in between.
+  """
+  evidenceDigest: String
 
   """
   Replaces the registered set. A model left out is retired, never deleted.

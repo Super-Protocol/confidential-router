@@ -11,12 +11,32 @@
       "inputs": [
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
-        "{projectRoot}/go.sum"
+        "{projectRoot}/go.sum",
+        "swarmEvidenceGo"
       ],
       "outputs": ["{projectRoot}/bin"],
       "options": {
         "command": "go build -o bin/ ./cmd/...",
         "cwd": "apps/gatekeeper"
+      }
+    },
+    "build-teststand": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum",
+        "swarmEvidenceGo"
+      ],
+      "outputs": ["{projectRoot}/bin-teststand"],
+      "options": {
+        "commands": [
+          "go build -tags teststand -o bin-teststand/ ./cmd/gatekeeper-teststand",
+          "go test -tags teststand -count=1 ./cmd/gatekeeper-teststand"
+        ],
+        "cwd": "apps/gatekeeper",
+        "parallel": false
       }
     },
     "test": {
@@ -26,7 +46,8 @@
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
         "{projectRoot}/go.sum",
-        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*"
+        "{workspaceRoot}/libs/attestation-fixtures/vectors/**/*",
+        "swarmEvidenceGo"
       ],
       "options": {
         "command": "go test ./...",
@@ -36,7 +57,11 @@
     "e2e": {
       "executor": "nx:run-commands",
       "cache": false,
-      "dependsOn": ["build", "@confidential-router/router-api:build"],
+      "dependsOn": [
+        "build",
+        "build-teststand",
+        "@confidential-router/router-api:build"
+      ],
       "options": {
         "command": "tsx tools/demo/src/main.ts",
         "env": {
@@ -51,7 +76,8 @@
         "{projectRoot}/**/*.go",
         "{projectRoot}/go.mod",
         "{projectRoot}/go.sum",
-        "{projectRoot}/.golangci.yml"
+        "{projectRoot}/.golangci.yml",
+        "swarmEvidenceGo"
       ],
       "options": {
         "commands": ["go vet ./...", "golangci-lint run"],
@@ -84,5 +110,8 @@
       }
     }
   },
-  "implicitDependencies": ["@confidential-router/attestation-fixtures"]
+  "implicitDependencies": [
+    "@confidential-router/attestation-fixtures",
+    "swarm-evidence-go"
+  ]
 }

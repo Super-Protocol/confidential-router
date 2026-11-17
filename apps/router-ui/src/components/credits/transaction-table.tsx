@@ -9,7 +9,7 @@ import {
 } from '@confidential-router/ui/components/table';
 import { ExternalLink } from 'lucide-react';
 import type { CreditTransactionKind } from '../../generated/graphql';
-import { formatDate, formatUsd } from '../../lib/format';
+import { formatDate, formatUsdMetered } from '../../lib/format';
 import { descriptionTextOf, receiptUrlOf } from './amounts';
 
 export interface TransactionRow {
@@ -41,9 +41,15 @@ const KIND_LABELS: Record<CreditTransactionKind, string> = {
  */
 const FEEDBACK_GRANT_REFERENCE = 'feedback';
 
+/** `reference` on the operator's sign-up credit (`signup-grant.service.ts`, SUP-249). */
+const SIGNUP_GRANT_REFERENCE = 'signup';
+
 function kindLabelOf(entry: TransactionRow): string {
   if (entry.kind === 'GRANT' && entry.reference === FEEDBACK_GRANT_REFERENCE) {
     return 'Feedback grant';
+  }
+  if (entry.kind === 'GRANT' && entry.reference === SIGNUP_GRANT_REFERENCE) {
+    return 'Sign-up credit';
   }
   return KIND_LABELS[entry.kind];
 }
@@ -80,7 +86,9 @@ export function TransactionTable({ transactions }: { transactions: readonly Tran
                 className={`text-right font-mono whitespace-nowrap ${credit ? 'text-brand' : 'text-foreground'}`}
               >
                 {credit ? '+' : ''}
-                {formatUsd(entry.amountMicros)}
+                {/* Four decimals, as on Logs: a usage row is fractions of a cent
+                    and rounded to cents it read as `−$0.00` (SUP-424). */}
+                {formatUsdMetered(entry.amountMicros)}
               </TableCell>
               <TableCell className="text-right">
                 {receipt ? (

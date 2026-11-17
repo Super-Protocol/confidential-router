@@ -39,7 +39,7 @@ export default function OverviewPage() {
           </p>
         </div>
         <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
-          <Link href="/gatekeeper">How it works</Link>
+          <Link href="/keys#how-to-connect">How it works</Link>
         </Button>
       </div>
 

@@ -1,5 +1,5 @@
 import type { MockLink } from '@apollo/client/testing';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithSession, sessionMock } from '../../test-utils';
@@ -52,8 +52,14 @@ const REVOKED_KEY: MockedApiKey = {
 };
 
 const MODELS = [
-  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct', available: true },
-  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true },
+  {
+    __typename: 'Model',
+    id: 'meta/llama-3.3-70b-instruct:tdx',
+    name: 'Llama 3.3 70B Instruct',
+    available: true,
+    contextLength: 131_072,
+  },
+  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true, contextLength: 131_072 },
 ];
 
 function keysMock(keys: MockedApiKey[] = [LIVE_KEY, REVOKED_KEY]): MockLink.MockedResponse {
@@ -133,6 +139,74 @@ describe('APIKeysScreen', () => {
     const snippet = screen.getByTestId('wiring-snippet-curl');
     expect(snippet).toHaveTextContent('sk-tee-v1-4f…');
     expect(snippet).toHaveTextContent('http://127.0.0.1:8787/v1');
+  });
+
+  // SUP-255: the standalone Gatekeeper screen folded into this page, in the
+  // order a reader needs it — why, then the gatekeeper, then the client.
+  describe('How to connect', () => {
+    it('explains the connection, installs the gatekeeper and wires a client, in that order', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      const card = screen.getByRole('heading', { name: 'How to connect' }).closest('[id="how-to-connect"]');
+      expect(card).not.toBeNull();
+      const headings = within(card as HTMLElement)
+        .getAllByRole('heading', { level: 3 })
+        .map((heading) => heading.textContent);
+      expect(headings).toEqual([
+        '1.How the connection works, and why there is a gatekeeper',
+        '2.Install the gatekeeper and point it at this router',
+        '3.Point your client at it',
+      ]);
+      // The diagram and the shared setup block are the same components the
+      // old screen and the chat panel use, not copies.
+      expect(within(card as HTMLElement).getByRole('figure')).toBeInTheDocument();
+      expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
+    });
+
+    it('fills the key prefix into the command snippets and leaves VS Code an input reference', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent);
+      for (const label of ['curl', 'Python', 'Node', 'VS Code', 'OpenCode']) {
+        expect(tabs).toContain(label);
+      }
+      await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('${input:chat.lm.secret.-...}');
+      expect(screen.getByText(/Update API Key/)).toBeInTheDocument();
+      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1-4f…');
+      await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
+      expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
+    });
+
+    it('keeps each step’s lead to one line, with the rest behind a ⓘ', async () => {
+      // A paragraph between a step's heading and the tabs it introduces was the
+      // gap SUP-262 closed; the words did not change, only where they are read.
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      expect(screen.getByText(/Five steps, already carrying this deployment/)).toBeInTheDocument();
+      expect(screen.queryByText(/there is no certificate to trust/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'About these commands' }));
+      expect(await screen.findByText(/there is no certificate to trust/)).toBeInTheDocument();
+
+      expect(screen.queryByText(/Keys are stored hashed/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'About the key in this snippet' }));
+      expect(await screen.findByText(/Keys are stored hashed/)).toBeInTheDocument();
+    });
+
+    it('links the documentation site, which does not exist yet and is linked anyway', async () => {
+      renderScreen();
+      await screen.findByText('production-agent');
+
+      expect(screen.getByRole('link', { name: 'Details in the documentation' })).toHaveAttribute(
+        'href',
+        'https://docs.router.superprotocol.com/',
+      );
+    });
   });
 
   describe('the create flow', () => {
@@ -228,6 +302,127 @@ describe('APIKeysScreen', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Create key' }));
 
       expect(await screen.findByRole('alert')).toHaveTextContent('A key named ci-agent already exists.');
+    });
+
+    /*
+     * SUP-295 item 2. The API names the input it refused; the dialog's job is to
+     * put the message where the reader is looking. A sentence at the bottom of a
+     * six-field form makes them hunt for which field it is about — and the
+     * generic "The request failed" it used to show did not even say that much.
+     */
+    it('puts a refusal about one field under that field', async () => {
+      renderScreen([
+        keysMock(),
+        {
+          request: {
+            query: CREATE_API_KEY,
+            variables: {
+              input: {
+                workspaceId: WORKSPACE_ID,
+                name: 'ci-agent',
+                modelIds: null,
+                spendLimitMicros: '25000000',
+                expiresAt: null,
+                requestsPerMinute: null,
+                tokensPerMinute: null,
+              },
+            },
+          },
+          result: {
+            errors: [
+              {
+                message: 'spendLimitMicros must not be greater than 1000000000000000',
+                extensions: {
+                  code: 'BAD_USER_INPUT',
+                  fields: { spendLimitMicros: 'spendLimitMicros must not be greater than 1000000000000000' },
+                },
+              },
+            ],
+          },
+        },
+      ]);
+
+      await openCreateDialog();
+      await userEvent.type(screen.getByLabelText('Name'), 'ci-agent');
+      await userEvent.type(screen.getByLabelText('Spend limit (USD)'), '25');
+      await userEvent.click(screen.getByRole('button', { name: 'Create key' }));
+
+      const spend = await screen.findByLabelText('Spend limit (USD)');
+      await waitFor(() => expect(spend).toHaveAttribute('aria-invalid', 'true'));
+      expect(screen.getByText(/must not be greater than/)).toBeInTheDocument();
+      // The dialog stays open on the values that were typed, so the reader can
+      // fix the one field rather than start again.
+      expect(spend).toHaveValue('25');
+    });
+
+    /*
+     * Moving the reload out of the mutation opened a window the mutation's own
+     * `loading` no longer covers: it goes false the moment the key exists, while
+     * the dialog is still open and the reload is still in flight. A second click
+     * there mints a second key, and the reader only ever sees the second secret
+     * — the first exists, unshown and unusable.
+     */
+    it('cannot be submitted twice while the list is still reloading', async () => {
+      let creates = 0;
+      const counted: MockLink.MockedResponse = {
+        ...createMock(),
+        maxUsageCount: Number.POSITIVE_INFINITY,
+        result: () => {
+          creates += 1;
+          return { data: { createApiKey: { secret: SECRET, key: created } } };
+        },
+      };
+      // One load for the screen, then a reload slow enough to click through.
+      renderScreen([{ ...keysMock(), maxUsageCount: 1 }, counted, { ...keysMock(), delay: 300 }]);
+
+      await openCreateDialog();
+      await userEvent.type(screen.getByLabelText('Name'), 'ci-agent');
+      await userEvent.click(screen.getByRole('checkbox', { name: /Restrict this key to specific models/ }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'GPT-OSS 120B' }));
+      await userEvent.type(screen.getByLabelText('Spend limit (USD)'), '25');
+
+      const create = screen.getByRole('button', { name: 'Create key' });
+      await userEvent.click(create);
+      // The key now exists and the reload has not come back — the window the
+      // mutation's own `loading` stopped covering.
+      await waitFor(() => expect(creates).toBe(1));
+
+      // user-event, because only it emulates the implicit form submission a
+      // click on a submit button performs — and it declines to click a disabled
+      // one, which is exactly the behaviour under test.
+      await userEvent.click(create);
+
+      expect(await screen.findByText('Copy your key now')).toBeInTheDocument();
+      expect(screen.getByTestId('created-key-secret')).toHaveTextContent(SECRET);
+      expect(creates).toBe(1);
+    });
+
+    /*
+     * The secret is shown once and is not recoverable. Reloading the table is a
+     * courtesy — the mutation has already succeeded — so a reload that fails
+     * must not be reported as a failed creation, which would lose the key for
+     * good (SUP-295 item 2).
+     */
+    it('shows the secret even when the list cannot be reloaded afterwards', async () => {
+      renderScreen([
+        { ...keysMock(), maxUsageCount: 1 },
+        createMock(),
+        {
+          request: { query: API_KEYS_QUERY, variables: { workspaceId: WORKSPACE_ID } },
+          error: new Error('the list could not be reloaded'),
+          maxUsageCount: Number.POSITIVE_INFINITY,
+        },
+      ]);
+
+      await openCreateDialog();
+      await userEvent.type(screen.getByLabelText('Name'), 'ci-agent');
+      await userEvent.click(screen.getByRole('checkbox', { name: /Restrict this key to specific models/ }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'GPT-OSS 120B' }));
+      await userEvent.type(screen.getByLabelText('Spend limit (USD)'), '25');
+      await userEvent.click(screen.getByRole('button', { name: 'Create key' }));
+
+      expect(await screen.findByText('Copy your key now')).toBeInTheDocument();
+      expect(screen.getByTestId('created-key-secret')).toHaveTextContent(SECRET);
     });
   });
 

@@ -165,6 +165,47 @@ describe('a real Super Swarm root', () => {
   });
 });
 
+describe('a real Azure SEV-SNP root (SUP-251)', () => {
+  const AZURE_ROOT_PEM = readFileSync(join(TESTDATA, 'apps-448-azure-sev-snp-root.pem'), 'utf8');
+
+  it('recognises the Azure branch instead of calling the evidence unreadable', async () => {
+    const attestation = await readRootAttestation(new X509Certificate(AZURE_ROOT_PEM));
+
+    expect(attestation.error).toBeNull();
+    expect(attestation.challengeType).toBe('sev-snp-azure');
+    expect(attestation.networkType).toBe('trusted');
+    expect(attestation.evidence).toMatchObject({
+      type: 'sev-snp-azure',
+      label: 'AMD SEV-SNP (Azure)',
+      registryFolder: 'sev-snp',
+      build: null,
+    });
+    expect(attestation.evidence?.security?.policy.debugAllowed).toBe(false);
+  });
+
+  it('follows the key binding through the HCL runtime data to this certificate', async () => {
+    // Two links, both checked: the SEV-SNP report commits to the paravisor's
+    // runtime data, and that data's user-data commits to the CA key.
+    const { evidence } = await readRootAttestation(new X509Certificate(AZURE_ROOT_PEM));
+
+    expect(evidence?.keyBinding).toBe(true);
+  });
+
+  it('says false when the same Azure evidence is attached to a different key', async () => {
+    const extension = new X509Certificate(AZURE_ROOT_PEM).getExtension(OID_TEE_EVIDENCE);
+    if (!extension) throw new Error('the Azure fixture carries no TEE evidence extension');
+    const impostor = await rootCarrying([
+      text(OID_CHALLENGE_TYPE, 'sev-snp-azure'),
+      bytes(OID_TEE_EVIDENCE, new Uint8Array(extension.value)),
+    ]);
+
+    const { evidence } = await readRootAttestation(impostor);
+
+    expect(evidence?.type).toBe('sev-snp-azure');
+    expect(evidence?.keyBinding).toBe(false);
+  });
+});
+
 describe('a root with no attestation extensions', () => {
   it('is not an error: an ordinary CA simply says nothing', async () => {
     const plain = await rootCarrying([]);

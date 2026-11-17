@@ -10,11 +10,13 @@ import {
 } from '@confidential-router/ui/components/sheet';
 import type * as React from 'react';
 import type { ExternalEndpointFieldsFragment } from '../../generated/graphql';
-import { formatContextLength, formatPricePer1m, formatTimestamp, shortenDigest } from '../../lib/format';
+import { formatContextLength, formatPricePer1m, formatTimestamp } from '../../lib/format';
+import { fingerprintHex } from '../chat/attestation/hex';
 import { DigestValue } from '../evidence/digest-value';
 import { measurementSourceLabel, statusPresentation } from './endpoint-status';
 import { EndpointTimeline } from './endpoint-timeline';
 import { EvidenceSummary } from './evidence-summary';
+import { TrustFactors } from './trust-factors';
 
 export interface EndpointDrawerProps {
   endpoint: ExternalEndpointFieldsFragment | null;
@@ -34,8 +36,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 /**
  * Everything this router knows about one external upstream, in the order an
- * operator asks it: where it stands, what admitted it, what it is running, and
- * what has happened to it.
+ * operator asks it: where it stands, what admits it — the two trust factors, each
+ * approvable from here — what it is running, and what has happened to it.
  *
  * A drawer rather than a page so the list keeps its place — the list is where an
  * operator compares endpoints, and the drawer is where they interrogate one.
@@ -77,6 +79,9 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
             </dl>
           </section>
 
+          {/* SUP-252: the two factors, and the one-click approval of each. */}
+          <TrustFactors endpoint={endpoint} isAdmin={isAdmin} />
+
           <section aria-label="Last verdict" className="space-y-2">
             <h3 className="font-medium text-sm">Last verdict</h3>
             <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5">
@@ -89,31 +94,19 @@ export function EndpointDrawer({ endpoint, onOpenChange, isAdmin }: EndpointDraw
                 </Field>
               ) : null}
               {endpoint.lastReason ? <Field label="Reason">{endpoint.lastReason}</Field> : null}
-              <Field label="Measurement seen">
-                {endpoint.measurementSeen ? (
-                  <>
-                    <span className="font-mono text-xs" title={endpoint.measurementSeen}>
-                      {shortenDigest(endpoint.measurementSeen, 8)}
-                    </span>
-                    {source ? <span className="ml-2 text-muted-foreground text-xs">{source}</span> : null}
-                  </>
-                ) : (
-                  '—'
-                )}
-              </Field>
-              <Field label="Digest seen">
-                {endpoint.evidenceDigestSeen ? (
-                  <span className="font-mono text-xs" title={endpoint.evidenceDigestSeen}>
-                    {shortenDigest(endpoint.evidenceDigestSeen, 8)}
-                  </span>
-                ) : (
-                  '—'
-                )}
-              </Field>
+              {source ? <Field label="Measurement anchor">{source}</Field> : null}
               <Field label="Pinned certificate">
                 {endpoint.pinnedCertFingerprint ? (
+                  /*
+                    The API sends this one without a hex twin, in whatever form
+                    the pin was stored — on a live router that is the canonical
+                    `sha256/<base64url>`, which the 0.16.0 dossier printed as
+                    `sha256:sha256/…` (SUP-262). Converted here, as the chat
+                    inspector does for the bundle it fetched; a bare hex value
+                    passes through.
+                  */
                   <DigestValue
-                    hex={endpoint.pinnedCertFingerprint}
+                    hex={fingerprintHex(endpoint.pinnedCertFingerprint) ?? endpoint.pinnedCertFingerprint}
                     canonical={endpoint.pinnedCertFingerprint}
                     keep={8}
                   />

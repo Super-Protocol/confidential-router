@@ -59,11 +59,26 @@ const (
 	// at runtime and cannot approve each one by digest (ADR-008 decision 1);
 	// it is never written by `gatekeeper init` or the `endpoint` commands.
 	TrustCloudMeasurement = "cloud-measurement"
+	// TrustMeasurementAndDigest is two-factor trust (SUP-252, superseding
+	// ADR-008 §10 ruling 1): the cloud is admitted by its launch measurement,
+	// exactly as [TrustCloudMeasurement], *and* the deployment by an
+	// evidenceDigest pinned in `trustedEvidence`, exactly as
+	// [TrustEvidenceDigest]. Both are required, so a trusted cloud no longer
+	// admits every deployment on it.
+	//
+	// Unlike the other two modes, neither factor has to be configured for the
+	// file to run. The mode exists for a control loop that approves what it
+	// has *seen* — trust on first use, with an operator in the loop — so the
+	// first verification has to happen before either factor is known, and a
+	// verdict naming the missing factor is the answer rather than a refusal to
+	// start. It is never written by `gatekeeper init` or the `endpoint`
+	// commands.
+	TrustMeasurementAndDigest = "measurement-and-digest"
 )
 
 // trustModes are the accepted `trust` values, in the order error messages list
 // them.
-var trustModes = []string{TrustEvidenceDigest, TrustCloudMeasurement}
+var trustModes = []string{TrustEvidenceDigest, TrustCloudMeasurement, TrustMeasurementAndDigest}
 
 // Built-in tuning defaults (ADR-003 §7); they are the bottom layer of the
 // precedence chain and are also what the JSON schema documents.
@@ -181,9 +196,9 @@ type Endpoint struct {
 	// [Config.ValidateEditable] tolerates.
 	TrustedEvidence DigestList `yaml:"trustedEvidence"`
 	// Trust selects what the built-in policy requires for this endpoint:
-	// [TrustEvidenceDigest] (the default, and what an empty value means) or
-	// [TrustCloudMeasurement]. The two are mutually exclusive — a
-	// `cloud-measurement` endpoint must not also carry `trustedEvidence`, so
+	// [TrustEvidenceDigest] (the default, and what an empty value means),
+	// [TrustCloudMeasurement], or both at once — [TrustMeasurementAndDigest].
+	// A `cloud-measurement` endpoint must not also carry `trustedEvidence`, so
 	// that nobody can read a stale pin as though it were still enforced.
 	Trust  string         `yaml:"trust,omitempty"`
 	Tuning EndpointTuning `yaml:",inline"`
@@ -196,6 +211,12 @@ func (e Endpoint) TrustMode() string {
 		return TrustEvidenceDigest
 	}
 	return e.Trust
+}
+
+// TrustsCloud reports whether a trust mode admits by the upstream cloud's
+// launch measurement — alone or as one of two factors.
+func TrustsCloud(mode string) bool {
+	return mode == TrustCloudMeasurement || mode == TrustMeasurementAndDigest
 }
 
 // Tuning is a fully resolved set of endpoint knobs — no inheritance left.

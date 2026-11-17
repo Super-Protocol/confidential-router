@@ -106,6 +106,16 @@ func eventually(t *testing.T, log *syncWriter, want string, count int) {
 	t.Fatalf("waited for %d×%q; log was:\n%s", count, want, log.String())
 }
 
+// runnableConfig is a configuration `gatekeeper run` accepts, which is what the
+// supervisor now waits for: one `trust: cloud-measurement` endpoint and the
+// measurement list that mode needs. An `endpoints: []` document is a valid
+// *document* and not a runnable configuration — see TestItWaitsForAnEndpoint.
+const runnableConfig = "version: 1\ntrustedRoots: []\n" +
+	"attestedRoots:\n  trustedMeasurements:\n" +
+	"    - 842c5f2e1d0b4a9c7e6f3d8b5a2c9e0f1b4d7a6c3e8f5b2d9a0c7e4f1b6d3a8c\n" +
+	"endpoints:\n  - name: external\n    listen: 127.0.0.1:8443\n" +
+	"    upstream: https://llama.other-cloud.example\n    trust: cloud-measurement\n"
+
 func writeConfig(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -132,7 +142,7 @@ func writeConfigAtomic(t *testing.T, path, body string) {
 // reaching into this one's PID namespace.
 func TestAChangedConfigReloadsTheGatekeeper(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfig(t, path, "version: 1\nendpoints: []\n")
+	writeConfig(t, path, runnableConfig)
 
 	log := &syncWriter{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,13 +165,13 @@ func TestAChangedConfigReloadsTheGatekeeper(t *testing.T) {
 	eventually(t, log, "gatekeeper: up", 1)
 
 	// An admin edit: new content, so a real change.
-	writeConfig(t, path, "version: 1\nendpoints: []\nlog:\n  level: debug\n")
+	writeConfig(t, path, runnableConfig+"log:\n  level: debug\n")
 	eventually(t, log, "sending SIGHUP", 1)
 	eventually(t, log, "gatekeeper: reloaded", 1)
 
 	// A second, distinct change reloads again — the watcher does not fire once
 	// and stop.
-	writeConfig(t, path, "version: 1\nendpoints: []\nlog:\n  level: warn\n")
+	writeConfig(t, path, runnableConfig+"log:\n  level: warn\n")
 	eventually(t, log, "gatekeeper: reloaded", 2)
 
 	cancel()
@@ -178,7 +188,7 @@ func TestAChangedConfigReloadsTheGatekeeper(t *testing.T) {
 // endpoint for nothing, so identical content is not a change.
 func TestRewritingIdenticalContentDoesNotReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	const body = "version: 1\nendpoints: []\n"
+	const body = runnableConfig
 	writeConfig(t, path, body)
 
 	log := &syncWriter{}
@@ -243,7 +253,43 @@ func TestItWaitsForTheConfigToBeRendered(t *testing.T) {
 		t.Fatal("the gatekeeper was started before its configuration existed")
 	}
 
+	writeConfig(t, path, runnableConfig)
+	eventually(t, log, "gatekeeper: up", 1)
+}
+
+// The render that *is* there and still is not one to start on: router-api
+// renders this file from its database, so a deployment with no external
+// endpoint registered yet gets a valid document with an empty endpoint list.
+// `gatekeeper run` refuses that, so starting it would exit immediately — and
+// this supervisor does not restart the gatekeeper, which in a pod is a crash
+// loop over a deployment that has done nothing wrong.
+func TestItWaitsForAnEndpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfig(t, path, "version: 1\nendpoints: []\n")
+
+	log := &syncWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if _, err := sidecar.Run(ctx, sidecar.Options{
+			Config:   path,
+			Command:  helperCommand(t, "gatekeeper"),
+			Interval: 20 * time.Millisecond,
+			Stdout:   log, Stderr: log,
+		}); err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	}()
+
+	// The reason is in the log, so an operator reading `kubectl logs` is told
+	// that nothing is wrong rather than left with a silent container.
+	eventually(t, log, "at least one endpoint is required", 1)
+	if strings.Contains(log.String(), "gatekeeper: up") {
+		t.Fatal("the gatekeeper was started on a configuration it would refuse")
+	}
+
+	writeConfigAtomic(t, path, runnableConfig)
 	eventually(t, log, "gatekeeper: up", 1)
 }
 
@@ -276,7 +322,7 @@ func TestItGivesUpWaitingWhenCancelled(t *testing.T) {
 // every failure to 1 would hide a configuration error behind a crash.
 func TestTheChildsExitStatusIsReported(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfig(t, path, "version: 1\nendpoints: []\n")
+	writeConfig(t, path, runnableConfig)
 
 	for _, want := range []int{0, 2, 7} {
 		t.Run(strconv.Itoa(want), func(t *testing.T) {
@@ -299,7 +345,7 @@ func TestTheChildsExitStatusIsReported(t *testing.T) {
 // A missing binary is a broken image, not something to retry silently.
 func TestAnUnstartableChildIsReported(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfig(t, path, "version: 1\nendpoints: []\n")
+	writeConfig(t, path, runnableConfig)
 
 	code, err := sidecar.Run(context.Background(), sidecar.Options{
 		Config:   path,
@@ -346,7 +392,7 @@ func writeTruncated(t *testing.T, path, body string, gap time.Duration) {
 // One reload for one edit, even when the edit is visible in two steps.
 func TestAHalfWrittenFileIsNotReloadedTwice(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfig(t, path, "version: 1\nendpoints: []\n")
+	writeConfig(t, path, runnableConfig)
 
 	log := &syncWriter{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -366,7 +412,7 @@ func TestAHalfWrittenFileIsNotReloadedTwice(t *testing.T) {
 
 	// The empty window is several ticks wide, so the watcher certainly observes
 	// it; it still must not act on it.
-	writeTruncated(t, path, "version: 1\nendpoints: []\nlog:\n  level: debug\n", 120*time.Millisecond)
+	writeTruncated(t, path, runnableConfig+"log:\n  level: debug\n", 120*time.Millisecond)
 	eventually(t, log, "gatekeeper: reloaded", 1)
 
 	// Give any second reload time to show up, then insist there was none.
@@ -382,7 +428,7 @@ func TestAHalfWrittenFileIsNotReloadedTwice(t *testing.T) {
 // on every tick.
 func TestAnUnloadableRenderIsReportedAndNotForwarded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfig(t, path, "version: 1\nendpoints: []\n")
+	writeConfig(t, path, runnableConfig)
 
 	log := &syncWriter{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -414,6 +460,6 @@ func TestAnUnloadableRenderIsReportedAndNotForwarded(t *testing.T) {
 	}
 
 	// Fixing it still works: the watcher did not get stuck on the bad version.
-	writeConfigAtomic(t, path, "version: 1\nendpoints: []\nlog:\n  level: debug\n")
+	writeConfigAtomic(t, path, runnableConfig+"log:\n  level: debug\n")
 	eventually(t, log, "gatekeeper: reloaded", 1)
 }

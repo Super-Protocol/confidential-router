@@ -22,11 +22,15 @@ import { errorMessageOf } from '../../lib/graphql-error';
 import { PageHeader } from '../page-header';
 import { useViewerIsAdmin } from '../session/use-viewer-is-admin';
 import { AdminReadOnlyNotice } from './admin-gate';
+import { DiscoverModelsDialog } from './discover-models-dialog';
 import { EndpointDrawer } from './endpoint-drawer';
 import { STATUS_ORDER, statusPresentation } from './endpoint-status';
 import { EXTERNAL_ENDPOINTS_QUERY, SET_EXTERNAL_ENDPOINT_ENABLED } from './operations';
 import { RegisterEndpointDialog } from './register-endpoint-dialog';
 import { RotateKeyDialog } from './rotate-key-dialog';
+
+/** How often an open dossier re-reads its endpoint's verdict. */
+const DOSSIER_POLL_MS = 3_000;
 
 /**
  * Denied first, then pending, then verified, then disabled — and alphabetically
@@ -51,7 +55,7 @@ export function ExternalEndpointsScreen() {
    */
   const isAdmin = useViewerIsAdmin();
 
-  const { data, loading, error, refetch } = useQuery(EXTERNAL_ENDPOINTS_QUERY, {
+  const { data, loading, error, refetch, startPolling, stopPolling } = useQuery(EXTERNAL_ENDPOINTS_QUERY, {
     // A verdict flips on the sidecar's own schedule, so a cache read on
     // navigation can show an endpoint as routable after it stopped being.
     fetchPolicy: 'cache-and-network',
@@ -60,6 +64,7 @@ export function ExternalEndpointsScreen() {
   const [registering, setRegistering] = React.useState(false);
   const [openEndpointId, setOpenEndpointId] = React.useState<string | null>(null);
   const [rotatingId, setRotatingId] = React.useState<string | null>(null);
+  const [discoveringId, setDiscoveringId] = React.useState<string | null>(null);
   const [actionFailure, setActionFailure] = React.useState<string | null>(null);
 
   const [setEnabled] = useMutation(SET_EXTERNAL_ENDPOINT_ENABLED);
@@ -73,7 +78,21 @@ export function ExternalEndpointsScreen() {
 
   const endpoints = React.useMemo(() => sortEndpoints(data?.externalEndpoints ?? []), [data]);
   const openEndpoint = endpoints.find((endpoint) => endpoint.id === openEndpointId) ?? null;
+
+  /*
+   * While a dossier is open, keep reading. An approval from the drawer re-attests
+   * at once (SUP-252) and the admin is waiting for exactly that verdict; and a
+   * verified endpoint can fail closed under the reader at any re-attest — a
+   * redeploy is `digest-mismatch` — which is the moment the dossier's "approve
+   * new digest" exists for. A switched-off endpoint has nothing to report.
+   */
+  const watching = openEndpoint !== null && openEndpoint.status !== 'DISABLED';
+  React.useEffect(() => {
+    if (watching) startPolling(DOSSIER_POLL_MS);
+    else stopPolling();
+  }, [watching, startPolling, stopPolling]);
   const rotating = endpoints.find((endpoint) => endpoint.id === rotatingId) ?? null;
+  const discovering = endpoints.find((endpoint) => endpoint.id === discoveringId) ?? null;
 
   const toggle = async (endpoint: ExternalEndpointFieldsFragment) => {
     setActionFailure(null);
@@ -90,7 +109,7 @@ export function ExternalEndpointsScreen() {
   const header = (
     <PageHeader
       title="External endpoints"
-      description="Models served by other deployments. This router verifies each one's evidence against the trust list and pins its certificate before proxying a single prompt; a failed check drops its models immediately."
+      description="Models served by other deployments. This router verifies each one's evidence, requires both its cloud's measurement on the trust list and its deployment's pinned digest, and pins its certificate before proxying a single prompt; a failed check drops its models immediately."
       actions={
         isAdmin ? (
           <Button variant="brand" onClick={() => setRegistering(true)}>
@@ -205,6 +224,16 @@ export function ExternalEndpointsScreen() {
                           >
                             {endpoint.enabled ? 'Disable' : 'Enable'}
                           </Button>
+                          {endpoint.enabled ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDiscoveringId(endpoint.id)}
+                              aria-label={`Discover models on ${endpoint.name}`}
+                            >
+                              Discover models
+                            </Button>
+                          ) : null}
                           <Button variant="ghost" size="sm" onClick={() => setRotatingId(endpoint.id)}>
                             Rotate key
                           </Button>
@@ -239,6 +268,18 @@ export function ExternalEndpointsScreen() {
         isAdmin={isAdmin}
         onOpenChange={(open) => !open && setOpenEndpointId(null)}
       />
+
+      {isAdmin ? (
+        <DiscoverModelsDialog
+          key={discovering?.id}
+          endpoint={discovering}
+          onOpenChange={(open) => !open && setDiscoveringId(null)}
+          onDone={(endpointId) => {
+            setDiscoveringId(null);
+            setOpenEndpointId(endpointId);
+          }}
+        />
+      ) : null}
 
       {/* `key` so the typed secret cannot survive into another endpoint's dialog. */}
       {isAdmin ? (

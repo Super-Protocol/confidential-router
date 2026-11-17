@@ -1,0 +1,6 @@
+No manually trusted roots in $TMP/config.yaml.
+
+A Swarm cloud needs none — its certificate authority is accepted on its own TEE
+evidence (attestedRoots). Add a root only to pin one particular cloud, or to trust
+a CA that publishes no evidence:
+  gatekeeper trust roots add <name> --pem-file <root.pem>

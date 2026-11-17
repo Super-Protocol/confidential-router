@@ -1,0 +1,51 @@
+{
+  "name": "swarm-policy",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/swarm-policy",
+  "projectType": "library",
+  "tags": ["type:lib", "lang:go", "lang:rego", "lang:sentinel"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/**/*.rego",
+        "{projectRoot}/**/*.sentinel",
+        "{projectRoot}/**/*.hcl",
+        "{projectRoot}/**/*.json",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum",
+        "{workspaceRoot}/libs/swarm-evidence-go/schema/**/*"
+      ],
+      "options": {
+        "command": "go test ./...",
+        "cwd": "libs/swarm-policy"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.go",
+        "{projectRoot}/go.mod",
+        "{projectRoot}/go.sum",
+        "{projectRoot}/.golangci.yml"
+      ],
+      "options": {
+        "commands": ["go vet ./...", "golangci-lint run"],
+        "cwd": "libs/swarm-policy",
+        "parallel": false
+      }
+    },
+    "tidy": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "go mod tidy",
+        "cwd": "libs/swarm-policy"
+      }
+    }
+  },
+  "implicitDependencies": ["swarm-evidence-go"]
+}

@@ -1,0 +1,6 @@
+Configuration already exists at $TMP/config.yaml; nothing was written.
+
+Next: check what is still missing
+  gatekeeper config validate
+
+To start over from a fresh starter file: gatekeeper init --force

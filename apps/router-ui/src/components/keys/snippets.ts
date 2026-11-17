@@ -35,9 +35,15 @@ export interface SnippetOptions {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  /**
+   * The model's context length from the catalogue. VS Code's language-models
+   * entry uses it as `contextWindow`; without it the snippet names no token
+   * limits rather than inventing a pair that can exceed the window.
+   */
+  contextLength?: number;
 }
 
-export type SnippetLanguage = 'curl' | 'python' | 'node';
+export type SnippetLanguage = 'curl' | 'python' | 'node' | 'vscode' | 'opencode';
 
 interface ResolvedOptions {
   baseUrl: string;
@@ -100,16 +106,135 @@ function nodeSnippet(options: SnippetOptions): string {
   ].join('\n');
 }
 
+/**
+ * Completion cap written next to `contextWindow`. VS Code derives
+ * `maxInputTokens` as the difference, and the sum of the two must not exceed
+ * the model's context window, so the cap is also kept to half of a short window.
+ */
+const VSCODE_MAX_OUTPUT_TOKENS = 8_192;
+
+/**
+ * An example of the reference Update API Key writes. The id after
+ * `chat.lm.secret.` is generated. A literal key is not a reference: resolution
+ * yields an empty bearer.
+ */
+// biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax, not a template.
+const VSCODE_API_KEY_INPUT = '${input:chat.lm.secret.-...}';
+
+/**
+ * VS Code's chat, through its Custom Endpoint provider: one entry of the
+ * language-models JSON the Command Palette or the agent model picker opens.
+ * `url` is the full chat-completions address, not a base URL — that is how the
+ * provider is specified. The key is never written here; `options.apiKey` is for
+ * the other clients.
+ */
+function vscodeSnippet(options: SnippetOptions): string {
+  const { baseUrl, model } = resolve(options);
+  const limits = vscodeLimits(options.contextLength);
+  return JSON.stringify(
+    [
+      {
+        name: 'Confidential Router',
+        vendor: 'customendpoint',
+        apiKey: VSCODE_API_KEY_INPUT,
+        models: [
+          {
+            id: model,
+            name: model,
+            url: `${baseUrl}/chat/completions`,
+            toolCalling: true,
+            vision: false,
+            ...limits,
+          },
+        ],
+      },
+    ],
+    null,
+    2,
+  );
+}
+
+/**
+ * `contextWindow` is the catalogue's context length. `maxOutputTokens` stays
+ * inside it, so VS Code's derived input budget cannot overflow the window.
+ * No catalogue means no numbers: a hardcoded pair would be a lie about a model
+ * the snippet does not know.
+ */
+function vscodeLimits(
+  contextLength: number | undefined,
+): { contextWindow: number; maxOutputTokens: number } | undefined {
+  if (contextLength === undefined || !Number.isInteger(contextLength) || contextLength < 1) return undefined;
+  return {
+    contextWindow: contextLength,
+    maxOutputTokens: Math.max(1, Math.min(VSCODE_MAX_OUTPUT_TOKENS, Math.floor(contextLength / 2))),
+  };
+}
+
+/**
+ * OpenCode, as a provider block of `opencode.json` — in the project, or in
+ * `~/.config/opencode/` for every project. `@ai-sdk/openai-compatible` is its
+ * adapter for any `/v1/chat/completions` server, which the gatekeeper is.
+ */
+function opencodeSnippet(options: SnippetOptions): string {
+  const { baseUrl, apiKey, model } = resolve(options);
+  return JSON.stringify(
+    {
+      $schema: 'https://opencode.ai/config.json',
+      provider: {
+        'confidential-router': {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'Confidential Router',
+          options: { baseURL: baseUrl, apiKey },
+          models: { [model]: { name: model } },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
 const BUILDERS: Record<SnippetLanguage, (options: SnippetOptions) => string> = {
   curl: curlSnippet,
   python: pythonSnippet,
   node: nodeSnippet,
+  vscode: vscodeSnippet,
+  opencode: opencodeSnippet,
 };
 
-export const SNIPPET_LANGUAGES: { id: SnippetLanguage; label: string }[] = [
+export interface SnippetLanguageEntry {
+  id: SnippetLanguage;
+  label: string;
+  /** One line under the code: where the snippet goes, for the two that are files rather than commands. */
+  hint?: string;
+  /**
+   * Numbered ways to open the file the snippet is pasted into, when there is
+   * more than one. The phrase "go-to-file icon" is where the console draws the
+   * VS Code codicon of that name.
+   */
+  steps?: readonly string[];
+}
+
+export const SNIPPET_LANGUAGES: SnippetLanguageEntry[] = [
   { id: 'curl', label: 'curl' },
   { id: 'python', label: 'Python' },
   { id: 'node', label: 'Node' },
+  {
+    id: 'vscode',
+    label: 'VS Code',
+    steps: [
+      'Press Ctrl+Shift+P (Windows/Linux) or Cmd+Shift+P (Mac), start typing Chat: Open Language Models (JSON), press Enter, and paste this block.',
+      'In the agent chat, open the model selector, click +, then the go-to-file icon in the top right, and paste this block into the file that opens.',
+    ],
+    hint: 'Then click + in the model selector, open the gear on the Confidential Router group, choose Update API Key, paste the key, and press Enter. That writes the apiKey reference above; the id differs, so leave that line. Do not paste the key into the file.',
+  },
+  {
+    id: 'opencode',
+    label: 'OpenCode',
+    hint:
+      'Save as opencode.json in your project, or in ~/.config/opencode/ for every project; "{env:ROUTER_KEY}" in ' +
+      'place of the key reads it from the environment instead. Then pick the model in OpenCode.',
+  },
 ];
 
 export function wiringSnippet(language: SnippetLanguage, options: SnippetOptions = {}): string {

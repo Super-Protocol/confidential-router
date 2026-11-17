@@ -25,12 +25,14 @@ const STATUS_PRESENTATION: Record<ExternalEndpointStatus, StatusPresentation> = 
   PENDING: {
     label: 'Pending',
     variant: 'secondary',
-    detail: 'Registered, no verdict yet. It serves nothing until one arrives.',
+    detail:
+      'No verdict yet, or its deployment is awaiting approval (digest-not-pinned). It serves nothing until both trust factors hold.',
   },
   VERIFIED_BY_THIS_ROUTER: {
     label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
     variant: 'success',
-    detail: 'Evidence verified, measurement on the trust list, certificate pinned. Its models are routable.',
+    detail:
+      'Evidence verified, cloud measurement on the trust list, deployment digest pinned, certificate pinned. Its models are routable.',
   },
   DENIED_BY_THIS_ROUTER: {
     label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER,
@@ -63,18 +65,40 @@ export interface EventPresentation {
 
 /**
  * The timeline's labels. `DIGEST_CHANGED` and `MEASUREMENT_CHANGED` are warnings
- * rather than neutral notes on purpose: a trusted cloud redeploying a different
- * image is exactly what cloud-granularity trust (threat T13) cannot catch, so it
- * is the one thing in here an operator has to read.
+ * rather than neutral notes on purpose: under two-factor trust (SUP-252) a digest
+ * change fails the endpoint closed until an admin approves it, so it is the one
+ * thing in here an operator has to read. `DIGEST_PINNED` is that approval, and
+ * `DIGEST_UNPINNED` is a warning for the same reason as a digest change: the
+ * endpoint has no approved deployment left, so it serves nothing until it has
+ * one again (SUP-435).
+ *
+ * `OUTAGE` is the one `destructive` entry that is not a verdict: a
+ * `DENIED_BY_THIS_ROUTER` is one check that refused, an `OUTAGE` is this router
+ * declaring that the run of them has passed the configured threshold and
+ * alerting on it (SUP-517). It reads as more severe than the denial beside it
+ * because it is — the denial is a fact about a check, the outage is a statement
+ * that nobody has been served for a while.
+ *
+ * `VERDICT_EXPIRED` is a `warning` and not a `destructive`, and the difference is
+ * where it sends the reader (SUP-583). A denial and an outage are statements
+ * about the upstream; this one says the egress sidecar stopped confirming a
+ * verdict, so the router let it go and the models went with it. Nothing was
+ * judged about the upstream's cloud, and a label that read like a refusal would
+ * send an operator to go and look at one that is fine.
  */
 const EVENT_PRESENTATION: Record<ExternalEndpointEventKind, EventPresentation> = {
   REGISTERED: { label: 'Registered', variant: 'secondary' },
   VERIFIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER, variant: 'success' },
   DENIED_BY_THIS_ROUTER: { label: EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER, variant: 'destructive' },
-  DIGEST_CHANGED: { label: 'Image digest changed', variant: 'warning' },
+  DIGEST_CHANGED: { label: 'Deployment digest changed', variant: 'warning' },
+  DIGEST_PINNED: { label: 'Deployment digest pinned', variant: 'secondary' },
+  DIGEST_UNPINNED: { label: 'Deployment approval withdrawn', variant: 'warning' },
   MEASUREMENT_CHANGED: { label: 'Measurement changed', variant: 'warning' },
   DISABLED: { label: 'Disabled', variant: 'outline' },
   KEY_ROTATED: { label: 'Key rotated', variant: 'secondary' },
+  OUTAGE: { label: 'Outage declared', variant: 'destructive' },
+  RECOVERED: { label: 'Serving again', variant: 'success' },
+  VERDICT_EXPIRED: { label: 'Verdict expired', variant: 'warning' },
 };
 
 export function eventPresentation(kind: ExternalEndpointEventKind): EventPresentation {
@@ -87,7 +111,9 @@ export function eventPresentation(kind: ExternalEndpointEventKind): EventPresent
  * it, which is SUP-221 ruling 1 restated as a predicate.
  */
 export function showsEvidenceSummary(kind: ExternalEndpointEventKind): boolean {
-  return kind === 'REGISTERED' || kind === 'DIGEST_CHANGED' || kind === 'MEASUREMENT_CHANGED';
+  return (
+    kind === 'REGISTERED' || kind === 'DIGEST_CHANGED' || kind === 'DIGEST_PINNED' || kind === 'MEASUREMENT_CHANGED'
+  );
 }
 
 const MEASUREMENT_SOURCE_LABEL: Record<MeasurementSource, string> = {

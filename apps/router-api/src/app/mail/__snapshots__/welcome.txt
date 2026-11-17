@@ -1,0 +1,15 @@
+Welcome, Ada
+
+Your account is ready. Confidential Router is an OpenAI-compatible API whose models run inside attested confidential computing — every response can be traced back to the hardware and software that produced it.
+
+Console: https://console.example.com
+Starting credit: $20
+
+Create an API key in the console to start making requests, or try a model in the chat.
+
+Open the console: https://console.example.com
+
+You are receiving this because an account was created with this address. If that was not you, ignore this email.
+
+--
+Sent by Confidential Router at console.example.com, a Super Protocol deployment.

@@ -24,6 +24,7 @@ import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createSqliteFixture, type SqliteFixture } from '../../../test/sqlite.js';
 import type { routerConfig } from '../config.js';
 import { type RouterConfig, RouterConfigSchema } from '../config.schema.js';
@@ -60,7 +61,6 @@ async function seedEndpoint(dataSource: DataSource, name: string, hostname: stri
     id,
     name,
     hostname,
-    tee: 'Intel TDX',
     evidenceUrl: null,
     enabled: true,
     updatedAt: new Date(),
@@ -90,6 +90,9 @@ async function seedExternalEndpoint(
     measurementSource: 'operator-pinned',
     evidenceDigestSeen: parsed.digest.canonical,
     pinnedCertFingerprint: parsed.certFingerprint,
+    observedCertFingerprint: parsed.certFingerprint,
+    // The approved deployment: the relay only ever hands out its publication.
+    pinnedEvidenceDigest: parsed.digest.canonical,
     apiKeyCiphertext: 'v1.sealed',
     apiKeyPrefix: 'sk-upstr',
     createdByUserId: null,
@@ -112,7 +115,11 @@ interface Harness {
 /** Controller over the real services and a migrated database — no mock in the path. */
 function controllerOn(publicBaseUrl: string): Harness {
   const service = new EvidenceService(config(publicBaseUrl) as ConfigType<typeof routerConfig>, fixture.dataSource);
-  const external = new ExternalEvidenceService(fixture.dataSource);
+  const external = new ExternalEvidenceService(
+    fixture.dataSource,
+    config(publicBaseUrl) as ConfigType<typeof routerConfig>,
+    new RecordingOperatorAlerts().asService(),
+  );
   return { controller: new EvidenceController(service, external), service, external };
 }
 
@@ -305,6 +312,27 @@ describe('relaying a registered external upstream’s bundle', () => {
     const stored = await seedExternalEndpoint(fixture.dataSource);
     await storeUpstreamBundle(external, stored);
     await fixture.dataSource.getRepository(ExternalEndpoint).update({ id: stored.id }, { evidenceDigestSeen: null });
+
+    const error = await controller.latest('partner-cloud').catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('does not relay a deployment no admin approved — a redeploy behind a pin (SUP-252)', async () => {
+    const { controller, external } = controllerOn('http://127.0.0.1:3000');
+    // Filed — the console shows it so the admin can decide — but not approved:
+    // the pin names another deployment, and the public relay hands out only the
+    // approved one's publication.
+    const endpoint = await seedExternalEndpoint(fixture.dataSource);
+    await storeUpstreamBundle(external, endpoint);
+    await fixture.dataSource.getRepository(ExternalEndpoint).update(
+      { id: endpoint.id },
+      {
+        status: 'denied',
+        lastStage: 'digest-mismatch',
+        pinnedEvidenceDigest: `sha256/${Buffer.alloc(32, 4).toString('base64url')}`,
+      },
+    );
 
     const error = await controller.latest('partner-cloud').catch((caught: unknown) => caught);
 

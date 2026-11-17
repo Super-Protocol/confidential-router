@@ -73,14 +73,16 @@ jobs:
           echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
           echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
-      # `gatekeeper` is excluded here and owned by the `go` job below, which has
-      # the Go toolchain and golangci-lint installed.
+      # The three Go projects — `gatekeeper`, the `swarm-evidence-go` module it
+      # is built out of, and the `swarm-policy` artefacts — are excluded here
+      # and owned by the `go` job below, which has the Go toolchain,
+      # golangci-lint and the Sentinel CLI installed.
       - name: Lint, typecheck, build & test
         run: |
           pnpm nx affected -t lint typecheck build test \
             --base="${{ steps.nx-shas.outputs.base }}" \
             --head="${{ steps.nx-shas.outputs.head }}" \
-            --exclude=gatekeeper \
+            --exclude=gatekeeper,swarm-evidence-go,swarm-policy \
             --parallel=3 \
             --outputStyle=static
 
@@ -107,6 +109,29 @@ jobs:
         run: |
           pnpm nx run @confidential-router/router-ui:codegen
           git diff --exit-code -- apps/router-ui/src/generated
+
+      # The bundle conformance vectors are generated too, and their
+      # `expect.claims` blocks are derived by the generator rather than
+      # written per case — so regenerating has to be a no-op for the same
+      # reason the composite corpus's step exists in `go-checks`: an
+      # expectation edited by hand is an expectation fitted to the code.
+      - name: Attestation vectors are up to date
+        run: |
+          pnpm nx run @confidential-router/attestation-fixtures:generate
+          status=$(git status --porcelain -- libs/attestation-fixtures/vectors)
+          if [ -n "$status" ]; then
+            echo "$status"
+            git diff -- libs/attestation-fixtures/vectors
+            echo "::error::regenerating the attestation vectors was not a no-op"
+            exit 1
+          fi
+
+      # `docker/router-api/entrypoint.sh` belongs to no Nx project, so `nx
+      # affected` never runs anything for it. Unconditional and two seconds: it
+      # decides the heap ceiling the router actually runs under, and getting it
+      # wrong cost production a total outage (SUP-583).
+      - name: Image entrypoint heap ceiling
+        run: sh docker/router-api/entrypoint.heap.test.sh
 
       - name: Check formatting
         run: pnpm format:check
@@ -224,6 +249,17 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # The secure-origin suite stands up the real egress sidecar beside the
+      # router, so this job builds Go now (ADR-008 §7, `tools/demo/serve.ts`
+      # under `CR_DEMO_EXTERNAL`).
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gatekeeper/go.mod
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -249,7 +285,10 @@ jobs:
       # Unconditional, and a separate target, because it is the only suite that
       # runs the console on a secure context — which is the only way tier 1's
       # verifier runs in a browser at all. `nx affected` would skip it on the
-      # changes most likely to break it, since the gate lives in a library.
+      # changes most likely to break it, since the gate lives in a library. It
+      # also covers the browser's own tier-1 run over a *relayed external*
+      # bundle, which needs the real egress sidecar to have reached a verdict
+      # first — hence the Go toolchain above.
       - name: Run the secure-origin e2e suite (tier 1, against the live stack)
         run: pnpm nx run @confidential-router/router-ui-e2e:e2e-secure --outputStyle=static
 
@@ -264,10 +303,12 @@ jobs:
           retention-days: 7
 
   # The whole story in one process tree: gatekeeper → mock evidence host →
-  # router-api → mock LiteLLM, with a live digest rotation in the middle. It is
-  # unconditional rather than `nx affected` because it is the only check that
-  # covers the seams *between* the apps, and a PR that breaks one of those
-  # rarely touches every project involved.
+  # router-api → mock LiteLLM → the egress sidecar → an upstream in another
+  # cloud, with a live digest rotation and a live measurement rotation in the
+  # middle. It is unconditional rather than `nx affected` because it is the only
+  # check that covers the seams *between* the apps, and a PR that breaks one of
+  # those rarely touches every project involved — the external-endpoint gate in
+  # particular lives in libraries on both sides of the seam (ADR-007 §7a).
   #
   # The acceptance criterion for this suite is that it finishes in under ten
   # minutes; the timeout is the guard, and the demo prints its own wall clock.
@@ -292,13 +333,18 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The built router-api as a process, the OpenAI SDK over real HTTP, and
-      # the router's own /v1, GraphQL and evidence surfaces.
+      # The built router-api as a process, the OpenAI SDK over real HTTP, the
+      # router's own /v1, GraphQL and evidence surfaces — and the external
+      # endpoint loop against the real `gatekeeper-sidecar`, which is why this
+      # job has the Go toolchain. Both `e2e` targets build the binaries they
+      # drive, including the build-tagged stand gatekeeper.
       - name: router-api e2e
         run: pnpm nx run @confidential-router/router-api-e2e:e2e --outputStyle=static
 
@@ -444,7 +490,7 @@ jobs:
           retention-days: 7
 
   go:
-    name: Go checks (gatekeeper)
+    name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

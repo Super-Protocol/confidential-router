@@ -3,7 +3,7 @@ import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InviteCode } from '../src/app/db/entities/invite-code.entity.js';
 import { formatInviteCode, generateInvites, mintInviteCode } from '../src/app/invites/index.js';
-import { createHarness, type Harness, pathOf } from './app-harness.js';
+import { createHarness, type Harness, lastCodeFor, pathOf, signUpWithCode } from './app-harness.js';
 import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } from './console.js';
 
 /**
@@ -20,7 +20,6 @@ import { anonymous, type ConsoleSession, dataSourceOf, expectData, graphql } fro
 
 const GRANT_MICROS = 100_000_000;
 const CAMPAIGN = 'launch-2026-10-devs';
-const PASSWORD = 'correct-horse-battery';
 
 const INVITE_GRANT = '{ inviteGrant { grantMicros campaign creditTransactionId redeemedAt } }';
 const GRANT_STATUS = `
@@ -43,11 +42,10 @@ const CAMPAIGNS = `
 
 let harness: Harness;
 
-/** A deployment with password sign-up, so a test can create an account in one call. */
+/** A deployment a test can create an account on in one call: `signUp` asks for a code and trades it in. */
 async function inviteHarness(env: Record<string, string> = {}): Promise<Harness> {
   harness = await createHarness({
     env: {
-      CR_API_AUTH__PASSWORD__ENABLED: 'true',
       CR_API_INVITES__LANDING_BASE_URL: 'https://router.superprotocol.com',
       ...env,
     },
@@ -86,7 +84,32 @@ function lookup(code: string) {
 }
 
 function signUp(body: Record<string, unknown>, query = '') {
-  return request(server()).post(`/auth/sign-up/email${query}`).send(body);
+  return signUpWithCode(harness, body, query);
+}
+
+/** Asks for a mailed code, with the invitation an invite-only deployment needs to send one. */
+function sendCode(email: string, inviteCode?: string) {
+  return request(server())
+    .post('/auth/email-otp/send-verification-otp')
+    .send({ email, type: 'sign-in', ...(inviteCode ? { inviteCode } : {}) });
+}
+
+/**
+ * A sign-up whose mailed code was asked for with one invitation and handed back
+ * with whatever `body` carries.
+ *
+ * The only way a typed refusal reaches this path now (SUP-410): an invite-only
+ * deployment will not mail an address it has no account for unless the request
+ * carries a code it would admit, so every refusal a visitor can still see is one
+ * the invitation earned between the mail and the submit — taken by somebody
+ * else, withdrawn by an operator, or a different code on the submit.
+ */
+async function signUpMailedWith(mailInvite: string, body: Record<string, unknown>): Promise<request.Response> {
+  const email = String(body.email);
+  await sendCode(email, mailInvite).expect(200);
+  return request(server())
+    .post('/auth/sign-in/email-otp')
+    .send({ ...body, otp: lastCodeFor(harness, email) });
 }
 
 function sessionCookiesOf(response: request.Response): string[] {
@@ -178,7 +201,6 @@ describe('signing up with an invitation', () => {
 
     const created = await signUp({
       email: 'invited@example.com',
-      password: PASSWORD,
       name: 'Invited',
       inviteCode: invite.code,
     }).expect(200);
@@ -199,7 +221,6 @@ describe('signing up with an invitation', () => {
     const [invite] = await issue(dataSourceOf(harness));
     const created = await signUp({
       email: 'ledger@example.com',
-      password: PASSWORD,
       name: 'Ledger',
       inviteCode: invite.code,
     }).expect(200);
@@ -219,7 +240,7 @@ describe('signing up with an invitation', () => {
     const [invite] = await issue(dataSourceOf(harness));
 
     const created = await signUp(
-      { email: 'query@example.com', password: PASSWORD, name: 'Query' },
+      { email: 'query@example.com', name: 'Query' },
       `?invite=${encodeURIComponent(invite.code)}`,
     ).expect(200);
 
@@ -231,11 +252,62 @@ describe('signing up with an invitation', () => {
     const [invite] = await issue(dataSourceOf(harness));
     await lookup(invite.code).expect(200).expect(validBody());
 
-    await signUp({ email: 'first@example.com', password: PASSWORD, name: 'First', inviteCode: invite.code }).expect(
-      200,
-    );
+    await signUp({ email: 'first@example.com', name: 'First', inviteCode: invite.code }).expect(200);
 
     await lookup(invite.code).expect(200).expect({ valid: false, reason: 'unavailable' });
+  });
+});
+
+describe('the operator sign-up grant (SUP-249)', () => {
+  const SIGNUP_GRANT_MICROS = 20_000_000;
+
+  async function balanceAfterSignUp(body: Record<string, unknown>): Promise<{ balance: string; ledger: unknown[] }> {
+    const created = await signUp({ name: 'New', ...body }).expect(200);
+    const session = await consoleSession(sessionCookiesOf(created));
+    const data = await expectData(
+      session,
+      `{ creditBalance(workspaceId: "${session.workspaceId}") { balanceMicros } }`,
+    );
+    const ledger = await expectData(session, LEDGER, { workspaceId: session.workspaceId });
+    return {
+      balance: data.creditBalance.balanceMicros,
+      ledger: ledger.creditTransactions.edges.map((edge: { node: unknown }) => edge.node),
+    };
+  }
+
+  it('credits every new account, visible on its first page load', async () => {
+    await inviteHarness({ CR_API_BILLING__SIGNUP_GRANT_MICROS: String(SIGNUP_GRANT_MICROS) });
+
+    const { balance, ledger } = await balanceAfterSignUp({ email: 'organic@example.com' });
+
+    expect(balance).toBe(String(SIGNUP_GRANT_MICROS));
+    expect(ledger).toEqual([
+      {
+        kind: 'GRANT',
+        amountMicros: String(SIGNUP_GRANT_MICROS),
+        reference: 'signup',
+        description: expect.any(String),
+      },
+    ]);
+  });
+
+  it('stacks with an invitation: 20 + 100 = 120', async () => {
+    await inviteHarness({ CR_API_BILLING__SIGNUP_GRANT_MICROS: String(SIGNUP_GRANT_MICROS) });
+    const [invite] = await issue(dataSourceOf(harness));
+
+    const { balance, ledger } = await balanceAfterSignUp({ email: 'both@example.com', inviteCode: invite.code });
+
+    expect(balance).toBe(String(SIGNUP_GRANT_MICROS + GRANT_MICROS));
+    expect(ledger).toHaveLength(2);
+  });
+
+  it('grants nothing at 0, the schema default', async () => {
+    await inviteHarness();
+
+    const { balance, ledger } = await balanceAfterSignUp({ email: 'unfunded@example.com' });
+
+    expect(balance).toBe('0');
+    expect(ledger).toEqual([]);
   });
 });
 
@@ -258,18 +330,16 @@ describe('signing up with a code that cannot be redeemed', () => {
 
   it('still creates the account when the code was already used', async () => {
     const [invite] = await issue(dataSourceOf(harness));
-    await signUp({ email: 'first@example.com', password: PASSWORD, name: 'First', inviteCode: invite.code }).expect(
-      200,
-    );
+    await signUp({ email: 'first@example.com', name: 'First', inviteCode: invite.code }).expect(200);
 
     await expectAccountWithoutCredit(
-      await signUp({ email: 'second@example.com', password: PASSWORD, name: 'Second', inviteCode: invite.code }),
+      await signUp({ email: 'second@example.com', name: 'Second', inviteCode: invite.code }),
     );
   });
 
   it('still creates the account for outright garbage', async () => {
     await expectAccountWithoutCredit(
-      await signUp({ email: 'garbage@example.com', password: PASSWORD, name: 'Garbage', inviteCode: 'ZZZZ-ZZZZ-ZZZZ' }),
+      await signUp({ email: 'garbage@example.com', name: 'Garbage', inviteCode: 'ZZZZ-ZZZZ-ZZZZ' }),
     );
   });
 
@@ -277,7 +347,6 @@ describe('signing up with a code that cannot be redeemed', () => {
     await expectAccountWithoutCredit(
       await signUp({
         email: 'nonsense@example.com',
-        password: PASSWORD,
         name: 'Nonsense',
         inviteCode: '../../etc/passwd',
       }),
@@ -288,7 +357,7 @@ describe('signing up with a code that cannot be redeemed', () => {
     const [invite] = await issue(dataSourceOf(harness), { expiresAt: new Date('2020-01-01T00:00:00Z') });
 
     await expectAccountWithoutCredit(
-      await signUp({ email: 'expired@example.com', password: PASSWORD, name: 'Expired', inviteCode: invite.code }),
+      await signUp({ email: 'expired@example.com', name: 'Expired', inviteCode: invite.code }),
     );
   });
 
@@ -298,7 +367,6 @@ describe('signing up with a code that cannot be redeemed', () => {
     const [second] = await issue(dataSource, { campaign: 'launch-2026-11' });
     const created = await signUp({
       email: 'twice@example.com',
-      password: PASSWORD,
       name: 'Twice',
       inviteCode: first.code,
     }).expect(200);
@@ -306,10 +374,7 @@ describe('signing up with a code that cannot be redeemed', () => {
 
     // Redemption lives in account creation, so the second sign-in has nothing to
     // redeem with — which is the property that makes the grant unreplayable.
-    await request(server())
-      .post(`/auth/sign-in/email?invite=${encodeURIComponent(second.code)}`)
-      .send({ email: 'twice@example.com', password: PASSWORD })
-      .expect(200);
+    await signUp({ email: 'twice@example.com' }, `?invite=${encodeURIComponent(second.code)}`).expect(200);
 
     const data = await expectData(
       session,
@@ -364,7 +429,6 @@ describe('the post-sign-up screen', () => {
   async function accountWith(code: string | undefined, email: string): Promise<ConsoleSession> {
     const created = await signUp({
       email,
-      password: PASSWORD,
       name: 'Arrived',
       ...(code ? { inviteCode: code } : {}),
     }).expect(200);
@@ -460,13 +524,12 @@ describe('the campaign stats query', () => {
     const invites = await issue(dataSource, { count: 4 });
     const redeemed = await signUp({
       email: 'redeemer@example.com',
-      password: PASSWORD,
       name: 'Redeemer',
       inviteCode: invites[0].code,
     }).expect(200);
 
     const operator = await consoleSession(
-      sessionCookiesOf(await signUp({ email: 'ops@example.com', password: PASSWORD, name: 'Ops' }).expect(200)),
+      sessionCookiesOf(await signUp({ email: 'ops@example.com', name: 'Ops' }).expect(200)),
     );
     const stats = await expectData(operator, CAMPAIGNS, { campaign: CAMPAIGN });
     expect(stats.inviteCampaigns).toEqual([
@@ -517,9 +580,7 @@ describe('the kill switch', () => {
   `;
 
   async function operator(): Promise<ConsoleSession> {
-    return consoleSession(
-      sessionCookiesOf(await signUp({ email: 'ops@example.com', password: PASSWORD, name: 'Ops' }).expect(200)),
-    );
+    return consoleSession(sessionCookiesOf(await signUp({ email: 'ops@example.com', name: 'Ops' }).expect(200)));
   }
 
   beforeEach(async () => {
@@ -546,7 +607,6 @@ describe('the kill switch', () => {
       sessionCookiesOf(
         await signUp({
           email: 'too-late@example.com',
-          password: PASSWORD,
           name: 'Late',
           inviteCode: invite.code,
         }).expect(200),
@@ -564,7 +624,6 @@ describe('the kill switch', () => {
       sessionCookiesOf(
         await signUp({
           email: 'early@example.com',
-          password: PASSWORD,
           name: 'Early',
           inviteCode: invites[0].code,
         }).expect(200),
@@ -611,7 +670,6 @@ describe('the kill switch', () => {
       sessionCookiesOf(
         await signUp({
           email: 'second-chance@example.com',
-          password: PASSWORD,
           name: 'Second',
           inviteCode: invite.code,
         }).expect(200),
@@ -623,9 +681,7 @@ describe('the kill switch', () => {
   it('refuses a signed-in caller who is not an operator, and leaves the code usable', async () => {
     const [invite] = await issue(dataSourceOf(harness));
     const outsider = await consoleSession(
-      sessionCookiesOf(
-        await signUp({ email: 'outsider@example.com', password: PASSWORD, name: 'Outsider' }).expect(200),
-      ),
+      sessionCookiesOf(await signUp({ email: 'outsider@example.com', name: 'Outsider' }).expect(200)),
     );
 
     const refused = await graphql(outsider, DISABLE, { input: { code: invite.code } });
@@ -680,7 +736,7 @@ describe('a deployment that requires an invitation to sign up', () => {
     await inviteHarness({ CR_API_AUTH__REQUIRE_INVITE_FOR_SIGN_UP: 'true', ...env });
   }
 
-  describe('the password path', () => {
+  describe('the emailed-code path', () => {
     beforeEach(async () => {
       await requireInvites();
     });
@@ -690,7 +746,6 @@ describe('a deployment that requires an invitation to sign up', () => {
 
       const created = await signUp({
         email: 'invited@example.com',
-        password: PASSWORD,
         name: 'Invited',
         inviteCode: invite.code,
       }).expect(200);
@@ -700,13 +755,23 @@ describe('a deployment that requires an invitation to sign up', () => {
       expect(grant.inviteGrant).toMatchObject({ grantMicros: String(GRANT_MICROS), campaign: CAMPAIGN });
     });
 
-    it('refuses a sign-up with no code at all, and creates nothing', async () => {
+    it('mails nothing to an address with no account and no invitation, and creates nothing', async () => {
       const before = await users();
 
-      const refused = await signUp({ email: 'uninvited@example.com', password: PASSWORD, name: 'Uninvited' }).expect(
-        403,
-      );
+      await sendCode('uninvited@example.com').expect(200);
+      await harness.settleMail();
 
+      expect(harness.mailer.ofKind('sign-in-code')).toEqual([]);
+      expect(await users()).toBe(before);
+    });
+
+    it('refuses a sign-up whose submit carries no code, even though the mail was earned', async () => {
+      const [invite] = await issue(dataSourceOf(harness));
+      const before = await users();
+
+      const refused = await signUpMailedWith(invite.code, { email: 'uninvited@example.com', name: 'Uninvited' });
+
+      expect(refused.status).toBe(403);
       expect(refused.body.code).toBe('invite_required');
       expect(await users()).toBe(before);
     });
@@ -727,16 +792,20 @@ describe('a deployment that requires an invitation to sign up', () => {
         ['not-a-code-at-all', 'invite_expired_or_unknown'],
       ];
 
+      // One usable code mails every one of them: a code is spent by creating an
+      // account, and none of these submits creates one.
+      const [mailable] = await issue(dataSource, { campaign: 'mailable-c' });
+
       const before = await users();
       let index = 0;
       for (const [code, expected] of cases) {
-        const refused = await signUp({
+        const refused = await signUpMailedWith(mailable.code, {
           email: `refused-${index}@example.com`,
-          password: PASSWORD,
           name: 'Refused',
           inviteCode: code,
-        }).expect(403);
+        });
         index += 1;
+        expect(refused.status, code).toBe(403);
         expect(refused.body.code, code).toBe(expected);
       }
       expect(await users()).toBe(before);
@@ -744,17 +813,21 @@ describe('a deployment that requires an invitation to sign up', () => {
 
     it('spends the code exactly once, so the second person to try it is turned away', async () => {
       const [invite] = await issue(dataSourceOf(harness));
+      // Both are mailed while the invitation still has its seat — after the
+      // first account takes it, the send route would not mail the second at all.
+      await sendCode('first@example.com', invite.code).expect(200);
+      await sendCode('second@example.com', invite.code).expect(200);
+      const codes = ['first@example.com', 'second@example.com'].map((email) => lastCodeFor(harness, email));
 
-      await signUp({ email: 'first@example.com', password: PASSWORD, inviteCode: invite.code, name: 'First' }).expect(
-        200,
-      );
+      await request(server())
+        .post('/auth/sign-in/email-otp')
+        .send({ email: 'first@example.com', otp: codes[0], inviteCode: invite.code, name: 'First' })
+        .expect(200);
       const before = await users();
-      const second = await signUp({
-        email: 'second@example.com',
-        password: PASSWORD,
-        inviteCode: invite.code,
-        name: 'Second',
-      }).expect(403);
+      const second = await request(server())
+        .post('/auth/sign-in/email-otp')
+        .send({ email: 'second@example.com', otp: codes[1], inviteCode: invite.code, name: 'Second' })
+        .expect(403);
 
       expect(second.body.code).toBe('invite_already_claimed');
       expect(await users()).toBe(before);
@@ -762,15 +835,10 @@ describe('a deployment that requires an invitation to sign up', () => {
 
     it('leaves signing in to an existing account alone', async () => {
       const [invite] = await issue(dataSourceOf(harness));
-      await signUp({ email: 'returning@example.com', password: PASSWORD, inviteCode: invite.code, name: 'R' }).expect(
-        200,
-      );
+      await signUp({ email: 'returning@example.com', inviteCode: invite.code, name: 'R' }).expect(200);
 
       // No code on this request, and the one it was created with is spent.
-      await request(server())
-        .post('/auth/sign-in/email')
-        .send({ email: 'returning@example.com', password: PASSWORD })
-        .expect(200);
+      await signUp({ email: 'returning@example.com' }).expect(200);
     });
   });
 
@@ -798,33 +866,52 @@ describe('a deployment that requires an invitation to sign up', () => {
      * as `?error=` on the error callback — the same three codes the password path
      * puts in its body, which is what lets the console have one set of copy.
      */
-    it('redirects to the error callback with the code, and creates nothing', async () => {
+    /**
+     * The link is mail too, and it was being sent to any address a stranger
+     * named on a deployment that would then refuse the account (SUP-410). So the
+     * request that asks for one is gated the same way, by the code on its
+     * `callbackURL` — the one thing it carries through to the verification.
+     */
+    it('mails no link to an address with no account and no invitation, and creates nothing', async () => {
+      const before = await users();
+      const sent = harness.mailer.ofKind('magic-link').length;
+
+      const answer = await request(server())
+        .post('/auth/sign-in/magic-link')
+        .send({ email: 'nocode@example.com', callbackURL: '/', errorCallbackURL: '/signup' })
+        .expect(200);
+      await harness.settleMail();
+
+      expect(answer.body).toEqual({ status: true });
+      expect(harness.mailer.ofKind('magic-link')).toHaveLength(sent);
+      expect(await users()).toBe(before);
+    });
+
+    /**
+     * A navigation cannot be answered with a 403 body, so the refusal comes back
+     * as `?error=` on the error callback — the same three codes the emailed-code
+     * path puts in its body, which is what lets the console have one set of copy.
+     * Reachable for a link that was earned and spent before it was opened.
+     */
+    it('redirects to the error callback with the code when the invitation went bad in between', async () => {
+      const dataSource = dataSourceOf(harness);
+      const [invite] = await issue(dataSource);
       const before = await users();
 
       await request(server())
         .post('/auth/sign-in/magic-link')
-        .send({ email: 'nocode@example.com', callbackURL: '/', errorCallbackURL: '/signup' });
+        .send({ email: 'spent@example.com', callbackURL: `/?invite=${invite.code}`, errorCallbackURL: '/signup' })
+        .expect(200);
+      // Claimed by somebody else between the mail and the click.
+      await dataSource
+        .getRepository(InviteCode)
+        .update({ code: invite.code.replace(/-/g, '') }, { redemptionCount: 1 });
       const verified = await request(server()).get(pathOf(harness.mailer.last.url)).expect(302);
 
       const location = new URL(verified.headers.location, 'http://localhost:3000');
       expect(location.pathname).toBe('/signup');
-      expect(location.searchParams.get('error')).toBe('invite_required');
+      expect(location.searchParams.get('error')).toBe('invite_already_claimed');
       expect(await users()).toBe(before);
-    });
-
-    it('carries the claimed-already refusal the same way', async () => {
-      const dataSource = dataSourceOf(harness);
-      const [spent] = await issue(dataSource);
-      await dataSource.getRepository(InviteCode).update({ code: spent.code.replace(/-/g, '') }, { redemptionCount: 1 });
-
-      await request(server())
-        .post('/auth/sign-in/magic-link')
-        .send({ email: 'spent@example.com', callbackURL: `/?invite=${spent.code}`, errorCallbackURL: '/signup' });
-      const verified = await request(server()).get(pathOf(harness.mailer.last.url)).expect(302);
-
-      expect(new URL(verified.headers.location, 'http://localhost:3000').searchParams.get('error')).toBe(
-        'invite_already_claimed',
-      );
     });
   });
 
@@ -845,9 +932,9 @@ describe('a deployment that requires an invitation to sign up', () => {
     it('reports the requirement, so the sign-up screen can say so before anyone tries', async () => {
       await requireInvites();
 
-      const options = await expectData(anonymous(harness), '{ signInOptions { inviteRequired password } }');
+      const options = await expectData(anonymous(harness), '{ signInOptions { inviteRequired emailCode } }');
 
-      expect(options.signInOptions).toMatchObject({ inviteRequired: true, password: true });
+      expect(options.signInOptions).toMatchObject({ inviteRequired: true, emailCode: true });
     });
 
     it('reports it off on a deployment that did not ask for it — the demo stand’s default', async () => {
@@ -868,7 +955,6 @@ describe('a deployment that does not require an invitation', () => {
   it('still creates the account when the code is no good — the behaviour SUP-142 chose', async () => {
     const created = await signUp({
       email: 'nocode-open@example.com',
-      password: PASSWORD,
       name: 'Open',
       inviteCode: formatInviteCode(mintInviteCode()),
     }).expect(200);

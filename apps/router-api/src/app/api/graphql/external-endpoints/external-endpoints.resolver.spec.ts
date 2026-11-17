@@ -1,5 +1,6 @@
 import type { ConfigType } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../../../test/operator-alerts-recorder.js';
 import type { SessionUser, UserProfileService } from '../../../auth/index.js';
 import type { routerConfig } from '../../../config.js';
 import { RouterConfigSchema } from '../../../config.schema.js';
@@ -12,6 +13,7 @@ import type {
   ExternalEndpointAdminService,
   ExternalEndpointView,
   ExternalEvidenceService,
+  ExternalModelDiscoveryService,
 } from '../../../external-endpoints/index.js';
 import { ExternalEndpointsResolver } from './external-endpoints.resolver.js';
 
@@ -43,7 +45,6 @@ function model(overrides: Partial<Model> = {}): Model {
     capabilities: ['chat'],
     promptPer1mMicros: 400_000,
     completionPer1mMicros: 800_000,
-    tee: '',
     enabled: true,
     updatedAt: NOW,
     ...overrides,
@@ -65,6 +66,7 @@ function view(endpoint: Partial<ExternalEndpoint> = {}, models: Model[] = [model
       lastReason: null,
       measurementSeen: MEASUREMENT,
       measurementSource: 'operator-pinned',
+      measurementInRegistry: false,
       evidenceDigestSeen: DIGEST_NOW,
       pinnedCertFingerprint: LEAF,
       apiKeyCiphertext: `v1.${Buffer.from(UPSTREAM_KEY).toString('base64url')}`,
@@ -159,7 +161,14 @@ function build({ admin: adminOverrides = {}, evidence: evidenceOverrides = {}, a
     admin,
     evidence,
     profiles,
-    resolver: new ExternalEndpointsResolver(admin, evidence, profiles, config(adminEmails)),
+    resolver: new ExternalEndpointsResolver(
+      admin,
+      evidence,
+      { discover: vi.fn().mockResolvedValue([]) } as unknown as ExternalModelDiscoveryService,
+      profiles,
+      new RecordingOperatorAlerts().asService(),
+      config(adminEmails),
+    ),
   };
 }
 
@@ -280,6 +289,25 @@ describe('the catalogue an endpoint reports', () => {
     // console say nothing, not make the admin screen fail to load.
     expect((await resolver.externalEndpoints(ADMIN))[0].measurementSource).toBeNull();
   });
+
+  it('passes the registry signal of a denial through, without changing the status', async () => {
+    const { resolver } = build({
+      admin: {
+        list: vi
+          .fn()
+          .mockResolvedValue([
+            view({ status: 'denied', lastStage: 'policy', measurementSource: null, measurementInRegistry: true }),
+          ]),
+      } as Partial<ExternalEndpointAdminService>,
+    });
+
+    // SUP-251: informational only — the console badges it, the trust list still decides.
+    expect((await resolver.externalEndpoints(MEMBER))[0]).toMatchObject({
+      status: 'denied',
+      measurementSeen: MEASUREMENT,
+      measurementInRegistry: true,
+    });
+  });
 });
 
 describe('the evidence summary (SUP-221 ruling 1)', () => {
@@ -313,6 +341,9 @@ describe('the evidence summary (SUP-221 ruling 1)', () => {
     expect(endpoint.latestEvidence?.snapshotId).toBe('snap-now');
     expect(endpoint.events.map((entry) => entry.evidence?.snapshotId)).toEqual(['snap-now', 'snap-before']);
     expect(endpoint.events[1].evidence?.containerImages).toEqual(['ghcr.io/example/vllm@sha256:snap-before']);
+    // Every digest a screen renders travels in both spellings, so the timeline
+    // never has to show the canonical wire form (SUP-115, SUP-255).
+    expect(endpoint.events.map((entry) => entry.evidenceDigestHex)).toEqual(['01'.repeat(32), '02'.repeat(32)]);
   });
 
   it('asks only for the digests the page will render', async () => {

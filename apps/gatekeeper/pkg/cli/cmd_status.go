@@ -45,7 +45,7 @@ func newStatusCommand(g *globals) *cobra.Command {
 		}
 
 		return p.emit(snapshotDocumentOf(snapshot), func(w io.Writer) {
-			printSnapshot(w, snapshot, now)
+			printSnapshot(w, snapshot, now, g.path())
 		})
 	}
 	return cmd
@@ -53,9 +53,10 @@ func newStatusCommand(g *globals) *cobra.Command {
 
 // printSnapshot renders one row per endpoint — the CLI's version of the
 // dashboard's table.
-func printSnapshot(w io.Writer, snapshot status.Snapshot, now time.Time) {
+func printSnapshot(w io.Writer, snapshot status.Snapshot, now time.Time, path string) {
 	if len(snapshot.Endpoints) == 0 {
-		fmt.Fprintln(w, "No endpoints are configured.")
+		fmt.Fprintf(w, "The gatekeeper is running, with no endpoints configured in %s.\n", path)
+		nextStep(w, "front the endpoint you want to verify", addEndpointExample())
 		return
 	}
 	rows := make([][]string, 0, len(snapshot.Endpoints))
@@ -105,6 +106,7 @@ func printEndpointDetail(w io.Writer, ep status.Endpoint, now time.Time) {
 	})
 	if ep.Report == nil {
 		fmt.Fprintln(w, "\nNo verification has completed for this endpoint yet.")
+		nextStep(w, "run one now and see the whole report", "gatekeeper verify "+ep.Name)
 		return
 	}
 	fmt.Fprintln(w)

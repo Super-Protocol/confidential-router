@@ -24,7 +24,6 @@ const AttestationInspector = React.lazy(() => import('./inspector'));
 export interface InspectAttestationButtonProps {
   verification: VerificationState;
   hostname: string;
-  teeLabel: string | null;
   declaredImages: readonly DeclaredImage[] | null;
   /**
    * Whose endpoint the panel is about. `external` changes the button's label and
@@ -38,7 +37,6 @@ export interface InspectAttestationButtonProps {
 export function InspectAttestationButton({
   verification,
   hostname,
-  teeLabel,
   declaredImages,
   endpointKind = 'own',
 }: InspectAttestationButtonProps) {
@@ -71,7 +69,6 @@ export function InspectAttestationButton({
             onOpenChange={setOpen}
             verification={verification}
             hostname={hostname}
-            teeLabel={teeLabel}
             declaredImages={declaredImages}
             endpointKind={endpointKind}
           />

@@ -1,5 +1,6 @@
 /**
- * First sign-in against the built artefact, on a genuinely empty deployment.
+ * The deployment's own token against the built artefact, on a genuinely empty
+ * deployment: the first sign-in, and the break-glass sign-in after it (SUP-269).
  *
  * `apps/router-api/test/bootstrap.e2e.spec.ts` covers the behaviour; two things
  * only a real process can show are here. The token must not reach the log — the
@@ -12,12 +13,12 @@
  * user in as part of coming up, which is precisely the state that closes this
  * endpoint.
  *
- * **Four requests reach `/auth/bootstrap` below, and the plugin's own rate limit
+ * **Six requests reach `/auth/bootstrap` below, and the plugin's own rate limit
  * is five a minute.** Better Auth only enables rate limiting in production and
- * this process runs as `development`, so nothing is throttled today — but a
- * fifth case, or a run against a production-mode build, would start answering
- * 429 and the failure would look nothing like a rate limit. Add cases to the
- * in-process suite instead, or raise the window here deliberately.
+ * this process runs as `development`, so nothing is throttled today — but a run
+ * against a production-mode build would start answering 429 and the failure
+ * would look nothing like a rate limit. Add cases to the in-process suite
+ * instead, or raise the window here deliberately.
  */
 import {
   CONSOLE_ORIGIN,
@@ -115,15 +116,51 @@ describe('bootstrap against the built router', () => {
     expect(body.data?.me.workspaces[0]?.role).toBe('OWNER');
   });
 
-  it('closes for good once that account exists', async () => {
-    const response = await bootstrap(TOKEN, { origin: CONSOLE_ORIGIN });
+  it('signs back into that account afterwards, and into no other — break-glass', async () => {
+    // Sign-in is otherwise a code mailed to the address, and this deployment
+    // has no mailer: the token is the administrator's only way back in.
+    const response = await bootstrap(TOKEN, {
+      origin: CONSOLE_ORIGIN,
+      'x-forwarded-for': '203.0.113.7',
+    });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { user: { email: string } }).user.email).toBe(BOOTSTRAP_EMAIL);
 
-    expect(response.status).toBe(404);
+    const cookie = sessionCookieOf(response);
+    expect(cookie).not.toBeNull();
+    const me = await fetch(`${router.baseUrl}/graphql`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: cookie as string, origin: CONSOLE_ORIGIN },
+      body: JSON.stringify({ query: '{ me { email } }' }),
+    });
+    expect(((await me.json()) as { data?: { me: { email: string } } }).data?.me.email).toBe(BOOTSTRAP_EMAIL);
+  });
+
+  it('still refuses a wrong token once the account exists, with a 401 and no session', async () => {
+    const response = await bootstrap('not-the-configured-token', { origin: CONSOLE_ORIGIN });
+
+    expect(response.status).toBe(401);
+    expect(sessionCookieOf(response)).toBeNull();
+  });
+
+  it('writes an audit line for the break-glass sign-in, naming the account and the source', async () => {
+    await delay(250);
+    const lines = router
+      .log()
+      .split('\n')
+      .filter((line) => line.includes('Break-glass sign-in'));
+
+    // One: the first claim is not break-glass, and a refused token opened nothing.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(BOOTSTRAP_EMAIL);
+    expect(lines[0]).toContain('203.0.113.7');
+    expect(lines[0]).toContain('"level":40');
   });
 
   it('never writes the token to the log', async () => {
-    // Everything above has already been through the process: a valid bootstrap,
-    // a rejected one and a blocked origin — all three paths that see the token.
+    // Everything above has already been through the process: the claim, the
+    // break-glass sign-in and its audit line, two rejected tokens and a blocked
+    // origin — every path that sees the token.
     // Give the logger a moment to flush what the last request produced.
     await delay(250);
 

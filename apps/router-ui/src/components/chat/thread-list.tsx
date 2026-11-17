@@ -17,8 +17,6 @@ export interface ThreadListProps {
   onSelect: (threadId: string) => void;
   onDelete: (threadId: string) => void;
   onCreate: () => void;
-  /** From `chatSettings`, so the list can say how much room is left. */
-  maxThreads: number;
   /**
    * Handed the *row* of the active conversation, so the storage note can send a
    * reader to its delete control (SUP-189) instead of describing where it is.
@@ -36,16 +34,12 @@ export interface ThreadListProps {
  * Delete is a hard delete and says so: no archive, no tombstone. The thread row
  * goes and `chat_messages` cascades from it, so there is nothing left to ask us
  * for afterwards.
+ *
+ * How many are kept is the screen's to say, in its footer beside the storage
+ * note (SUP-262): a count at the bottom of a column this tall floated in the
+ * gutter, nowhere near the list it counted.
  */
-export function ThreadList({
-  threads,
-  activeThreadId,
-  onSelect,
-  onDelete,
-  onCreate,
-  maxThreads,
-  activeRowRef,
-}: ThreadListProps) {
+export function ThreadList({ threads, activeThreadId, onSelect, onDelete, onCreate, activeRowRef }: ThreadListProps) {
   return (
     <div className="flex h-full flex-col gap-2">
       <Button variant="outline" size="sm" onClick={onCreate} className="justify-start">
@@ -88,10 +82,6 @@ export function ThreadList({
           );
         })}
       </ul>
-
-      <p className="text-muted-foreground text-xs">
-        {threads.length} of {maxThreads} conversations kept. The oldest is dropped past that.
-      </p>
     </div>
   );
 }

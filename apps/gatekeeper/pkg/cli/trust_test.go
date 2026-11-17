@@ -139,15 +139,29 @@ func TestUnpinningEverythingWarnsInsteadOfFailing(t *testing.T) {
 	}
 }
 
-func TestAddingAnEndpointWithoutPinsWarns(t *testing.T) {
+// TestAddingAnEndpointWithoutPinsSaysSoAndNamesTheNextStep is the shape every
+// write command's output has to have (SUP-300): what happened, the file it
+// happened in, and the command that carries the sequence on. The missing pin
+// used to be a stderr warning that repeated the advice already on stdout.
+func TestAddingAnEndpointWithoutPinsSaysSoAndNamesTheNextStep(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("init")
 	h.mustRun("trust", "roots", "add", "prod", "--pem-file", h.write("root.pem", rootPEM(t)))
 
 	got := h.mustRun("endpoint", "add", "qwen25-72b",
 		"--listen", "127.0.0.1:8444", "--upstream", "https://qwen25-72b.tee.swarm.cloud")
-	if !strings.Contains(got.stderr, "cannot admit traffic yet") {
-		t.Errorf("stderr = %q, want a warning about the missing pin", got.stderr)
+	for _, want := range []string{
+		`Added endpoint "qwen25-72b"`,
+		"$TMP/config.yaml",
+		"cannot admit traffic yet",
+		"gatekeeper endpoint trust add qwen25-72b --from-upstream",
+	} {
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("stdout = %q, want it to mention %q", got.stdout, want)
+		}
+	}
+	if got.stderr != "" {
+		t.Errorf("stderr = %q, want the whole result on one stream", got.stderr)
 	}
 }
 

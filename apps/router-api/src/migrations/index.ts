@@ -8,6 +8,14 @@ import { EndpointDeclaredImages1759300000000 } from './1759300000000-EndpointDec
 import { ExternalEndpoints1759400000000 } from './1759400000000-ExternalEndpoints.js';
 import { ExternalGenerationEndpoint1759500000000 } from './1759500000000-ExternalGenerationEndpoint.js';
 import { ExternalEndpointEvidence1759600000000 } from './1759600000000-ExternalEndpointEvidence.js';
+import { ExternalEndpointRegistrySignal1759700000000 } from './1759700000000-ExternalEndpointRegistrySignal.js';
+import { ExternalEndpointPinnedDigest1759800000000 } from './1759800000000-ExternalEndpointPinnedDigest.js';
+import { InviteCodeIssuer1759900000000 } from './1759900000000-InviteCodeIssuer.js';
+import { InviteCarriedRedemptions1760000000000 } from './1760000000000-InviteCarriedRedemptions.js';
+import { DropDeclaredTee1760100000000 } from './1760100000000-DropDeclaredTee.js';
+import { GenerationClient1760200000000 } from './1760200000000-GenerationClient.js';
+import { MailAddressStates1760400000000 } from './1760400000000-MailAddressStates.js';
+import { ExternalEndpointLiveness1760500000000 } from './1760500000000-ExternalEndpointLiveness.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -26,4 +34,12 @@ export const MIGRATIONS = [
   ExternalEndpoints1759400000000,
   ExternalGenerationEndpoint1759500000000,
   ExternalEndpointEvidence1759600000000,
+  ExternalEndpointRegistrySignal1759700000000,
+  ExternalEndpointPinnedDigest1759800000000,
+  InviteCodeIssuer1759900000000,
+  InviteCarriedRedemptions1760000000000,
+  DropDeclaredTee1760100000000,
+  GenerationClient1760200000000,
+  MailAddressStates1760400000000,
+  ExternalEndpointLiveness1760500000000,
 ];

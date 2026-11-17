@@ -2,17 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { findNavItem, isNavItemActive, NAV_GROUPS, NAV_ITEMS, visibleNavGroups } from './navigation';
 
 describe('navigation', () => {
-  it('covers the twelve console screens', () => {
+  it('covers the fourteen console screens', () => {
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       'Overview',
       'Models',
       'Chat',
       'API Keys',
-      'Gatekeeper',
       'Activity',
       'Logs',
       'External endpoints',
       'Trust list',
+      'Invitations',
+      'Export & import',
       'Credits',
       'Profile',
       'Preferences',
@@ -85,10 +86,12 @@ describe('visibleNavGroups', () => {
     expect(groups.flatMap((group) => group.items).filter((item) => item.adminOnly)).toEqual([]);
   });
 
-  it('marks exactly the two admin screens as admin-only', () => {
+  it('marks exactly the four admin screens as admin-only', () => {
     expect(NAV_ITEMS.filter((item) => item.adminOnly).map((item) => item.href)).toEqual([
       '/admin/endpoints',
       '/admin/trust',
+      '/admin/invitations',
+      '/admin/migration',
     ]);
   });
 });

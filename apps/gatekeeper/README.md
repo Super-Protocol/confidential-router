@@ -127,24 +127,47 @@ worse than not reloading. `SIGINT` and `SIGTERM` drain every listener
 
 ## Getting started
 
+Paths below are a Linux session's; the configuration directory is
+`os.UserConfigDir()` and differs per OS, so every command prints the one it
+actually resolved and `gatekeeper config path` prints it on demand.
+
 ```console
 $ gatekeeper init
-Wrote ~/.config/confidential-gatekeeper/config.yaml
-...
+Configuration created at /home/you/.config/confidential-gatekeeper/config.yaml
+
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
+/home/you/.config/confidential-gatekeeper/config.yaml is not ready to run (1 problem):
   - endpoints: at least one endpoint is required
 
-Nothing in the file is wrong — it is not finished. See `gatekeeper trust roots add`
-and `gatekeeper endpoint add`.
+Nothing in the file is wrong — it is not finished.
+
+Next: front the endpoint you want to verify
+  gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper endpoint add llama-33-70b \
-    --listen 127.0.0.1:8443 --upstream https://llama-33-70b.tee.swarm.cloud
+    --upstream https://llama-33-70b.tee.swarm.cloud --listen 127.0.0.1:8787
+Added endpoint "llama-33-70b" (127.0.0.1:8787 → https://llama-33-70b.tee.swarm.cloud) to /home/you/.config/confidential-gatekeeper/config.yaml
+
+It has no pinned evidenceDigest, so it cannot admit traffic yet.
+
+Next: review what the endpoint publishes, then pin it
+  gatekeeper endpoint trust add llama-33-70b --from-upstream
+
 $ gatekeeper endpoint discover llama-33-70b     # review what it publishes
 $ gatekeeper endpoint trust add llama-33-70b --from-upstream
+Pinned sha256:aba90ff985…75e530fe for "llama-33-70b" in /home/you/.config/confidential-gatekeeper/config.yaml
+
+Next: start the gatekeeper
+  gatekeeper run
+
 $ gatekeeper config validate
-~/.config/confidential-gatekeeper/config.yaml is valid and ready to run
+/home/you/.config/confidential-gatekeeper/config.yaml is valid and ready to run
+
+Next: start the gatekeeper
+  gatekeeper run
 ```
 
 There is no `trust roots add` in that sequence. A Swarm cloud's certificate
@@ -173,6 +196,16 @@ attested. Because it proves less, it is reported as a different verdict:
 `attested (operator-pinned)` rather than `attested (registry)`, on every surface
 and in `input.attestation.rootAttestation.measurementSource`, so a stricter
 deployment can refuse it in one Rego line.
+
+**How often the registry is asked.** The attested-root verdict for a root is
+cached for `attestedRoots.cacheTtl` — 10 minutes by default — and a denial is
+cached the same as an admission. Every endpoint re-attests on its own schedule
+(`reattestInterval`, 5 minutes by default), so the first re-attestation after the
+cache expires looks the measurement up again. A gatekeeper that is already
+running therefore admits a cloud whose measurement Super Protocol signs later
+within about `cacheTtl + reattestInterval` (15 minutes by default) with no
+restart; set a shorter `attestedRoots.cacheTtl` to tighten that, or send `SIGHUP`
+to rebuild the verifier and ask straight away.
 
 Every edit goes through `config.Document`, so the comments and formatting of a
 hand-written file survive, and every save is atomic.
@@ -428,12 +461,17 @@ The image is the *cluster* packaging, not a replacement for the binaries: it
 exists for a pod running the gatekeeper as an attested egress, where the
 configuration is rendered by a control loop rather than edited by a person. Its
 entrypoint is [`cmd/gatekeeper-sidecar`](./cmd/gatekeeper-sidecar) — see
-[`pkg/sidecar`](./pkg/sidecar) — which waits for the configuration to be
-rendered, runs `gatekeeper run --headless`, and SIGHUPs it when the file's
+[`pkg/sidecar`](./pkg/sidecar) — which waits for a configuration the gatekeeper
+will *run*, runs `gatekeeper run --headless`, and SIGHUPs it when the file's
 contents change — never for identical bytes, and never for a render that does
 not parse as a configuration, which is what a truncate-then-write renderer is
-briefly observable as. `docs/gatekeeper.md` §"In a cluster" is the
-operator-facing version; the PR gate builds the image and runs that whole loop.
+briefly observable as. Waiting for a *runnable* one, rather than for any file
+that reads, is what keeps a deployment with no external endpoint registered yet
+— the state every deployment ships in — out of a crash loop: an empty
+`endpoints` list is a valid document that `gatekeeper run` refuses, so the
+supervisor waits and logs why. `docs/gatekeeper.md` §"In a cluster" is the
+operator-facing version; the PR gate builds the image and runs that whole loop,
+and `apps/router-api-e2e` drives it against a live router.
 
 ```sh
 docker build -f gatekeeper.dockerfile -t gatekeeper .
@@ -445,7 +483,9 @@ docker build -f gatekeeper.dockerfile -t gatekeeper .
 | ------------------------ | ----------------------------------------------------------------------- |
 | `cmd/gatekeeper/`        | Process entry point. Four lines: it maps the CLI's exit status onto the process's. |
 | `cmd/gatekeeper-sidecar/`| Entry point of the container image. Flags and signals onto `pkg/sidecar`; never part of a Release. |
+| `cmd/gatekeeper-teststand/`| The gatekeeper with its attested-root *hardware* leg read from a file, for the external-endpoint e2e stand. Behind the `teststand` build tag, so no release build contains it; `go build ./cmd/...` does not compile it. |
 | `pkg/`                   | All reusable logic, importable by third parties and by a future desktop shell. |
+| `pkg/attestation/`       | The gatekeeper's view of the claim core. The verifier itself is the standalone `libs/swarm-evidence-go` module (SUP-647), which a bank or a Veraison deployment imports without the router; this package re-exports the names the gatekeeper uses and nothing else. |
 | `pkg/cli/`               | Every command, its output and its exit code. Driven end to end in tests through `cli.Run`. |
 | `pkg/tui/`               | The bubbletea dashboard, over the same status model the `status` command reads. |
 | `pkg/status/`            | What an endpoint's live state and one verification look like, plus the two seams the CLI and TUI are written against. |
@@ -468,9 +508,10 @@ and the schemas in [`/schemas`](../../schemas); read those first.
 
 ### Configuration (`pkg/config`)
 
-`~/.config/confidential-gatekeeper/config.yaml` by default
-(`--config`, `$CR_GATEKEEPER_CONFIG`, or `$GATEKEEPER_CONFIG`). Values resolve
-in four layers, later ones winning:
+`confidential-gatekeeper/config.yaml` under `os.UserConfigDir()` by default —
+`$XDG_CONFIG_HOME`/`~/.config`, `~/Library/Application Support`, `%AppData%` —
+overridden by `--config`, `$CR_GATEKEEPER_CONFIG`, or `$GATEKEEPER_CONFIG`.
+Values resolve in four layers, later ones winning:
 
 ```
 built-in defaults  →  the file  →  CR_GATEKEEPER_*  →  command-line flags
@@ -487,9 +528,10 @@ Validation reports every problem at once, each addressed by its path
 are rejected: a mistyped `trustedEvidance` would otherwise mean an endpoint
 running with the wrong pins. Cross-field rules live here too, notably the one
 trust mode per endpoint: `trustedEvidence` and `trust: cloud-measurement` are
-mutually exclusive, and an endpoint with neither is refused — a file that
-listed a pin next to a cloud-wide rule would read as though the pin were still
-enforced.
+mutually exclusive, and an `evidence-digest` endpoint with no pin is refused — a
+file that listed a pin next to a cloud-wide rule would read as though the pin
+were still enforced. `trust: measurement-and-digest` is the mode that requires
+both, and the one that runs with neither configured yet (SUP-252).
 
 Edits (`gatekeeper trust roots add …`, `gatekeeper endpoint add …`) go through `config.Document`, which rewrites
 the file through the yaml.v3 node API — comments, key order and block scalars
@@ -543,7 +585,10 @@ satisfies it — and in this mode the operator's list is the **sole** authority:
 measurement the Super Protocol registry signed but the operator did not list is
 denied, with `measurementSource` still reported for display and for user
 policies. It exists for a caller that registers upstreams at runtime and cannot
-approve each one by digest, and nothing else should use it.
+approve each one by digest, and nothing else should use it. `trust:
+measurement-and-digest` (SUP-252) is the two clauses at once — the router's egress
+renders it — and a built-in denial of it carries a `refusal` code naming the
+missing factor: `digest-not-pinned`, `measurement-not-trusted` or `digest-mismatch`.
 
 A request is admitted only if **every** loaded package's `allow` is true, so a
 user policy can narrow trust but never widen it — including back to the closed
@@ -589,7 +634,22 @@ built-in of the same name, so policies move over unchanged.
 forwarded only if that endpoint holds a verdict admitting it; the very first
 request waits for the first verdict (`initialTimeout`), and every later one is
 decided against the last one the background loop produced (`reattestInterval`).
-Verification never happens on the request path.
+Admitted traffic never waits for a verification — but a request the verdict in
+force would *refuse* re-attests on the spot, bounded to one check every two
+seconds per endpoint, so an upstream that came back seconds ago is admitted on
+the next request instead of at the next `reattestInterval` tick (ADR-003 §7).
+That request does wait for the check, up to two seconds: a refused dial fails in
+milliseconds, but an upstream that blackholes its traffic hangs inside the check
+until `initialTimeout`, and then each refused request pays the full two seconds
+on top of its 503. It is the price of not having the next five minutes of
+requests fail as well.
+
+Traffic is not the only trigger. While an endpoint is denied, the background
+loop re-checks on a backoff — two seconds, doubling to thirty, never slower than
+`reattestInterval` — instead of waiting out the interval, so an endpoint nobody
+calls is already admitted again when its next caller arrives. That matters most
+where the interval is long: the router's own egress sidecar runs this loop with
+`reattestInterval: 10m`.
 
 Three things make it more than a reverse proxy with a check in front:
 
@@ -615,14 +675,22 @@ Without a verdict, `failMode: closed` (the default) answers `503` with
   "error": { "type": "gatekeeper_error", "code": "attestation_failed",
              "message": "untrusted-root: the chain terminates in …" },
   "stage": "untrusted-root",
-  "reason": "the chain terminates in …"
+  "reason": "the chain terminates in …",
+  "checkedAt": "2026-10-19T20:05:00Z"
 }
 ```
 
-and never opens an upstream connection. `failMode: open` forwards anyway, logs
-at `warn`, tags the client-facing response `X-Gatekeeper-Verdict: deny <stage>:
-<reason>`, and carries that traffic on a *separate* connection pool, so nothing
-a verdict covered is ever reused for traffic it did not.
+and never opens an upstream connection. `checkedAt` — also on the response as
+`X-Gatekeeper-Checked-At` — dates the verdict the refusal came from, so a reason
+is never read as describing the present. The code is `attestation_unreachable`
+rather than `attestation_failed` when the evidence fetch never completed: a
+dial, handshake or read failure means no check ran at all, and calling a brief
+network outage an attestation failure sends its reader after the wrong thing.
+
+`failMode: open` forwards anyway, logs at `warn`, tags the client-facing
+response `X-Gatekeeper-Verdict: deny <stage>: <reason>`, and carries that
+traffic on a *separate* connection pool, so nothing a verdict covered is ever
+reused for traffic it did not.
 
 ### Admin socket
 

@@ -16,6 +16,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/Super-Protocol/confidential-router/apps/gatekeeper/pkg/attestation"
@@ -194,7 +195,16 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	if !result.OK {
 		report.Stage = string(result.Stage)
 		report.Reason = result.Reason
-		if report.AttestedRoot != nil && report.AttestedRoot.Reason != "" &&
+		report.Unreachable = result.Unreachable
+		if report.ByMeasurement() && result.Stage == attestation.StageUntrustedRoot {
+			// A cloud-measurement endpoint never trusts a root by certificate,
+			// so the store's "<root fingerprint> not in trusted store" answers a
+			// question this endpoint does not ask — and its bare hash reads as
+			// the value to put on the list, which it is not (SUP-251). The
+			// attested-root check is the only anchor here; its answer is the
+			// reason.
+			report.Reason = measurementRootDenial(report.AttestedRoot)
+		} else if report.AttestedRoot != nil && report.AttestedRoot.Reason != "" &&
 			result.Stage == attestation.StageUntrustedRoot {
 			// The manual store said "not listed"; say why the other anchor did
 			// not save it either, or the denial reads as though the attested
@@ -239,7 +249,7 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	}
 	report.EvidenceDigest = digest.String()
 	report.Pinned = configured && !endpoint.ByMeasurement() && endpoint.IsPinned(digest)
-	if configured && endpoint.ByMeasurement() && report.AttestedRoot != nil {
+	if configured && endpoint.TrustsCloud() && report.AttestedRoot != nil {
 		report.MeasurementTrusted = v.store.IsTrustedMeasurement(report.AttestedRoot.Measurement)
 	}
 
@@ -270,12 +280,51 @@ func (v *Verifier) Verify(ctx context.Context, req status.VerifyRequest) (*statu
 	report.Admitted = decision.Allow
 	if !decision.Allow {
 		report.Reason = decision.Reason
-		if detail := measurementDenialDetail(decision, report); detail != "" {
+		detail := measurementDenialDetail(decision, report)
+		if report.TrustMode == config.TrustMeasurementAndDigest && builtinDeniedCleanly(decision) {
+			report.Refusal, detail = twoFactorRefusal(report, len(endpoint.Pins) > 0)
+		}
+		if detail != "" {
 			report.Reason += " (" + detail + ")"
 		}
 		report.Stage = "policy"
 	}
 	return report, nil
+}
+
+// twoFactorRefusal decides which factor a built-in denial of a
+// `measurement-and-digest` endpoint is about, and explains every factor that
+// is missing — an operator approving the first should not find out about the
+// second only after the next check.
+//
+// The code is the first that applies, in an order that reads as the approval
+// loop does: a digest never pinned means nothing has been approved yet, which
+// is a pending decision rather than a refusal; then the cloud, which outranks
+// the deployment running on it; then the deployment itself.
+func twoFactorRefusal(report *status.Report, digestsPinned bool) (string, string) {
+	var refusal string
+	var details []string
+	if !digestsPinned {
+		refusal = status.RefusalDigestNotPinned
+		details = append(details, fmt.Sprintf(
+			"no evidenceDigest is pinned for endpoint %q, so no deployment is approved yet — this one publishes %s",
+			report.Endpoint, report.EvidenceDigest))
+	}
+	if detail := cloudFactorDetail(report); detail != "" {
+		if refusal == "" {
+			refusal = status.RefusalMeasurementNotTrusted
+		}
+		details = append(details, detail)
+	}
+	if digestsPinned && !report.Pinned {
+		if refusal == "" {
+			refusal = status.RefusalDigestMismatch
+		}
+		details = append(details, fmt.Sprintf(
+			"the deployment now publishes evidenceDigest %s, which is not the one pinned for endpoint %q",
+			report.EvidenceDigest, report.Endpoint))
+	}
+	return refusal, strings.Join(details, "; ")
 }
 
 // measurementDenialDetail explains a built-in denial of a `cloud-measurement`
@@ -296,7 +345,13 @@ func measurementDenialDetail(decision policy.Decision, report *status.Report) st
 	if !builtinDeniedCleanly(decision) {
 		return ""
 	}
+	return cloudFactorDetail(report)
+}
 
+// cloudFactorDetail explains why the measurement factor does not admit, or
+// returns "" when it does. Shared by `cloud-measurement` and the cloud half of
+// `measurement-and-digest`.
+func cloudFactorDetail(report *status.Report) string {
 	switch {
 	case report.AttestedRoot == nil || !report.RootAttested:
 		return fmt.Sprintf(
@@ -316,6 +371,28 @@ func measurementDenialDetail(decision policy.Decision, report *status.Report) st
 		return fmt.Sprintf("measurement %s is %s", report.AttestedRoot.Measurement, listed)
 	default:
 		return ""
+	}
+}
+
+// measurementRootDenial says why a `cloud-measurement` endpoint's root was not
+// admitted, in terms of the one thing such an endpoint is trusted by: the
+// launch measurement its root CA's TEE evidence attests.
+//
+// The two failures it separates call for different people. No measurement
+// means the evidence itself was unusable — an unrecognised format, a bad
+// signature, a key it does not commit to — and no list edit can fix that. A
+// measurement that was derived but not admitted is the admin's decision, and
+// naming the value is what lets them make it.
+func measurementRootDenial(root *status.AttestedRoot) string {
+	switch {
+	case root == nil:
+		return "could not extract a launch measurement from the upstream's root CA: " +
+			"the root certificate could not be checked for TEE evidence"
+	case root.Measurement == "":
+		return "could not extract a launch measurement from the upstream's root CA: " + root.Reason
+	default:
+		return "the upstream's root CA attests launch measurement " + root.Measurement +
+			", which is not admitted: " + root.Reason
 	}
 }
 

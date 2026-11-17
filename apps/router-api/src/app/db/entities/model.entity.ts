@@ -75,10 +75,6 @@ export class Model {
   @Column(bigIntColumn())
   completionPer1mMicros!: number;
 
-  /** Denormalised from the endpoint so a model list needs no join. */
-  @Column({ type: 'varchar', length: 128 })
-  tee!: string;
-
   @Column({ type: 'boolean', default: true })
   enabled!: boolean;
 

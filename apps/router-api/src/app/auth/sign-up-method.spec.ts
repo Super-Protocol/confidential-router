@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { signUpMethodOf } from './sign-up-method.js';
 
 describe('signUpMethodOf', () => {
-  it('reads the password path', () => {
-    expect(signUpMethodOf({ path: '/sign-up/email' })).toBe('password');
+  it('reads the emailed-code path, which is where accounts are created now (SUP-269)', () => {
+    expect(signUpMethodOf({ path: '/sign-in/email-otp' })).toBe('email_code');
   });
 
   it('reads a magic-link verification', () => {

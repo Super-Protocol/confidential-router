@@ -1,8 +1,12 @@
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ApiKeyService } from '../src/app/api-keys/api-key.service.js';
 import { ApiKey } from '../src/app/db/entities/api-key.entity.js';
+import { Endpoint } from '../src/app/db/entities/endpoint.entity.js';
+import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entity.js';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
 import { createHarness, type Harness } from './app-harness.js';
 import {
@@ -138,9 +142,59 @@ describe('GET /v1/models', () => {
       owned_by: 'confidential-router',
       context_length: 4096,
       pricing: { prompt_per_1m_micros: 1_000_000, completion_per_1m_micros: 1_000_000 },
-      endpoint: { name: 'mock-primary', hostname: PRIMARY_ENDPOINT_HOSTNAME, tee: 'Intel TDX + H100 CC' },
-      capabilities: ['chat', 'completions'],
+      endpoint: { name: 'mock-primary', hostname: PRIMARY_ENDPOINT_HOSTNAME },
+      // Derived from the declared `[chat, completions]`, and wider than it: the
+      // surface streams and forwards tools for every chat model (SUP-450).
+      capabilities: ['chat', 'completions', 'tools', 'streaming'],
     });
+    // Nothing has published evidence for the endpoint yet, so there is no TEE to
+    // name — and no config label to fall back on (SUP-260).
+    expect(chat.endpoint).not.toHaveProperty('tee');
+  });
+
+  /*
+   * The label comes from the root certificate of the published chain and from
+   * nowhere else: with the real production root stored, the same deployment
+   * that used to answer the chart's "Intel TDX + H100 CC" default answers what
+   * its hardware actually is.
+   */
+  it('names the TEE the endpoint’s published evidence carries', async () => {
+    const dataSource = harness.app.get(DataSource);
+    const endpoint = await dataSource
+      .getRepository(Endpoint)
+      .findOneByOrFail({ hostname: EMBEDDINGS_ENDPOINT_HOSTNAME });
+    const rootPem = readFileSync(
+      new URL('../src/app/evidence/testdata/prod-router-azure-sev-snp-root.pem', import.meta.url),
+      'utf8',
+    );
+    await dataSource.getRepository(EvidenceSnapshot).insert({
+      id: randomUUID(),
+      endpointId: endpoint.id,
+      externalEndpointId: null,
+      fetchedAt: new Date(),
+      issuedAt: new Date(),
+      evidenceDigest: `sha256/${'A'.repeat(43)}`,
+      evidenceDigestHex: '0'.repeat(64),
+      certFingerprint: `sha256/${'B'.repeat(43)}`,
+      quoteFormat: null,
+      containerImages: [],
+      chainSummary: [],
+      workloads: null,
+      measurements: null,
+      jws: 'a.b.c',
+      bundle: { certChain: [rootPem] },
+    });
+
+    const listed = await request(server()).get('/v1/models').set(bearer(secret)).expect(200);
+    const embeddings = listed.body.data.find((model: { id: string }) => model.id === 'mock/embed:tdx');
+    expect(embeddings.endpoint).toEqual({
+      name: 'mock-embeddings',
+      hostname: EMBEDDINGS_ENDPOINT_HOSTNAME,
+      tee: 'AMD SEV-SNP (Azure)',
+    });
+
+    const one = await request(server()).get('/v1/models/mock/embed:tdx').set(bearer(secret)).expect(200);
+    expect(one.body.endpoint.tee).toBe('AMD SEV-SNP (Azure)');
   });
 
   it('shows a scoped key only the models it may call', async () => {
@@ -242,6 +296,10 @@ describe('POST /v1/chat/completions', () => {
       evidenceSnapshotId: null,
     });
     expect(row.latencyMs).toBeGreaterThanOrEqual(0);
+    // No stream, so no first token to time — and without that window a rate
+    // would be the whole latency, prefill included (SUP-424).
+    expect(row.timeToFirstTokenMs).toBeNull();
+    expect(row.tokensPerSecond).toBeNull();
     expect(JSON.stringify(row)).not.toContain('Hello there');
   });
 
@@ -264,6 +322,77 @@ describe('POST /v1/chat/completions', () => {
     const row = await generations().findOneByOrFail({ id: response.body.id });
     expect(row.promptTokens).toBeGreaterThan(0);
     expect(row.costMicros).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * SUP-466. The dimension exists because SUP-447 spent two days answering "which
+ * editor was the tester using?" from screenshots while the answer was in a
+ * header on all 97 of his requests.
+ *
+ * The agent strings below are real: `GitHubCopilotChat/0.69.0` and
+ * `RooCode/3.54.0` are what VS Code's own chat and Roo Code 3.54.0 sent through
+ * SUP-447's logging proxy, and `node` is what Cline 4.1.25 sent — which is why
+ * the label beside it has to come from `X-Title` instead.
+ */
+describe('which client sent the request', () => {
+  it('is on the row, as a label and never as the agent string', async () => {
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'GitHubCopilotChat/0.69.0')
+      .send(CHAT)
+      .expect(200);
+
+    const row = await generations().findOneByOrFail({ id: response.body.id });
+    expect(row.client).toBe('vscode-chat');
+    // The fingerprint is read and discarded in `client-dimension.ts`; no version,
+    // no editor build and no part of the header itself reaches the column.
+    expect(JSON.stringify(row)).not.toContain('GitHubCopilotChat');
+    expect(JSON.stringify(row)).not.toContain('0.69.0');
+  });
+
+  it('is on the row of a request that failed, which is the row the question is asked of', async () => {
+    // Some of these clients fail in ways the user never reports, so a breakdown
+    // that only covered successes would answer with survivors.
+    await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'RooCode/3.54.0')
+      .send({ ...CHAT, model: 'mock/boom:tdx' })
+      .expect(502);
+
+    const row = await generations().findOneOrFail({
+      where: { modelId: 'mock/boom:tdx' },
+      order: { createdAt: 'DESC' },
+    });
+    expect(row).toMatchObject({ status: 'error', client: 'roo' });
+  });
+
+  it('reads a client that names itself in a header other than its agent string', async () => {
+    // Cline 4.1.25 announces `user-agent: node` against an OpenAI-compatible
+    // endpoint and names itself nowhere else but here.
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'node')
+      .set('x-title', 'Cline')
+      .send(CHAT)
+      .expect(200);
+
+    expect((await generations().findOneByOrFail({ id: response.body.id })).client).toBe('cline');
+  });
+
+  it('is `other` rather than null when nothing recognisable arrived', async () => {
+    const response = await request(server())
+      .post('/v1/chat/completions')
+      .set(bearer(secret))
+      .set('user-agent', 'SomeoneElsesAgent/4.2')
+      .send(CHAT)
+      .expect(200);
+
+    // A countable population, where null would mean nobody looked.
+    expect((await generations().findOneByOrFail({ id: response.body.id })).client).toBe('other');
   });
 });
 

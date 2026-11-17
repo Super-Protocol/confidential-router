@@ -103,7 +103,7 @@ allow if {
   "measurements": {"<mrEnclave hex>", …},           // attestedRoots.trustedMeasurements, a Rego set
   "endpoints":    { "<endpoint name>": {
       "hostname": "…",
-      "trust": "evidence-digest" | "cloud-measurement",
+      "trust": "evidence-digest" | "cloud-measurement" | "measurement-and-digest",
       "evidence_digests": {"sha256/…", …},          // a Rego set, canonical form
       "evidence_digests_hex": {"…", …},
       "fail_mode": "closed" | "open"
@@ -111,14 +111,15 @@ allow if {
 }
 ```
 
-`measurements` and `endpoints[…].trust` are what the second clause of the built-in policy below
-reads. `trust` is always one of the two literals — an endpoint that sets nothing in the config is
-generated as `evidence-digest` — so a user policy can switch on it without a default.
+`measurements` and `endpoints[…].trust` are what the second and third clauses of the built-in policy
+below read. `trust` is always one of the three literals — an endpoint that sets nothing in the config
+is generated as `evidence-digest` — so a user policy can switch on it without a default.
 
 ## Built-in default policy (always loaded, cannot be disabled)
 
-One clause per trust mode. Each endpoint is in exactly one mode; the config refuses a file that
-declares both or neither.
+One clause per trust mode. Each endpoint is in exactly one mode; the config refuses a pin beside
+`cloud-measurement` (it would not be enforced) and an `evidence-digest` endpoint with none.
+`measurement-and-digest` (SUP-252) is the first two clauses at once.
 
 ```rego
 package gatekeeper.default
@@ -146,9 +147,27 @@ allow if {
   some measurement in data.gatekeeper.trust.measurements
   measurement == input.attestation.rootAttestation.measurement
 }
+
+# trust: measurement-and-digest (SUP-252) — two-factor: the cloud by measurement
+# AND the deployment by a pinned digest. Legal with no pin yet (trust on first use
+# with an operator in the loop); never admitted until one matches.
+allow if {
+  input.attestation.verified == true
+  endpoint := data.gatekeeper.trust.endpoints[input.endpoint]
+  endpoint.trust == "measurement-and-digest"
+  input.attestation.rootAttestation.attested == true
+  some measurement in data.gatekeeper.trust.measurements
+  measurement == input.attestation.rootAttestation.measurement
+  some digest in endpoint.evidence_digests
+  digest == input.evidence.evidenceDigest
+}
 ```
 
-A `cloud-measurement` endpoint requires `rootAttestation` — the anchor that derives a measurement.
+A built-in denial of a `measurement-and-digest` endpoint is reported with a `refusal` code on the
+verdict (`pkg/status`): `digest-not-pinned`, `measurement-not-trusted` or `digest-mismatch`, the first
+that applies.
+
+A `cloud-measurement` or `measurement-and-digest` endpoint requires `rootAttestation` — the anchor that derives a measurement.
 A root taken from `trustedRoots` carries none (see `input` above), so such an endpoint denies until
 its cloud's root CA is admitted by the attested-root path.
 

@@ -53,6 +53,15 @@ export class ExternalUpstreamModel {
   @Field(() => GraphQLISODateTime, { nullable: true, description: 'When the last verdict was read back.' })
   lastCheckedAt!: Date | null;
 
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description:
+      'Since when this upstream has not been known to serve, or null while it is serving (SUP-517). The answer ' +
+      'to “is `available: false` a new registration or a model that has been dark for a day” — the question an ' +
+      'advertised-but-refusing model left a reader unable to ask.',
+  })
+  notServingSince!: Date | null;
+
   @Field(() => String, { nullable: true, description: 'The upstream cloud’s root measurement, as the verdict saw it.' })
   measurementSeen!: string | null;
 
@@ -61,4 +70,12 @@ export class ExternalUpstreamModel {
     description: 'Canonical digest of the upstream deployment snapshot the verdict admitted.',
   })
   evidenceDigestSeen!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'evidenceDigestSeen as 64 hex characters — the spelling every screen shows and copies (SUP-115). Null when ' +
+      'there is no digest, or when the stored value is not one the parser accepts.',
+  })
+  evidenceDigestSeenHex!: string | null;
 }

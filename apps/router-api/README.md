@@ -64,6 +64,13 @@ and `evidence_digest`.
 the time — **evidence coverage, never a verdict**. The router does not know
 whether it was verified; that happens in the user's gatekeeper (ADR-002).
 
+On an **external** endpoint the same field carries a different kind of fact: the
+digest the router's own verdict observed before it routed there (ADR-008 §4,
+`GenerationRecorder.begin`). It is therefore not coverage, and such a generation
+has no `evidence_snapshots` row — which is why the console's coverage ratio
+counts it in neither half and reports "not applicable" for a window made only of
+them, rather than 0% (SUP-421, `activitySummary.coverableRequests`).
+
 Prompts and completions are forwarded and never stored. `generations` has no
 column that could hold them, and `invariants.spec.ts` fails the build if one
 appears.
@@ -220,7 +227,7 @@ build if a field named `verified`, `trusted` or `valid` ever appears.
 ## Authentication
 
 Better Auth (ADR-004), mounted at `/auth/*`, sharing the one database. OAuth
-(GitHub, Google) and email magic link; no passwords, no wallet, no second store.
+(GitHub, Google) and a one-time code mailed to the address (SUP-269); no passwords, no wallet, no second store.
 Better Auth owns `user`, `session`, `account` and `verification` and migrates them
 itself; this service's TypeORM migration owns the other ten tables and takes no
 database-level foreign key on `user`, so the two stay independent.
@@ -305,7 +312,7 @@ touch a grant already made.
 
 `auth.requireInviteForSignUp` turns the campaign into an invite-only deployment
 (SUP-173): `SignUpGate` runs in `user.create.before` and refuses every sign-up
-path — password, magic link, OAuth callback — that does not carry a usable code,
+path — emailed code, magic link, OAuth callback — that does not carry a usable code,
 before the `user` row exists. It answers one of three typed codes,
 `invite_required` / `invite_already_claimed` / `invite_expired_or_unknown`, in a
 403 body or as `?error=` on the error callback depending on whether the path can
@@ -343,13 +350,18 @@ This service drives it through a file and reads it back over a socket:
 - **`SidecarConfigWriterService`** renders `externalEndpoints.configFile` from
   `external_endpoints` and `trusted_measurements` on boot and after every admin
   mutation, atomically, and only when the bytes change. Every endpoint is rendered
-  `trust: cloud-measurement` and `failMode: closed`; there is no setting that
-  renders otherwise, and the file carries no secret — the upstream API key is
+  `trust: measurement-and-digest` — two-factor, the cloud by measurement and the
+  deployment by the digest an admin pinned as its `trustedEvidence` (SUP-252) —
+  and `failMode: closed`; there is no setting that renders otherwise, and the file
+  carries no secret — the upstream API key is
   injected by router-api on the egress leg and the sidecar passes `Authorization`
   through untouched. `testdata/sidecar-config.golden.yaml` is the committed shape.
 - **`ExternalEndpointStatusPollerService`** reads the sidecar's `/verdicts` every
   `externalEndpoints.statusPollInterval` and projects each one onto its row and
-  its event timeline. A transition is an event; a repetition is not.
+  its event timeline. A transition is an event; a repetition is not. A two-factor
+  refusal is projected with its factor as `lastStage`: `digest-not-pinned` stays
+  `pending` (awaiting an approval), `measurement-not-trusted` and `digest-mismatch`
+  are `denied`.
 - **`ExternalEvidencePollerService`** / **`ExternalEvidenceService`** fetch a
   verified upstream's own published bundle every
   `externalEndpoints.evidencePollInterval` and file it in `evidence_snapshots`
@@ -363,7 +375,16 @@ This service drives it through a file and reads it back over a socket:
   leaf it claims is the leaf the sidecar pinned, and it is only ever surfaced for
   the digest a verdict actually saw. Endpoints with no verdict are not polled at
   all — there is no pin to bind a document to — so `latestEvidence` is null while
-  one is `pending`.
+  one is `pending`. A filed copy is re-fetched once it is
+  `externalEndpoints.evidenceRefreshAfter` old even though the digest has not
+  moved: the digest says *what* is deployed and only `issuedAt` says *when* the
+  upstream last asserted it, and a relay that stops advancing is rejected by
+  every verifier after 24 hours (SUP-615 — the console reported for 37 hours
+  that a production upstream's evidence did not check out, while that upstream
+  was publishing a one-minute-old bundle). A copy that ages past
+  `externalEndpoints.evidenceStaleAfter` anyway is an `ERROR` line and an
+  operator alert, once per run, with the "it is current again" line when a
+  refresh lands.
 - **`ExternalCatalogService`** holds the routable external models — a model is in
   it **iff** its endpoint is enabled and `verified`, which is the fail-closed drop
   of a failed re-attestation as seen from the admission side. The sidecar refuses
@@ -485,7 +506,7 @@ src/
     activity/             SQL aggregates, the generation log and its CSV
     billing/              credits ledger, payment providers, automatic top-up
     preferences/          console settings and the evidence export
-    api/health            /health
+    api/health            /health for the kubelet, /admin/health for the operator
     gatekeeper/           GitHub release metadata for the console's download screen
     api/graphql           Apollo code-first schema, its error codes and the committed SDL
     api/v1                the OpenAI-compatible gateway

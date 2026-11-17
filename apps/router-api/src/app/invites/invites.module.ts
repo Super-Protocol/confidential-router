@@ -3,17 +3,22 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { InMemoryTokenBucketRateLimiter, RATE_LIMITER } from '../api/v1/rate-limiter.js';
 import { BillingModule } from '../billing/index.js';
 import { Generation } from '../db/entities/generation.entity.js';
+import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
+import { InviteAdminService } from './invite-admin.service.js';
 import { InviteAttributionService } from './invite-attribution.service.js';
+import { InviteCodesTransferService } from './invite-codes-transfer.service.js';
 import { InviteStatsService } from './invite-stats.service.js';
 import { InviteWithdrawalService } from './invite-withdrawal.service.js';
 import { InvitesController } from './invites.controller.js';
 import { InvitesService } from './invites.service.js';
+import { SignUpGrantService } from './signup-grant.service.js';
 
 /**
  * Invitation codes: the public lookup, the redemption that runs inside sign-up,
- * and the campaign aggregates.
+ * and the campaign aggregates — plus the operator-configured sign-up grant
+ * (SUP-249), which runs in the same hook and writes the ledger the same way.
  *
  * `BillingModule` for `LedgerService`, which stays the only writer of the ledger
  * — the grant goes through it like every other entry. The dependency runs one way
@@ -24,18 +29,33 @@ import { InvitesService } from './invites.service.js';
  * spend the landing page's lookups, and vice versa.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([InviteCode, InviteRedemption, Generation]), BillingModule],
+  imports: [
+    TypeOrmModule.forFeature([InviteCode, InviteRedemption, InviteCarriedRedemption, Generation]),
+    BillingModule,
+  ],
   controllers: [InvitesController],
   providers: [
     { provide: RATE_LIMITER, useClass: InMemoryTokenBucketRateLimiter },
     InvitesService,
+    SignUpGrantService,
     InviteStatsService,
     InviteWithdrawalService,
     InviteAttributionService,
+    InviteAdminService,
+    InviteCodesTransferService,
   ],
   // `RATE_LIMITER` is exported so the console's `inviteGrantStatus` query spends
   // the same budget as the public lookup: both answer questions about a code, so
   // a signed-in caller must not get a second allowance for asking.
-  exports: [InvitesService, InviteStatsService, InviteWithdrawalService, InviteAttributionService, RATE_LIMITER],
+  exports: [
+    InvitesService,
+    SignUpGrantService,
+    InviteStatsService,
+    InviteWithdrawalService,
+    InviteAttributionService,
+    InviteAdminService,
+    InviteCodesTransferService,
+    RATE_LIMITER,
+  ],
 })
 export class InvitesModule {}

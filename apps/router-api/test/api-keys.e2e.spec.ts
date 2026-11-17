@@ -126,6 +126,55 @@ describe('createApiKey', () => {
     expect(await countKeysNamed('Bad money')).toBe(0);
   });
 
+  /*
+   * SUP-295 item 2. The dialog sends every optional field, and sends `null` for
+   * the ones left empty rather than omitting them (`key-form.ts`,
+   * `commonInput`) — so "no limit, never expires, workspace defaults" is a
+   * payload of five explicit nulls, and that is the payload a tester could not
+   * create a key with. Pinned here as the console sends it, in full.
+   */
+  it('creates a key from the console’s own payload for "no limit, never expires"', async () => {
+    const response = await gql(
+      CREATE,
+      {
+        input: {
+          workspaceId,
+          name: 'No limit',
+          modelIds: null,
+          spendLimitMicros: null,
+          expiresAt: null,
+          requestsPerMinute: null,
+          tokensPerMinute: null,
+        },
+      },
+      cookies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.errors, JSON.stringify(response.body.errors)).toBeUndefined();
+    expect(response.body.data.createApiKey.key).toMatchObject({
+      name: 'No limit',
+      modelScope: null,
+      spendLimitMicros: null,
+      expiresAt: null,
+      requestsPerMinute: null,
+    });
+  });
+
+  it('names the field it refused, so the dialog can put the message under it', async () => {
+    const response = await gql(
+      CREATE,
+      { input: { workspaceId, name: 'Bad money', spendLimitMicros: 'lots' } },
+      cookies,
+    );
+
+    const [error] = response.body.errors;
+    expect(error.extensions.fields).toMatchObject({ spendLimitMicros: expect.stringContaining('spendLimitMicros') });
+    // And not the literal "Bad Request Exception", which is what a response
+    // object's `HttpException.message` is and what the console used to show.
+    expect(error.message).toContain('spendLimitMicros');
+  });
+
   it('treats an explicit null spend limit as no limit, not a limit of zero', async () => {
     // `Number(null)` is 0, and a key with a zero ceiling is refused on its first
     // request — the opposite of what the caller asked for.
