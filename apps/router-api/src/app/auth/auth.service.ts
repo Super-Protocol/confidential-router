@@ -67,6 +67,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       database: this.database,
       onUserCreated: (user, invite, method) => provisioning.onUserCreated(user, invite, method),
       onBeforeUserCreated: (invite, bootstrap) => gate.admit(invite, bootstrap),
+      admitsSignUp: (invite) => gate.admits(invite),
     });
     this.instance = betterAuth(this.options);
   }

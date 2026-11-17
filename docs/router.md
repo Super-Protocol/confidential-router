@@ -52,6 +52,7 @@ server:
   validClientOrigins:                              # CORS + Better Auth trusted origins
     - https://console.tee.swarm.cloud
   maxInferenceRequestBytes: 8388608                # /v1 only; the console keeps 1 MiB
+  streamKeepAliveAfter: 15s                        # keep below the ingress read timeout
 
 database:
   type: postgres                # `sqlite` for development
@@ -144,6 +145,17 @@ models:
 A model id the catalogue does not list is a `404 model_not_found`, not a
 forwarded request: the router never guesses what a backend might answer to.
 
+`capabilities` says which routes the **backend** serves, and is not the list
+`/v1/models` publishes: that one is derived from this
+(`catalog/served-capabilities.ts`) and is wider. A model declaring `chat` is
+published as serving chat, the legacy completions route, streaming and tool
+calling, because the surface serves all four for it — it translates
+`/v1/completions` into a chat call when the backend has no legacy route of its
+own (SUP-450). Declaring `completions` as well is a statement about the backend —
+vLLM and SGLang do serve it — and buys a verbatim forward, which is the only
+form in which `suffix` infilling works. Omitting it costs infilling and nothing
+else.
+
 Rate limits apply per key *and* per workspace, so minting more keys does not
 multiply a tenant's budget:
 
@@ -176,9 +188,158 @@ What the console gets out of it:
 - **evidence coverage** — of the generations served in a window, how many were
   served while a fresh bundle was published for the endpoint that served them.
   A fact about publication. Not a verification rate, and the console says so.
+  Only this deployment's own endpoints can answer it: a generation routed to an
+  external endpoint has no bundle of ours, so it is outside the ratio in both
+  numerator and denominator (ADR-008 §4), and a window of nothing but external
+  traffic has no coverage figure at all — the tile says so instead of printing
+  `0%`, which would report the product's own promise as never kept (SUP-421).
+  Those generations are covered by the other vocabulary, *verified by this
+  router*.
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
+
+## When an external upstream goes dark
+
+An external model endpoint lives in somebody else's deployment and is reached
+through the egress sidecar, which attests it before any prompt is proxied
+(ADR-008). It is the one dependency whose failure stops completions working while
+every other part of the router keeps answering — so it is also the one that can
+fail for a long time without anyone finding out. Once: a published upstream lost
+the gateway route for its hostname at 2026-10-23 06:11 UTC and the router answered
+`503 attestation_failed` for 30 hours before a human noticed.
+
+```yaml
+externalEndpoints:
+  outage:
+    afterFailures: 3      # distinct failed checks in a row; 0 disables
+    afterNoSuccess: 15m   # since last known to serve; 0 disables
+```
+
+Each check is a re-attestation (`reattestInterval`, 10 minutes), not a status poll
+(`statusPollInterval`, 5 seconds) — counting the poll's re-readings of the same
+verdict would make `afterFailures` a number of seconds wearing a different name.
+Both thresholds are there because they miss different failures: the count is the
+honest unit while checks are happening, and sees nothing at all when the checking
+itself has stopped. A sidecar that never answers leaves every endpoint at
+`pending`, serving nothing, with no counter moving; only `afterNoSuccess` notices
+that, and it notices out loud — the check runs on the status poll's error path
+too, from the rows alone, precisely because a wedged sidecar is the failure that
+produces no verdict to notice it by.
+
+Crossing either threshold does four things, once per run:
+
+- **writes one message to the operators** — the outbound path, and the only one of
+  the four that reaches somebody who is not already looking (SUP-535). It carries
+  the endpoint, how long it has been dark, how many checks failed and whether the
+  upstream answered at all, and its closing line sends the reader to the upstream's
+  cloud when the upstream did not answer and to the console when it answered and
+  was refused. A recovery sends its counterpart. See *Where an alert goes* below.
+- **writes one `ERROR` log line** naming the endpoint, how long it has been dark,
+  how many checks have failed, whether the upstream answered at all and the
+  sidecar's own reason. `error` is the severity a log sink matches on, and the line
+  carries everything needed to act without opening a console. A recovery logs its
+  counterpart at `log` level.
+- **appends an `outage` row** to that endpoint's timeline, which the admin
+  section renders; `recovered` closes it.
+- **flips `GET /health`'s `externalEndpoints.status` to `outage`.** That block is
+  counts, two timestamps and one word — never an endpoint name, hostname, stage or
+  reason, because `/health` is unauthenticated. It never changes the overall
+  `status`, for the same reason mail and analytics do not: the process still serves
+  every built-in model and the whole console, and dropping it from the
+  load-balancer rotation would turn one dark upstream into a dark deployment.
+
+### Configuring the sink that listens
+
+**Until something matches that line, the behaviour change is zero.** "This is the
+alert" is only true once something is listening, so the matcher is part of
+deploying this, not an afterthought. Two stable handles, either of which is
+enough:
+
+| Match on | Value |
+| --- | --- |
+| Logger name (pino `context`) | `ExternalEndpointStatusService` |
+| Level | `error` (pino `level: 50`) |
+| Message prefix | `External endpoint "` … `" has not served for ` |
+
+The recovery line is the same logger at `log` level (pino `info`) and contains
+`is serving again after`. A rule on *name + level* is the one to prefer: the
+message wording is for a human and may be improved, while the logger name is
+structural. Polling `GET /health` for `externalEndpoints.status == "outage"` is
+the equivalent black-box rule for a sink that cannot read logs — it crosses at
+the same instant, by construction, because both come out of the same pass.
+
+### Where an alert goes
+
+An `ERROR` line is an alert only where something watches the log, and this
+deployment has nothing watching it — both production outages so far were found by
+a person stumbling over them. So the alert also leaves the process, by the one
+channel this deployment proves every day: the mail provider the sign-in codes go
+out through (SUP-535). Nothing new to keep working; if mail breaks, sign-in breaks
+first and much more loudly.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `alerts.emails` | `[]` | Who to write to. **Empty falls back to `auth.adminEmails`**, which every deployment with an admin section already sets — so the channel works on the deployment that is already running, which is the one the outage happens on. Name a shared inbox or an on-call alias here to override. |
+| `alerts.email` | `true` | Switches the outbound path off and nothing else. The log line, the timeline row and the `/health` block are the record and are unaffected. Off is for a deployment whose log sink already pages. |
+| `alerts.minInterval` | `15m` | Least gap between two outbound alerts, whatever raised them. The per-run latch already sends one message per outage; this is the second belt against a flapping upstream, because a mailbox flooded once grows a filter and then the next alert is lost for good. What was suppressed is counted and named in the next message that goes out. The interval is armed by a message that **landed**, not by one that was attempted: a send that reached nobody put nothing in a mailbox, and arming on it would spend the next quarter-hour's alerting budget on a message that does not exist. A **recovery is sent past this interval** — an operator who was woken is owed the "it is back" line. |
+
+What the message does *not* carry: the upstream hostname, the pinned digest, the
+sidecar's verdict detail. Mail is forwarded, quoted and left open on screens, and
+SUP-221 ruling 3 keeps upstream identity behind a session — the endpoint's own
+name is the one identifier, and it is the operator's own label. The full verdict
+is in the console.
+
+**The sidecar's own sentence is the sharp edge of that rule**, and the first
+version of this mail got it wrong. `lastReason` is up to 255 characters of free
+text written by the sidecar, and it routinely embeds the very things the
+paragraph above keeps behind a session: a denial names the measurement hex (the
+router-api e2e suite asserts that it does), and a `fetch` refusal names the URL
+it could not read. So the mail carries the **stage** — `policy`, `fetch`,
+`untrusted-root` — which is the same fact bounded, and which is what decides
+whether the operator goes to the upstream's cloud or to the console. The sentence
+itself stays in the `ERROR` log line and on the endpoint's timeline, both of
+which need being inside the deployment or holding a session.
+
+**`GET /health` reports the channel, not just the outage.** The `alerts` block
+carries a state and a count of recipients — never an address:
+
+| `alerts.state` | Means |
+| --- | --- |
+| `disabled` | `alerts.email` is off, or `mail.provider` is `none`. |
+| `unconfigured` | Enabled with nobody to write to. **This is the state that looks exactly like quiet**: the deployment is detecting outages and telling no one. `externalEndpoints.status: outage` beside this pair is the reading that says nobody has been told. |
+| `ready` | Enabled, with recipients, nothing raised yet. |
+| `ok` / `failing` | Whether the last alert reached anybody. |
+
+**Proving it works:** the admin mutation `sendOperatorAlertTest` sends one message
+now, past the rate limit, to every configured recipient. Its body says in so many
+words that nothing is wrong. That exists because the acceptance criterion for an
+alerting path is a message that *arrived*, and inducing a real outage on a live
+deployment to watch the mail go out is what cost 28 minutes once already.
+
+Two endpoints are deliberately exempt, and both exemptions are about keeping the
+alert worth believing rather than keeping it quiet: one an operator **disabled**
+(nothing is expected of a row taken out of service) and one whose deployment has
+**never been approved** — `pinnedEvidenceDigest` null, so it is `pending` with
+`digest-not-pinned` by design (SUP-252). That is a registration half-finished, not
+an upstream that went dark. An endpoint whose pin stopped matching after an
+unapproved redeploy is *not* exempt: the router was serving it a moment ago.
+
+Reachability — "did the upstream answer at all" — is read from the sidecar's own
+`unreachable` flag, never inferred from the stage. The `fetch` stage is wider than
+the flag: a non-2xx answer to the bundle fetch, an over-sized bundle and a
+hostname the gatekeeper refuses all stop there while the upstream demonstrably
+answered. An ingress that serves completions while `/.well-known/swarm-evidence`
+502s reads as `REACHABLE`, denied at `fetch` — which sends the operator to the
+evidence route rather than to a cloud that is fine.
+
+Per endpoint, the full answer is `ExternalEndpoint.liveness` in the console schema
+— reachability, since when, how many checks, whether an outage was declared. All
+of it is a projection of live verification and is cleared on boot, so a router
+restarted mid-outage reports the outage as starting at the restart; the timeline's
+`outage` row keeps the true start. A dead upstream's models are absent from
+`/v1/models` either way (fail-closed, ADR-008 decision 5) and carry
+`available: false` plus `notServingSince` on the console catalogue.
 
 ## Auth
 
@@ -257,10 +418,122 @@ authenticates once at boot without sending anything, and `/health` carries the
 outcome as `mail: { provider, state, reason }` — `ok`, or `failing` with
 `unreachable` (no connection at all), `auth_failed` or `rejected`. Every later
 send updates it. It never makes `/health` itself fail: a lost welcome mail is
-not an outage. The log line says which host and port, and never the password.
+not an outage. On a deployment, read it through `GET /admin/health` — `/health`
+itself is the kubelet's and is not published (SUP-479). The log line says which host and port, and never the password.
 On a Swarm cluster space, outbound connections to public addresses are open and
 private ranges are not, so the SMTP host has to resolve to a public address;
 some clouds also block outbound port 25, which is what 587 and 465 are for.
+
+### What happens after the relay accepts a message
+
+`state` above only ever knows whether the hand-off to the provider worked, and
+that is not the same question as whether the mail arrived. A single bounce puts
+an address on the provider's suppression list, and from then on every message to
+it is accepted at SMTP time and **silently discarded**: the send succeeds, the
+console tells the person a code is on its way, and nothing arrives — not late,
+not in spam, never (SUP-551).
+
+The outcome exists only in the provider's event stream, so the deployment reads
+it from there:
+
+```yaml
+mail:
+  webhookSecret: ${CR_API_MAIL__WEBHOOK_SECRET}   # the provider's signing secret, `whsec_…`
+  webhooksPerMinute: 120                          # per source address; the signature is the authority
+  stateLookupsPerMinute: 30                       # per source address, for `signInMailState`
+```
+
+- **`POST /v1/webhooks/resend`** takes the provider's notifications, verified by
+  HMAC over the raw bytes and by nothing else. Unset `webhookSecret` and the
+  route is a `404` — the state every deployment before this was in. Register the
+  endpoint in the provider's dashboard for `email.bounced`, `email.complained`,
+  `email.suppressed`, `email.failed`, `email.delivery_delayed`,
+  `email.delivered` and the two `suppression.*` events. It is read whatever
+  `mail.provider` is: the events belong to the mail account, not to the
+  transport, so an SMTP deployment sending through the same provider gets them
+  too.
+- **An address that is being dropped is written down** (`mail_address_states`)
+  and reported at `error` in the log, naming the provider's own words and
+  whether an account here holds the address — a stranger's typo and a user
+  locked out of their account are different emergencies.
+- **`mail.undeliverable`** on `/health` and `/admin/health` counts the addresses
+  in that state. Like `mail.state` it never decides the overall status.
+- **The code-entry screen stops lying.** `signInMailState(email)` is a public
+  query answering whether mail to an address is being dropped, and the console
+  replaces "check spam, it may be slow" with the truth when it is. It is a fact
+  about the mailbox and not about any account: an address with an account and
+  one without answer identically, so it is not an existence oracle.
+- **It names somewhere else to write.** `signInOptions.supportEmail` is
+  `mail.replyTo`, and the only screen that renders it is the one saying the
+  address is being rejected (SUP-556). Set `mail.replyTo` to a mailbox someone
+  reads: it is the single channel a locked-out person has left, since the one
+  they would otherwise use is the one that is broken.
+
+What this does **not** do is retry or re-route anything. Clearing a suppression
+is the operator's — the runbook below.
+
+### Clearing a suppression
+
+Read this before an invitation campaign goes out, because on this deployment a
+suppression is a lockout and not an inconvenience (SUP-555, SUP-556).
+
+**What puts an address on the list.** Three origins, and the provider treats
+them alike: `bounce`, `complaint` — the recipient pressed "report spam" — and
+`manual`. The list is the *account's*, so a suppressed address is skipped
+across every domain and subdomain the account sends from, transactional mail
+included. A single complaint is enough, and it needs no repeat.
+
+**Why that locks someone out.** Sign-in here is a mailed code and nothing else
+(ADR-004 §1) — no passwords, and OAuth only where a deployment configured it.
+An invitation code is redeemable only inside sign-up, so an account that
+already exists cannot be credited by re-issuing one. Two windows follow:
+
+| when it happens | consequence | way back |
+|---|---|---|
+| before sign-up | the invitation is still unredeemed, so a second address works — provided the person is told the first one is rejecting our mail, which is what the code-entry screen and `mail.replyTo` are for | a second address |
+| after sign-up | no sign-in code can ever arrive, and the credit is bound to that account | clearing the suppression |
+
+**Finding out.** `mail.undeliverable` on `GET /admin/health` counts the
+addresses in `rejecting`, and each one is in the log at `error` with the
+provider's own words. Both are fed by the webhook above: with no
+`mail.webhookSecret` configured and no endpoint registered, the count stays `0`
+by construction and says nothing. Until that is in place, read the list
+straight from the provider instead — it is short enough to read by eye, and one
+call per campaign is the whole check:
+
+```bash
+curl -s -H "authorization: Bearer $RESEND_API_KEY" https://api.resend.com/suppressions
+```
+
+**Clearing one.** The provider's dashboard has a Suppressions page, and the API
+does the same:
+
+```bash
+curl -s -X DELETE -H "authorization: Bearer $RESEND_API_KEY" \
+  https://api.resend.com/suppressions/someone@example.com
+```
+
+It needs the account credential, so it is the operator's action and nobody
+else's — which is why the owner has to be a named person rather than "whoever
+notices". The provider's own precondition: *address the reason for the
+suppression first, or the address is re-suppressed automatically.* That cuts
+differently per origin:
+
+- **`complaint`** — the reason was a button press, which does not recur by
+  itself. Clearing it is sound, and it is the only thing that gets an existing
+  account its sign-in back.
+- **`bounce`** — the address did not accept mail. Clearing it changes nothing
+  unless the mailbox itself was fixed; for the usual cause, a mistyped
+  invitation, there is nothing to fix and the person needs a second address.
+
+A cleared address produces `suppression.removed`, which the webhook consumes and
+which returns the row to `delivering` — so the console's code-entry screen stops
+warning on its own, with no deployment step.
+
+**What it does not restore.** Clearing a suppression restores *access*, and the
+account's balance was never touched. It cannot move credit between accounts: if
+someone signed up again on a second address, granting them the first account's
+credit needs an audited admin grant and not a second invitation code.
 
 ## Sign-in by emailed code
 
@@ -278,7 +551,10 @@ auth:
 
 1. `POST /auth/email-otp/send-verification-otp {"email": …, "type": "sign-in"}`
    answers `200 {"success": true}` for every address, account or not, and mails
-   it a six-digit code. Only a digest of the code is stored.
+   it a six-digit code. Only a digest of the code is stored. On an
+   [invite-only](#invite-only-registration) deployment the request may also
+   carry `inviteCode`, and for an address with no account it has to — see
+   [what it will not mail](#what-an-invite-only-deployment-will-not-mail).
 2. `POST /auth/sign-in/email-otp {"email": …, "otp": …}` answers with the
    session cookie. The code is consumed: a second use, a wrong code and an
    expired one are all a 400 (`INVALID_OTP`, `OTP_EXPIRED`), and after `attempts`
@@ -288,17 +564,52 @@ auth:
 its code comes back; the second request may carry `name`, and `inviteCode` for
 [an invitation](#invitation-codes). On an
 [invite-only](#invite-only-registration) deployment that is the whole rule: an
-unknown address needs a valid, unredeemed invitation *and* the code, in that one
-request, and an existing account needs only the code. A refused sign-up has
-still spent its code, so the console checks the invitation before it asks for
-one.
+unknown address needs a valid, unredeemed invitation *and* the code — on **both**
+requests, because the first will not mail a code without one — and an existing
+account needs only the code. A refused sign-up has still spent its code, so the
+console checks the invitation before it asks for one.
 
 **What it does not tell anyone.** The send route answers identically for every
 address and is rate-limited per source (429). One recipient is mailed at most
 `mailsPerAddressPerHour` codes — past that the answer is the same 200 and
 nothing is sent, so the limit cannot be used to learn or to silence anything. A
-send the mail server refused is also a 200: it shows in the log and in
-`/health`, not to the requester.
+send an invite-only deployment withheld is the same 200 again, for the same
+reason.
+
+**A send that failed is not a 200.** While the mailer is down — `/health`
+reports `mail.state: failing` — both mail routes answer
+`503 {"code": "MAIL_SEND_FAILED"}` (SUP-460). This matters because a deployment
+with `emailCode` on and `magicLink` off has no other way in but the
+[bootstrap token](#first-sign-in-on-a-fresh-deployment), so a mail outage
+reported as success would be every account locked out while the router says
+everything is fine.
+
+The refusal is decided from the **mailer's** state as the request found it, and
+not from what happened to that request, which is what keeps it from saying
+anything about who asked. Deciding it per request would not: the invitation gate
+above returns before the send for an uninvited address, so during an outage an
+account holder would get the 503 and a stranger the 200, and the difference
+would be unauthenticated account enumeration. Decided this way, a withheld send,
+a recipient past their allowance and an attempted send all answer alike. The
+send is still attempted, so the first one that works puts `mail.state` back to
+`ok` and the route recovers on its own — at the cost of one 503 for a code that
+did reach the inbox, whose retry succeeds.
+
+**A recipient the server will not take is not the mailer being down.** That one
+refusal is logged, leaves `mail.state` alone, and is answered exactly as a
+withheld send is — a 200 with nothing behind it. Nothing else is treated that
+way: a relay refusing our *sender*, one refusing the body, and anything the
+provider does not classify are all the mailer, and make `mail.state` `failing`.
+The line is drawn at the recipient and defaults the other way on purpose. A
+false `failing` costs one uniform refusal that the next good send clears; a
+false `ok` would leave `/health` reporting a healthy mailer through a
+misconfiguration that can send nothing for anybody — an unverified sender
+domain, say — while the send route went back to answering an account holder
+differently from a stranger.
+
+It also keeps `mail.state` from being something an outsider can set. While any
+refusal flipped it, a sign-up to a bogus address was enough to put the whole
+deployment into `failing` and have every sign-in refused with it.
 
 **Passwords are gone.** `/auth/sign-up/email`, `/auth/sign-in/email`,
 `/auth/change-password`, `/auth/request-password-reset` and
@@ -436,7 +747,7 @@ threshold, no more often than `autoTopUpCooldown`.
 
 ```
 POST /v1/chat/completions      streaming and not
-POST /v1/completions
+POST /v1/completions           legacy; forwarded, or translated into a chat call
 GET  /v1/models
 GET  /v1/generation?id=…       what one request cost, after the fact
 ```
@@ -642,6 +953,58 @@ in to an existing account, which is untouched, and `POST /auth/bootstrap`, which
 is the operator claiming their own deployment and could never have been mailed a
 code.
 
+#### What an invite-only deployment will not mail
+
+The gate holds the account. It does not, by itself, hold the **mail** — and the
+two requests that send some are one step in front of it, so until SUP-410 a
+stranger could post any address to `/auth/email-otp/send-verification-otp` (or
+to `/auth/sign-in/magic-link`) and have a sign-in credential delivered to it on
+a deployment that then refused the account one request later. Nothing was
+created; the mail had gone out, which made the deployment's verified sender an
+open relay for whoever found the hostname.
+
+So on an invite-only deployment both mail steps ask the same question the insert
+asks, before they send:
+
+- the address **has an account** → a sign-in, mailed as always. The invitation
+  requirement is about accounts coming into existence and has nothing to say
+  about this request;
+- it **does not** → the mail goes out only while the request carries a code the
+  gate would admit: `inviteCode` in the body of the code request, or `invite` on
+  the `callbackURL` of the magic-link request, which is where the console puts
+  it on both.
+
+**Asked at the mail, not in front of the route.** The check lives in the one
+statement that hands a credential to the outside world — Better Auth's
+`sendVerificationOTP` / `sendMagicLink` callback — rather than in a hook that
+answers the request early. A hook would have to say which requests it covers,
+and every answer to that is a list: list the code `type`s that can mail and an
+upstream default quietly adds one outside the list; list the paths and the one
+request that slips the list is answered by *us* instead of by the route, so our
+200 for an unknown address differs from the route's 400 for a known one — an
+account-existence oracle inside the fix meant to prevent one. From the mail
+callback there is no list: every send of every type on both routes passes
+through it. One `before` hook remains, and it decides nothing — it moves an
+`inviteCode` from the body, which the code route's schema is about to drop, into
+the query, which it does not validate.
+
+A withheld send is therefore **indistinguishable from a sent one**: the route
+runs to completion and answers exactly as it always did — `200 {"success":
+true}`, or `{"status": true}` for the link, or whatever 400 the body earned —
+and the only difference is that nothing left the process. The reason is in the
+log (`Sign-up mail withheld: …`) and nowhere else. A sign-in code is still
+*generated* and stored hashed for a withheld send, as it is for every other type
+the route accepts; it was never delivered, and the sign-up it would belong to is
+refused by the gate in any case.
+
+One consequence worth knowing: an unusable invitation can no longer buy a mailed
+code, so on this deployment the typed refusals below are reached only by a
+sign-up that was actually attempted — an OAuth callback, or a code that went bad
+between the mail and its use. The console therefore holds its submit while the
+invitation has not passed the live lookup, and says both of the things an
+`unavailable` answer can mean rather than guessing one (which was the point of
+SUP-176; what it no longer does is promise that submitting will reveal which).
+
 The refusal is typed, because "you need an invitation" and "yours has been used"
 send a person to two different places:
 
@@ -666,17 +1029,17 @@ copy. `signInOptions { inviteRequired }` reports the setting, so the sign-up scr
 says "registration is by invitation", keeps the code input open, and renders each
 refusal as its own alert.
 
-**The typed refusal has to be reachable from a browser** (SUP-176). The screen's
-pre-check calls the public lookup, which answers one `unavailable` for a spent
-code and for one that was never issued alike — so while the console held the
-submit button behind that answer, the two refusals that read differently were
-readable only by `curl`, and the visitor whose link really had been spent got a
-sentence that opened by suggesting a typo. So the button is held only while the
-lookup has *no* answer — in flight, or unreachable — and a settled `unavailable`
-submits: the gate runs before the insert, so the 403 costs nothing and is the one
-place the distinction exists. It is not a new oracle either, because that POST
-already answers the three codes to any caller, at the price of a mailed code
-per guess; the free `GET /v1/invites/:code` stays collapsed.
+**What the console says when it cannot know** (SUP-176, as SUP-410 left it). The
+screen's pre-check calls the public lookup, which answers one `unavailable` for a
+spent code and for one that was never issued alike, and the copy it renders used
+to fill that gap with "it may already have been claimed" — which told the one
+visitor whose link really had been spent that they had probably mistyped it. The
+sentence now names both outcomes and neither first. For a while the screen also
+submitted an `unavailable` code, because the router's typed 403 was the only
+place the two came apart; a submit needs a mailed code, an invite-only deployment
+no longer mails one for a code it would refuse, so the button is held in every
+state but a confirmed invitation and the free `GET /v1/invites/:code` stays
+collapsed.
 
 **One window the check does not cover.** The pre-check is a read, and the seat is
 still claimed by the atomic `UPDATE` inside the grant that follows the insert. It
@@ -745,7 +1108,7 @@ analytics:
   posthog:
     host: https://eu.i.posthog.com   # POSTHOG_HOST
     requestTimeout: 3s
-  ingestPerMinute: 60                # per source address on POST /v1/analytics/events
+  ingestPerMinute: 60                # per source address on POST /v1/console-events
 ```
 
 `analytics.posthog.projectKey` is normally set from `POSTHOG_PROJECT_KEY` — a
@@ -753,6 +1116,23 @@ write-only ingest key, not a secret — which `loadRouterConfig` maps into this
 section as its lowest-precedence layer. With no key every event is discarded and
 the boot says so once, which is the state of every developer machine and every
 test.
+
+**Whether it is alive is reported, not assumed.** The key is a deployment
+environment value rather than an image build argument, so nothing stops a rebuild
+from leaving it out — and a deployment that lost it looks exactly like a working
+one, since the ingest answers `202` either way and both sinks swallow what they
+lose. `/health` therefore carries `analytics: { status, dropped }`:
+`configured` or `disabled` for the sink the process actually built, and a
+monotonic count of events lost since boot, whether the disabled sink discarded
+them, PostHog refused them or the host could not be reached (SUP-464). Like
+`mail`, it never makes `/health` itself fail: a missing chart is not an outage.
+`/health` is unauthenticated, so that is all it says — no key, no key prefix, no
+host. The chart does not publish `/health`, so on a deployment the place to read
+this is `GET /admin/health`, the same document behind the operator's session
+(SUP-479): `curl -b "$COOKIE" "$API/admin/health"`.
+`configured` answers "did the variable arrive", not "do events land": a key that
+is present and wrong also reads `configured`, since PostHog accepts a capture for
+a project that does not exist.
 
 **Six of the eight events are captured server-side**, at the boundary where the
 fact they report is committed: `signup_completed` and `invite_redeemed` from the
@@ -762,9 +1142,12 @@ the row it reports, so a retried hook cannot show as two conversions. Nothing is
 ever captured that the database does not already hold: no email, no name, no IP,
 no free text, and `$ip: null` on every event.
 
-**The other two are posted by the browser** to `POST /v1/analytics/events`, this
+**The other two are posted by the browser** to `POST /v1/console-events`, this
 service's own ingest, and validated against the taxonomy's allow-list before they
-leave. A browser SDK would have bought those two and written a persistent
+leave. The path avoids every word a blocklist's path rules are written with — the
+first spelling, `/v1/analytics/events`, matched EasyPrivacy's default rule and was
+cancelled in the browser (SUP-463), and it still answers for one release so a
+split deploy drops nothing. A browser SDK would have bought those two and written a persistent
 identifier to the visitor's device — which is what needs a consent banner, and a
 banner in front of the campaign we are measuring costs more than two events are
 worth. `signup_started` is captured anonymously and is a volume, never a funnel
@@ -849,6 +1232,7 @@ built for the request that asked for it and kept nowhere on the server:
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
 | `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
 `counts`, `totalBalanceMicros` and `integrity.contentSha256` (SHA-256 over the
@@ -860,13 +1244,28 @@ are ISO-8601 UTC, money is integer micro-USD as a decimal string.
 **Left behind, by design:** chats and messages, generations and activity,
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
-read); API keys, which are stored hashed and cannot be moved — **every user issues
-new keys after a migration**; and the upstream API key of an external endpoint,
-which is sealed under the old deployment's `CR_API_SECRETS_KEY`. The file
-therefore holds **no secret**. It does hold personal data and invitation codes
-that can still be redeemed: keep it private, and delete it once the new
-deployment is verified. A bundle with a credential-shaped field in it is refused
-on both sides — the export will not write one and the import will not read one.
+read); and the upstream API key of an external endpoint, which is sealed under
+the old deployment's `CR_API_SECRETS_KEY`. Which table is in which half is not a
+matter of reading this page: `data-migration/bundle-coverage.ts` records the
+decision for every entity in the schema, and a spec fails the build when a new
+one is in neither list — a table nobody classifies is a table the next rebuild
+drops in silence, which is what happened to the API keys (SUP-445).
+
+**The API-key hashes are the one thing in the file worth a paragraph.** A `/v1`
+key is stored as `sha256(secret)` over 32 bytes of CSPRNG entropy, so the stored
+form has no feasible preimage: carrying it moves the ability to *recognise* a
+key, never the ability to present one, and the file still cannot be used as a
+credential against any deployment. That is what lets a key configured into a
+Gatekeeper, an IDE or a script keep working across a redeploy — before SUP-445
+every rebuild revoked all of them, and the only symptom was a bare
+`401 invalid_api_key` on an account that otherwise looked untouched. The file
+therefore holds **no secret**, and it does hold personal data, invitation codes
+that can still be redeemed and those hashes: keep it private, and delete it once
+the new deployment is verified. A bundle with any *other* credential-shaped field
+in it is refused on both sides — the export will not write one and the import
+will not read one; the exact paths excused are listed, with their reasons, in
+`CARRIED_NON_CREDENTIAL_PATHS`. An older build handed a file that carries the new
+section refuses it on that guard rather than importing it without the keys.
 
 The import takes the file **only into a fresh deployment**, and always in two
 steps:
@@ -883,7 +1282,8 @@ file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`); the
 file's schema version is not this build's; its contents do not match its own
 hash, counts or total; a workspace balance does not equal the sum of its ledger
 entries; or a row collides with a different one here (a taken slug, an invitation
-code already issued here under another id, a taken endpoint name or model id).
+code already issued here under another id, an API key whose credential is already
+registered here under another id, a taken endpoint name or model id).
 
 Three things about what it writes:
 
@@ -894,6 +1294,12 @@ Three things about what it writes:
   that account (the sign-up credit) is not credited twice.
 - **Balances are re-summed from the imported ledger**, never copied — the same
   invariant every other balance obeys (`contracts/data-model.md`, invariant 3).
+- **API keys arrive usable.** The hash is written exactly as exported, which is
+  what `ApiKeyService.authenticate` looks a presented key up by, so nobody has to
+  re-issue anything; the spend limit arrives with the counter it is measured
+  against, so a key that had $0.50 of its cap left still has $0.50; and a revoked
+  key arrives revoked. The report says how many came across and how many of them
+  are still live.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.
@@ -912,7 +1318,7 @@ Both actions leave an audit line (`warn`) naming the operator, the bundle's hash
 and its row counts, and never an address or a code:
 
 ```
-Deployment export downloaded by admin@example.com — sha256 8135…0659: 42 account(s), 42 workspace(s), 118 ledger entr(y/ies), 50 invitation code(s) (31 unredeemed), 2 external endpoint(s), 3 trusted measurement(s).
+Deployment export downloaded by admin@example.com — sha256 8135…0659: 42 account(s), 42 workspace(s), 118 ledger entr(y/ies), 50 invitation code(s) (31 unredeemed), 37 API key(s) (29 live), 2 external endpoint(s), 3 trusted measurement(s).
 Deployment import by admin@example.com — applied; from https://api.old.example.com, sha256 8135…0659: users +41, workspaces +41, …
 ```
 
@@ -932,10 +1338,86 @@ Deployment import by admin@example.com — applied; from https://api.old.example
    Import.
 6. **Verify:** the Invitations section shows the same codes and attribution; a
    known user signs in with their address and sees their balance; an unredeemed
-   code still redeems; API Keys is empty for everyone (expected) and a new key
-   works; chat history is empty (expected). Re-enter upstream keys for any
-   external endpoint and enable it.
+   code still redeems; **a key issued before the export still authenticates** —
+   `curl -H "Authorization: Bearer sk-tee-v1-…" https://<new-host>/v1/models` —
+   and API Keys lists the same keys with the same spend used; chat history is
+   empty (expected). Re-enter upstream keys for any external endpoint and enable
+   it.
 7. **Delete the export file.**
+
+### A parked rollback is not finished until it serves a completion
+
+A deploy train ends by parking the previous deployment on its own hostnames so
+there is something to fall back to. Parking is `unpublish → reconfigure →
+publish`, which is a full pod bring-up, so the parked deployment comes up from
+its stored configuration rather than from the sequence that built it — and that
+is a path worth checking rather than assuming.
+
+**The acceptance check is a generation, not a health page.** Published, evidence
+200, console 200 and a working sign-in are all things a deployment that cannot
+serve anything will report. After the hostnames move, take a key on the parked
+deployment and complete once through it:
+
+```bash
+curl -s -X POST https://<parked-api-host>/v1/chat/completions \
+  -H "Authorization: Bearer sk-tee-v1-…" -H 'content-type: application/json' \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"ping"}],"max_tokens":8}'
+```
+
+A 503 with `"type":"gatekeeper_error"` means the external endpoint is not
+serving, whatever the rest of the deployment says. Administration → External
+endpoints names the reason; `lastCheckedAt` empty means no verification has been
+attempted at all, which is a listener that is not up rather than an upstream
+that is refusing.
+
+**If the endpoint is not serving**, first establish which sidecar you have, from
+the **gatekeeper image digest the deployment pulled** — that is readable from the
+marketplace without reaching the cluster, which is the situation this section is
+written for. (`gatekeeper version` inside the container answers too, but it needs
+an exec you most likely do not have. There is no `--version` flag.) A sidecar
+carrying SUP-537 — the first gatekeeper release after it — brings its own
+listeners back within seconds and reports a bind it cannot make as `broken` with
+the reason, so on those builds this is a state to read rather than to repair.
+
+On an older sidecar, the recovery that needs no cluster access is to make the
+endpoint's *spec* change, because that is the only thing that has the sidecar
+rebuild it — and the spec is the **rendered `upstream`, which is scheme and
+authority only**:
+
+1. `updateExternalEndpoint` with a `baseUrl` whose **host or port differs**, and
+   `evidenceDigest` set to the digest the endpoint already holds, so the approval
+   survives the re-point (SUP-252).
+2. A second `updateExternalEndpoint` putting the original `baseUrl` back, again
+   stating the digest.
+
+**A path or query edit does nothing at all** — not "less", nothing. `baseUrl` is
+canonicalised to scheme-and-authority on the way into the row, so appending `/v1`
+is not even recorded as a change: no re-render, no reload, no rebuild, and the
+mutation returns success. It is the first thing most people try, because changing
+the host of a production-adjacent endpoint feels like the risky option. It is
+also the one edit that cannot work.
+
+Toggling `enabled`, re-pinning the digest and editing a price are no-ops for this
+purpose too, for a different reason: they do re-render, but they do not touch the
+upstream, the listen address or the tuning, which are the only fields the sidecar
+compares when deciding whether to rebuild an endpoint.
+
+Do this to a parked deployment, never to the one serving traffic — and verify the
+recipe on a test stand before using it on the only fallback you have.
+
+**If you have to go back to an older build**, know what its import will say. A
+file written by a build that carries the `apiKeys` section is refused by any
+build that predates it, with:
+
+```
+The export carries credential-shaped fields (apiKeys, apiKeys[].keyHash, apiKeys[].tokensPerMinute). A router export never does, so this file is refused.
+```
+
+The message blames the file; the cause is the build, and the file is perfectly
+valid one version forward. Nothing is written on either side — the refusal
+happens while the file is being read, before the dry run plans anything — so the
+way back is a file the older build wrote itself, or a build at least as new as
+the file (verified against the parked 0.18.3 deployment, SUP-445).
 
 ## Running it
 

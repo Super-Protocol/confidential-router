@@ -21,17 +21,24 @@ interface ModelFixture {
  */
 const MODELS: ModelFixture[] = [
   { id: 'mock/chat:tdx', litellmModel: 'mock/chat', capabilities: ['chat', 'completions'] },
+  // Declares chat and nothing else, which is the common registration and the one
+  // `/v1/completions` used to refuse: here it exercises the translation (SUP-450).
+  { id: 'mock/chat-only:tdx', litellmModel: 'mock/chat' },
   { id: 'mock/scoped:tdx', litellmModel: 'mock/chat' },
   { id: 'mock/no-usage:tdx', litellmModel: 'mock/no-usage' },
   { id: 'mock/boom:tdx', litellmModel: 'mock/boom' },
   { id: 'mock/overloaded:tdx', litellmModel: 'mock/overloaded' },
   { id: 'mock/context:tdx', litellmModel: 'mock/context' },
   { id: 'mock/refuses:tdx', litellmModel: 'mock/refuses' },
+  { id: 'mock/invalid-tool-call:tdx', litellmModel: 'mock/invalid-tool-call' },
   { id: 'mock/garbage:tdx', litellmModel: 'mock/garbage' },
   { id: 'mock/hangup:tdx', litellmModel: 'mock/hangup' },
   { id: 'mock/thinking:tdx', litellmModel: 'mock/thinking' },
+  { id: 'mock/slow-start:tdx', litellmModel: 'mock/slow-start' },
+  { id: 'mock/slow-boom:tdx', litellmModel: 'mock/slow-boom' },
   { id: 'mock/stream-abort:tdx', litellmModel: 'mock/stream-abort' },
   { id: 'mock/stream-slow:tdx', litellmModel: 'mock/stream-slow' },
+  { id: 'mock/stream-tools:tdx', litellmModel: 'mock/stream-tools' },
   { id: 'mock/covered:tdx', litellmModel: 'mock/chat', endpoint: 'mock-covered' },
   { id: 'mock/stale:tdx', litellmModel: 'mock/chat', endpoint: 'mock-stale' },
   { id: 'mock/embed:tdx', litellmModel: 'mock/embed', capabilities: ['embeddings'], endpoint: 'mock-embeddings' },

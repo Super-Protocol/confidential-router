@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { type AnalyticsEventName, isAnalyticsProperty } from '@confidential-router/types';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { AnalyticsHealth } from './analytics-health.js';
 import {
   ANALYTICS_SINK,
   type AnalyticsPropertyValue,
@@ -51,7 +52,10 @@ export interface CaptureInput {
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
 
-  constructor(@Inject(ANALYTICS_SINK) private readonly sink: AnalyticsSink) {}
+  constructor(
+    @Inject(ANALYTICS_SINK) private readonly sink: AnalyticsSink,
+    private readonly health: AnalyticsHealth,
+  ) {}
 
   async capture(input: CaptureInput): Promise<void> {
     try {
@@ -70,6 +74,9 @@ export class AnalyticsService {
     } catch (error) {
       // The sinks swallow their own transport failures; this covers a
       // programming error in the envelope, which must still not fail a request.
+      // Counted all the same: from `/health` an event lost here and an event
+      // PostHog refused are the same lost event.
+      this.health.eventDropped();
       this.logger.error(
         `Analytics capture of ${input.event} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
