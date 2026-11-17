@@ -203,8 +203,7 @@ test.describe('accessibility', () => {
      * caveat above is what first pushed the list past the fold and made
      * `scrollable-region-focusable` fire; `inspector.tsx` carries the tab stop.
      */
-    const violations = await auditPage(page);
-    expect(violations.filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the deployment graph is walkable with the keyboard, node by node', async ({ page }) => {

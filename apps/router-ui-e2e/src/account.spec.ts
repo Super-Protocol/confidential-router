@@ -344,6 +344,6 @@ test.describe('Profile', () => {
     await expect(card).not.toContainText('Days covered');
     await expect(page.getByRole('img', { name: /Days with published evidence/ })).toHaveCount(0);
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });
