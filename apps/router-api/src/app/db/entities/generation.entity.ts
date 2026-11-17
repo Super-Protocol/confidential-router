@@ -8,6 +8,38 @@ import { Workspace } from './workspace.entity.js';
 export type GenerationStatus = 'ok' | 'error' | 'aborted';
 
 /**
+ * Every value `generations.client` may hold, as a **closed set** (SUP-466).
+ *
+ * Extended by pull request and never by passthrough: the point of a closed set is
+ * that `client` is a breakdown with a dozen rows rather than one row per editor
+ * build. The derivation — and the reason the raw `User-Agent` is not here — lives
+ * in `client-dimension.ts`; `other` is the only label that mapping does not read
+ * off the wire.
+ *
+ * An array with the union derived from it, rather than a union with an array
+ * beside it, because the two have to agree with the enum in
+ * `schemas/analytics-taxonomy.json` and a label the array omitted would be
+ * dropped from `first_request_sent` with only a log line to say so. One
+ * declaration cannot drift from itself.
+ */
+export const GENERATION_CLIENTS = [
+  'vscode-chat',
+  'cline',
+  'roo',
+  'continue',
+  'cursor',
+  'claude-code',
+  'openai-python',
+  'openai-node',
+  'litellm',
+  'langchain',
+  'curl',
+  'other',
+] as const;
+
+export type GenerationClient = (typeof GENERATION_CLIENTS)[number];
+
+/**
  * One metered request. **No prompt or completion content, ever** — the router
  * forwards bodies to LiteLLM and never inspects or persists them
  * (`docs/threat-model.md`). `invariants.spec.ts` walks this entity's metadata
@@ -16,6 +48,20 @@ export type GenerationStatus = 'ok' | 'error' | 'aborted';
  */
 @Entity({ name: 'generations' })
 @Index('IDX_generations_workspaceId_createdAt', ['workspaceId', 'createdAt'])
+/*
+ * The retention sweep's holder lookup, one index per way a generation names its
+ * publication (SUP-498, sized in SUP-525).
+ *
+ * `EvidenceRetentionService.windowDaysOf` asks "which accounts hold this
+ * publication" once per 500-id batch, and neither of its predicates can use the
+ * two `workspaceId` indexes above — so without these it sequentially scans
+ * `generations`, the fastest-growing table in the schema, several times a pass.
+ * With an `archiveEvidence` opt-out anywhere on the deployment the candidate
+ * range is the whole unstripped table and that happens on every pass, for good:
+ * every row inside an opted-in holder's open window stays a candidate.
+ */
+@Index('IDX_generations_evidenceSnapshotId', ['evidenceSnapshotId'])
+@Index('IDX_generations_externalEndpointId_evidenceDigest', ['externalEndpointId', 'evidenceDigest'])
 export class Generation {
   /** `gen-<ulid>`; also the `id` of the OpenAI-shaped response. */
   @PrimaryColumn({ type: 'varchar', length: 64 })
@@ -109,6 +155,20 @@ export class Generation {
   /** Salted hash, for abuse investigation. The address itself is never stored. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   clientIpHash!: string | null;
+
+  /**
+   * Which client sent the request — one of {@link GenerationClient}, `other` for
+   * anything the mapping does not name, and null only on the rows written before
+   * SUP-466.
+   *
+   * **Not the `User-Agent`, and never a version of it.** The agent string is a
+   * fingerprinting vector, which is why `InviteRedemption` keeps only a salted
+   * hash of it; a raw copy here would contradict that decision for every metered
+   * request. `client-dimension.ts` maps and discards it in one place, and nothing
+   * downstream of that function sees it.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  client!: GenerationClient | null;
 
   @Column(timestampColumn())
   createdAt!: Date;

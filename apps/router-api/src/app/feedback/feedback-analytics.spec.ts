@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { RecordingAnalyticsSink } from '../../../test/analytics-recorder.js';
-import { AnalyticsHealth, AnalyticsService, type AnalyticsSink, eventUuid } from '../analytics/index.js';
+import { AnalyticsHealth } from '../analytics/analytics-health.js';
+import { AnalyticsService, type AnalyticsSink, eventUuid } from '../analytics/index.js';
 import { CapturingFeedbackAnalytics, type FeedbackGrantAppliedEvent } from './feedback-analytics.js';
 
 /**

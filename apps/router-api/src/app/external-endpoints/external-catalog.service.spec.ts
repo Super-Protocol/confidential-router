@@ -1,5 +1,5 @@
-import type { DataSource } from 'typeorm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DataSource, EntityTarget, FindManyOptions, ObjectLiteral, Repository } from 'typeorm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDataSource, seedCatalog, seedExternalEndpoint } from '../../../test/seed.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { Model } from '../db/entities/model.entity.js';
@@ -14,6 +14,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await dataSource.destroy();
 });
 
@@ -154,6 +155,63 @@ describe('refresh', () => {
     await catalog.refresh();
 
     expect(catalog.list()).toEqual([]);
+  });
+  it('counts the upstreams it will route to, model-less ones included', async () => {
+    // `routableEndpoints` is the catalogue's side of the comparison `/health`
+    // publishes against the rows' own `serving` (SUP-600), so it has to be
+    // counted in endpoints and off the admission record rather than off the
+    // model map: an admitted upstream whose models an admin has retired routes
+    // nothing and is not a disagreement.
+    const endpoint = await seedExternalEndpoint(dataSource, { status: 'verified' });
+    await catalog.refresh();
+    expect(catalog.routableEndpoints()).toBe(1);
+
+    await dataSource.getRepository(Model).delete({ origin: 'external' });
+    await expect(catalog.refresh()).resolves.toBe(0);
+    expect(catalog.routableEndpoints()).toBe(1);
+
+    await setStatus(endpoint.id, 'denied');
+    await catalog.refresh();
+    expect(catalog.routableEndpoints()).toBe(0);
+  });
+
+  it('never rebuilds twice at once, so the newest read is the newest state', async () => {
+    // Two rebuilds in flight would finish in the order they read rather than the
+    // order they started, and the one that read first assigning last would
+    // restore a model an admin has just disabled. The poll calls this every five
+    // seconds now rather than only on a flip, so the overlap is worth ruling out
+    // rather than reasoning about.
+    await seedExternalEndpoint(dataSource, { status: 'verified' });
+    let inFlight = 0;
+    let concurrent = 0;
+    const repositoryOf = dataSource.getRepository.bind(dataSource);
+    // Counted once per repository: TypeORM caches them, so re-wrapping `find` on
+    // every `getRepository` would nest the counters and count one call twice.
+    const counted = new Map<EntityTarget<ObjectLiteral>, Repository<ObjectLiteral>>();
+    vi.spyOn(dataSource, 'getRepository').mockImplementation((entity: EntityTarget<ObjectLiteral>) => {
+      const already = counted.get(entity);
+      if (already) {
+        return already;
+      }
+      const repository = repositoryOf(entity);
+      const find = repository.find.bind(repository);
+      repository.find = async (options?: FindManyOptions<ObjectLiteral>) => {
+        inFlight += 1;
+        concurrent = Math.max(concurrent, inFlight);
+        try {
+          return await find(options);
+        } finally {
+          inFlight -= 1;
+        }
+      };
+      counted.set(entity, repository);
+      return repository;
+    });
+
+    await Promise.all([catalog.refresh(), catalog.refresh(), catalog.refresh()]);
+
+    expect(concurrent).toBe(1);
+    expect(catalog.routableEndpoints()).toBe(1);
   });
 });
 

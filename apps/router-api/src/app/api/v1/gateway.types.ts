@@ -1,5 +1,5 @@
 import type { AuthenticatedApiKey } from '../../api-keys/index.js';
-import type { GenerationStatus } from '../../db/entities/generation.entity.js';
+import type { GenerationClient, GenerationStatus } from '../../db/entities/generation.entity.js';
 import type { ModelCapability, ModelOrigin } from '../../db/entities/model.entity.js';
 import type { EvidenceCoverage } from '../../metering/evidence-coverage.service.js';
 
@@ -131,6 +131,15 @@ export interface GatewayContext {
   rateLimitHeaders: Record<string, string>;
   requestId: string | null;
   clientIp: string | null;
+  /**
+   * Which client sent this request, derived once on the way in (SUP-466).
+   *
+   * On the context rather than re-read in the recorder, so the error and abort
+   * paths — which have no request object left to look at — meter the same label
+   * as the success path. The headers it came from are not carried any further;
+   * see `client-dimension.ts`.
+   */
+  client: GenerationClient;
   startedAt: number;
 }
 

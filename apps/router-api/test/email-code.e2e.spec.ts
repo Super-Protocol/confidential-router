@@ -15,7 +15,7 @@ import { createHarness, type Harness, lastCodeFor, signInWithCode } from './app-
 const EMAIL = 'someone@example.com';
 const ME_QUERY = '{ me { id email name workspaces { slug role } } }';
 const OPTIONS_QUERY =
-  '{ signInOptions { emailCode emailCodeLength magicLink bootstrap adminRecovery inviteRequired } }';
+  '{ signInOptions { emailCode emailCodeLength magicLink bootstrap adminRecovery inviteRequired supportEmail } }';
 const CONSOLE = 'http://localhost:4200';
 
 let harness: Harness | undefined;
@@ -74,6 +74,23 @@ function wrong(code: string): string {
 describe('signing in with an emailed code', () => {
   it('is what the sign-in screen is told to offer', async () => {
     await expect(options(await codeHarness())).resolves.toMatchObject({ emailCode: true, emailCodeLength: 6 });
+  });
+
+  /**
+   * SUP-556. A code is the only way in, and one spam complaint suppresses the
+   * address for the whole provider account — after which nothing can be mailed
+   * to it again. So the deployment's reply-to mailbox is published as the
+   * contact the code-entry screen can offer, and `null` where none is set: a
+   * contact nobody reads is worse than none.
+   */
+  it('publishes the reply-to mailbox as the contact for an address the provider drops', async () => {
+    const current = await codeHarness({ CR_API_MAIL__REPLY_TO: 'community@example.com' });
+
+    await expect(options(current)).resolves.toMatchObject({ supportEmail: 'community@example.com' });
+  });
+
+  it('publishes no contact where the deployment named no mailbox', async () => {
+    await expect(options(await codeHarness())).resolves.toMatchObject({ supportEmail: null });
   });
 
   it('mails a six-digit code, creates the account with it, and answers with a session', async () => {
