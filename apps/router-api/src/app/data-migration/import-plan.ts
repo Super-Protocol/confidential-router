@@ -34,6 +34,8 @@ export interface LocalState {
   ledger: readonly { id: string; idempotencyKey: string }[];
   inviteCodes: readonly { id: string; code: string }[];
   redemptions: readonly { id: string; userId: string }[];
+  /** Key id and the hash it authenticates by — the two things an API key can collide on. */
+  apiKeys: readonly { id: string; keyHash: string }[];
   externalEndpoints: readonly { id: string; name: string }[];
   models: readonly { id: string; externalEndpointId: string | null }[];
   trustedMeasurements: readonly { id: string; measurement: string }[];
@@ -51,6 +53,7 @@ export type SectionName =
   | 'creditLedger'
   | 'inviteCodes'
   | 'inviteRedemptions'
+  | 'apiKeys'
   | 'externalEndpoints'
   | 'externalModels'
   | 'trustedMeasurements';
@@ -136,6 +139,11 @@ export function bundleInconsistencies(data: ExportData): string[] {
     ).length,
   );
 
+  missing(
+    'API key(s) belong to a workspace the export does not carry.',
+    data.apiKeys.filter((row) => !workspaces.has(row.workspaceId)).length,
+  );
+
   const sums = new Map<string, bigint>();
   for (const entry of data.creditLedger) {
     sums.set(entry.workspaceId, (sums.get(entry.workspaceId) ?? 0n) + BigInt(entry.amountMicros));
@@ -169,6 +177,16 @@ export function bundleInconsistencies(data: ExportData): string[] {
   duplicated(
     'invitation code',
     data.inviteCodes.map((code) => code.id),
+  );
+  duplicated(
+    'API key',
+    data.apiKeys.map((key) => key.id),
+  );
+  // Named by id, never by hash: two rows with one hash would import as a unique
+  // index violation halfway through the transaction.
+  duplicated(
+    'API key hash',
+    data.apiKeys.map((key) => key.keyHash),
   );
   return problems;
 }
@@ -363,6 +381,43 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
     }
   }
 
+  // ── API keys ────────────────────────────────────────────────────────────
+  // The point of the section: a key the user configured somewhere keeps working
+  // after the redeploy (SUP-445). It authenticates by hash, so a hash already
+  // here under another id is the one thing that cannot be written as it is.
+  const keys = new Section('apiKeys', data.apiKeys.length);
+  const localKeyHashes = new Map(local.apiKeys.map((key) => [key.keyHash, key.id]));
+  const localKeysById = new Map(local.apiKeys.map((key) => [key.id, key.keyHash]));
+  const keyWrites: ExportData['apiKeys'] = [];
+  for (const key of data.apiKeys) {
+    const here = localKeysById.get(key.id);
+    if (here !== undefined) {
+      if (here === key.keyHash) {
+        keys.alreadyPresent += 1;
+      } else {
+        keys.conflicts.push(`API key ${key.id} exists here as a different credential.`);
+      }
+      continue;
+    }
+    if (localKeyHashes.has(key.keyHash)) {
+      keys.conflicts.push(`The credential of API key ${key.id} is already registered here under another id.`);
+      continue;
+    }
+    keys.toCreate += 1;
+    keyWrites.push({
+      ...key,
+      workspaceId: workspaceIdOf(key.workspaceId),
+      createdByUserId: userIdOrNull(key.createdByUserId),
+    });
+  }
+  if (keyWrites.length > 0) {
+    const live = keyWrites.filter((key) => key.revokedAt === null).length;
+    notes.push(
+      `${keyWrites.length} API key(s) are imported, ${live} of them still live: a key configured in a Gatekeeper, ` +
+        'an IDE or a script keeps working here, and nobody has to issue a new one. A revoked key arrives revoked.',
+    );
+  }
+
   // ── external endpoints and trust ────────────────────────────────────────
   const endpoints = new Section('externalEndpoints', data.externalEndpoints.length);
   const models = new Section(
@@ -418,8 +473,8 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   return {
     refusals,
     notes,
-    sections: [users, workspaces, members, ledger, codes, redemptions, endpoints, models, measurements].map((section) =>
-      section.done(),
+    sections: [users, workspaces, members, ledger, codes, redemptions, keys, endpoints, models, measurements].map(
+      (section) => section.done(),
     ),
     writes: {
       users: userWrites,
@@ -428,6 +483,7 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
       creditLedger: ledgerWrites,
       inviteCodes: codeWrites,
       inviteRedemptions: redemptionWrites,
+      apiKeys: keyWrites,
       externalEndpoints: endpointWrites,
       trustedMeasurements: measurementWrites,
     },

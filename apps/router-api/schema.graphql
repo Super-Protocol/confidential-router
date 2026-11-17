@@ -4,13 +4,18 @@ type ActivityPoint {
   bucket: DateTime!
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
   requests: Int!
 
@@ -25,18 +30,33 @@ type ActivitySummary {
   avgTokensPerSecond: Float
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   promptTokens: Int!
+
+  """
+  Of `requests`, how many reported a generation rate — the sample `avgTokensPerSecond` averages. Always at most `timedRequests`: a rate also needs a window large enough to divide.
+  """
+  ratedRequests: Int!
   requests: Int!
 
   """Spend in micro-USD."""
   spendMicros: String!
+
+  """
+  Of `requests`, how many reported a first-token time — the sample `avgTimeToFirstTokenMs` averages. A request that was not streamed never reports one.
+  """
+  timedRequests: Int!
 }
 
 input AddTrustedMeasurementInput {
@@ -461,13 +481,19 @@ type Endpoint {
 }
 
 """
-Of the generations served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate.
+Of the generations this deployment’s own endpoints served in a window, how many were served while the platform had a fresh bundle published for the endpoint that served them. A fact about publication, not a verification rate. Generations routed to an external endpoint are outside the question entirely — they are in neither `requests` nor `covered` — because this platform publishes no bundle for one; the router verified that upstream itself and reports it as “verified by this router” (ADR-008 §4).
 """
 type EvidenceCoverage {
   covered: Int!
 
-  """covered / requests; 0 when nothing was served."""
-  ratio: Float!
+  """
+  covered / requests. Null when `requests` is 0: nothing in the window could have been covered, so there is no ratio — render it as “not applicable”, never as 0%.
+  """
+  ratio: Float
+
+  """
+  Generations this deployment’s own endpoints served — not the workspace’s total.
+  """
   requests: Int!
 }
 
@@ -621,6 +647,11 @@ type ExternalEndpoint {
   latestEvidence: ExternalEndpointEvidence
 
   """
+  The failure run behind the verdict above: since when, how many checks, whether the upstream answered, and whether this router has declared an outage (SUP-517).
+  """
+  liveness: ExternalEndpointLiveness!
+
+  """
   Whether the sidecar found the measurement it saw signed in the Super Protocol registry, reported on a denial too. Informational only: it never admits — the admin trust list is the sole authority. Null when no measurement was derived.
   """
   measurementInRegistry: Boolean
@@ -692,16 +723,20 @@ type ExternalEndpointEvent {
 }
 
 """
-DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest.
+DIGEST_CHANGED and MEASUREMENT_CHANGED are reported on every change. Under two-factor trust a DIGEST_CHANGED is gating: the pinned digest no longer matches, so on an admitted endpoint it arrives with the DENIED_BY_THIS_ROUTER it caused. DIGEST_PINNED is an admin approving a deployment, and carries the digest. DIGEST_UNPINNED is an approval withdrawn by an edit — a re-point — and carries the digest that is no longer approved, so an endpoint that stops serving says in its own timeline why. OUTAGE and RECOVERED are the sustained-failure pair (SUP-517): a DENIED_BY_THIS_ROUTER is one check that refused, an OUTAGE is this router declaring that the run of them has passed the configured threshold and alerting on it. VERDICT_EXPIRED is this router letting go of an admitting verdict because the egress sidecar stopped confirming it: nothing was judged about the upstream, and the endpoint stopped claiming otherwise (SUP-583).
 """
 enum ExternalEndpointEventKind {
   DENIED_BY_THIS_ROUTER
   DIGEST_CHANGED
   DIGEST_PINNED
+  DIGEST_UNPINNED
   DISABLED
   KEY_ROTATED
   MEASUREMENT_CHANGED
+  OUTAGE
+  RECOVERED
   REGISTERED
+  VERDICT_EXPIRED
   VERIFIED_BY_THIS_ROUTER
 }
 
@@ -744,10 +779,42 @@ type ExternalEndpointEvidence {
 }
 
 """
+How long this upstream has been dark, and whether that has passed this router’s outage threshold.
+"""
+type ExternalEndpointLiveness {
+  """
+  Denied checks in the current run, counted per distinct check rather than per poll. Zero while serving, and zero while nothing has been checked — “not looked yet” is not a failure.
+  """
+  consecutiveFailures: Int!
+
+  """
+  When a verdict last denied it. Kept across a recovery, so flapping is visible on the row.
+  """
+  lastFailureAt: DateTime
+
+  """
+  When a verdict last admitted it. Null until the first admitting verdict of this process.
+  """
+  lastSuccessAt: DateTime
+
+  """
+  Since when this endpoint has not been known to serve — a denial, an operator switching it back on, or this process starting. Null while it is serving. What the outage threshold is measured from.
+  """
+  notServingSince: DateTime
+
+  """
+  Whether this run has passed `externalEndpoints.outage.*` and been alerted on. An endpoint an operator disabled, or one whose deployment has never been approved, is never an outage: nothing is expected of it.
+  """
+  outage: Boolean!
+  reachability: ExternalEndpointReachability!
+}
+
+"""
 A model an operator registered on an external endpoint, with the prices every generation freezes.
 """
 type ExternalEndpointModel {
-  capabilities: [ModelCapability!]!
+  """Declared routes of the upstream; the editable value."""
+  capabilities: [RouteCapability!]!
   contextLength: Int!
 
   """The public model id, as /v1/models reports it."""
@@ -764,6 +831,15 @@ type ExternalEndpointModel {
 }
 
 """
+Whether the last check got a document back. UNREACHABLE: it did not — the upstream is down or unroutable. REACHABLE: it answered, and any refusal is a judgement about a live upstream. UNKNOWN: nothing checked yet.
+"""
+enum ExternalEndpointReachability {
+  REACHABLE
+  UNKNOWN
+  UNREACHABLE
+}
+
+"""
 What this router currently says about an upstream. Rendered as “verified by this router” / “denied by this router” — never a bare “verified”, which is reserved for nothing in this schema (ADR-002). PENDING is where every endpoint starts and restarts: no live verdict yet, so it serves nothing.
 """
 enum ExternalEndpointStatus {
@@ -776,9 +852,9 @@ enum ExternalEndpointStatus {
 """A model on an external endpoint, and what this router charges for it."""
 input ExternalModelInput {
   """
-  Defaults to CHAT — the one capability every OpenAI-compatible upstream serves.
+  Which routes the upstream serves itself. Defaults to CHAT — the one every OpenAI-compatible upstream serves — and the router then serves /v1/completions for it by wrapping the prompt. Add COMPLETIONS when the upstream serves the legacy route natively (vLLM and SGLang do), which forwards it verbatim and keeps `suffix` infilling working. What the catalogue ends up reporting is `Model.capabilities`, derived from this.
   """
-  capabilities: [ModelCapability!]
+  capabilities: [RouteCapability!]
 
   """Micro-USD per 1M completion tokens."""
   completionPer1mMicros: String!
@@ -825,6 +901,11 @@ type ExternalUpstream {
   The endpoint name. Also the key of this router’s raw-bundle relay, `GET /v1/evidence/{endpoint}`, which is how a browser reads the upstream’s published evidence and verifies it itself.
   """
   name: String!
+
+  """
+  Since when this upstream has not been known to serve, or null while it is serving (SUP-517). The answer to “is `available: false` a new registration or a model that has been dark for a day” — the question an advertised-but-refusing model left a reader unable to ask.
+  """
+  notServingSince: DateTime
 
   """
   Rendered as “verified by this router” / “denied by this router”, never a bare “verified”.
@@ -1200,13 +1281,18 @@ type KeyUsage {
   apiKeyId: ID
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   name: String!
   prefix: String
   promptTokens: Int!
@@ -1236,6 +1322,8 @@ type Model {
   Whether this router will route to it right now. Always true for a CONFIG model; for an EXTERNAL one it is false unless the endpoint holds a live verdict admitting it.
   """
   available: Boolean!
+
+  """What the router serves for this model; derived, not declared."""
   capabilities: [ModelCapability!]!
   contextLength: Int!
 
@@ -1266,10 +1354,15 @@ type Model {
   tee: String
 }
 
+"""
+Something the router does with this model: a route it accepts (CHAT, COMPLETIONS, EMBEDDINGS), tool definitions forwarded and tool-call deltas relayed untouched (TOOLS), or `stream: true` honoured (STREAMING). Derived from the declared `RouteCapability` list, so it cannot claim what the surface does not serve.
+"""
 enum ModelCapability {
   CHAT
   COMPLETIONS
   EMBEDDINGS
+  STREAMING
+  TOOLS
 }
 
 """
@@ -1284,13 +1377,18 @@ enum ModelOrigin {
 type ModelUsage {
   completionTokens: Int!
 
+  """
+  Of `requests`, how many this deployment’s own endpoints served — the denominator of `evidenceCoverage`. The difference from `requests` went to external endpoints, which publish no bundle of ours and are reported as “verified by this router” instead.
+  """
+  coverableRequests: Int!
+
   """Of `requests`, how many the endpoint had published evidence for."""
   coveredRequests: Int!
 
   """
-  0–1, over the requests this deployment’s own endpoints served. Zero when there were none. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
+  0–1 over `coverableRequests`. Null when that is 0 — nothing in the window could have been covered, so there is no ratio; render it as “not applicable”, never as 0%. Generations routed to an external endpoint are outside this ratio, not counted as uncovered.
   """
-  evidenceCoverage: Float!
+  evidenceCoverage: Float
   modelId: ID!
   name: String!
   promptTokens: Int!
@@ -1374,6 +1472,11 @@ type Mutation {
   """
   rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 
+  """
+  Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.
+  """
+  sendOperatorAlertTest: OperatorAlertTest!
+
   """Turns automatic top-up on or off."""
   setAutoTopUp(input: SetAutoTopUpInput!): CreditBalance!
 
@@ -1387,7 +1490,7 @@ type Mutation {
   updateApiKey(id: ID!, input: UpdateApiKeyInput!): ApiKey!
 
   """
-  Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. Restricted to auth.adminEmails.
+  Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. Re-pointing withdraws the approved deployment, so an edit that means to keep one carries it as evidenceDigest. Restricted to auth.adminEmails.
   """
   updateExternalEndpoint(id: ID!, input: UpdateExternalEndpointInput!): ExternalEndpoint!
 
@@ -1406,6 +1509,22 @@ type Mutation {
   Withdraws one unredeemed invitation code. Restricted to auth.adminEmails.
   """
   withdrawInviteCode(id: ID!): InviteWithdrawal!
+}
+
+type OperatorAlertTest {
+  """Addresses the message was accepted for."""
+  delivered: Int!
+
+  """Addresses the provider refused. Each one is in the container log."""
+  failed: Int!
+
+  """Whether at least one operator was written to."""
+  sent: Boolean!
+
+  """
+  Why nothing was attempted, when nothing was: NO_PROVIDER (alerts.email off, or mail.provider is none) or NO_RECIPIENTS (neither alerts.emails nor auth.adminEmails names an address).
+  """
+  skipped: String
 }
 
 type PageInfo {
@@ -1576,6 +1695,14 @@ type Query {
   """
   routerEndpoint: Endpoint
 
+  """
+  Whether this deployment’s mail provider is dropping messages to an address. Public, and says nothing about whether an account holds it.
+  """
+  signInMailState(
+    """The address a code was asked for."""
+    email: String!
+  ): SignInMailState!
+
   """The sign-in paths this deployment offers. Public."""
   signInOptions: SignInOptions!
 
@@ -1647,6 +1774,15 @@ input RotateExternalEndpointKeyInput {
   apiKey: String!
 }
 
+"""
+A route an upstream serves itself, as declared on the model. What the router then serves for it is `ModelCapability`, which is derived from this and never declared (SUP-450).
+"""
+enum RouteCapability {
+  CHAT
+  COMPLETIONS
+  EMBEDDINGS
+}
+
 input SetAutoTopUpInput {
   settings: AutoTopUpInput!
   workspaceId: ID!
@@ -1657,6 +1793,23 @@ input SetExternalEndpointEnabledInput {
   Switching it back on returns it to PENDING: it re-attests from nothing.
   """
   enabled: Boolean!
+}
+
+"""Whether a sign-in code can reach an address at all."""
+type SignInMailState {
+  """
+  When the current state began, as an ISO timestamp. Null while the state is UNKNOWN.
+  """
+  since: String
+  state: SignInMailStateName!
+}
+
+"""What this deployment’s mail provider last reported about an address."""
+enum SignInMailStateName {
+  DELAYED
+  DELIVERING
+  REJECTING
+  UNKNOWN
 }
 
 """Which sign-in paths this deployment offers."""
@@ -1694,6 +1847,11 @@ type SignInOptions {
 
   """A one-time sign-in link can be mailed as well as a code."""
   magicLink: Boolean!
+
+  """
+  A mailbox to write to from a different address when this deployment’s mail cannot reach the one a viewer is holding (`mail.replyTo`). Null where none is configured. Sign-in is an emailed code, so a suppressed address has no other way to ask for help.
+  """
+  supportEmail: String
 }
 
 """How an account came to exist."""
@@ -1743,6 +1901,11 @@ input UpdateApiKeyInput {
 
 input UpdateExternalEndpointInput {
   baseUrl: String
+
+  """
+  The deployment this edit approves — the same value pinExternalEndpointDigest takes, in either spelling. Omitted says nothing about the pin: an edit that leaves baseUrl alone keeps the approval, and re-pointing still withdraws it (SUP-252), which is why a re-point that means to keep its approval states it here rather than pinning again afterwards with the endpoint out of service in between.
+  """
+  evidenceDigest: String
 
   """
   Replaces the registered set. A model left out is retired, never deleted.

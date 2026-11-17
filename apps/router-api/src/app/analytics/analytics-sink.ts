@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import type { AnalyticsHealth } from './analytics-health.js';
 
 /** Scalars only — the taxonomy forbids nested objects (`analytics-events.md`, convention 4). */
 export type AnalyticsPropertyValue = string | number | boolean;
@@ -41,6 +42,11 @@ export const PERSON_PROPERTIES = ['campaign', 'signup_method'] as const;
  * that can hold a request open or lose a batch on a rolling restart. What the
  * router needs is a `fetch` with a timeout — and an interface a test can record
  * against with no network at all.
+ *
+ * An implementation that loses an event tells {@link AnalyticsHealth} so, which
+ * is deliberately not part of this interface: a test double that keeps every
+ * envelope has nothing to report, and `/health` must read the real process
+ * state rather than whichever sink was injected.
  */
 export interface AnalyticsSink {
   send(envelope: AnalyticsEnvelope): Promise<void>;
@@ -51,14 +57,18 @@ export const ANALYTICS_SINK = Symbol('ANALYTICS_SINK');
 /**
  * The sink a deployment with no `POSTHOG_PROJECT_KEY` gets.
  *
- * Dropping silently is right here: analytics is an operator's instrumentation,
- * not a product feature, and `nx serve`, every unit test and the e2e suite all
- * run without a project. The one warning at boot is what keeps that from being a
- * surprise in production.
+ * Dropping is right here: analytics is an operator's instrumentation, not a
+ * product feature, and `nx serve`, every unit test and the e2e suite all run
+ * without a project. Dropping *silently* was the bug — the boot warning scrolls
+ * away, so every discarded event is counted and `/health` reports the total
+ * (SUP-464).
  */
 export class DisabledAnalyticsSink implements AnalyticsSink {
+  constructor(private readonly health: AnalyticsHealth) {}
+
   async send(): Promise<void> {
-    // Nothing, by design.
+    // Nowhere to send it, by design — but it is still an event we did not keep.
+    this.health.eventDropped();
   }
 }
 
@@ -80,14 +90,19 @@ export interface PostHogSinkOptions {
  *  - `$process_person_profile: false` on an anonymous event;
  *  - `$lib`, so an operator reading a raw event can tell what sent it.
  *
- * A failure is logged and swallowed. Every caller is on a request path that has
- * already committed its database work: losing an event is a gap in a chart,
- * while failing the request that produced it would be a bug in the product.
+ * A failure is logged, counted on {@link AnalyticsHealth} and swallowed. Every
+ * caller is on a request path that has already committed its database work:
+ * losing an event is a gap in a chart, while failing the request that produced
+ * it would be a bug in the product. Counting is what keeps the gap from being
+ * invisible to anyone not reading the log at the time (SUP-464).
  */
 export class PostHogSink implements AnalyticsSink {
   private readonly logger = new Logger(PostHogSink.name);
 
-  constructor(private readonly options: PostHogSinkOptions) {}
+  constructor(
+    private readonly options: PostHogSinkOptions,
+    private readonly health: AnalyticsHealth,
+  ) {}
 
   async send(envelope: AnalyticsEnvelope): Promise<void> {
     try {
@@ -111,9 +126,11 @@ export class PostHogSink implements AnalyticsSink {
         }),
       });
       if (!response.ok) {
+        this.health.eventDropped();
         this.logger.warn(`PostHog refused ${envelope.event}: ${response.status}.`);
       }
     } catch (error) {
+      this.health.eventDropped();
       this.logger.warn(
         `PostHog could not be reached for ${envelope.event}: ${error instanceof Error ? error.message : String(error)}`,
       );

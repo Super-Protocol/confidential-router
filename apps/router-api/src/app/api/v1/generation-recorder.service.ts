@@ -76,7 +76,11 @@ export class GenerationRecorder {
 
   async finish(context: GatewayContext, outcome: GenerationOutcome): Promise<void> {
     const latencyMs = Date.now() - context.startedAt;
-    const generationMs = outcome.timeToFirstTokenMs === null ? latencyMs : latencyMs - outcome.timeToFirstTokenMs;
+    // The generation window starts at the first token. Without one there is
+    // nothing to tell prefill from generation, and the full latency stood in for
+    // the window — which reported a slower model the longer its prompt was
+    // (SUP-424). `tokensPerSecond` says nothing rather than something wrong.
+    const generationMs = outcome.timeToFirstTokenMs === null ? null : latencyMs - outcome.timeToFirstTokenMs;
     await this.metering.close({
       ...this.admittedOf(context),
       promptTokens: outcome.promptTokens,
@@ -114,6 +118,7 @@ export class GenerationRecorder {
       streamed: context.stream,
       requestId: context.requestId,
       clientIpHash: this.hashClientIp(context.clientIp),
+      client: context.client,
       createdAt: new Date(context.startedAt),
     };
   }

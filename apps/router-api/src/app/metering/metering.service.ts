@@ -3,11 +3,11 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { AnalyticsService, eventUuid } from '../analytics/index.js';
 import { ApiKeyService } from '../api-keys/api-key.service.js';
-import { Generation, type GenerationStatus } from '../db/entities/generation.entity.js';
+import { Generation, type GenerationClient, type GenerationStatus } from '../db/entities/generation.entity.js';
 import { Workspace } from '../db/entities/workspace.entity.js';
-import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAttributionService } from '../invites/invite-attribution.service.js';
 import { CREDITS_GATEWAY, type CreditsGateway } from './credits.gateway.js';
+import { WorkspaceOwnerService } from './workspace-owner.service.js';
 
 /** An hour, in milliseconds. `hours_since_signup` is whole hours, floored. */
 const MS_PER_HOUR = 3_600_000;
@@ -36,6 +36,14 @@ export interface AdmittedGeneration {
   streamed: boolean;
   requestId: string | null;
   clientIpHash: string | null;
+  /**
+   * The closed-set label, never the agent string it was derived from (SUP-466).
+   *
+   * On the admission half rather than the outcome: it is read off the request's
+   * own headers before anything is forwarded, so it is known at `open` and is
+   * not something the outcome may revise.
+   */
+  client: GenerationClient;
   createdAt: Date;
 }
 
@@ -80,6 +88,7 @@ export class MeteringService {
     private readonly apiKeys: ApiKeyService,
     private readonly analytics: AnalyticsService,
     private readonly attribution: InviteAttributionService,
+    private readonly owners: WorkspaceOwnerService,
   ) {}
 
   /**
@@ -198,7 +207,7 @@ export class MeteringService {
     // one with the workspace — and if it somehow did, an anonymous
     // `first_request_sent` would be a row nothing can be concluded from, which is
     // worse than the gap.
-    const ownerId = await this.ownerOf(record.workspaceId);
+    const ownerId = await this.owners.ownerOf(record.workspaceId);
     if (!ownerId) {
       this.logger.warn(`Workspace ${record.workspaceId} has no owner; first_request_sent not reported.`);
       return;
@@ -216,26 +225,16 @@ export class MeteringService {
         campaign: attribution.campaign,
         had_invite_grant: attribution.hadInviteGrant,
         model_slug: record.modelId,
+        // The once-per-workspace boundary is the only place this belongs: it
+        // answers "which client did this account activate with", and it is the
+        // breakdown SUP-447 needed. Per-request client volume is a question for
+        // `generations`, not for an event.
+        client: record.client,
         hours_since_signup: workspace
           ? Math.max(0, Math.floor((record.createdAt.getTime() - workspace.createdAt.getTime()) / MS_PER_HOUR))
           : 0,
       },
     });
-  }
-
-  /**
-   * The account the workspace's events are attributed to: its owner.
-   *
-   * Read from `workspace_members` rather than carried on the request, because the
-   * request authenticated with an API key and a key has no user — the account
-   * that created it may have left the workspace since.
-   */
-  private async ownerOf(workspaceId: string): Promise<string | null> {
-    const owner = await this.dataSource
-      .getRepository(WorkspaceMember)
-      .findOne({ where: { workspaceId, role: 'owner' } });
-
-    return owner?.userId ?? null;
   }
 }
 

@@ -1,16 +1,34 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
 import type { Response as ExpressResponse } from 'express';
+import type { AuthenticatedApiKey } from '../../api-keys/index.js';
+import { bridgesCompletions } from '../../catalog/served-capabilities.js';
+import { routerConfig } from '../../config.js';
 import { estimatePromptTokens } from '../../metering/token-estimator.js';
+import { generationId } from '../../metering/ulid.js';
 import { type ApiKeyRequest, apiKeyOf } from './api-key.guard.js';
+import { clientOf } from './client-dimension.js';
+import { chatBodyForPrompt, textCompletionOf } from './completions-bridge.js';
 import { ExternalUpstreamClient } from './external-upstream.client.js';
 import type { ExternalRoute, GatewayContext, GenerationOutcome, RoutedModel, RouteKind } from './gateway.types.js';
 import { UPSTREAM_PATHS } from './gateway.types.js';
+import { GatewayAnalytics } from './gateway-analytics.service.js';
 import { GatewayPolicyService } from './gateway-policy.service.js';
 import { GenerationRecorder } from './generation-recorder.service.js';
 import { LiteLlmClient } from './litellm.client.js';
+import { requestedModelSlug, resultOf } from './model-demand.js';
 import { OpenAiApiError, openAiErrors } from './openai-error.js';
 import { readUsage, shapeResponse } from './response-shaping.js';
-import { extensionFor, relayStream, type StreamFailure } from './stream-relay.js';
+import { formatDataEvent, SSE_DONE } from './sse.js';
+import {
+  extensionFor,
+  HEARTBEAT_INTERVAL_MS,
+  openStreamIfSlow,
+  type PendingStream,
+  relayStream,
+  type StreamFailure,
+} from './stream-relay.js';
+import { describeUpstreamError, readUpstreamError, upstreamFailureOf } from './upstream-failure.js';
 import { UpstreamTimeoutError } from './upstream-fetch.js';
 
 /** A model resolved to the external leg, narrowed so `external` is not optional. */
@@ -39,16 +57,26 @@ export class GatewayService {
 
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
+    @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
     private readonly policy: GatewayPolicyService,
     private readonly recorder: GenerationRecorder,
     private readonly upstream: LiteLlmClient,
     private readonly external: ExternalUpstreamClient,
+    private readonly productAnalytics: GatewayAnalytics,
   ) {}
 
   async handle(request: ApiKeyRequest, response: ExpressResponse, kind: RouteKind): Promise<void> {
     const auth = apiKeyOf(request);
     const body = bodyOf(request);
-    const model = this.policy.resolve(kind, body, auth.key);
+    const model = this.resolveAndReport(kind, body, auth);
+    // The legacy route for a chat-only model is served here rather than refused
+    // (SUP-450): the prompt becomes a chat request, and the answer is translated
+    // back on the way out. Beside `resolve` and before `admit`, because an
+    // untranslatable legacy parameter is a request shape the router rejects —
+    // the same class of 400 as `n > 1`, and it should cost no rate-limit slot
+    // and leave no metering row.
+    const bridged = kind === 'completions' && bridgesCompletions(model.capabilities);
+    const upstreamBody = bridged ? chatBodyForPrompt(body) : body;
     const rateLimitHeaders = await this.policy.admit(auth);
 
     const start = await this.recorder.prepare(model);
@@ -60,14 +88,17 @@ export class GatewayService {
       generationId: start.id,
       model,
       auth,
-      body,
+      body: upstreamBody,
       stream,
+      upstreamPath: bridged ? UPSTREAM_PATHS.chat : UPSTREAM_PATHS[kind],
+      bridged,
       suppressUsageChunk: stream && !clientWantsUsage,
       coverage: start.coverage,
       evidenceDigest: start.evidenceDigest,
       rateLimitHeaders,
       requestId: headerOf(request, 'x-request-id'),
       clientIp: request.ip ?? null,
+      client: clientOf(request.headers),
       startedAt: Date.now(),
     };
 
@@ -87,34 +118,84 @@ export class GatewayService {
 
     const leg = externalOf(model);
     const abort = new AbortController();
+
+    // A streamed request that waits too long gets its stream opened anyway, so
+    // the router rather than an impatient proxy decides how this request ends.
+    // The cadence is shared with the relay that takes over: an operator who
+    // tunes the delay down for a tight ingress tunes the whole stream's silence
+    // down with it.
+    const keepAliveAfterMs = this.config.server.streamKeepAliveAfter;
+    const heartbeatIntervalMs = Math.min(HEARTBEAT_INTERVAL_MS, keepAliveAfterMs);
+    const pending = stream
+      ? openStreamIfSlow({ context, response, openAfterMs: keepAliveAfterMs, heartbeatIntervalMs })
+      : null;
+
+    // The client's socket is watched from here, not from `relayStream`: the
+    // window SUP-449 lives in is the one *before* the upstream answers, and a
+    // hang-up there left the fetch running with nothing watching it.
+    //
+    // Streamed requests only. A non-streamed completion that is cancelled
+    // mid-flight is still finished and metered as it always was: its tokens were
+    // produced whether or not anyone is left to read them, and `aborted` is
+    // defined in streaming terms (`docs/contracts/router-api.md`).
+    let clientLeft = false;
+    const onClose = (): void => {
+      if (response.writableEnded) {
+        return;
+      }
+      clientLeft = true;
+      abort.abort(new Error('Client closed the connection.'));
+    };
+    if (stream) {
+      response.on('close', onClose);
+    }
+    /** Hands the socket back to whoever runs next — the relay, or nobody. */
+    const releaseSocket = (): void => {
+      pending?.stop();
+      response.off('close', onClose);
+    };
+
     let upstreamResponse: Response;
     try {
       upstreamResponse = leg
         ? await this.external.send({
             model: leg,
-            path: UPSTREAM_PATHS[kind],
+            path: context.upstreamPath,
             body: upstreamBodyFor(context),
             stream,
             signal: abort.signal,
           })
         : await this.upstream.send({
-            path: UPSTREAM_PATHS[kind],
+            path: context.upstreamPath,
             body: upstreamBodyFor(context),
             generationId: context.generationId,
             stream,
             signal: abort.signal,
           });
     } catch (error) {
+      releaseSocket();
+      if (clientLeft) {
+        return this.recordAbandoned(context);
+      }
       // Nothing was forwarded, and which failure this was decides who the caller
       // is told to look at — see `transportFailureOf`.
-      throw await this.fail(context, transportFailureOf(error));
+      return this.endBeforeTokens({ context, response, pending }, transportFailureOf(error));
+    }
+    releaseSocket();
+    if (clientLeft) {
+      // The hang-up and the upstream's headers crossed. Nothing failed and
+      // nobody is left to tell, so this is the same `aborted` as a hang-up one
+      // tick earlier — not the `error` the relay would read off a body the
+      // abort has already torn down.
+      void upstreamResponse.body?.cancel().catch(() => undefined);
+      return this.recordAbandoned(context);
     }
 
     if (!upstreamResponse.ok) {
       const error = leg
         ? await this.external.mapFailure(leg, upstreamResponse)
         : await this.mapUpstreamFailure(upstreamResponse);
-      throw await this.fail(context, error);
+      return this.endBeforeTokens({ context, response, pending }, error);
     }
 
     const outcome = stream
@@ -124,6 +205,7 @@ export class GatewayService {
           response,
           readTimeoutMs: leg ? this.external.readTimeoutMs : this.upstream.readTimeoutMs,
           abort,
+          heartbeatIntervalMs,
           failureMapper: leg
             ? (failure): Promise<StreamFailure> => this.external.classifyStreamFailure(leg, failure)
             : undefined,
@@ -139,6 +221,55 @@ export class GatewayService {
     // still runs whatever the meter did.
     await this.recorder.finish(context, outcome);
     await this.policy.settle(auth.key, outcome.promptTokens + outcome.completionTokens);
+  }
+
+  /**
+   * Admission, with the one thing it refuses reported as demand (SUP-542).
+   *
+   * The refusals are the point. `unknown_model` — somebody asked for a model we
+   * do not serve — is the whole roadmap signal, and it is the one outcome that
+   * leaves no row anywhere else: `resolve` throws before a generation id exists,
+   * so without this the request is invisible to everything but the caller's own
+   * 404. An event emitted only on the success path would answer "which of our
+   * models is popular" and nothing about demand we are missing.
+   *
+   * Reported from the error the admission path threw rather than re-derived, so
+   * the chart and the status code the caller received cannot disagree about why a
+   * request was refused. `void`, never awaited: a refusal must not be answered
+   * more slowly because of a chart.
+   */
+  private resolveAndReport(kind: RouteKind, body: Record<string, unknown>, auth: AuthenticatedApiKey): RoutedModel {
+    const slug = requestedModelSlug(body);
+    const at = new Date();
+    try {
+      const model = this.policy.resolve(kind, body, auth.key);
+      if (slug) {
+        void this.productAnalytics.modelRequested({
+          workspaceId: auth.workspace.id,
+          // Its own id: the generation the recorder is about to open has not been
+          // minted yet, and the event is about the request rather than the row.
+          generationId: generationId(),
+          modelSlug: slug,
+          result: 'served',
+          route: kind,
+          at,
+        });
+      }
+      return model;
+    } catch (error) {
+      const result = slug ? resultOf(error) : null;
+      if (slug && result) {
+        void this.productAnalytics.modelRequested({
+          workspaceId: auth.workspace.id,
+          generationId: generationId(),
+          modelSlug: slug,
+          result,
+          route: kind,
+          at,
+        });
+      }
+      throw error;
+    }
   }
 
   /**
@@ -163,7 +294,12 @@ export class GatewayService {
     }
 
     const counts = readUsage(payload) ?? { promptTokens: estimatePromptTokens(context.body), completionTokens: 0 };
-    const shaped = shapeResponse(payload as Record<string, unknown>, context, extensionFor(context, counts));
+    // Translated before shaping, so the identity rewrite and the usage extension
+    // land on the object the client will actually read.
+    const body = context.bridged
+      ? textCompletionOf(payload as Record<string, unknown>)
+      : (payload as Record<string, unknown>);
+    const shaped = shapeResponse(body, context, extensionFor(context, counts));
 
     response.setHeader('X-Confidential-Router-Endpoint', context.model.endpoint.hostname);
     response.setHeader('X-Confidential-Router-Generation-Id', context.generationId);
@@ -179,31 +315,74 @@ export class GatewayService {
   }
 
   /**
-   * Maps a backend failure onto the router's error table.
+   * Maps a backend failure onto the router's error table — see
+   * `upstream-failure.ts`, which holds the table both legs read.
    *
-   * Deliberately conservative in two directions. Only the cases a *client* can
-   * act on come back as 4xx — a misconfigured LiteLLM key or a crashed worker is
-   * the operator's problem, and telling the caller it made a bad request would
-   * be a lie. And the backend's own wording is logged rather than forwarded,
-   * except for the context-length message, which is the one thing in it the
-   * caller can actually do something about; the rest is cluster-internal detail
-   * that a bearer token should not buy.
+   * Still conservative about whose fault a failure is: a misconfigured LiteLLM key
+   * or a crashed worker stays a 502, because telling the caller it made a bad
+   * request would be a lie. What changed with SUP-448 is the converse — a 4xx
+   * LiteLLM raised *about the request body* is now reported as a 4xx, with its
+   * wording, because nothing else in the chain knows which field is wrong.
+   *
+   * That wording reaches the caller and not the log: a refusal quotes the field
+   * it refused, so the line carries `describeUpstreamError`'s content-free
+   * summary instead (SUP-497).
    */
   private async mapUpstreamFailure(upstream: Response): Promise<OpenAiApiError> {
-    const detail = await readErrorDetail(upstream);
-    this.logger.warn(`LiteLLM answered ${upstream.status}: ${detail || '(no detail)'}`);
+    const body = await readUpstreamError(upstream);
+    this.logger.warn(`LiteLLM answered ${upstream.status}: ${describeUpstreamError(body)}`);
+    return upstreamFailureOf('The model backend', upstream, body);
+  }
 
-    if (upstream.status === 429) {
-      const retryAfter = upstream.headers.get('retry-after') ?? '1';
-      return openAiErrors.rateLimited('The model backend is at capacity.', { 'Retry-After': retryAfter });
+  /**
+   * Ends a request that failed before a single token, by whichever channel is
+   * still open.
+   *
+   * Normally that is the status line, and the error is thrown for the filter to
+   * render as a 502/503/504. Once the keep-alive stream has been opened there is
+   * no status line left, so the error goes where a mid-stream failure already
+   * goes: one last `data:` event carrying the OpenAI error object, then the
+   * terminator the client is waiting for. Either way exactly one metering row is
+   * written, which is the half of SUP-423 the router owns.
+   */
+  private async endBeforeTokens(
+    ending: { context: GatewayContext; response: ExpressResponse; pending: PendingStream | null },
+    error: OpenAiApiError,
+  ): Promise<void> {
+    const { context, response, pending } = ending;
+    if (!pending?.opened) {
+      throw await this.fail(context, error);
     }
-    if (/context[ _-]?length|maximum context|too many tokens/i.test(detail)) {
-      return openAiErrors.contextLengthExceeded(detail);
+    // The stream is closed before the row is written, not after: a metering
+    // failure must not leave the client with a truncated stream carrying neither
+    // the error object nor the terminator it is waiting for.
+    if (!response.writableEnded) {
+      response.write(formatDataEvent(JSON.stringify(error.toBody())));
+      response.write(SSE_DONE);
+      response.end();
     }
-    if (upstream.status >= 500 || upstream.status === 404) {
-      return openAiErrors.backendUnavailable(`The model backend answered ${upstream.status}.`);
-    }
-    return openAiErrors.backendError(`The model backend rejected the request (${upstream.status}).`);
+    await this.fail(context, error);
+  }
+
+  /**
+   * Meters a request whose client hung up before the upstream answered.
+   *
+   * `aborted` with no `errorCode`, the same thing the relay records for a client
+   * that leaves mid-stream (`docs/contracts/router-api.md`): nothing failed, the
+   * caller simply stopped waiting. Without this the request left Logs with no row
+   * at all — the reporting gap three of the seven SUP-449 stalls fell into, once
+   * the ingress had closed the socket under a request the router was still
+   * serving.
+   */
+  private async recordAbandoned(context: GatewayContext): Promise<void> {
+    await this.recorder.finish(context, {
+      promptTokens: 0,
+      completionTokens: 0,
+      status: 'aborted',
+      errorCode: null,
+      finishReason: null,
+      timeToFirstTokenMs: null,
+    });
   }
 
   /**
@@ -295,15 +474,4 @@ function transportFailureOf(error: unknown): OpenAiApiError {
   return openAiErrors.backendUnavailable(
     `The model backend is unreachable: ${error instanceof Error ? error.message : String(error)}`,
   );
-}
-
-async function readErrorDetail(upstream: Response): Promise<string> {
-  try {
-    const text = (await upstream.text()).slice(0, 1000);
-    const parsed: unknown = JSON.parse(text);
-    const message = (parsed as { error?: { message?: unknown } })?.error?.message;
-    return typeof message === 'string' ? message : text;
-  } catch {
-    return '';
-  }
 }

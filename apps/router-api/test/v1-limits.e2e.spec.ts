@@ -1,6 +1,7 @@
+import { Logger } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
 import { IncompleteGenerationSweeper, NO_RESPONSE_CODE } from '../src/app/metering/index.js';
 import { createHarness, type Harness } from './app-harness.js';
@@ -330,5 +331,89 @@ describe('backend failures', () => {
     await post(secret, chat('nobody/nothing:tdx')).expect(404);
 
     expect(await harness.app.get(DataSource).getRepository(Generation).count()).toBe(before);
+  });
+});
+
+/**
+ * SUP-448, the conformance the issue asks for: a conversation the upstream reads
+ * and calls invalid must come back as a 4xx that names the field.
+ *
+ * It used to be `502 backend_error`. That is "transient, retry" to every
+ * OpenAI-compatible SDK — and the offending message is already in the history, so
+ * each retry rebuilt the same invalid request. One client slip (Continue merging
+ * two concurrent responses into a truncated `arguments`, SP-447) killed the
+ * session permanently and the user read it as our outage: 15 of 97 agent requests
+ * through production in one afternoon.
+ */
+describe('a request the model endpoint itself calls invalid', () => {
+  /** The body that killed the Continue sessions: `arguments` is truncated JSON. */
+  function poisoned(model = 'mock/invalid-tool-call:tdx') {
+    return {
+      model,
+      messages: [
+        { role: 'user', content: 'Read the readme' },
+        {
+          role: 'assistant',
+          tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read', arguments: '{"filepath": "RE' } }],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '# Readme' },
+      ],
+    };
+  }
+
+  it('comes back as a 4xx, so no SDK and no “Resubmit” retries it forever', async () => {
+    const response = await post(secret, poisoned()).expect(400);
+
+    expect(response.body.error).toMatchObject({
+      type: 'invalid_request_error',
+      code: 'upstream_invalid_request',
+    });
+    // The whole point: not the status that means "the gateway is broken, try again".
+    expect(response.status).not.toBe(502);
+  });
+
+  it('names the field that is wrong, which the router itself cannot know', async () => {
+    const response = await post(secret, poisoned()).expect(400);
+
+    expect(response.body.error.message).toContain('messages[8].tool_calls[0].function.arguments');
+    expect(response.body.error.param).toBe('messages[8].tool_calls[0].function.arguments');
+  });
+
+  it('is metered as an error that cost nothing, like any other refusal', async () => {
+    await post(secret, poisoned()).expect(400);
+
+    const row = await harness.app
+      .get(DataSource)
+      .getRepository(Generation)
+      .findOneOrFail({ where: { modelId: 'mock/invalid-tool-call:tdx' }, order: { createdAt: 'DESC' } });
+    expect(row).toMatchObject({ status: 'error', errorCode: 'upstream_invalid_request', costMicros: 0 });
+  });
+
+  it('is not retried upstream: the request cannot become valid on a second send', async () => {
+    await post(secret, poisoned()).expect(400);
+
+    expect(upstream.requests).toHaveLength(1);
+  });
+
+  it('reaches the client with the upstream’s wording and the log without it (SUP-497)', async () => {
+    /*
+     * The two halves of this request go to different places on purpose. The
+     * upstream's sentence is the only thing that names the bad field, so the
+     * caller gets it (SUP-448) — and a model server refusing a request is the
+     * one place on this path that quotes the request back, so the log does not
+     * (`describeUpstreamError`). `/privacy` §5 publishes the second half.
+     */
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const response = await post(secret, poisoned()).expect(400);
+    const lines = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    warn.mockRestore();
+
+    expect(response.body.error.message).toContain('unterminated object');
+
+    expect(lines).toContain('LiteLLM answered 400');
+    expect(lines).toContain('param=messages[8].tool_calls[0].function.arguments');
+    expect(lines).not.toContain('unterminated object');
+    expect(lines).not.toContain('Invalid JSON in');
   });
 });
