@@ -59,6 +59,21 @@ func (e *leafMismatchError) Error() string {
 		attestation.FormatDigestHex(e.Got), attestation.FormatDigestHex(e.Want))
 }
 
+// unpinnedPoolError is returned by a dial on a pool that may only carry
+// attested traffic while it is holding no pin.
+//
+// An unpinned connection in the *admitted* pool is a contradiction in terms: a
+// request reaches that pool only because a verdict admitted it, and a verdict
+// that admits carries the leaf it was formed over. So this error says a verdict
+// and the data plane disagree, which is a trust-chain failure and not a
+// transport one — and refusing beats forwarding a request the audit log would
+// then record as `allow` over a channel nothing was ever held to (SUP-428).
+type unpinnedPoolError struct{}
+
+func (*unpinnedPoolError) Error() string {
+	return "this endpoint holds no attested certificate to pin the connection to"
+}
+
 // pool is one http.Transport whose TLS handshakes are all held to the same
 // expected leaf certificate.
 //
@@ -74,6 +89,10 @@ type pool struct {
 	addr string
 	host string
 	dial DialFunc
+	// requirePin makes an empty pin a refusal rather than a wildcard. See
+	// [newAdmittedPool]. Set at construction and never written again, which is
+	// why dialTLS reads it without the lock.
+	requirePin bool
 
 	mu        sync.Mutex
 	pin       string
@@ -110,6 +129,20 @@ func newPool(hostname string, port int, dial DialFunc) *pool {
 	return p
 }
 
+// newAdmittedPool builds the pool that carries nothing but attested traffic, so
+// an empty pin is a contradiction there rather than the wildcard [newPool]
+// documents: it refuses to dial at all until it holds a leaf.
+//
+// It closes the window the ordering in [endpoint.attest] closes, a second time
+// and structurally — whatever a future reordering does to that sequence, a
+// request can no longer be forwarded as admitted over a connection the pool was
+// not holding to the attested leaf (SUP-428).
+func newAdmittedPool(hostname string, port int, dial DialFunc) *pool {
+	p := newPool(hostname, port, dial)
+	p.requirePin = true
+	return p
+}
+
 // setPin points the pool at a new expected leaf. Connections opened under the
 // old one are closed immediately, in flight or not: they are no longer covered
 // by a verdict.
@@ -129,9 +162,7 @@ func (p *pool) setPin(pin string) {
 	if !changed {
 		return
 	}
-	for _, conn := range stale {
-		_ = conn.Close()
-	}
+	discardAll(stale)
 	p.transport.CloseIdleConnections()
 }
 
@@ -141,10 +172,28 @@ func (p *pool) setPin(pin string) {
 func (p *pool) closeAll() {
 	// The connections are taken out of the map before any of them is closed:
 	// closing one calls back into [pool.forget], which takes the same lock.
-	for _, conn := range p.take() {
+	discardAll(p.take())
+	p.transport.CloseIdleConnections()
+}
+
+// discardAll drops connections the pool has revoked, without waiting for the
+// TLS shutdown each one would otherwise get.
+//
+// A connection a verdict no longer covers is not owed `close_notify`: it is
+// being refused, not finished with. That is also what keeps the sweep quick,
+// which matters because both callers can run with endpoint.mu held — see
+// [endpoint.movePool] and [endpoint.release]. `tls.Conn.Close` sets its own
+// five-second write deadline to deliver that alert, so a peer that has stopped
+// reading would otherwise stall every reader of the verdict for five seconds
+// per socket. Closing the connection underneath makes the alert's write fail at
+// once.
+func discardAll(conns []net.Conn) {
+	for _, conn := range conns {
+		if tracked, ok := conn.(*trackedConn); ok && tracked.raw != nil {
+			_ = tracked.raw.Close()
+		}
 		_ = conn.Close()
 	}
-	p.transport.CloseIdleConnections()
 }
 
 func (p *pool) take() []net.Conn {
@@ -176,6 +225,9 @@ func (p *pool) dialTLS(ctx context.Context, network, addr string) (net.Conn, err
 	p.mu.Lock()
 	pin := p.pin
 	p.mu.Unlock()
+	if p.requirePin && pin == "" {
+		return nil, &unpinnedPoolError{}
+	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
@@ -212,7 +264,7 @@ func (p *pool) dialTLS(ctx context.Context, network, addr string) (net.Conn, err
 		return nil, &leafMismatchError{Want: pin, Got: observed}
 	}
 
-	tracked := &trackedConn{Conn: conn, pool: p}
+	tracked := &trackedConn{Conn: conn, raw: raw, pool: p}
 	p.mu.Lock()
 	// What decides this connection is the pin in force now, not the one read
 	// before the handshake. A pin that changed mid-handshake and no longer
@@ -225,6 +277,11 @@ func (p *pool) dialTLS(ctx context.Context, network, addr string) (net.Conn, err
 	if current := p.pin; current != pin && !attestation.FingerprintsEqual(current, observed) {
 		p.mu.Unlock()
 		_ = conn.Close()
+		if current == "" {
+			// The verdict flipped to a denial while this handshake was in
+			// flight, so there is no leaf to name in a mismatch.
+			return nil, &unpinnedPoolError{}
+		}
 		return nil, &leafMismatchError{Want: current, Got: observed}
 	}
 	p.conns[tracked] = struct{}{}
@@ -245,6 +302,10 @@ func (p *pool) forget(conn net.Conn) {
 // handed the connection and failing never reached the upstream.
 type trackedConn struct {
 	net.Conn
+	// raw is the TCP connection underneath the TLS one, kept so that a
+	// revocation can drop the socket without waiting on a TLS alert. See
+	// [discardAll].
+	raw     net.Conn
 	pool    *pool
 	once    sync.Once
 	written atomic.Int64
