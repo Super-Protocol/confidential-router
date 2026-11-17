@@ -47,6 +47,13 @@ const PR_GATE_JOBS: Record<string, { mirroredAs: string } | { notMirrored: strin
   // commit has already landed and commitlint would be reporting on an unchangeable fact.
   commitlint: { notMirrored: 'it lints a PR title, and a trunk push has no PR' },
   nx: { mirroredAs: 'verify' },
+  // `verify` runs `test` over the whole workspace, and `@confidential-router/contract-conformance`'s
+  // own spec holds the committed schema to the same contract (SUP-237). The PR gate needs this as a
+  // separate, unconditional job only because `nx affected` cannot see that project change when the
+  // schema or the document does; `run-many` has no such blind spot.
+  'contract-conformance': {
+    notMirrored: 'verify already runs the contract-conformance test target over the whole workspace',
+  },
   'router-api-postgres': { mirroredAs: 'postgres' },
   // The console suite installs a browser and a Go toolchain and is budgeted at twenty minutes,
   // against roughly nine for everything in `main.yml`. The exposure that buys is real and
