@@ -30,6 +30,8 @@ export const INVITE_STATISTICS_QUERY = graphql(`
         redeemed
         redemptionRate
         activated
+        codeGrantMicrosMin
+        codeGrantMicrosMax
         grantedMicros
       }
     }
