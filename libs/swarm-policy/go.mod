@@ -13,7 +13,7 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/google/go-sev-guest v0.15.0 // indirect
-	github.com/google/go-tdx-guest v0.3.1 // indirect
+	github.com/google/go-tdx-guest v0.3.2-0.20261102220254-19b50fc35dcd // indirect
 	github.com/google/logger v1.1.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gowebpki/jcs v1.0.2 // indirect
