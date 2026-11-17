@@ -310,6 +310,142 @@ func TestVerifyRejectsTampering(t *testing.T) {
 	})
 }
 
+// tdxFixture is the TDX evidence; the TD quote format is TDX-only.
+func tdxFixture(t *testing.T) platformFixture {
+	t.Helper()
+	for _, fixture := range fixtures {
+		if fixture.platform == PlatformTDX {
+			return fixture
+		}
+	}
+	t.Fatal("no TDX fixture")
+	return platformFixture{}
+}
+
+// quoteAsV5 re-frames a v4 TD quote as a v5 quote of the given body type: the
+// same header with version 5, the body descriptor v5 inserts, and the same
+// body. A TDX 1.5 body is the TDX 1.0 body plus tee_tcb_svn2 and mrservicetd,
+// which the fixture's TDX 1.0 TD has no values for, so that tail is filled with
+// a marker — a value no TDREPORT field holds, which is what makes a test over
+// this quote show that the tail is not compared. The signature section is not
+// read by this package in either format, so the fixture's is kept as it is.
+func quoteAsV5(t *testing.T, quote []byte, bodyType uint16, bodySize int) []byte {
+	t.Helper()
+	if len(quote) < quoteHeaderSize+quoteBodySize {
+		t.Fatalf("fixture quote has %d bytes, expected at least %d", len(quote), quoteHeaderSize+quoteBodySize)
+	}
+	body := bytes.Repeat([]byte{0xA5}, bodySize)
+	copy(body, quote[quoteHeaderSize:quoteHeaderSize+quoteBodySize])
+
+	v5 := clone(quote[:quoteHeaderSize])
+	binary.LittleEndian.PutUint16(v5[0:2], quoteVersion5)
+	descriptor := make([]byte, quoteBodyDescriptorSize)
+	binary.LittleEndian.PutUint16(descriptor[0:2], bodyType)
+	binary.LittleEndian.PutUint32(descriptor[2:6], uint32(bodySize))
+
+	v5 = append(v5, descriptor...)
+	v5 = append(v5, body...)
+	return append(v5, quote[quoteHeaderSize+quoteBodySize:]...)
+}
+
+// Azure hosts have started issuing TD quote v5 (SUP-768). It carries the same
+// body six bytes further into the quote, under either of two body types, and
+// the values read from it — and so the verdict — must not change.
+func TestVerifyAcceptsQuoteV5(t *testing.T) {
+	fixture := tdxFixture(t)
+	base, userData := loadFixture(t, fixture)
+	for _, tt := range []struct {
+		name     string
+		bodyType uint16
+		bodySize int
+	}{
+		{"TDX 1.0 body", quoteBodyTypeTDX10, quoteBodySize},
+		{"TDX 1.5 body", quoteBodyTypeTDX15, quoteBodySizeTDX15},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := base
+			evidence.Quote = quoteAsV5(t, base.Quote, tt.bodyType, tt.bodySize)
+
+			result, err := Verify(evidence, PlatformTDX, fixtureTime)
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if got := hex.EncodeToString(result.MrEnclave); got != fixture.mrEnclave {
+				t.Errorf("mrEnclave = %s, want %s", got, fixture.mrEnclave)
+			}
+			if !bytes.Equal(result.ReportData, userData) {
+				t.Errorf("reportData = %x, want %x", result.ReportData, userData)
+			}
+
+			// Every body field is still read at its own offset rather than
+			// skipped: the tampering a v4 quote is caught by is caught here.
+			for _, field := range []struct {
+				name   string
+				offset int
+				want   string
+			}{
+				{"mrtd", 136, "mrtd does not match"},
+				{"report_data", 520, "report_data does not match"},
+			} {
+				tampered := evidence
+				tampered.Quote = clone(evidence.Quote)
+				tampered.Quote[quoteHeaderSize+quoteBodyDescriptorSize+field.offset] ^= 1
+				_, err := Verify(tampered, PlatformTDX, fixtureTime)
+				if err == nil || !strings.Contains(err.Error(), field.want) {
+					t.Errorf("tampered %s in a v5 body: error %v does not mention %q", field.name, err, field.want)
+				}
+			}
+		})
+	}
+}
+
+// A quote whose body this package cannot locate by the offsets of a TD report
+// must be rejected rather than read at offsets that happen to be in range.
+func TestVerifyRejectsUnsupportedQuoteFormats(t *testing.T) {
+	base, _ := loadFixture(t, tdxFixture(t))
+	v5 := quoteAsV5(t, base.Quote, quoteBodyTypeTDX10, quoteBodySize)
+	v5TDX15 := quoteAsV5(t, base.Quote, quoteBodyTypeTDX15, quoteBodySizeTDX15)
+	withUint16 := func(quote []byte, offset int, value uint16) []byte {
+		out := clone(quote)
+		binary.LittleEndian.PutUint16(out[offset:], value)
+		return out
+	}
+	withUint32 := func(quote []byte, offset int, value uint32) []byte {
+		out := clone(quote)
+		binary.LittleEndian.PutUint32(out[offset:], value)
+		return out
+	}
+
+	tests := []struct {
+		name  string
+		quote []byte
+		want  string
+	}{
+		{"version 3", withUint16(base.Quote, 0, 3), "TD quote version is 3"},
+		{"version 6", withUint16(base.Quote, 0, 6), "TD quote version is 6"},
+		{"SGX report body", quoteAsV5(t, base.Quote, 1, quoteBodySize), "TD quote body type is 1"},
+		{"unknown body type", quoteAsV5(t, base.Quote, 4, quoteBodySize), "TD quote body type is 4"},
+		{"TDX 1.5 size on a TDX 1.0 body", withUint32(v5, quoteHeaderSize+2, quoteBodySizeTDX15), "declares 648 bytes"},
+		{"TDX 1.0 size on a TDX 1.5 body", withUint32(v5TDX15, quoteHeaderSize+2, quoteBodySize), "declares 584 bytes"},
+		{"body descriptor cut short", v5[:quoteHeaderSize+quoteBodyDescriptorSize-3], "expected at least 54"},
+		{"TDX 1.0 body one byte short", v5[:quoteHeaderSize+quoteBodyDescriptorSize+quoteBodySize-1], "expected at least 638"},
+		{"TDX 1.5 body one byte short", v5TDX15[:quoteHeaderSize+quoteBodyDescriptorSize+quoteBodySizeTDX15-1], "expected at least 702"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := base
+			evidence.Quote = tt.quote
+			_, err := Verify(evidence, PlatformTDX, fixtureTime)
+			if err == nil {
+				t.Fatal("Verify accepted a quote it cannot parse")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not mention %q", err, tt.want)
+			}
+		})
+	}
+}
+
 // Relabelling a measured event as informational must not drop it from
 // mrEnclave: only events whose digest is the hash of their data are skipped.
 func TestRelabelledEventStaysInMrEnclave(t *testing.T) {
