@@ -154,7 +154,7 @@ export class ExternalUpstreamClient {
    * Why an external stream died mid-flight, by asking the only party that knows.
    *
    * A withdrawn verdict takes the connection down under fail-closed
-   * (`applyVerdict` → `closeAll` in `pkg/proxy/endpoint.go`), and on the wire that
+   * (`movePool` → `closeAll` in `pkg/proxy/endpoint.go`), and on the wire that
    * is indistinguishable from an upstream crash: the response was a 200 long ago,
    * so there is no status code left to carry the reason. The sidecar's `/verdicts`
    * is where the reason still exists, and this is the one place that reads it
