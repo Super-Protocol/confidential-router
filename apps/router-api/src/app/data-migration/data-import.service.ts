@@ -4,6 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager, type EntityTarget, In, type ObjectLiteral } from 'typeorm';
 import { AuthService } from '../auth/index.js';
 import { routerConfig } from '../config.js';
+import { ApiKey } from '../db/entities/api-key.entity.js';
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
@@ -140,6 +141,7 @@ export class DataImportService {
       inviteCodes,
       redemptions,
       carriedRedemptions,
+      apiKeys,
       externalEndpoints,
       models,
       measurements,
@@ -151,6 +153,7 @@ export class DataImportService {
       repository(InviteCode).find({ select: { id: true, code: true } }),
       repository(InviteRedemption).find({ select: { id: true, userId: true } }),
       repository(InviteCarriedRedemption).find({ select: { id: true } }),
+      repository(ApiKey).find({ select: { id: true, keyHash: true } }),
       repository(ExternalEndpoint).find({ select: { id: true, name: true } }),
       repository(Model).find({ select: { id: true, externalEndpointId: true } }),
       repository(TrustedMeasurement).find({ select: { id: true, measurement: true } }),
@@ -163,6 +166,7 @@ export class DataImportService {
       inviteCodes,
       redemptions,
       carriedRedemptions,
+      apiKeys,
       externalEndpoints,
       models,
       trustedMeasurements: measurements,
@@ -265,6 +269,32 @@ export class DataImportService {
       })),
     );
 
+    // After the workspaces they belong to, and with the hash exactly as exported:
+    // that column is what `ApiKeyService.authenticate` looks a presented key up
+    // by, so writing it unchanged is the whole of "the key still works" (SUP-445).
+    await insert(
+      manager,
+      ApiKey,
+      writes.apiKeys.map((key) => ({
+        id: key.id,
+        workspaceId: key.workspaceId,
+        name: key.name,
+        keyHash: key.keyHash,
+        prefix: key.prefix,
+        purpose: key.purpose,
+        modelScope: key.modelScope,
+        spendLimitMicros: numberOrNull(key.spendLimitMicros),
+        spentTotalMicros: numberOf(key.spentTotalMicros),
+        requestsPerMinute: key.requestsPerMinute,
+        tokensPerMinute: key.tokensPerMinute,
+        expiresAt: dateOrNull(key.expiresAt),
+        lastUsedAt: dateOrNull(key.lastUsedAt),
+        revokedAt: dateOrNull(key.revokedAt),
+        createdByUserId: key.createdByUserId,
+        createdAt: dateOf(key.createdAt),
+      })),
+    );
+
     await insert(
       manager,
       ExternalEndpoint,
@@ -358,6 +388,16 @@ function endpointRow(endpoint: ExportData['externalEndpoints'][number], now: Dat
     pinnedEvidenceDigest: endpoint.pinnedEvidenceDigest,
     pinnedCertFingerprint: null,
     observedCertFingerprint: null,
+    // The failure run is a verdict projection like the columns above it, so the
+    // bundle carries none of it and an import lands it empty (SUP-517).
+    // `notServingSince` is null rather than `now` because the row arrives
+    // `disabled`: nothing is expected of it until an operator enters a key and
+    // switches it on, and that write starts the clock.
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    notServingSince: null,
+    consecutiveFailures: 0,
+    upstreamUnreachable: null,
     apiKeyCiphertext: '',
     apiKeyPrefix: '',
     createdByUserId: endpoint.createdByUserId,

@@ -17,6 +17,7 @@ export type ImportSectionName =
   | 'inviteCodes'
   | 'inviteRedemptions'
   | 'inviteCarriedRedemptions'
+  | 'apiKeys'
   | 'externalEndpoints'
   | 'externalModels'
   | 'trustedMeasurements';

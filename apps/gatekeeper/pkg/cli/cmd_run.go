@@ -93,10 +93,14 @@ func newRunCommand(g *globals) *cobra.Command {
 
 		// Every endpoint is started individually so that one address already in
 		// use leaves that endpoint broken — and visible as broken — instead of
-		// taking the whole gatekeeper down with it.
+		// taking the whole gatekeeper down with it. It is also not the last
+		// attempt: the supervisor reconciles what the configuration declares
+		// against what is listening, so an endpoint that could not bind now is
+		// retried rather than left stopped for the life of the process
+		// (SUP-537).
 		for _, ep := range cfg.Endpoints {
 			if err := supervisor.Start(ctx, ep.Name); err != nil {
-				fmt.Fprintf(runLog, "starting %s: %v\n", ep.Name, err)
+				fmt.Fprintf(runLog, "starting %s: %v — it will be retried\n", ep.Name, err)
 			}
 		}
 		printRunning(runLog, g.path(), cfg)

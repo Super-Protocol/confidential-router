@@ -53,6 +53,13 @@ describe('resolveMailSettings', () => {
     expect(settings.smtp?.password).toBeUndefined();
   });
 
+  it('carries a Reply-To only when the deployment named one', () => {
+    expect(resolveMailSettings(config({ mail: { provider: 'resend', replyTo: 'support@example.com' } })).replyTo).toBe(
+      'support@example.com',
+    );
+    expect(resolveMailSettings(config({ mail: { provider: 'resend' } })).replyTo).toBeUndefined();
+  });
+
   it('builds links on the console origin, not the API', () => {
     expect(resolveMailSettings(config()).consoleUrl).toBe('https://console.example.com');
   });

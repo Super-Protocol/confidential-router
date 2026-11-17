@@ -9,6 +9,7 @@ import {
   formatPricePer1m,
   formatQuoteAge,
   formatUsd,
+  formatUsdMetered,
   microsToUsd,
   microsToUsdInput,
   shortenDigest,
@@ -34,6 +35,25 @@ describe('microsToUsd', () => {
 describe('formatUsd', () => {
   it('renders two decimals with a currency symbol', () => {
     expect(formatUsd('170650000')).toBe('$170.65');
+  });
+});
+
+describe('formatUsdMetered', () => {
+  it('prices a generation to four decimals, where cents would read as zero', () => {
+    expect(formatUsdMetered('3530')).toBe('$0.0035');
+    expect(formatUsdMetered('-3530')).toBe('-$0.0035');
+  });
+
+  it('still prints a whole amount as a ledger does', () => {
+    expect(formatUsdMetered('100000000')).toBe('$100.00');
+    expect(formatUsdMetered('-1200000')).toBe('-$1.20');
+  });
+
+  it('never shows money that moved as zero', () => {
+    // Finer than four decimals: micro-USD is the unit the API meters in.
+    expect(formatUsdMetered('7')).toBe('$0.000007');
+    expect(formatUsdMetered('-99')).toBe('-$0.000099');
+    expect(formatUsdMetered('0')).toBe('$0.00');
   });
 });
 
