@@ -697,6 +697,14 @@ your measurement list. `gatekeeper verify <endpoint>` is what answers for one.
   streams log lines, which is what a container or a systemd unit wants.
 - **SIGHUP** reloads the configuration in place. A reload that fails to load or
   validate changes nothing — a typo must not take the proxy down.
+- **Every endpoint the configuration declares is kept listening.** The
+  supervisor re-checks that, a few times a minute, against what is actually
+  bound, and starts whatever is missing: an endpoint that arrived in a reload, an
+  address that was taken a moment ago, a listener that died on its own. Binding
+  opens nothing — a fresh listener admits no traffic until its own verification
+  completes — so the only state this will not override is a stop you asked for
+  from the dashboard. A bind that keeps failing shows up as `broken` with the
+  reason, rather than as a `stopped` endpoint nothing is retrying (SUP-537).
 - **SIGINT / SIGTERM** drain the listeners (`--drain-timeout`, 30s) and exit.
 - **`gatekeeper status`** reports on a gatekeeper running in another process,
   through the `admin` socket. Without an `admin:` section there is nothing to

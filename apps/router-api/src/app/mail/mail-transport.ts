@@ -3,7 +3,7 @@ import { createTransport, type Transporter } from 'nodemailer';
 import type { MailSettings } from './mail-settings.js';
 
 /** Which flow a message belongs to — logged, and how tests find the one they want. */
-export type MailKind = 'magic-link' | 'sign-in-code' | 'welcome';
+export type MailKind = 'magic-link' | 'sign-in-code' | 'welcome' | 'operator-alert';
 
 /** An image the HTML refers to as `cid:<contentId>` rather than by URL. */
 export interface InlineImage {
@@ -73,6 +73,7 @@ const CONSOLE_LABEL: Record<MailKind, string> = {
   'magic-link': 'Magic link',
   'sign-in-code': 'Sign-in code',
   welcome: 'Welcome mail',
+  'operator-alert': 'Operator alert',
 };
 
 /**

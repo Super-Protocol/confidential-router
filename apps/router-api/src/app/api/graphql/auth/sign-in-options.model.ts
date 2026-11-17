@@ -41,4 +41,13 @@ export class SignInOptionsModel {
       'invitation code that is valid and unredeemed. Signing in to an existing account is unaffected.',
   })
   inviteRequired!: boolean;
+
+  @Field({
+    nullable: true,
+    description:
+      'A mailbox to write to from a different address when this deployment’s mail cannot reach the one a ' +
+      'viewer is holding (`mail.replyTo`). Null where none is configured. Sign-in is an emailed code, so a ' +
+      'suppressed address has no other way to ask for help.',
+  })
+  supportEmail?: string;
 }

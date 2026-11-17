@@ -4,6 +4,7 @@ import { type GraphQLSchema, lexicographicSortSchema, printSchema } from 'graphq
 import { ActivityResolver } from './activity/activity.resolver.js';
 import { ApiKeyCensusResolver } from './api-keys/api-key-census.resolver.js';
 import { ApiKeysResolver } from './api-keys/api-keys.resolver.js';
+import { SignInMailStateResolver } from './auth/sign-in-mail-state.resolver.js';
 import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
 import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
@@ -41,6 +42,7 @@ export const CONSOLE_RESOLVERS = [
   InviteAdminResolver,
   InvitesResolver,
   PreferencesResolver,
+  SignInMailStateResolver,
   SignInOptionsResolver,
   ViewerResolver,
 ] as const;

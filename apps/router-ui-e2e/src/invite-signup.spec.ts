@@ -162,7 +162,7 @@ async function mockInviteFlow(page: Page, operations: GraphQLFixtures): Promise<
   const recorded: Recorded = { events: [], signUps: [], codeRequests: [] };
   let created = false;
 
-  await page.route('**/v1/analytics/events', async (route) => {
+  await page.route('**/v1/console-events', async (route) => {
     recorded.events.push(route.request().postDataJSON() as Record<string, unknown>);
     await route.fulfill({ status: 202, body: '' });
   });
