@@ -1581,6 +1581,48 @@ serving; a hand-written zone is slower.
 - The deployment's own evidence digest changes, as on any redeploy: anyone who
   pinned the old one — a gatekeeper, a tenant — has to approve the new one.
 
+### Taking the export on a schedule
+
+The export step above is the one that is not there when it matters: production
+lost its data on 2026-10-13 because the only copy lived inside the deployment
+that died, and nobody had run an export (SUP-308, SUP-313). An export taken when
+somebody remembers is not a backup.
+
+[`tools/scheduled-export/`](../tools/scheduled-export/README.md) is a systemd
+timer for an operator's own machine that takes the bundle and the codes CSV once
+a day, verifies both against what the deployment declared, copies them to object
+storage, and says so loudly when a run fails or comes back empty. It signs in
+with `auth.bootstrapToken` — the only credential that works unattended, since
+every other sign-in path is a code mailed to a mailbox — so each run leaves a
+`Break-glass sign-in` line in the log.
+
+It is operator tooling and not part of the router: nothing in it deploys, and the
+deployment does not know it exists. Because that credential belongs to one
+deployment and a redeploy mints a new one, the timer reads it off the current
+deployment at run time — from the marketplace that made it, the same value its
+credentials dialog shows — rather than keeping a copy that a redeploy turns into
+a 401 (SUP-438). A stored `ROUTER_BOOTSTRAP_TOKEN` is still honoured, as the
+fallback for a marketplace that cannot be reached and as the whole credential
+for a deployment that was not made by one; a run that falls back says so on the
+alert issue, because a backup quietly back on a deployment-scoped secret is the
+defect re-arming itself.
+
+**A redeploy re-arms it or kills it.** The credential is one deployment's, so
+the old deployment's token is a 401 the moment the new one serves. With
+`MARKETPLACE_ORIGIN` configured the timer host finds the new token by itself and
+there is nothing to do — confirm it with one manual run. Without it, paste the
+new token into `ROUTER_BOOTSTRAP_TOKEN` in `~/.config/router-export/env` on the
+timer host and run `router-export.sh --local-only` to prove it. **A redeploy that
+skips this leaves the backup dead until the next failed run is noticed**, which
+is how the 2026-10-20 export came to 401 (SUP-438). Do it in the same window as
+the cutover, not afterwards.
+
+The right version of this is the router
+pushing its own bundle to an export target given as a deployment parameter, the
+way the SMTP password is given, so the file never transits an operator's machine
+at all. Until that exists, the timer is what stands between an incident and a
+rebuild from an empty database.
+
 ### A parked rollback is not finished until it serves a completion
 
 A deploy train ends by parking the previous deployment on its own hostnames so

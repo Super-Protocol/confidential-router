@@ -1,0 +1,12 @@
+# The alert of last resort: the export unit failed in a way that stopped the
+# script before it could speak for itself. Reached through OnFailure=, never
+# enabled on its own.
+[Unit]
+Description=Say that the production export unit failed
+Documentation=https://github.com/Super-Protocol/confidential-router/blob/main/tools/scheduled-export/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h
+ExecStart=%h/bin/router-export-alert router-export.service
+TimeoutStartSec=120
