@@ -97,6 +97,15 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
       'Per-user console settings, written lazily on first change. Everyone starts on the defaults again on the new ' +
       'deployment: the loss is one click each, and the row holds nothing that cannot be re-chosen.',
   },
+  MailAddressState: {
+    notCarried:
+      'What the mail provider has said about an address (SUP-551). The suppression list it mirrors lives at the ' +
+      'provider and survives any rebuild of ours, so the new deployment is wrong about an address only until the ' +
+      'next send to it — which produces the same bounced or suppressed webhook again, and the row with it. ' +
+      'Self-healing state, in other words, and carrying it would carry one deployment’s `failures` counts into ' +
+      'another deployment’s timeline. What is lost is the operator’s record of who was unreachable before the ' +
+      'cutover; the process log of the old deployment still has it.',
+  },
   InviteCarriedRedemption: {
     notCarried:
       'A redemption that happened on another deployment, recorded here by a codes CSV import (SUP-272). Not carried ' +

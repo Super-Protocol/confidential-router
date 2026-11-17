@@ -109,15 +109,35 @@ type endpoint struct {
 
 	mu      sync.Mutex
 	running bool
+	// wanted is whether this endpoint is *supposed* to be serving, which is a
+	// different question from whether it is. A configuration that names an
+	// endpoint wants it served — binding is not a trust decision, the listener
+	// admits nothing until a verdict says so (ADR-003 §7) — so it starts true
+	// and only [Supervisor.Stop] clears it. The gap between wanted and running
+	// is what [Supervisor.reconcile] closes.
+	wanted bool
 	// generation counts the times this endpoint has been started. A
 	// verification that completes after its listener was stopped belongs to the
 	// previous generation and is discarded rather than installed.
 	generation int
 	bindErr    string
-	listener   net.Listener
-	server     *http.Server
-	cancel     context.CancelFunc
-	loopDone   chan struct{}
+	// serveErr is why the listener died on its own: Serve returned something
+	// other than the shutdown sentinel. Separate from bindErr because the two
+	// say different things to an operator — "the address was taken" against
+	// "the socket we held went away" — and because a bind that then succeeds
+	// has to clear both.
+	serveErr string
+	listener net.Listener
+	server   *http.Server
+	cancel   context.CancelFunc
+	loopDone chan struct{}
+	// serveDone is closed when this generation's Serve goroutine has returned,
+	// and with it released the socket: [http.Server.Shutdown] only closes the
+	// listeners Serve has already registered, so a stop that lands in the
+	// window between `go server.Serve(listener)` and that registration closes
+	// nothing itself and leaves the address bound until the goroutine runs.
+	// Waiting on it is what makes "stopped" mean the port is free (SUP-704).
+	serveDone chan struct{}
 
 	verdict *verdict
 	// firstVerdict is closed once the first verification has finished, whatever
@@ -145,9 +165,10 @@ func newEndpoint(sup *Supervisor, spec config.Endpoint, tuning config.Tuning) (*
 		hostname:     hostname,
 		port:         port,
 		tuning:       tuning,
-		admittedPool: newPool(hostname, port, sup.opts.Dial),
+		admittedPool: newAdmittedPool(hostname, port, sup.opts.Dial),
 		openPool:     newPool(hostname, port, sup.opts.Dial),
 		firstVerdict: make(chan struct{}),
+		wanted:       true,
 	}
 	ep.flow = &flow{
 		stats: &ep.stats,
@@ -186,22 +207,69 @@ func (e *endpoint) sameSpec(spec config.Endpoint, tuning config.Tuning) bool {
 	return e.listen == spec.Listen && e.upstream == spec.Upstream && e.tuning == tuning
 }
 
+// startRequest is how the two ways into [endpoint.startListener] differ.
+type startRequest struct {
+	// onlyIfWanted abandons the start when the endpoint is not wanted. It is
+	// checked under the same lock the bind takes, which is the whole point:
+	// a Stop that lands on a not-running endpoint does nothing but clear the
+	// flag, so a check made before the lock would be lost to a pass already in
+	// flight and the listener would come back under an operator who stopped it.
+	onlyIfWanted bool
+	// reportRepeatedBindError logs a bind failure even when the endpoint is
+	// already carrying the same one.
+	reportRepeatedBindError bool
+}
+
 // start binds the listener and begins attesting. It is a no-op when the
-// endpoint is already running.
+// endpoint is already running. Every failure is logged: a caller that asked for
+// this endpoint by name — `run` at boot, a reload, the dashboard's start key —
+// is owed an answer even when it is the same answer as last time.
+//
+// It does not make the endpoint wanted. Both callers establish that themselves
+// — [Supervisor.Start] before the attempt, [newEndpoint] for a rebuilt one —
+// so a successful bind never invents an intent nobody expressed.
 func (e *endpoint) start(ctx context.Context) error {
+	_, err := e.startListener(ctx, startRequest{reportRepeatedBindError: true})
+	return err
+}
+
+// retry is start on the reconcile loop's behalf: identical work, except that it
+// acts only on intent it did not create, and that a bind failure the endpoint is
+// already carrying is not logged again. The loop asks a few times a minute for
+// as long as the configuration declares the endpoint, and an address someone
+// else holds would otherwise write the same line into the log for ever. The
+// reason still reaches an operator — it is on the endpoint, and so in the
+// snapshot the console reads.
+//
+// It reports whether this call is what brought the listener up, so the loop
+// counts and logs a recovery rather than a tick.
+func (e *endpoint) retry(ctx context.Context) (bool, error) {
+	return e.startListener(ctx, startRequest{onlyIfWanted: true})
+}
+
+func (e *endpoint) startListener(ctx context.Context, req startRequest) (bool, error) {
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
-		return nil
+		return false, nil
+	}
+	if req.onlyIfWanted && !e.wanted {
+		// An operator's Stop reached this lock first. Nothing to report: not
+		// starting an endpoint nobody wants is the loop working.
+		e.mu.Unlock()
+		return false, nil
 	}
 
 	listener, err := net.Listen("tcp", e.listen)
 	if err != nil {
+		report := req.reportRepeatedBindError || e.bindErr != err.Error()
 		e.bindErr = err.Error()
 		e.mu.Unlock()
 		e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
-		e.sup.log("error", e.name, "cannot bind "+e.listen+": "+err.Error())
-		return fmt.Errorf("endpoint %q: %w", e.name, err)
+		if report {
+			e.sup.log("error", e.name, "cannot bind "+e.listen+": "+err.Error())
+		}
+		return false, fmt.Errorf("endpoint %q: %w", e.name, err)
 	}
 
 	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -215,24 +283,106 @@ func (e *endpoint) start(ctx context.Context) error {
 		BaseContext:       func(net.Listener) context.Context { return loopCtx },
 	}
 
-	e.running, e.bindErr = true, ""
+	e.running = true
+	e.bindErr, e.serveErr = "", ""
 	e.generation++
 	e.listener, e.server, e.cancel = listener, server, cancel
 	e.loopDone = make(chan struct{})
+	e.serveDone = make(chan struct{})
 	e.stats.reset()
-	loopDone := e.loopDone
+	loopDone, serveDone, generation := e.loopDone, e.serveDone, e.generation
 	e.mu.Unlock()
 
 	e.sup.metrics.listening.WithLabelValues(e.name).Set(1)
 	e.sup.log("info", e.name, "listening on "+e.listen+" → "+e.upstream)
 
 	go func() {
+		// Serve closes the listener on its way out, whatever it returns, so
+		// this channel is the moment the address is free.
+		defer close(serveDone)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			e.sup.log("error", e.name, "listener stopped: "+err.Error())
+			e.serveFailed(generation, err)
 		}
 	}()
 	go e.attestLoop(loopCtx, loopDone)
-	return nil
+	return true, nil
+}
+
+// serveFailed records a listener that died on its own — Serve returned
+// something other than the shutdown sentinel — and releases what it held.
+//
+// Without it the endpoint went on reporting `confidential` with a socket that
+// no longer accepted anything: `running` stayed true because only [endpoint.stop]
+// ever cleared it, so the one state the dashboard and the console could not
+// show was the one where nothing was listening. Marking it stopped is also what
+// makes it eligible for [Supervisor.reconcile], which is what brings it back.
+//
+// The generation guard is the same one a late verdict passes: a Serve that
+// returns while a newer listener is already up belongs to a previous
+// generation and says nothing about this one.
+func (e *endpoint) serveFailed(generation int, err error) {
+	e.mu.Lock()
+	if !e.running || e.generation != generation {
+		e.mu.Unlock()
+		return
+	}
+	cancel, loopDone := e.cancel, e.loopDone
+	e.running = false
+	e.generation++
+	torn := e.generation
+	e.serveErr = err.Error()
+	// serveDone is this goroutine's own, and Serve has already closed the
+	// listener on its way here: cleared, never waited on.
+	e.listener, e.server, e.cancel, e.loopDone, e.serveDone = nil, nil, nil, nil, nil
+	// Same reasoning as stop(): an endpoint that is not being re-attested must
+	// not keep the verdict that admitted traffic.
+	e.verdict = nil
+	e.firstVerdict = make(chan struct{})
+	e.lastAttestAt, e.nextAttestAt = time.Time{}, time.Time{}
+	e.mu.Unlock()
+
+	cancel()
+	<-loopDone
+	e.release(torn)
+	e.sup.log("error", e.name, "listener stopped: "+err.Error())
+}
+
+// release drops the connections and clears the gauges of the generation that
+// has just ended — unless a newer one has already begun.
+//
+// The guard matters because the teardown above it is not instant: cancelling
+// the attestation loop waits for a check that may be inside a network call, and
+// an automatic restart can bind a new listener in that window (SUP-537). The
+// pools and the gauges belong to the endpoint, not to a generation, so closing
+// them for a generation that is already over would drop the *new* listener's
+// upstream connections and report it as not listening while it serves.
+func (e *endpoint) release(generation int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.generation != generation {
+		return
+	}
+	// Under the lock, so that a start cannot land between the check and the
+	// close. Neither pool reaches back into this endpoint.
+	e.admittedPool.closeAll()
+	e.openPool.closeAll()
+	e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
+	e.sup.metrics.admitted.WithLabelValues(e.name).Set(0)
+}
+
+// desired reports whether this endpoint is supposed to be serving.
+func (e *endpoint) desired() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.wanted
+}
+
+// setDesired records an operator's intent, which is the one thing
+// [Supervisor.reconcile] will not override.
+func (e *endpoint) setDesired(wanted bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.wanted = wanted
 }
 
 // stop drains the listener and closes every upstream connection.
@@ -242,10 +392,11 @@ func (e *endpoint) stop(ctx context.Context) error {
 		e.mu.Unlock()
 		return nil
 	}
-	server, cancel, loopDone := e.server, e.cancel, e.loopDone
+	server, cancel, loopDone, serveDone := e.server, e.cancel, e.loopDone, e.serveDone
 	e.running = false
 	e.generation++
-	e.server, e.listener, e.cancel, e.loopDone = nil, nil, nil, nil
+	torn := e.generation
+	e.server, e.listener, e.cancel, e.loopDone, e.serveDone = nil, nil, nil, nil, nil
 	// A stopped endpoint has no verdict: it is not being re-attested, so the
 	// one it had would go stale unnoticed and the next start would admit
 	// traffic on it before the first check completed.
@@ -265,11 +416,14 @@ func (e *endpoint) stop(ctx context.Context) error {
 	}
 	cancel()
 	<-loopDone
+	// The address is this endpoint's to hand over: a reload that retires an
+	// endpoint starts its replacement on the same `listen` as soon as this
+	// returns, and a bind that races the old socket's close fails for good
+	// (SUP-704). Shutdown has made Serve return — or will have stopped it from
+	// ever accepting — so this is bounded by one goroutine's wake-up.
+	<-serveDone
 
-	e.admittedPool.closeAll()
-	e.openPool.closeAll()
-	e.sup.metrics.listening.WithLabelValues(e.name).Set(0)
-	e.sup.metrics.admitted.WithLabelValues(e.name).Set(0)
+	e.release(torn)
 	e.sup.log("info", e.name, "listener stopped")
 	return err
 }
@@ -382,6 +536,17 @@ func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
 		return result
 	}
 	previous := e.verdict
+	// The data plane moves first, under the same hold of e.mu that publishes
+	// the verdict. Otherwise there is a window in which a reader of e.current()
+	// — a single-flight waiter returning from here, a first-request waiter
+	// released by firstVerdict, or any concurrent request — sees an admitted
+	// verdict while the admitted pool is still pinned to whatever the previous
+	// denial left it at. Such a request would be forwarded over a connection
+	// the pool was never holding to the attested leaf, and recorded as `allow`;
+	// and the re-pin that followed would sweep that connection out from under
+	// it mid-response (SUP-428). Publishing after the pin leaves no such
+	// window: by the time a verdict is visible, the pool already matches it.
+	e.movePool(result)
 	e.verdict = result
 	e.lastAttestAt = result.At
 	e.attesting = false
@@ -394,7 +559,7 @@ func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
 	e.mu.Unlock()
 	close(done)
 
-	e.applyVerdict(previous, result)
+	e.reportVerdict(previous, result)
 	return result
 }
 
@@ -471,23 +636,43 @@ func (e *endpoint) retryDenied(ctx context.Context, current *verdict) *verdict {
 	return current
 }
 
-// applyVerdict moves the data plane to a new verdict: it re-pins the connection
-// pool, closes what the new verdict no longer covers, and reports the change.
-func (e *endpoint) applyVerdict(previous, current *verdict) {
+// movePool moves the data plane onto a new verdict: it re-pins the admitted
+// connection pool and closes what the new verdict no longer covers.
+//
+// Called with e.mu held, so that the move and the verdict it belongs to become
+// visible together — see the comment at the call site in [endpoint.attest] for
+// why the order matters. Taking pool.mu under endpoint.mu is the lock order
+// [endpoint.release] already establishes, and nothing the pool does reaches back
+// into the endpoint: [pool.forget], which a Close calls into, takes pool.mu
+// alone, and setPin closes outside its own hold for exactly that reason.
+//
+// It has to stay quick, because every reader of the verdict is waiting on the
+// same lock. The sweep is what could have been slow, and [discardAll] is why it
+// is not: a revoked connection's socket is dropped rather than shut down
+// politely. The sweep cannot be deferred past the publish instead — the
+// transport's idle pool is not pin-aware, so a connection left in it is one a
+// newly admitted request could ride under the pin it was just revoked from.
+func (e *endpoint) movePool(current *verdict) {
 	if current.Admitted {
 		// Pinning to the observed leaf is what makes the verdict a statement
 		// about a channel rather than about a hostname. setPin closes every
 		// connection opened under the previous leaf.
 		e.admittedPool.setPin(current.Leaf)
-	} else {
-		e.admittedPool.setPin("")
-		if e.tuning.FailMode == config.FailClosed {
-			// ADR-003 §7: a flip to deny under fail-closed takes down the
-			// connections already carrying traffic, not just the next request.
-			e.admittedPool.closeAll()
-		}
+		return
 	}
+	e.admittedPool.setPin("")
+	if e.tuning.FailMode == config.FailClosed {
+		// ADR-003 §7: a flip to deny under fail-closed takes down the
+		// connections already carrying traffic, not just the next request.
+		e.admittedPool.closeAll()
+	}
+}
 
+// reportVerdict records a new verdict everywhere an operator reads one:
+// metrics, the log, the audit log and the status snapshot. It runs after
+// [endpoint.movePool] has moved the data plane and the verdict is published,
+// because none of it is on the admission path and all of it takes other locks.
+func (e *endpoint) reportVerdict(previous, current *verdict) {
 	result := "admitted"
 	if !current.Admitted {
 		result = current.Stage
@@ -584,7 +769,7 @@ func (e *endpoint) await(ctx context.Context) *verdict {
 // API.
 func (e *endpoint) snapshot() status.Endpoint {
 	e.mu.Lock()
-	running, bindErr := e.running, e.bindErr
+	running, bindErr, serveErr := e.running, e.bindErr, e.serveErr
 	current := e.verdict
 	out := status.Endpoint{
 		Name: e.name, Listen: e.listen, Upstream: e.upstream, FailMode: e.tuning.FailMode,
@@ -598,12 +783,21 @@ func (e *endpoint) snapshot() status.Endpoint {
 		out.PublishedDigest = current.Report.EvidenceDigest
 	}
 
+	if !running {
+		// Nothing is crossing a listener that is not there, whatever the reason
+		// below turns out to be.
+		out.RequestsPerSecond, out.BytesIn, out.BytesOut = 0, 0, 0
+	}
+
 	switch {
 	case bindErr != "":
 		out.Health, out.Reason = status.Broken, "cannot bind "+e.listen+": "+bindErr
+	case serveErr != "":
+		// Broken rather than stopped: `stopped` is what an operator asked for,
+		// and a listener that went away on its own is the opposite of that.
+		out.Health, out.Reason = status.Broken, "listener stopped: "+serveErr
 	case !running:
 		out.Health, out.Reason = status.Stopped, "listener stopped"
-		out.RequestsPerSecond, out.BytesIn, out.BytesOut = 0, 0, 0
 	case current == nil:
 		out.Health, out.Reason = status.Attesting, "waiting for the first verdict"
 	case current.Admitted:

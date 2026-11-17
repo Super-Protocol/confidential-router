@@ -51,6 +51,21 @@ afterEach(() => {
  * is the point of writing the migration against the `Table` API in the first
  * place.
  */
+/**
+ * Whether one named index exists, read back from the live schema.
+ *
+ * Through TypeORM's table introspection for the same reason {@link isNullable}
+ * is: the migration is written against the dialect-neutral `Table` API, so the
+ * assertion has to read the same on both dialects.
+ */
+async function hasIndex(queryRunner: QueryRunner, table: string, name: string): Promise<boolean> {
+  const found = await queryRunner.getTable(table);
+  if (!found) {
+    throw new Error(`${table} does not exist, so nothing can be concluded about its indices.`);
+  }
+  return found.indices.some((index) => index.name === name);
+}
+
 async function isNullable(queryRunner: QueryRunner, table: string, column: string): Promise<boolean> {
   const found = (await queryRunner.getTable(table))?.findColumnByName(column);
   if (!found) {
@@ -111,8 +126,57 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-498 makes the evidence retention window enforceable: the two
+      // documents it governs come off NOT NULL, `payloadStrippedAt` records when
+      // the sweep took them, and the holder lookup gets its two indexes on
+      // `generations`. First because this migration is numbered last — it was
+      // renumbered past SUP-466's, SUP-551's and SUP-517's when they landed on
+      // `main` during review, because a migration is appended, never inserted.
+      // The undo can only restore the NOT NULLs on a database the sweep has not
+      // run on yet, which is this one.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(false);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(false);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(false);
+      // The identity indices survive the SQLite column rebuild, which is the
+      // half of this migration that could have taken them with it.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'evidenceDigest')).toBe(true);
+      // And the holder indexes go with it, off a table the rebuild never touched.
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_evidenceSnapshotId')).toBe(false);
+
+      // SUP-517's failure-run columns are five additive columns on one table;
+      // the next undo drops only those.
+      expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
+      await dataSource.undoLastMigration();
+      for (const column of [
+        'lastSuccessAt',
+        'lastFailureAt',
+        'notServingSince',
+        'consecutiveFailures',
+        'upstreamUnreachable',
+      ]) {
+        expect(await queryRunner.hasColumn('external_endpoints', column)).toBe(false);
+      }
+      expect(await queryRunner.hasColumn('external_endpoints', 'lastCheckedAt')).toBe(true);
+
+      // SUP-551's mail address states are one additive table; the next undo
+      // drops only that and leaves the rest of the schema alone.
+      expect(await queryRunner.hasTable('mail_address_states')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('mail_address_states')).toBe(false);
+
+      // SUP-466's client dimension is one additive column; the next undo drops
+      // only that and leaves the rest of the metering row alone.
+      expect(await queryRunner.hasColumn('generations', 'client')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('generations', 'client')).toBe(false);
+      expect(await queryRunner.hasColumn('generations', 'clientIpHash')).toBe(true);
+
       // SUP-260 drops the operator-declared TEE label from both catalogue
-      // tables; the first undo puts the two columns back and nothing else.
+      // tables; the next undo puts the two columns back and nothing else.
       expect(await queryRunner.hasColumn('endpoints', 'tee')).toBe(false);
       expect(await queryRunner.hasColumn('models', 'tee')).toBe(false);
       await dataSource.undoLastMigration();

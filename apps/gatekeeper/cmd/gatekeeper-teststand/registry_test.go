@@ -15,7 +15,12 @@ import (
 // package tests against; see its testdata/README.md. The stand serves the same
 // directory, so what the e2e suite sees as `inRegistry` is a real lookup
 // against the real layout.
-const registryLayout = "../../pkg/attestation/attestedroot/testdata/registry"
+//
+// The path crosses into the swarm-evidence-go module, where that package now
+// lives (SUP-647). It is spelled relatively rather than copied: two cuts of the
+// signature layout would be two things to keep in step, and the whole point of
+// the stand is that this lookup is the real one.
+const registryLayout = "../../../../libs/swarm-evidence-go/attestation/attestedroot/testdata/registry"
 
 // azureMeasurement is signed in the layout's sev-snp-azure/pre-release folder
 // (the apps-448 cloud); unknownMeasurement is signed nowhere.

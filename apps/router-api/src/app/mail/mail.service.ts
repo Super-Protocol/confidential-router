@@ -2,9 +2,16 @@ import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleD
 import { ConfigType } from '@nestjs/config';
 import { routerConfig } from '../config.js';
 import { type MailSettings, resolveMailSettings } from './mail-settings.js';
-import { MAIL_TRANSPORT, type MailKind, type MailTransport } from './mail-transport.js';
+import { MAIL_TRANSPORT, type MailKind, MailProviderError, type MailTransport } from './mail-transport.js';
 import { RecipientWindow } from './recipient-window.js';
-import { type RenderedMail, renderMagicLinkMail, renderSignInCodeMail, renderWelcomeMail } from './templates.js';
+import {
+  type OperatorAlertMail,
+  type RenderedMail,
+  renderMagicLinkMail,
+  renderOperatorAlertMail,
+  renderSignInCodeMail,
+  renderWelcomeMail,
+} from './templates.js';
 
 /**
  * Where the mail path stands, as `/health` reports it.
@@ -25,7 +32,12 @@ export interface MailStatus {
    * `failing` — the last one did not.
    */
   state: 'disabled' | 'unverified' | 'ok' | 'failing';
-  reason?: MailFailureReason;
+  /**
+   * Never `rejected`: that one is about a message rather than the mailer and
+   * does not reach `state` at all, so the type says so rather than the
+   * convention — see {@link MailFailureReason} and `reportFailure`.
+   */
+  reason?: MailerFailureReason;
   /** ISO time of the check or send `state` is from. */
   since?: string;
 }
@@ -33,10 +45,67 @@ export interface MailStatus {
 /**
  * `unreachable` is the one the egress question is about: the connection never
  * reached a mail server — DNS, a refused or timed-out connect, a dropped
- * socket. `auth_failed` means it did and the credentials were refused;
- * `rejected` is the server refusing the message itself.
+ * socket. `auth_failed` means it did and the credentials were refused.
+ *
+ * `recipient_refused` is the only one that is about a single message rather
+ * than the mailer, and so the only one that neither fails the request nor
+ * makes `state` `failing` — see `deliver` and `reportFailure`. It is named
+ * for the recipient on purpose: "the server refused this message" is far
+ * wider than it sounds. A relay that will not take our *sender* — an
+ * unverified domain, a suspended account — refuses at the same SMTP stage,
+ * and so does one that will not carry the body at all; in both of those
+ * nothing can be sent for anybody, which is the mailer being down. Everything
+ * that is not provably about the recipient lands in `error` and flips the
+ * state: a false `failing` costs one uniform refusal that the next good send
+ * clears, and a false `ok` costs a `/health` that lies while the send route
+ * goes back to answering an account differently from a stranger.
  */
-export type MailFailureReason = 'unreachable' | 'auth_failed' | 'rejected' | 'error';
+export type MailFailureReason = 'unreachable' | 'auth_failed' | 'recipient_refused' | 'error';
+
+/** The reasons that are the mailer's, and so the ones `/health` can report. */
+export type MailerFailureReason = Exclude<MailFailureReason, 'recipient_refused'>;
+
+/**
+ * Whether the provider named the recipient it would not take.
+ *
+ * nodemailer sets `rejected` only where a recipient was the thing refused:
+ * `_actionRCPT` on the all-recipients-rejected path, and the per-recipient
+ * LMTP one (`smtp-connection/index.js`, nodemailer 8.0.11). The refusals that
+ * are *not* the recipient carry the same `EENVELOPE` / `EMESSAGE` code and no
+ * `rejected` at all — a `MAIL FROM` the relay would not accept, a `DATA`
+ * stage it refused, the API-level envelope checks — which is exactly the
+ * distinction the state needs and the code alone does not give.
+ *
+ * The code still has to agree, though it adds nothing on its own. Only those
+ * two stages can refuse a recipient, so anything else carrying a `rejected`
+ * list is a transport error with a field we did not expect — and reading that
+ * as one address would suppress the state flip, which is the direction that
+ * costs a lying `/health` rather than one spare refusal.
+ */
+function namesRefusedRecipient(error: unknown): boolean {
+  const rejected = (error as { rejected?: unknown } | null)?.rejected;
+  if (!Array.isArray(rejected) || rejected.length === 0) {
+    return false;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'EENVELOPE' || code === 'EMESSAGE';
+}
+
+/** One operator alert, before it has recipients or a console URL. */
+export type OperatorAlert = Omit<OperatorAlertMail, 'consoleUrl'>;
+
+/**
+ * What one alert's send actually did — the difference between "a channel is
+ * configured" and "a human was written to", which is the whole point of SUP-535.
+ */
+export interface OperatorAlertDelivery {
+  /** Addresses tried, after de-duplication and after dropping undeliverable ones. */
+  attempted: number;
+  delivered: string[];
+  failed: Array<{ to: string; reason: MailFailureReason }>;
+  /** Why nothing was tried, when nothing was: no mail provider, or nobody named. */
+  skipped: 'no_provider' | 'no_recipients' | null;
+}
 
 /**
  * Why a mail this deployment was asked for never left the process.
@@ -114,6 +183,14 @@ const UNREACHABLE_CODES = new Set([
 ]);
 
 export function failureReasonOf(error: unknown): MailFailureReason {
+  // A provider that can name the cause has already done so. nodemailer cannot,
+  // and leaves an SMTP `code` and a `rejected` list to read instead.
+  if (error instanceof MailProviderError) {
+    return error.failure;
+  }
+  if (namesRefusedRecipient(error)) {
+    return 'recipient_refused';
+  }
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === 'string') {
     if (UNREACHABLE_CODES.has(code)) {
@@ -121,9 +198,6 @@ export function failureReasonOf(error: unknown): MailFailureReason {
     }
     if (code === 'EAUTH') {
       return 'auth_failed';
-    }
-    if (code === 'EENVELOPE' || code === 'EMESSAGE') {
-      return 'rejected';
     }
   }
   // `fetch` (Resend) fails a connect with a TypeError whose cause carries the code.
@@ -174,10 +248,10 @@ const WITHHELD_COUNTER: Record<MailWithheldReason, keyof typeof EMPTY_TALLY> = {
  * set and delivered through whichever provider is configured (SUP-269).
  *
  * Two kinds of caller, two contracts. A sign-in code or link is awaited and
- * rejects when it could not be sent; what the requester then sees is Better
- * Auth's decision, and for a code it is nothing — the send route swallows the
- * failure and answers every address alike. Awaiting leaks nothing either way:
- * a code is mailed to any address that asks, account or not, so the answer and
+ * rejects when it could not be sent, and that rejection is what the requester
+ * is told about: a 503 from either route, the same one for every address
+ * (SUP-460, `mail-send-failure.plugin.ts`). Awaiting leaks nothing by it — a
+ * code is mailed to any address that asks, account or not, so the answer and
  * the time it takes are the same for both. The welcome mail is fire-and-forget:
  * a sign-up must not fail because the greeting did not go out. Every failure
  * is the operator's to see, so each goes to the log at error level and into
@@ -265,7 +339,10 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
           this.record({ state: 'ok' });
           this.logger.log(`SMTP server ${this.describeSmtp()} accepted the connection and credentials.`);
         },
-        (error: unknown) => this.reportFailure('verify', error),
+        (error: unknown) => {
+          // The reason is `deliver`'s to act on; here it only has to be recorded.
+          this.reportFailure('verify', error);
+        },
       ),
     );
   }
@@ -293,7 +370,10 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
    * A recipient past their hourly allowance is the one case that resolves
    * without sending: the allowance exists so that nobody can flood somebody
    * else's inbox, and answering the flooder differently would hand them a way
-   * to tell when the victim's sign-in has been silenced.
+   * to tell when the victim's sign-in has been silenced. Nothing downstream
+   * can tell it from a send either — the route's refusal is decided from
+   * `status()` and not from whether a particular request reached `deliver`
+   * (`mail-send-failure.plugin.ts`).
    */
   async sendSignInCode(email: string, code: string): Promise<void> {
     if (!this.codeWindow.admit(email)) {
@@ -324,6 +404,45 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
     );
   }
 
+  /**
+   * An operator alert, to every address that was named (SUP-535).
+   *
+   * Awaited, and it never rejects: the caller is a background pass that has
+   * already written the outage to the log, the timeline and `/health`, and a mail
+   * server that is down must not turn a detected outage into an undetected one.
+   * What comes back says which addresses took it, so `/health` and the admin test
+   * can report delivery rather than configuration.
+   *
+   * One message per recipient rather than one with several `To:` addresses: a
+   * provider that refuses one address refuses the whole envelope, and the
+   * operator who would then not be told is the one whose address was fine.
+   */
+  async sendOperatorAlert(alert: OperatorAlert, recipients: readonly string[]): Promise<OperatorAlertDelivery> {
+    if (!this.enabled) {
+      return { attempted: 0, delivered: [], failed: [], skipped: 'no_provider' };
+    }
+    const to = [...new Set(recipients.map((address) => address.trim()).filter((address) => address.length > 0))].filter(
+      (address) => !undeliverable(address),
+    );
+    if (to.length === 0) {
+      return { attempted: 0, delivered: [], failed: [], skipped: 'no_recipients' };
+    }
+
+    const mail = renderOperatorAlertMail({ ...alert, consoleUrl: this.settings.consoleUrl });
+    const delivery: OperatorAlertDelivery = { attempted: to.length, delivered: [], failed: [], skipped: null };
+    for (const address of to) {
+      try {
+        await this.transport.send({ to: address, kind: 'operator-alert', ...mail });
+        this.record({ state: 'ok' });
+        delivery.delivered.push(address);
+      } catch (error) {
+        this.reportFailure('operator-alert', error);
+        delivery.failed.push({ to: address, reason: failureReasonOf(error) });
+      }
+    }
+    return delivery;
+  }
+
   private async deliver(job: {
     to: string;
     kind: MailKind;
@@ -337,7 +456,17 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
       await this.transport.send({ to, kind, link, code, ...mail });
       this.record({ state: 'ok' });
     } catch (error) {
-      this.reportFailure(kind, error);
+      // A recipient the server will not take resolves, like a send this
+      // deployment withheld: it is the one failure that is about the address
+      // the caller named rather than about this deployment, so answering it
+      // differently would tell a stranger apart from an account holder
+      // wherever an address can be both refused and registered — a suppressed
+      // recipient, a mailbox over quota. "Try again in a moment" would be a
+      // lie as well; nothing about a retry changes it. The operator sees it in
+      // the log, and SUP-462 is what will count it.
+      if (this.reportFailure(kind, error) === 'recipient_refused') {
+        return;
+      }
       if (job.rethrow) {
         throw error;
       }
@@ -349,9 +478,27 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
     this.pending.add(tracked);
   }
 
-  private reportFailure(what: MailKind | 'verify', error: unknown): void {
+  /**
+   * Logs a failure, and decides whether it was the *mailer* that failed.
+   *
+   * `recipient_refused` is not: the server took the connection, the
+   * credentials and our sender, and would not take the one address this
+   * message named. Letting that flip the deployment-wide state made the state
+   * settable by anyone who could get one send attempted — a bogus address
+   * through the fire-and-forget welcome mail, or one unspent invitation and a
+   * recipient the relay refuses — and `mail-send-failure.plugin.ts` answers
+   * the send route from that state, so an inducible `failing` is an inducible
+   * refusal. Everything else is the mailer and still flips it, including the
+   * refusals that merely look like this one: see {@link MailFailureReason} for
+   * why the line is drawn at the recipient and defaults the other way.
+   *
+   * Returns the reason, which is also what `deliver` decides on.
+   */
+  private reportFailure(what: MailKind | 'verify', error: unknown): MailFailureReason {
     const reason = failureReasonOf(error);
-    this.record({ state: 'failing', reason });
+    if (reason !== 'recipient_refused') {
+      this.record({ state: 'failing', reason });
+    }
     const where = this.settings.provider === 'smtp' ? ` (SMTP ${this.describeSmtp()})` : ` (${this.settings.provider})`;
     const hint =
       reason === 'unreachable'
@@ -363,6 +510,7 @@ export class MailService implements OnApplicationBootstrap, OnModuleDestroy {
           : '';
     const action = what === 'verify' ? 'Mail check failed' : `The "${what}" email was not delivered`;
     this.logger.error(`${action}${where}: ${messageOf(error)}.${hint}`);
+    return reason;
   }
 
   private record(next: Pick<MailStatus, 'state' | 'reason'>): void {

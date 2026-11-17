@@ -35,7 +35,8 @@ type Documents = {
     "\n  query TrustedMeasurements {\n    trustedMeasurements {\n      id\n      measurement\n      note\n      addedByEmail\n      addedAt\n      admits\n    }\n  }\n": typeof types.TrustedMeasurementsDocument,
     "\n  mutation AddTrustedMeasurement($input: AddTrustedMeasurementInput!) {\n    addTrustedMeasurement(input: $input) {\n      id\n      measurement\n      note\n      addedByEmail\n      addedAt\n      admits\n    }\n  }\n": typeof types.AddTrustedMeasurementDocument,
     "\n  mutation RemoveTrustedMeasurement($id: ID!) {\n    removeTrustedMeasurement(id: $id)\n  }\n": typeof types.RemoveTrustedMeasurementDocument,
-    "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n": typeof types.SignInOptionsDocument,
+    "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n      supportEmail\n    }\n  }\n": typeof types.SignInOptionsDocument,
+    "\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n": typeof types.SignInMailStateDocument,
     "\n  query SignedIn {\n    me {\n      id\n    }\n  }\n": typeof types.SignedInDocument,
     "\n  query ChatScreen {\n    chatSettings {\n      enabled\n      maxMessageChars\n      maxThreads\n      maxMessagesPerThread\n      historyStorage\n      chatModelIds\n    }\n    routerEndpoint {\n      ...EndpointEvidenceFields\n    }\n    models {\n      id\n      name\n      contextLength\n      capabilities\n      tee\n      origin\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n      externalUpstream {\n        ...ExternalUpstreamFields\n      }\n    }\n  }\n": typeof types.ChatScreenDocument,
     "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n": typeof types.ChatCredentialDocument,
@@ -49,6 +50,7 @@ type Documents = {
     "\n  query Credits($workspaceId: ID!, $first: Int!, $after: String) {\n    creditBalance(workspaceId: $workspaceId) {\n      ...CreditBalanceFields\n    }\n    creditTransactions(workspaceId: $workspaceId, first: $first, after: $after) {\n      totalCount\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n      edges {\n        cursor\n        node {\n          id\n          createdAt\n          kind\n          amountMicros\n          reference\n          description\n        }\n      }\n    }\n  }\n": typeof types.CreditsDocument,
     "\n  mutation CreateCheckout($input: CreateCheckoutInput!) {\n    createCheckout(input: $input) {\n      url\n      ref\n    }\n  }\n": typeof types.CreateCheckoutDocument,
     "\n  mutation SetAutoTopUp($input: SetAutoTopUpInput!) {\n    setAutoTopUp(input: $input) {\n      ...CreditBalanceFields\n    }\n  }\n": typeof types.SetAutoTopUpDocument,
+    "\n  query DeploymentDigest {\n    routerEndpoint {\n      id\n      hostname\n      evidenceState\n      latestEvidence {\n        id\n        issuedAt\n        tee\n        evidenceDigest\n        evidenceDigestHex\n      }\n    }\n  }\n": typeof types.DeploymentDigestDocument,
     "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    tee\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    certFingerprintHex\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      fingerprintHex\n      isRoot\n    }\n    jws\n  }\n": typeof types.EvidenceSnapshotFieldsFragmentDoc,
     "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    evidenceState\n    declaredImages {\n      name\n      digest\n    }\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n": typeof types.EndpointEvidenceFieldsFragmentDoc,
     "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n": typeof types.RefreshEvidenceDocument,
@@ -96,7 +98,8 @@ const documents: Documents = {
     "\n  query TrustedMeasurements {\n    trustedMeasurements {\n      id\n      measurement\n      note\n      addedByEmail\n      addedAt\n      admits\n    }\n  }\n": types.TrustedMeasurementsDocument,
     "\n  mutation AddTrustedMeasurement($input: AddTrustedMeasurementInput!) {\n    addTrustedMeasurement(input: $input) {\n      id\n      measurement\n      note\n      addedByEmail\n      addedAt\n      admits\n    }\n  }\n": types.AddTrustedMeasurementDocument,
     "\n  mutation RemoveTrustedMeasurement($id: ID!) {\n    removeTrustedMeasurement(id: $id)\n  }\n": types.RemoveTrustedMeasurementDocument,
-    "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n": types.SignInOptionsDocument,
+    "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n      supportEmail\n    }\n  }\n": types.SignInOptionsDocument,
+    "\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n": types.SignInMailStateDocument,
     "\n  query SignedIn {\n    me {\n      id\n    }\n  }\n": types.SignedInDocument,
     "\n  query ChatScreen {\n    chatSettings {\n      enabled\n      maxMessageChars\n      maxThreads\n      maxMessagesPerThread\n      historyStorage\n      chatModelIds\n    }\n    routerEndpoint {\n      ...EndpointEvidenceFields\n    }\n    models {\n      id\n      name\n      contextLength\n      capabilities\n      tee\n      origin\n      pricing {\n        promptPer1m\n        completionPer1m\n      }\n      endpoint {\n        ...EndpointEvidenceFields\n      }\n      externalUpstream {\n        ...ExternalUpstreamFields\n      }\n    }\n  }\n": types.ChatScreenDocument,
     "\n  mutation ChatCredential($input: ChatCredentialInput!) {\n    chatCredential(input: $input) {\n      apiKeyId\n      secret\n      expiresAt\n      baseUrl\n      modelScope\n    }\n  }\n": types.ChatCredentialDocument,
@@ -110,6 +113,7 @@ const documents: Documents = {
     "\n  query Credits($workspaceId: ID!, $first: Int!, $after: String) {\n    creditBalance(workspaceId: $workspaceId) {\n      ...CreditBalanceFields\n    }\n    creditTransactions(workspaceId: $workspaceId, first: $first, after: $after) {\n      totalCount\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n      edges {\n        cursor\n        node {\n          id\n          createdAt\n          kind\n          amountMicros\n          reference\n          description\n        }\n      }\n    }\n  }\n": types.CreditsDocument,
     "\n  mutation CreateCheckout($input: CreateCheckoutInput!) {\n    createCheckout(input: $input) {\n      url\n      ref\n    }\n  }\n": types.CreateCheckoutDocument,
     "\n  mutation SetAutoTopUp($input: SetAutoTopUpInput!) {\n    setAutoTopUp(input: $input) {\n      ...CreditBalanceFields\n    }\n  }\n": types.SetAutoTopUpDocument,
+    "\n  query DeploymentDigest {\n    routerEndpoint {\n      id\n      hostname\n      evidenceState\n      latestEvidence {\n        id\n        issuedAt\n        tee\n        evidenceDigest\n        evidenceDigestHex\n      }\n    }\n  }\n": types.DeploymentDigestDocument,
     "\n  fragment EvidenceSnapshotFields on EvidenceSnapshot {\n    id\n    endpointId\n    issuedAt\n    fetchedAt\n    quoteAgeSeconds\n    quoteFormat\n    tee\n    evidenceDigest\n    evidenceDigestHex\n    certFingerprint\n    certFingerprintHex\n    containerImages\n    measurements {\n      name\n      value\n    }\n    chain {\n      subject\n      issuer\n      notAfter\n      fingerprint\n      fingerprintHex\n      isRoot\n    }\n    jws\n  }\n": types.EvidenceSnapshotFieldsFragmentDoc,
     "\n  fragment EndpointEvidenceFields on Endpoint {\n    id\n    name\n    hostname\n    evidenceState\n    declaredImages {\n      name\n      digest\n    }\n    latestEvidence {\n      ...EvidenceSnapshotFields\n    }\n  }\n": types.EndpointEvidenceFieldsFragmentDoc,
     "\n  mutation RefreshEvidence($endpointId: ID!) {\n    refreshEvidence(endpointId: $endpointId) {\n      ...EvidenceSnapshotFields\n    }\n  }\n": types.RefreshEvidenceDocument,
@@ -237,7 +241,11 @@ export function graphql(source: "\n  mutation RemoveTrustedMeasurement($id: ID!)
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
-export function graphql(source: "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n"): (typeof documents)["\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n    }\n  }\n"];
+export function graphql(source: "\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n      supportEmail\n    }\n  }\n"): (typeof documents)["\n  query SignInOptions {\n    signInOptions {\n      bootstrap\n      adminRecovery\n      github\n      google\n      emailCode\n      emailCodeLength\n      magicLink\n      inviteRequired\n      supportEmail\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n"): (typeof documents)["\n  query SignInMailState($email: String!) {\n    signInMailState(email: $email) {\n      state\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
@@ -290,6 +298,10 @@ export function graphql(source: "\n  mutation CreateCheckout($input: CreateCheck
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  mutation SetAutoTopUp($input: SetAutoTopUpInput!) {\n    setAutoTopUp(input: $input) {\n      ...CreditBalanceFields\n    }\n  }\n"): (typeof documents)["\n  mutation SetAutoTopUp($input: SetAutoTopUpInput!) {\n    setAutoTopUp(input: $input) {\n      ...CreditBalanceFields\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query DeploymentDigest {\n    routerEndpoint {\n      id\n      hostname\n      evidenceState\n      latestEvidence {\n        id\n        issuedAt\n        tee\n        evidenceDigest\n        evidenceDigestHex\n      }\n    }\n  }\n"): (typeof documents)["\n  query DeploymentDigest {\n    routerEndpoint {\n      id\n      hostname\n      evidenceState\n      latestEvidence {\n        id\n        issuedAt\n        tee\n        evidenceDigest\n        evidenceDigestHex\n      }\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

@@ -2,6 +2,8 @@ import type { MockLink } from '@apollo/client/testing';
 import { MockedProvider } from '@apollo/client/testing/react';
 import { type RenderOptions, type RenderResult, render } from '@testing-library/react';
 import type * as React from 'react';
+import { signInMailStateMock } from './components/auth/auth-mocks';
+import { deploymentDigestMock } from './components/evidence/evidence-mocks';
 import { feedbackOfferMock } from './components/feedback/feedback-mocks';
 import { SESSION_QUERY, SessionProvider } from './components/session/session-provider';
 import { VIEWER_IS_ADMIN_QUERY } from './components/session/use-viewer-is-admin';
@@ -56,13 +58,19 @@ export interface RenderWithSessionOptions extends Omit<RenderOptions, 'wrapper'>
  * operations but never read the viewer. `SessionProvider` calls `useRouter`,
  * which throws outside an app-router tree, so wrapping in it would force every
  * such test to mock `next/navigation` for a provider it does not use.
+ *
+ * `signInMailStateMock()` is appended for the reason `feedbackOfferMock()` is
+ * appended below: the code-entry step asks whether the address it just mailed
+ * is one the provider is dropping (SUP-551), and a sign-in test that had to
+ * remember to stub that would be a test about the wrong thing. A caller that
+ * cares passes its own — the first matching mock wins.
  */
 export function renderWithApollo(
   ui: React.ReactElement,
   { mocks = [], ...rest }: RenderWithSessionOptions = {},
 ): RenderResult {
   return render(ui, {
-    wrapper: ({ children }) => <MockedProvider mocks={mocks}>{children}</MockedProvider>,
+    wrapper: ({ children }) => <MockedProvider mocks={[...mocks, signInMailStateMock()]}>{children}</MockedProvider>,
     ...rest,
   });
 }
@@ -70,20 +78,21 @@ export function renderWithApollo(
 /**
  * Renders inside the shell's providers.
  *
- * `feedbackOfferMock()` and `isAdminMock(false)` are appended to whatever the
- * caller passed, rather than left to each suite: `AppShell` asks for the offer
- * on every screen and `SessionProvider` asks for admin membership on every page,
- * and a test that forgot to stub either would fill its output with Apollo's "no
- * more mocked responses" warnings for queries it is not about. A caller that
- * cares passes its own — the first matching mock wins, so `isAdminMock(true)` in
- * `mocks` takes precedence over the default here.
+ * `feedbackOfferMock()`, `isAdminMock(false)` and `deploymentDigestMock()` are
+ * appended to whatever the caller passed, rather than left to each suite:
+ * `AppShell` asks for the offer on every screen, `SessionProvider` asks for
+ * admin membership on every page, and Overview and the API Keys page both mount
+ * `DeploymentDigest`. A test that forgot to stub any of them would fill its
+ * output with Apollo's "no more mocked responses" warnings for queries it is not
+ * about. A caller that cares passes its own — the first matching mock wins, so
+ * `isAdminMock(true)` in `mocks` takes precedence over the default here.
  */
 export function renderWithSession(ui: React.ReactElement, options: RenderWithSessionOptions = {}): RenderResult {
   const { mocks = [sessionMock()], ...rest } = options;
 
   return render(ui, {
     wrapper: ({ children }) => (
-      <MockedProvider mocks={[...mocks, feedbackOfferMock(), isAdminMock(false)]}>
+      <MockedProvider mocks={[...mocks, feedbackOfferMock(), isAdminMock(false), deploymentDigestMock()]}>
         <SessionProvider>{children}</SessionProvider>
       </MockedProvider>
     ),

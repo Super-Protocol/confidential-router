@@ -25,6 +25,17 @@ const name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'must be a lowercase 
 export const MIN_REATTEST_INTERVAL_MS = 60_000;
 export const MAX_REATTEST_INTERVAL_MS = 3_600_000;
 
+/**
+ * How old a bundle may be before the verifiers that read one reject it: the
+ * console's chat gate (`evidence-gate.ts`, `MAX_BUNDLE_AGE_MS`), the browser
+ * extension and the Gatekeeper all draw the line at 24 hours.
+ *
+ * Not a knob — it is somebody else's rule, restated here because
+ * `externalEndpoints.evidenceStaleAfter` is only an *alert* if it fires on the
+ * near side of it (SUP-615).
+ */
+export const RELAYED_EVIDENCE_REJECTED_AFTER_MS = 24 * 60 * 60 * 1000;
+
 const ServerSchema = z
   .strictObject({
     port: integerish().pipe(z.number().int().min(1).max(65535)).prefault(3000),
@@ -192,6 +203,18 @@ const EvidenceSchema = z
   .strictObject({
     pollInterval: durationMs('5m'),
     freshnessWindow: durationMs('24h'),
+    /**
+     * How often the retention sweep removes the bundle and JWS of publications
+     * past their holders' `evidenceRetentionDays` (SUP-498).
+     *
+     * Six hours rather than daily: the window is measured in days, so the pass
+     * only has to be frequent enough that a deployment restarted at an awkward
+     * hour still runs one, and often enough that a first-ever pass drains its
+     * backlog in a day rather than a week. `0ms` switches the sweep off, which
+     * makes the deployment publish a period it does not keep — the service says
+     * so at `warn` on every boot.
+     */
+    retentionSweepInterval: durationMs('6h'),
   })
   .prefault({});
 
@@ -382,6 +405,34 @@ const MailSchema = z
      */
     consoleUrl: z.url().optional(),
     resendApiKey: optionalSecret(1),
+    /**
+     * Signs the provider's delivery notifications (SUP-551).
+     *
+     * Unset, `POST /v1/webhooks/resend` is a 404 and this deployment learns
+     * nothing about what happened to a message after the relay took it — which
+     * is the state every deployment before this was in. It is the Svix signing
+     * secret the provider shows when the endpoint is created (`whsec_…`), and
+     * it is read whatever `provider` is set to: production sends through the
+     * same provider's SMTP relay, and the events are the account's rather than
+     * the transport's.
+     */
+    webhookSecret: optionalSecret(16),
+    /**
+     * Provider deliveries accepted per minute per source address.
+     *
+     * The signature is the authority, not this; the budget exists so that an
+     * unsigned flood cannot spend the service's time on HMAC verification.
+     */
+    webhooksPerMinute: integerish().pipe(z.number().int().positive()).prefault(120),
+    /**
+     * How often one source address may ask whether an address is being
+     * rejected (`signInMailState`).
+     *
+     * The console asks once per code-entry screen. The budget is what stops the
+     * query being used to walk a list of addresses looking for the ones the
+     * provider has suppressed.
+     */
+    stateLookupsPerMinute: integerish().pipe(z.number().int().positive()).prefault(30),
     smtp: z
       .strictObject({
         host: z.string().trim().min(1),
@@ -710,6 +761,36 @@ const ExternalEndpointsSchema = z
     /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
     statusPollInterval: durationMs('5s'),
     /**
+     * When a run of failed checks against a registered upstream stops being noise
+     * and becomes an outage worth waking somebody for (SUP-517).
+     *
+     * A threshold rather than a constant because what counts as an outage is a
+     * property of the deployment, not of the code: a stand that re-points
+     * endpoints all afternoon wants a looser one than production, where a model
+     * that has not served for a quarter of an hour is the only thing anybody
+     * cares about.
+     *
+     * Both halves, because they miss different failures. `afterFailures` is the
+     * honest unit while checks are happening on schedule and says nothing at all
+     * when the checking itself has stopped — a sidecar that never answers leaves
+     * every row at `pending` and increments no counter. `afterNoSuccess` notices
+     * that, and is what the 30-hour outage this comes from would have tripped
+     * within fifteen minutes. `0` disables either.
+     */
+    outage: z
+      .strictObject({
+        /**
+         * Distinct failed checks in a row. Three, against a 10-minute
+         * re-attestation, is roughly half an hour of a model refusing every
+         * request — long enough that one bad fetch does not page, short enough
+         * that nobody finds out from a user.
+         */
+        afterFailures: integerish().pipe(z.number().int().min(0).max(1_000)).prefault(3),
+        /** Since the endpoint was last known to serve, however little has been checked in between. */
+        afterNoSuccess: durationMs('15m'),
+      })
+      .prefault({}),
+    /**
      * How often router-api fetches a verified upstream's published bundle, so the
      * admin section can render what a cloud-level admission let in (SUP-221
      * ruling 1, ADR-008 §7).
@@ -721,6 +802,42 @@ const ExternalEndpointsSchema = z
      * has no snapshot for anyway.
      */
     evidencePollInterval: durationMs('1m'),
+    /**
+     * How old this router's filed copy of an upstream's publication may get
+     * before a pass fetches that upstream again — even though its digest has not
+     * changed (SUP-615).
+     *
+     * The digest is a statement about *what* is deployed and it does not move
+     * while a deployment stands; `issuedAt` is a statement about *when* the
+     * upstream last said so, and it moves every time it republishes. Polling on
+     * the digest alone therefore files one copy on the day an upstream is
+     * approved and relays that same copy for as long as the deployment lives —
+     * which is what made the console report for 37 hours that a production
+     * upstream's evidence did not check out, every verifier having correctly
+     * refused a bundle signed the day before while that upstream was publishing
+     * a one-minute-old one.
+     *
+     * An hour against a 24-hour rejection window
+     * ({@link RELAYED_EVIDENCE_REJECTED_AFTER_MS}) leaves 23 attempts' worth of
+     * headroom and costs one HTTPS fetch per upstream per hour. `0` re-fetches
+     * on every pass, which is `evidencePollInterval` and is a stand's setting,
+     * not production's.
+     */
+    evidenceRefreshAfter: durationMs('1h'),
+    /**
+     * When the copy the relay hands out has aged enough to wake somebody
+     * (SUP-615).
+     *
+     * Deliberately far inside the 24 hours at which the verifiers refuse it: the
+     * alert exists so that an operator hears about a relay that stopped
+     * advancing *before* the console starts reporting that an upstream's
+     * evidence did not check out, rather than from whoever read that sentence.
+     * Six hours is five failed refreshes at the default, which no longer reads
+     * as one bad fetch.
+     *
+     * `0` turns the alert off, like `outage.afterNoSuccess`.
+     */
+    evidenceStaleAfter: durationMs('6h'),
     /**
      * How long the egress leg waits for the sidecar's loopback listener to accept
      * a connection. Its own value rather than LiteLLM's: a refusal here means the
@@ -737,6 +854,27 @@ const ExternalEndpointsSchema = z
     readTimeout: durationMs('120s'),
   })
   .check((ctx) => {
+    const { evidenceRefreshAfter, evidenceStaleAfter } = ctx.value;
+    if (evidenceStaleAfter > 0 && evidenceStaleAfter >= RELAYED_EVIDENCE_REJECTED_AFTER_MS) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['evidenceStaleAfter'],
+        message:
+          'externalEndpoints.evidenceStaleAfter must be below 24h: that is when every verifier rejects a relayed ' +
+          'bundle outright, so an alert at or past it reports a console that is already locked (SUP-615).',
+      });
+    }
+    if (evidenceStaleAfter > 0 && evidenceRefreshAfter >= evidenceStaleAfter) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['evidenceStaleAfter'],
+        message:
+          'externalEndpoints.evidenceStaleAfter must be greater than evidenceRefreshAfter: otherwise the alert ' +
+          'fires on copies this router has not yet tried to refresh, and every upstream pages once an hour.',
+      });
+    }
     const { reattestInterval } = ctx.value;
     if (reattestInterval < MIN_REATTEST_INTERVAL_MS || reattestInterval > MAX_REATTEST_INTERVAL_MS) {
       ctx.issues.push({
@@ -749,6 +887,57 @@ const ExternalEndpointsSchema = z
           'the hour Denis accepted as the worst case.',
       });
     }
+  })
+  .prefault({});
+
+/**
+ * Where an alert goes so that a human reads it (SUP-535).
+ *
+ * The router already had alerts; what it did not have was an outbound path. An
+ * `ERROR` line is an alert only for a deployment with a log sink somebody has
+ * wired an alarm to, and this one has none — two production outages were found
+ * by a person stumbling over them. So the alert leaves the process by the one
+ * channel this deployment demonstrably has: the mail provider the sign-in codes
+ * already go out through.
+ *
+ * `emails` is empty by default and **falls back to `auth.adminEmails`**, which
+ * every deployment with an admin section already sets. That default is the point:
+ * a channel nobody had to configure is a channel that works on the deployment
+ * that is already running, and the failure this exists to catch is exactly the
+ * one nobody got round to configuring for.
+ */
+const AlertsSchema = z
+  .strictObject({
+    /**
+     * Who to write to. Empty means `auth.adminEmails`; a deployment that wants a
+     * shared inbox or an on-call alias instead names it here, and `['']`-style
+     * emptiness is not expressible — an address that is not an address is a
+     * configuration error at boot rather than a silent non-delivery.
+     */
+    emails: stringArrayish()
+      .pipe(z.array(z.email('must be an email address')))
+      .prefault([]),
+    /**
+     * Off switches the outbound path only. The log line, the `/health` block and
+     * the endpoint timeline are unchanged, because they are the record; this is
+     * the thing that wakes somebody, and a deployment with a real pager wired to
+     * its log sink may legitimately not want a second one.
+     */
+    email: booleanish().prefault(true),
+    /**
+     * The least time between two outbound alerts, whatever raised them.
+     *
+     * The latch in `ExternalEndpointStatusService` already sends one message per
+     * outage run. This is the second belt: a flapping upstream is a run that ends
+     * and begins again, and the honest answer to twenty of those in an hour is
+     * one mail and a line in the log saying how many it stood for. A mailbox that
+     * has been flooded once is a mailbox with a filter on it.
+     *
+     * Armed by a message that *landed*, not by one that was attempted: a send
+     * that reached nobody put nothing in a mailbox, and arming on it would spend
+     * the next interval's budget on a message that does not exist.
+     */
+    minInterval: durationMs('15m'),
   })
   .prefault({});
 
@@ -813,6 +1002,7 @@ export const RouterConfigSchema = z.strictObject({
   analytics: AnalyticsSchema,
   feedback: FeedbackSchema,
   chat: ChatSchema,
+  alerts: AlertsSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,
@@ -824,3 +1014,4 @@ export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
 export type MailConfig = RouterConfig['mail'];
 export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];
+export type AlertsConfig = RouterConfig['alerts'];

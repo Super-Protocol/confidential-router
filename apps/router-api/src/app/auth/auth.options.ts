@@ -8,6 +8,13 @@ import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js'
 import type { MailWithheldReason } from '../mail/mail.service.js';
 import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
+import {
+  type MailStateReader,
+  mailerFailing,
+  mailSendFailure,
+  recordMailSendFailure,
+  reportMailSendFailure,
+} from './mail-send-failure.plugin.js';
 import { mayMailSignUp, signUpInviteCarrier } from './sign-up-mail-gate.plugin.js';
 import { isBootstrapSignUp, type SignUpMethod, signUpMethodOf } from './sign-up-method.js';
 
@@ -61,10 +68,15 @@ export const EMAIL_CODE_LENGTH = 6;
  * What the auth flows need from the mail service — narrower than
  * `MailService`, so this file stays a function of its inputs.
  *
- * Both are awaited and reject when the mail could not be sent. Neither leaks
- * anything by that — see `MailService`.
+ * Both sends are awaited and reject when the mail could not be sent. Neither
+ * leaks anything by that — see `MailService`.
+ *
+ * `status` is what the refusal is decided from, and it is deliberately the
+ * deployment's state rather than this request's outcome: see
+ * `reportMailSendFailure` for why answering only the requests that tried
+ * would be an account-existence oracle on an invite-only deployment.
  */
-export interface AuthMail {
+export interface AuthMail extends MailStateReader {
   sendMagicLink(email: string, url: string): Promise<void>;
   sendSignInCode(email: string, code: string): Promise<void>;
   /**
@@ -262,7 +274,16 @@ function authPlugins(
         // `mayMailSignUp` below.
         disableSignUp: false,
         sendVerificationOTP: async ({ email, otp, type }, context) => {
-          // First, and for every type: an invite-only deployment mails nothing
+          // Read before the send below can heal it. `deliver` records `ok` on
+          // a send that works, so deciding afterwards would answer an address
+          // the gate admits 200 — its own send repaired the state — and a
+          // withheld one 503, at the edge of every outage. That difference is
+          // the oracle `reportMailSendFailure` exists to avoid, so the state
+          // this request arrived to is what it is answered from.
+          if (mailerFailing(mail)) {
+            recordMailSendFailure(context);
+          }
+          // Then, and for every type: an invite-only deployment mails nothing
           // to an address it would refuse an account to. Asked here, where the
           // credential would leave the process, so no route, body shape or
           // code type can get past it — see `mayMailSignUp`.
@@ -285,9 +306,21 @@ function authPlugins(
             mail.recordWithheld('unused_code_type');
             return;
           }
-          await mail.sendSignInCode(email, otp);
+          try {
+            await mail.sendSignInCode(email, otp);
+          } catch (error) {
+            // Better Auth swallows whatever this callback throws and answers
+            // `200 {"success": true}` regardless, so the failure is parked on
+            // the request and `reportMailSendFailure` answers 503 with it
+            // (SUP-460). With no request to park it on — an `auth.api` call —
+            // it travels as it always did.
+            if (!recordMailSendFailure(context)) {
+              throw error;
+            }
+          }
         },
       }),
+      reportMailSendFailure(mail),
     );
   }
 
@@ -295,15 +328,46 @@ function authPlugins(
     plugins.push(
       magicLink({
         sendMagicLink: async ({ email, url }, context) => {
+          // Captured first and for the same reason as the code route above —
+          // this route has no after hook, so it does both halves itself.
+          const failing = mailerFailing(mail);
           // The same gate as the code above: a link is a sign-in credential
           // too, and this route checks nothing about the address at all
           // (SUP-410). The code rides the `callbackURL` the console names,
           // which this route's schema keeps.
           if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
             mail.recordWithheld('no_invitation');
+            // Counted first and refused after, when the deployment's mail is
+            // failing: the withholding happened either way, and the refusal is
+            // about the deployment's state rather than about this address
+            // (SUP-460).
+            if (failing) {
+              throw mailSendFailure('link');
+            }
             return;
           }
-          await mail.sendMagicLink(email, url);
+          try {
+            // Attempted even while the state says `failing`: a send that works
+            // is the only thing that heals it, and skipping the send would
+            // leave a deployment refusing every link until someone restarted
+            // it — `onApplicationBootstrap` checks once, at boot, and only for
+            // SMTP. Today a code route is always mounted beside this one to do
+            // the healing (`emailCodeEnabled === mailEnabled`); attempting here
+            // is what keeps this route correct the day they diverge.
+            await mail.sendMagicLink(email, url);
+          } catch {
+            // This route awaits its callback, so a rejection already refuses
+            // the request — as a bodyless 500 carrying nothing the console can
+            // say anything about. Named instead, so a link that could not be
+            // sent reads the same as a code that could not (SUP-460).
+            throw mailSendFailure('link');
+          }
+          // The link is in the inbox and it works; this request is still
+          // refused, because the one that was withheld a moment ago was. The
+          // retry gets a 200.
+          if (failing) {
+            throw mailSendFailure('link');
+          }
         },
       }),
     );

@@ -29,7 +29,6 @@ registerEnumType(MailStateEnum, {
 export enum MailFailureReasonEnum {
   UNREACHABLE = 'UNREACHABLE',
   AUTH_FAILED = 'AUTH_FAILED',
-  REJECTED = 'REJECTED',
   ERROR = 'ERROR',
 }
 
@@ -37,7 +36,9 @@ registerEnumType(MailFailureReasonEnum, {
   name: 'MailFailureReason',
   description:
     'Why the last attempt failed. `UNREACHABLE`: the connection never reached a mail server at all — DNS, a ' +
-    'refused or timed-out connect, a dropped socket.',
+    'refused or timed-out connect, a dropped socket. These are the mailer’s own failures and nothing else: a ' +
+    'recipient the server would not take is about one message, leaves `state` alone, and so never appears here ' +
+    '(`MailerFailureReason`, SUP-460).',
 });
 
 @ObjectType('MailWithheld', {

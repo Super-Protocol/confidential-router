@@ -5,7 +5,7 @@ import { AdminGuard, SessionGuard } from '../../../auth/index.js';
 import { routerConfig } from '../../../config.js';
 import {
   type MailDeliveryReport,
-  type MailFailureReason,
+  type MailerFailureReason,
   MailService,
   type MailStatus,
 } from '../../../mail/mail.service.js';
@@ -37,12 +37,14 @@ const STATES = {
   failing: MailStateEnum.FAILING,
 } satisfies Record<MailStatus['state'], MailStateEnum>;
 
+// Keyed on `MailerFailureReason` and not on `MailFailureReason`: a recipient the
+// server would not take is about one message, never reaches `state`, and so has
+// no value here to map (SUP-460).
 const FAILURE_REASONS = {
   unreachable: MailFailureReasonEnum.UNREACHABLE,
   auth_failed: MailFailureReasonEnum.AUTH_FAILED,
-  rejected: MailFailureReasonEnum.REJECTED,
   error: MailFailureReasonEnum.ERROR,
-} satisfies Record<MailFailureReason, MailFailureReasonEnum>;
+} satisfies Record<MailerFailureReason, MailFailureReasonEnum>;
 
 /**
  * "The sign-in mail is not arriving" — answered for the deployment's own

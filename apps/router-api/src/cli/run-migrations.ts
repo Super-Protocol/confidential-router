@@ -43,6 +43,9 @@ async function main(): Promise<void> {
           },
           // Nothing is sent here, so nothing is withheld either.
           recordWithheld: () => undefined,
+          // Never read: the plugins that consult it are only registered to
+          // serve requests, and this process serves none.
+          status: () => ({ state: 'disabled' as const }),
         },
         database: authDatabase,
       }),
