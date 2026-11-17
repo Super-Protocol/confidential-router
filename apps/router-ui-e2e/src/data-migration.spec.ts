@@ -15,7 +15,29 @@ const SCREENSHOT_DIR = process.env.CR_E2E_SCREENSHOT_DIR;
 const SHA = '8135904c9572ff34b97a3fe397ed7957054940afa6c6cb12cdea3e3e6c590659';
 const FILE_NAME = 'router-export-20261010-1200-api.router.example.json.gz';
 
+/**
+ * Audits once the transitions have finished.
+ *
+ * `Button` is `transition-all` with `disabled:opacity-50`, so a control that has
+ * just become enabled spends a few frames at a blended opacity. axe exempts a
+ * *disabled* control from the contrast rule and judges an enabled one, so those
+ * frames are the one window in which `import-apply` reads as a contrast failure
+ * — which is what a dry-run report arriving flips it out of. A CI runner is slow
+ * enough to land the audit inside that window and a developer's machine is not,
+ * so the failure only ever appeared on CI. Same shape as SUP-296, same remedy as
+ * `invitations.spec.ts` uses around its dialog.
+ *
+ * `finished` rejects on a cancelled animation, which is not a failure here: a
+ * transition that was interrupted is one that is no longer running.
+ */
+async function settled(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+}
+
 async function blockingViolations(page: Page) {
+  await settled(page);
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   return results.violations
     .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))

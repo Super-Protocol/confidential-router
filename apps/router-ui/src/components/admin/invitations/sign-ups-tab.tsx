@@ -25,7 +25,8 @@ import {
 import { UsersRound } from 'lucide-react';
 import * as React from 'react';
 import type { SignUpOrigin } from '../../../generated/graphql';
-import { formatDate } from '../../../lib/format';
+import { formatDate, formatUsd } from '../../../lib/format';
+import { GrantCreditDialog, type GrantCreditTarget } from './grant-credit-dialog';
 import { ORIGIN_LABEL, ORIGIN_VARIANT, PAGE_SIZE, pageRange } from './invitations';
 import { MaskedCode } from './masked-code';
 import { ADMIN_SIGN_UPS_QUERY } from './operations';
@@ -38,11 +39,14 @@ const ORIGINS: SignUpOrigin[] = ['INVITE', 'BOOTSTRAP', 'OPEN'];
  * from which code" answer from the account's side (SUP-268).
  *
  * This is the console's only list of accounts, so it is where the per-user
- * origin lives: there is no separate admin user directory for it to join.
+ * origin lives: there is no separate admin user directory for it to join — and
+ * for the same reason it is where an operator credits one (SUP-406). The balance
+ * column is what makes that decision possible without signing in as the tester.
  */
 export function SignUpsTab() {
   const [origin, setOrigin] = React.useState<SignUpOrigin | typeof ALL>(ALL);
   const [offset, setOffset] = React.useState(0);
+  const [crediting, setCrediting] = React.useState<GrantCreditTarget | null>(null);
 
   const { data, loading, error, refetch } = useQuery(ADMIN_SIGN_UPS_QUERY, {
     variables: { origin: origin === ALL ? null : origin, offset, limit: PAGE_SIZE },
@@ -116,6 +120,8 @@ export function SignUpsTab() {
                   <TableHead>Origin</TableHead>
                   <TableHead>Invitation code</TableHead>
                   <TableHead>Campaign</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -135,6 +141,29 @@ export function SignUpsTab() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {signUp.campaign ?? <span className="font-sans text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums">
+                      {signUp.balanceMicros === null || signUp.balanceMicros === undefined ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        formatUsd(signUp.balanceMicros)
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!signUp.workspaceId}
+                        onClick={() =>
+                          setCrediting({
+                            email: signUp.email,
+                            workspaceId: signUp.workspaceId as string,
+                            balanceMicros: signUp.balanceMicros ?? null,
+                          })
+                        }
+                      >
+                        Credit
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -165,6 +194,14 @@ export function SignUpsTab() {
           </div>
         </>
       )}
+
+      <GrantCreditDialog
+        target={crediting}
+        onGranted={() => void refetch()}
+        onOpenChange={(open) => {
+          if (!open) setCrediting(null);
+        }}
+      />
     </>
   );
 }
