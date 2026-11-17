@@ -169,8 +169,9 @@ rateLimits:
 
 ```yaml
 evidence:
-  pollInterval: 5m        # how often each endpoint is retrieved
-  freshnessWindow: 24h    # past this, a publication reads as stale
+  pollInterval: 5m             # how often each endpoint is retrieved
+  freshnessWindow: 24h         # past this, a publication reads as stale
+  retentionSweepInterval: 6h   # how often archived bundles past their window are removed
 ```
 
 The poller fetches each endpoint's bundle, stores the publication and moves on.
@@ -198,6 +199,74 @@ What the console gets out of it:
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
+
+### The retention sweep
+
+`/privacy` publishes a period for archived evidence — *the raw bundle for as long
+as your Preferences say (90 days by default); the digests are kept* — and
+`Preferences → Evidence` offers the number
+(`UserPreferences.evidenceRetentionDays`, 1–3650 days). `retentionSweepInterval`
+is what keeps it: every pass removes the `bundle` and the `jws` of publications
+past their window, stamps `payloadStrippedAt`, and leaves the row — digests,
+certificate fingerprint, container images, measurements — exactly where it was.
+Nothing is ever deleted, so an endpoint's digest history is never shortened
+(SUP-498).
+
+Three rules decide a row, and all three are there to avoid doing harm:
+
+- **Whose window.** The published period is per account; the table is per
+  publication, and on a one-model deployment the same publication is the archived
+  evidence of everyone it served. A bundle is removed only once it is past the
+  *longest* window of every account that holds it — a generation of that
+  account's workspace having been served under it — so no account's setting is
+  quietly shortened by somebody else's. A publication no account holds is swept on
+  the 90-day default.
+- **Who is holding at all.** `Preferences → Evidence` also offers *Keep archived
+  quotes* (`UserPreferences.archiveEvidence`), and an account with it off is not
+  one of the holders: it contributes nothing to that maximum rather than its
+  window, so a publication only such accounts hold is past its window the moment
+  it is published and goes on the next pass (SUP-525). One an opted-in account
+  also holds stays until *that* window closes — a row is the archived evidence of
+  everyone served under it, and one account's switch cannot remove a document
+  others are still promised, which is why the switch is an opt-out of holding
+  rather than a delete button — though it *is* destructive, and the console says
+  so: within one sweep interval it empties every bundle no other account holds,
+  for good. It does not reach the poller either: every bundle is still fetched
+  and filed, because the live publication's bundle is what `GET /v1/evidence`
+  relays. One opt-out anywhere widens the candidate range to the whole unstripped
+  table, since no row is too young to be past nobody's window, and that does not
+  settle: every row inside an opted-in holder's open window stays a candidate on
+  every pass, so the steady state is a full ordered read rather than a shrinking
+  one. The write stays capped per pass, and `IDX_generations_evidenceSnapshotId`
+  / `IDX_generations_externalEndpointId_evidenceDigest` are what keep the holder
+  lookup in between off a sequential scan of `generations`. `MIN_RETENTION_DAYS`
+  is 1, so one account picking a one-day window already put the cutoff within a
+  day of `now`; this widens an edge that was always one setting away.
+- **What is never removed.** The publication a live surface still hands out:
+  the newest one per own endpoint (`GET /v1/evidence`, `GET /v1/models`, the
+  console's badge) and, for an external upstream, the one carrying the digest an
+  admin pinned and a verdict saw — which can be *older* than one that superseded
+  it. Those readers answer "what is running now", not "what was archived".
+
+**Check that it is running rather than that it is configured.** `/health` carries
+`evidenceRetention: { status, lastSweepAt, stripped, failed }`, and every pass
+logs its counts including the quiet ones — `evidenceRetentionDays` was published
+as a period and offered as a setting for a whole preview while nothing read it,
+and nothing in the running system could have said so. Setting
+`retentionSweepInterval: 0ms` switches the sweep off, which makes the deployment
+publish a period it does not keep; the service says so at `warn` on every boot
+and `/health` reports `disabled`.
+
+**A deploy train resets the record, not the promise.** `EvidenceSnapshot` is
+`notCarried` in the migration bundle (`data-migration/bundle-coverage.ts`) — a
+snapshot from the old deployment describes containers that no longer run — so
+`payloadStrippedAt` does not cross a rebuild, and neither does anything a
+previous deployment swept. The new one re-fetches its own evidence within a poll
+of boot and starts its own windows from those publications, which is the right
+outcome for a privacy period and a silent one for an auditor: after a rebuild the
+only evidence that a sweep has ever run is `/health` and the log line, both
+process-lifetime. Read them on the new deployment rather than looking for
+stripped rows.
 
 ## When an external upstream goes dark
 
@@ -1222,7 +1291,7 @@ built for the request that asked for it and kept nowhere on the server:
 | --- | --- |
 | `users` | id, address, name, `emailVerified`, sign-up date; plus `origin` (invite / bootstrap / open), `invitedByCodeId` and `role`, which are informational |
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
-| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
+| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
 | `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
@@ -1233,7 +1302,14 @@ deployment that wrote the file — its `server.publicBaseUrl`, router version an
 the evidence digest it last published for itself. Ids are the rows' own, instants
 are ISO-8601 UTC, money is integer micro-USD as a decimal string.
 
-**Left behind, by design:** chats and messages, generations and activity,
+`contentSha256` is a **checksum, not a signature**: it catches a truncated,
+damaged or half-written file, and the import re-derives it and refuses a
+mismatch — but nothing in the bundle proves who wrote it. The file is trusted
+because of where it was downloaded from and who carried it, not because of what
+it contains. Do not describe an export as signed.
+
+**Left behind, by design:** chats and messages, generations and activity (see
+`creditLedger` above for what that means for the spend they were charged for),
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
 read); and the upstream API key of an external endpoint, which is sealed under
@@ -1292,6 +1368,15 @@ Three things about what it writes:
   against, so a key that had $0.50 of its cap left still has $0.50; and a revoked
   key arrives revoked. The report says how many came across and how many of them
   are still live.
+- **Spend made before the migration arrives as one ledger entry per month.**
+  The money is identical to the micro-dollar; what is gone is the per-request
+  breakdown, which lived in the generation log the file does not carry — the
+  monthly shape survives, so a bill for a month before the migration is still
+  answerable. Activity and Logs on the new deployment therefore count only the
+  traffic it has served itself, and the Credits screen says in words where the
+  rest was spent. A file from a build before SUP-446 still carries the
+  per-request debits: the dry run reports how many, and the import collapses
+  them on the way in.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.
@@ -1316,26 +1401,111 @@ Deployment import by admin@example.com — applied; from https://api.old.example
 
 ### Redeploy runbook
 
-1. **Announce the window.** Anything that happens on the old deployment after the
-   export is not in the file; there is no merge of a second export.
-2. **Export** on the old deployment (Administration → Export & import → Download
-   export). Note the SHA-256 the screen shows.
-3. **Delete the old deployment first**, then **deploy the new version** — the
-   order the marketplace needs for the hostnames to be free.
-4. **Claim the new deployment** with its bootstrap token (see *First sign-in on a
-   fresh deployment*), using the **same address** as the old operator so the two
-   accounts merge, and make sure that address is in `auth.adminEmails`. Do not
-   open sign-up to anyone else before the import.
-5. **Import**: Check file → confirm the source, the SHA-256 and the counts →
-   Import.
-6. **Verify:** the Invitations section shows the same codes and attribution; a
-   known user signs in with their address and sees their balance; an unredeemed
-   code still redeems; **a key issued before the export still authenticates** —
-   `curl -H "Authorization: Bearer sk-tee-v1-…" https://<new-host>/v1/models` —
-   and API Keys lists the same keys with the same spend used; chat history is
-   empty (expected). Re-enter upstream keys for any external endpoint and enable
-   it.
-7. **Delete the export file.**
+**The old deployment stays alive until the new one is verified serving.** It is
+the rollback: repointing hostnames back to a deployment that still holds the data
+takes a minute, restoring a deleted one is not possible at all. A deployment with
+real users on it is never deleted first — the rehearsal this procedure comes from
+is SUP-305.
+
+#### Phase 0 — before the window
+
+- The new listing is published and the charts its version pins are live on the
+  chart repository. Check the repository index rather than the listing.
+- The upstream API key of every registered external endpoint is to hand: they
+  arrive switched off and keyless, and only an operator can re-enter them.
+- One person writes the DNS records for the hostnames, and only one. Two writers
+  chasing a rotating verification token is how a deployment ends up unreachable.
+- The users are told, in advance, what a migration costs them: **chat history is
+  lost**; API keys, balances, invitation codes and signing in by emailed code are
+  unaffected — the bundle carries the key hashes, so a key configured into an
+  agent keeps working (SUP-445).
+
+#### Phase 1 — export first, while nothing has been touched
+
+1. **Export** on the old deployment (Administration → Export & import → Download
+   export), and the codes CSV too if the deployment issues invitations.
+2. **Verify the file before relying on it:** its `integrity.contentSha256` equals
+   the SHA-256 the screen showed, and its `counts` match what the console shows —
+   accounts in Sign-up statistics, rows in the Codes tab, a couple of balances,
+   and the seat count of any multi-seat code.
+3. Keep **two copies off the cluster**. The file holds personal data and live
+   redeemable codes: not an issue attachment, not a chat, not a shared bucket.
+
+**Go / no-go:** the export downloads, opens, and its counts match the live
+console. If not, stop — nothing has been touched and nobody has noticed.
+
+#### Phase 2 — build the new install beside the old one
+
+4. **Deploy the new version on temporary hostnames**, with the old deployment's
+   parameters copied exactly. Both deployments serve at once; users stay on the
+   old one throughout this phase.
+5. **Claim it** with its own bootstrap token (see *First sign-in on a fresh
+   deployment*), using the **same address** as the old operator so the two
+   accounts merge, and make sure that address is in `auth.adminEmails`. Nobody
+   else signs up on it: one stranger account makes the import refuse.
+6. **Check file** → confirm the source deployment, the SHA-256 and the counts,
+   and read the notes. Then **Import**.
+7. **Re-enter the upstream API key** of each external endpoint and enable it. It
+   re-attests within seconds; the pinned evidence digest survived the import, so
+   nothing has to be approved again.
+8. **Verify on the temporary names:** every code with its status and remaining
+   seats, Sign-up statistics, two or three balances, a real user signing in by
+   emailed code, one generation with a freshly issued key — and **a key issued
+   before the export still authenticating**,
+   `curl -H "Authorization: Bearer sk-tee-v1-…" https://<temp-host>/v1/models`,
+   with API Keys listing the same keys and the same spend used against them.
+   Chat history is empty; that is expected.
+
+**Go / no-go:** every check in step 8 matches Phase 1. If not, stop and delete
+the new install — the old deployment is still serving its own hostnames and
+nothing has changed for anyone.
+
+#### Phase 3 — cutover
+
+9. **Announce the window and freeze use.** Anything that happens on the old
+   deployment after the Phase 1 export is not in the file, and a second import
+   into the install built in Phase 2 **adds rows it does not have and does not
+   update rows it already holds**. If the data moved in between, delete that
+   install and redo Phase 2 from a fresh export rather than importing twice.
+10. **Park the old deployment** on spare hostnames: unpublish → reconfigure the
+    hostnames → publish. A published deployment refuses to be reconfigured, which
+    is why every rename is that three-step; the real hostnames go dark here.
+11. **Move the new deployment onto the real hostnames** the same way, write or
+    refresh the verification records the platform asks for, and wait for both
+    hostnames to read verified and for the certificate.
+12. **Smoke test on the real names:** the console and the API answer, a user
+    signs in by emailed code and sees their balance, a code redeems, a generation
+    runs.
+13. **Withdraw the temporary records** by hand — a renamed deployment can leave
+    its old DNS records behind (SUP-310).
+14. Tell the group it is back, and name the one re-do again: chats are gone.
+    Keys are not — anyone who was told otherwise before SUP-445 can stop
+    re-issuing.
+
+**Budget 10–20 minutes of dark window, not one.** Each rename is an unpublish and
+a publish, hostname verification goes through the platform's own resolver with a
+cache, and a hostname it has never seen may need a fresh certificate issuance.
+The measured steps on a platform-managed zone were 7 s to reconfigure, ~60 s to
+serving; a hand-written zone is slower.
+
+#### Rollback, and afterwards
+
+- **Rollback is repointing:** move the real hostnames back to the parked
+  deployment — unpublish → reconfigure → publish. Its data is exactly as the
+  export left it.
+- Keep the bundle and the codes CSV until the new deployment has served for a
+  day; they are what makes a second attempt possible.
+- Delete the old deployment only then, and withdraw its parked records with it.
+- **Delete the export files** once they are no longer the rollback.
+
+#### What does not survive, whatever the procedure
+
+- Chats and generation history. Nothing carries them.
+- The upstream API key of an external endpoint (step 7) — it is sealed under the
+  old deployment's `CR_API_SECRETS_KEY`, so only an operator can re-enter it.
+  Users' own `/v1` keys *do* survive (SUP-445).
+- The deployment's own evidence digest changes, as on any redeploy: anyone who
+  pinned the old one — a gatekeeper, a tenant — has to approve the new one.
 
 ### A parked rollback is not finished until it serves a completion
 

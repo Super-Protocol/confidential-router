@@ -242,11 +242,14 @@ func (e *endpoint) newReverseProxy(p *pool) *httputil.ReverseProxy {
 
 // upstreamFailed turns a transport error into an answer for the client.
 //
-// A certificate that is not the attested one is the case worth separating: it
-// is not a broken upstream, it is the channel binding failing at request time,
-// so it answers as a denial and schedules a re-verification. That is the path a
-// certificate rotation — or a TLS-terminating interceptor — takes between two
-// background re-attestations.
+// A channel binding that failed at request time is the case worth separating: it
+// is not a broken upstream, so it answers as a denial and schedules a
+// re-verification. Two errors carry it. A certificate that is not the attested
+// one is the path a certificate rotation — or a TLS-terminating interceptor —
+// takes between two background re-attestations. A pool that holds no pin at all
+// means the verdict that admitted the request and the data plane disagree, which
+// the ordering in [endpoint.attest] is there to prevent and this refuses rather
+// than forwards (SUP-428).
 func (e *endpoint) upstreamFailed(w http.ResponseWriter, r *http.Request, err error) {
 	verdict := "allow"
 	if state := stateOf(r.Context()); state != nil {
@@ -255,20 +258,20 @@ func (e *endpoint) upstreamFailed(w http.ResponseWriter, r *http.Request, err er
 	}
 
 	var mismatch *leafMismatchError
-	if errors.As(err, &mismatch) {
-		e.sup.log("error", e.name, "upstream certificate changed — "+mismatch.Error())
-		e.sup.audit.record(AuditEntry{
-			At: e.sup.now(), Event: AuditBlocked, Endpoint: e.name, Admitted: false,
-			Stage: "tls-fingerprint", Reason: mismatch.Error(),
-			Method: r.Method, Path: r.URL.Path, Status: http.StatusServiceUnavailable,
-			FailMode: e.tuning.FailMode,
-		})
-		// Not on the request's context: it is about to be cancelled, and the
-		// re-check is for the endpoint, not for this client.
-		go e.attest(context.WithoutCancel(r.Context()), e.tuning.VerdictCacheTTL)
-		// The mismatch was observed on this very handshake, so the denial is as
-		// fresh as the request it answers.
-		writeDenial(w, refusal{stage: "tls-fingerprint", reason: mismatch.Error(), at: e.sup.now()})
+	var unpinned *unpinnedPoolError
+	switch {
+	case errors.As(err, &mismatch):
+		e.denyChannel(w, r, "tls-fingerprint", mismatch.Error(),
+			"upstream certificate changed — "+mismatch.Error())
+		return
+	case errors.As(err, &unpinned):
+		// The same stage as a mismatch, and for the same reason: what failed is
+		// the binding of this request to the attested channel. The stage set is
+		// the one documented for a verdict (docs/gatekeeper.md), and this
+		// should-never-happen guard does not earn an entry of its own — the
+		// reason says plainly which of the two it was.
+		e.denyChannel(w, r, "tls-fingerprint", unpinned.Error(),
+			"refusing an admitted request the connection pool holds no pin for — "+unpinned.Error())
 		return
 	}
 
@@ -285,4 +288,22 @@ func (e *endpoint) upstreamFailed(w http.ResponseWriter, r *http.Request, err er
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
 		"type": "gatekeeper_error", "code": "upstream_unavailable", "message": err.Error(),
 	}})
+}
+
+// denyChannel answers a request whose channel binding failed on the handshake it
+// rode, and asks for a fresh verification on the way out.
+func (e *endpoint) denyChannel(w http.ResponseWriter, r *http.Request, stage, reason, logMessage string) {
+	e.sup.log("error", e.name, logMessage)
+	e.sup.audit.record(AuditEntry{
+		At: e.sup.now(), Event: AuditBlocked, Endpoint: e.name, Admitted: false,
+		Stage: stage, Reason: reason,
+		Method: r.Method, Path: r.URL.Path, Status: http.StatusServiceUnavailable,
+		FailMode: e.tuning.FailMode,
+	})
+	// Not on the request's context: it is about to be cancelled, and the
+	// re-check is for the endpoint, not for this client.
+	go e.attest(context.WithoutCancel(r.Context()), e.tuning.VerdictCacheTTL)
+	// The failure was observed on this very handshake, so the denial is as fresh
+	// as the request it answers.
+	writeDenial(w, refusal{stage: stage, reason: reason, at: e.sup.now()})
 }
