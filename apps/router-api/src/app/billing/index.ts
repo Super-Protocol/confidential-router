@@ -2,6 +2,7 @@ export * from './auto-top-up.service.js';
 export * from './billing.controller.js';
 export * from './billing.module.js';
 export * from './billing.service.js';
+export * from './credit-grant.service.js';
 export * from './credits.gateway.js';
 export * from './disabled-payment.provider.js';
 export * from './ledger.errors.js';

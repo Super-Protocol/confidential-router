@@ -155,6 +155,7 @@ export class DataExportService {
           reference: entry.reference,
           description: entry.description,
           idempotencyKey: entry.idempotencyKey,
+          grantedByUserId: entry.grantedByUserId,
           createdAt: isoOf(entry.createdAt),
         })),
         sourceLabelOf(this.config.server.publicBaseUrl),

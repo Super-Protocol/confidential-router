@@ -1,6 +1,11 @@
 import { type CanActivate, type ExecutionContext, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
-import { ApiKeyService, type AuthenticatedApiKey, bearerTokenOf } from '../../api-keys/index.js';
+import {
+  ApiKeyService,
+  type AuthenticatedApiKey,
+  bearerTokenOf,
+  isCredentialPlaceholder,
+} from '../../api-keys/index.js';
 import { openAiErrors } from './openai-error.js';
 
 export interface ApiKeyRequest extends Request {
@@ -24,7 +29,15 @@ export class ApiKeyGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<ApiKeyRequest>();
     const secret = bearerTokenOf(request.headers.authorization);
     if (!secret) {
-      throw openAiErrors.invalidApiKey();
+      // Not `invalidApiKey`: nothing was presented, and on the documented IDE
+      // paths that is the likeliest refusal of all (SUP-326).
+      throw openAiErrors.missingApiKey();
+    }
+    // Before the lookup: a placeholder is not a key that failed, and saying so
+    // is the whole difference between a one-line fix and an outage report
+    // (SUP-326).
+    if (isCredentialPlaceholder(secret)) {
+      throw openAiErrors.apiKeyPlaceholder();
     }
 
     const result = await this.apiKeys.authenticate(secret);
@@ -49,7 +62,7 @@ const REJECTIONS = {
 /** Reads what `ApiKeyGuard` resolved. Only meaningful behind that guard. */
 export function apiKeyOf(request: ApiKeyRequest): AuthenticatedApiKey {
   if (!request.apiKey) {
-    throw openAiErrors.invalidApiKey();
+    throw openAiErrors.missingApiKey();
   }
   return request.apiKey;
 }
