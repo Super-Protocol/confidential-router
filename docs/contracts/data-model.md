@@ -116,13 +116,33 @@ Invariants enforced in code and tests:
 9. The deployment export (SUP-271) carries **no credential and no request content**, by construction:
    `DataExportService` names every column it writes, reads Better Auth's `user` table and none of its
    other three, and `buildBundle` refuses to assemble a document with a credential-shaped key in it.
-   `ApiKey`, `ChatThread`, `ChatMessage`, `Generation`, `EvidenceSnapshot`, `FeedbackSubmission`,
+   `ChatThread`, `ChatMessage`, `Generation`, `EvidenceSnapshot`, `FeedbackSubmission`,
    `UserPreferences`, `ExternalEndpointEvent`, `ExternalEndpoint.apiKeyCiphertext` and every verdict
-   column are left behind (`data-migration.e2e.spec.ts` asserts both the key names and that the stored
-   hashes, tokens and ciphertexts are absent from the bytes). The import is the one writer that sets
-   `Workspace.balanceMicros` absolutely — to the sum of the ledger it has just inserted, inside the
-   same transaction — and the one path that creates a `user` row without `databaseHooks`, so an
-   imported account is not gated, re-provisioned, re-granted or reported as a sign-up.
+   column are left behind (`data-migration.e2e.spec.ts` asserts both the key names and that no session
+   token, sign-in code, key plaintext or sealed ciphertext is in the bytes). `ApiKey` travels since
+   SUP-445 — as `sha256(secret)`, which recognises a key and cannot present one; `bundle-coverage.ts`
+   holds the carried/left-behind decision for every entity and a spec fails the build on a new one in
+   neither list. `Generation` is not merely left out but **cannot** be carried: `modelId` is `NOT
+   NULL` and names a `models` row the deployment projects from its own `router.yaml`, which the bundle
+   does not carry at all, and nulling `endpointId` instead would break `generationEndpointIsExclusive`
+   above and leave a row no screen can reach.
+   Because the log stays behind, **no exported or imported ledger row may name one** (SUP-446):
+   `LedgerService.debitGeneration` writes one `usage` entry per metered request, `reference` the
+   generation id and `idempotencyKey` `generation:<id>`, and carrying those as written leaves the
+   importing deployment charging for requests its Logs and Activity screens have no row for — $0.24
+   for 87 requests beside a log of 22, as production did. `carryUsageForward` collapses them into one
+   `usage` entry per workspace **per calendar month**, `reference: null` and `idempotencyKey`
+   `carried-usage:<yyyy-mm>:<workspaceId>`, for exactly the same total — a month because one row per
+   workspace would date a year of spend at its last charge, and because twelve rows a year is bounded
+   however busy the workspace. `buildBundle` refuses to write a bundle that still holds a per-request
+   debit (or an id past `MAX_ID_LENGTH`), and the import collapses any it is given, so a file written
+   by an older build is repaired rather than refused. There is at most one carried entry per workspace
+   per month, ever: a month that gets new traffic on a deployment which was itself imported into folds
+   the inherited entry into the new one, and a month with nothing new is passed through untouched.
+   The import is the one writer that sets `Workspace.balanceMicros` absolutely — to the sum of the
+   ledger it has just inserted, inside the same transaction — and the one path that creates a `user`
+   row without `databaseHooks`, so an imported account is not gated, re-provisioned, re-granted or
+   reported as a sign-up.
 10. An export is imported into a deployment holding **nobody else's data** — not only into an empty
    one (SUP-481). A local account the bundle does not carry refuses the import, unless it is an
    operator's own or this deployment has already taken this dataset (a `data_imports` row from the
