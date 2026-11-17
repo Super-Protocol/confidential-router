@@ -291,7 +291,7 @@ describe('mapFailure', () => {
 
 describe('classifyStreamFailure', () => {
   it('reports a withdrawn verdict as an abort named attestation_revoked', async () => {
-    // The connection died because `applyVerdict` closed it under fail-closed.
+    // The connection died because `movePool` closed it under fail-closed.
     // Denis's ruling 5: metered `aborted`, and the client sees policy.
     const adminPort = await serving((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
