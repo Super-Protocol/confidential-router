@@ -54,6 +54,20 @@ describe('createMailTransport', () => {
     );
   });
 
+  it('carries the configured Reply-To into whichever provider is built', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createMailTransport({
+      ...BASE,
+      provider: 'resend',
+      resendApiKey: 'k',
+      replyTo: 'support@example.com',
+    }).send(MESSAGE);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).reply_to).toBe('support@example.com');
+  });
+
   it('logs a magic link in the line tools/demo reads it from', async () => {
     const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
@@ -122,6 +136,17 @@ describe('ResendMailTransport', () => {
     });
   });
 
+  it('sends `reply_to` only when a mailbox is configured — `from` is a no-reply address', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await new ResendMailTransport('re_key', 'a@example.com', 'support@example.com').send(MESSAGE);
+    await new ResendMailTransport('re_key', 'a@example.com').send(MESSAGE);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).reply_to).toBe('support@example.com');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('reply_to');
+  });
+
   it('rejects with the status when Resend refuses', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('domain not verified', { status: 403 })));
 
@@ -132,6 +157,17 @@ describe('ResendMailTransport', () => {
 });
 
 describe('SmtpMailTransport', () => {
+  it('hands nodemailer a replyTo only when one is configured', async () => {
+    const sendMail = vi.fn().mockResolvedValue({});
+    const stub = { sendMail, verify: vi.fn(), close: vi.fn() } as never;
+
+    await new SmtpMailTransport(stub, 'a@example.com', 'support@example.com').send(MESSAGE);
+    await new SmtpMailTransport(stub, 'a@example.com').send(MESSAGE);
+
+    expect(sendMail.mock.calls[0][0].replyTo).toBe('support@example.com');
+    expect(sendMail.mock.calls[1][0]).not.toHaveProperty('replyTo');
+  });
+
   it('hands nodemailer both parts and the logo as a cid attachment', async () => {
     const sendMail = vi.fn().mockResolvedValue({});
     const transport = new SmtpMailTransport({ sendMail, verify: vi.fn(), close: vi.fn() } as never, 'a@example.com');

@@ -1,0 +1,88 @@
+{
+  "verifier": "intel-trust-authority",
+  "note": "Intel Trust Authority as the demonstration stand's stand-in Verifier. **Reconstructed, not recorded**: the claim names, nesting, encodings and signature algorithm are taken from Intel's published sample token at https://docs.trustauthority.intel.com/main/articles/concept-attestation-tokens.html, and the token is signed by a key generated for this repository over the synthetic quote the harness rebuilds. What it pins is the claim mapping; only the live test against a real tenant (SUP-642) can confirm it.",
+  "issuer": "https://portal.trustauthority.intel.com",
+  "jwks": {
+    "keys": [
+      {
+        "alg": "PS384",
+        "e": "AQAB",
+        "kid": "ita-2026-11",
+        "kty": "RSA",
+        "n": "vPN85JGb-cMubKBfbLd9QLU_-LBa8fdJj2R9CBV58XpjCIdw7VXPKNRT5klAfb9kfXK-j3mEHWvFkDlMT3WrHawX-gBUmozCq01TMy2eBR5mRTSvxL_arWWPxw8d_BIVc96k6bdrRWI0fJ3r6C5dvIvx3LpdmdQt2a_SJnGTDl5z0aAXLMkvM19SY4N3C610x8HvU3Jn5bzPVtHH6bkfOym9IXdja5_5O9F92rlExB_9HL1v9ZbDB9dtAf5PQzEMgfwcFSAU8I9S-LY4esurUuc7E60Hwf864oF2ZCu7urH1Ydn2wOCYAVHedt92ZbbYRHrrlMoPCSSS0qYSSo3Oo0cyvtax6Ujd0iqH3yswMWZ01Sik9RWaqygGFJmnurfiSl3ONHzmk3t5qvksZN9depvLdz9W7EQChp9ll7iiEt_hwkVv5VIGCUPS2y4X88ffkXEigbFgxm-fYeayUrOLNbLOppGab-FVCpGINRGigNZ4yKR-y4ggdvvT6plVAueZ",
+        "use": "sig"
+      }
+    ]
+  },
+  "verification_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvPN85JGb+cMubKBfbLd9\nQLU/+LBa8fdJj2R9CBV58XpjCIdw7VXPKNRT5klAfb9kfXK+j3mEHWvFkDlMT3Wr\nHawX+gBUmozCq01TMy2eBR5mRTSvxL/arWWPxw8d/BIVc96k6bdrRWI0fJ3r6C5d\nvIvx3LpdmdQt2a/SJnGTDl5z0aAXLMkvM19SY4N3C610x8HvU3Jn5bzPVtHH6bkf\nOym9IXdja5/5O9F92rlExB/9HL1v9ZbDB9dtAf5PQzEMgfwcFSAU8I9S+LY4esur\nUuc7E60Hwf864oF2ZCu7urH1Ydn2wOCYAVHedt92ZbbYRHrrlMoPCSSS0qYSSo3O\no0cyvtax6Ujd0iqH3yswMWZ01Sik9RWaqygGFJmnurfiSl3ONHzmk3t5qvksZN9d\nepvLdz9W7EQChp9ll7iiEt/hwkVv5VIGCUPS2y4X88ffkXEigbFgxm+fYeayUrOL\nNbLOppGab+FVCpGINRGigNZ4yKR+y4ggdvvT6plVAueZAgMBAAE=\n-----END PUBLIC KEY-----\n",
+  "token": "eyJhbGciOiJQUzM4NCIsImtpZCI6Iml0YS0yMDI2LTExIiwidHlwIjoiSldUIn0.eyJhcHByYWlzYWwiOnsibWV0aG9kIjoiZGVmYXVsdCIsInZlciI6Mn0sImVhdF9wcm9maWxlIjoiaHR0cHM6Ly9wb3J0YWwudHJ1c3RhdXRob3JpdHkuaW50ZWwuY29tL2VhdF9wcm9maWxlLmh0bWwiLCJleHAiOjE3OTQ1NjA3MDAsImlhdCI6MTc5NDU2MDQwMCwiaW50dXNlIjoiZ2VuZXJpYyIsImlzcyI6Imh0dHBzOi8vcG9ydGFsLnRydXN0YXV0aG9yaXR5LmludGVsLmNvbSIsImp0aSI6IjY0Yjc4ZWJiLTA0YmQtNGQzMy05ZGI4LTI0NTE5NjkxNjk0MSIsIm5iZiI6MTc5NDU2MDQwMCwidGR4Ijp7ImF0dGVzdGVyX2hlbGRfZGF0YSI6ImRHaGxJR05oYkd4bGNpZHpJRzkzYmlCeWRXNTBhVzFsSUdSaGRHRXNJRzV2ZENCMGFHVWdjbVZ3YjNKMElHUmhkR0U9IiwiYXR0ZXN0ZXJfdGNiX2RhdGUiOiIyMDI2LTA1LTE0VDAwOjAwOjAwWiIsImF0dGVzdGVyX3RjYl9zdGF0dXMiOiJVcFRvRGF0ZSIsImF0dGVzdGVyX3R5cGUiOiJURFgiLCJkYmdzdGF0IjoiZGlzYWJsZWQiLCJ0ZHhfaXNfZGVidWdnYWJsZSI6ZmFsc2UsInRkeF9pc19taWdyYXRhYmxlIjpmYWxzZSwidGR4X21ydGQiOiIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJ0ZHhfcmVwb3J0X2RhdGEiOiIyYmJjMWExNWI4NDg5MGVmYjVkNjljYTY4ZWM2MDIzZjkxMWM4OTUyZTg4YTBkYWZlZDEyOWRkNzRlNWJlMjIwOWI3M2U5MGNlYTA1MjkzMmEyNmY2OGZjMzc5ODVmOGU5MWIyZGE4ZDVmZTU4ZmQ5Y2EwNWIyNzJkOWZmMDY2OCIsInRkeF9ydG1yMCI6IjY4ZGNhMDk0M2NhZTBkODljZDk4YzU1NzY2MTU3Y2VlMjc5N2YwYTFjODljNzQwNGRiMjAyYTZhNDFjYWFkOWJhNGQxMDY2NGU4NzNiMDNjYTI0OWZiY2MwNmM5ZWVkZSIsInRkeF9ydG1yMSI6IjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMiIsInRkeF9ydG1yMiI6IjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMyIsInRkeF9ydG1yMyI6IjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NCIsInRkeF9zZWFtX2F0dHJpYnV0ZXMiOiIwMDAwMDAwMDAwMDAwMDAwIiwidGR4X3NlYW1zdm4iOjI2MywidGR4X3RkX2F0dHJpYnV0ZXMiOiIwMDAwMDAxMDAwMDAwMDAwIiwidGR4X3RlZV90Y2Jfc3ZuIjoiMDUwMDA2MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0ZHhfeGZhbSI6ImU3MDIwNjAwMDAwMDAwMDAifSwidmVyIjoiMi4wLjAiLCJ2ZXJpZmllcl9pbnN0YW5jZV9pZHMiOlsiYTAyYWEwZWUtYzg0OS00MTdjLTg0MTMtMWNlMjU3OWY2OWYzIl19.H8Awq1aSRpuAH6Ghe9r9aMb-0l9TK1F3f0UaXvG-L87aywirjiGIUD8bpf_ADKoEbJIq6vRLR9JiOwtwlx0ITI0NRp-r3ckcqAOHd9Owb8-sX6fv60w1Xy5abSZ5kLr5-IbNhLN2GN4r43ZYzz7HpU0jjgZNkiYjk9yT1hg_icQ6NqYtNOuUr-M_DcHu6AnvmHsor-_QVePwqnVEl32spq73i9JbYNSbWzdey6s4HBYkaixHHQyVxYoCLGsKOb9-5Oy-XEF6t3c0rzLxqA1Mi4gmbEmm3QzPXsROGD1Z5t1aQoDKly30RsPwvcvPM-dY9yKoWZL600MdeRkj9E-CElNoJkpVifd2n2rQ4y-vF83trKKhbRONETkbRDkifODGZdmWtTyRWNopfy2HTv-0x2LBk2IXk9rlEhbzPwdx3HLJCHlvRfl4IT-jfS4rTtPfgQTY4vNrJBudTX5HQ9oBAJyP7lo8vnOWSaM2M0Qs8b5vlSrm-1Iu1pPC0LrFyw3h",
+  "mapping": {
+    "tdattributes": [
+      "tdx",
+      "tdx_td_attributes"
+    ],
+    "mrtd": [
+      "tdx",
+      "tdx_mrtd"
+    ],
+    "rtmr0": [
+      "tdx",
+      "tdx_rtmr0"
+    ],
+    "rtmr1": [
+      "tdx",
+      "tdx_rtmr1"
+    ],
+    "rtmr2": [
+      "tdx",
+      "tdx_rtmr2"
+    ],
+    "rtmr3": [
+      "tdx",
+      "tdx_rtmr3"
+    ],
+    "seamsvn": [
+      "tdx",
+      "tdx_seamsvn"
+    ],
+    "tcb_status": [
+      "tdx",
+      "attester_tcb_status"
+    ],
+    "binding_data": [
+      "tdx",
+      "tdx_report_data"
+    ],
+    "encoding": "hex",
+    "binding_data_encoding": "hex"
+  },
+  "quote": {
+    "platform": "tdx-gcp",
+    "tdattributes": "0000001000000000",
+    "mrtd": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+    "rtmr1": "222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+    "rtmr2": "333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+    "rtmr3": "444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444",
+    "tee_tcb_svn": "05000600000000000000000000000000",
+    "event_log": [
+      {
+        "type": "EV_EFI_PLATFORM_FIRMWARE_BLOB",
+        "digest": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      {
+        "type": "EV_SEPARATOR",
+        "digest": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      },
+      {
+        "type": "EV_EFI_PLATFORM_FIRMWARE_BLOB2",
+        "digest": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      },
+      {
+        "type": "EV_EVENT_TAG",
+        "digest": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+      }
+    ],
+    "report_data": "2bbc1a15b84890efb5d69ca68ec6023f911c8952e88a0dafed129dd74e5be2209b73e90cea052932a26f68fc37985f8e91b2da8d5fe58fd9ca05b272d9ff0668"
+  },
+  "expected_mrenclave": "17be83eb82800c8763f2f35f9b3bd917a3862290dcbe215ee187d53fe2efa0ca"
+}

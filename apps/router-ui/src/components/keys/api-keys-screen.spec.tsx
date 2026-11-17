@@ -52,8 +52,14 @@ const REVOKED_KEY: MockedApiKey = {
 };
 
 const MODELS = [
-  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct', available: true },
-  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true },
+  {
+    __typename: 'Model',
+    id: 'meta/llama-3.3-70b-instruct:tdx',
+    name: 'Llama 3.3 70B Instruct',
+    available: true,
+    contextLength: 131_072,
+  },
+  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true, contextLength: 131_072 },
 ];
 
 function keysMock(keys: MockedApiKey[] = [LIVE_KEY, REVOKED_KEY]): MockLink.MockedResponse {
@@ -158,7 +164,7 @@ describe('APIKeysScreen', () => {
       expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
     });
 
-    it('offers curl, Python, Node, VS Code and OpenCode examples with the key prefix filled in', async () => {
+    it('fills the key prefix into the command snippets and leaves VS Code an input reference', async () => {
       renderScreen();
       await screen.findByText('production-agent');
 
@@ -168,7 +174,10 @@ describe('APIKeysScreen', () => {
       }
       await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
-      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('sk-tee-v1-4f…');
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('${input:chat.lm.secret.-...}');
+      expect(screen.getByText(/Update API Key/)).toBeInTheDocument();
+      expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
     });

@@ -2,6 +2,7 @@ import { evidenceDigestHex } from '@confidential-router/types';
 import { Inject, Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { OperatorAlertsService } from '../../../alerts/operator-alerts.service.js';
 import {
   AdminGuard,
   CurrentUser,
@@ -22,16 +23,20 @@ import {
   ExternalEvidenceService,
   ExternalModelDiscoveryService,
   type ExternalModelSpec,
+  livenessOf,
+  type OutageThresholds,
 } from '../../../external-endpoints/index.js';
 import {
   AddTrustedMeasurementInputModel,
   DiscoveredExternalModelModel,
   ExternalEndpointEventModel,
   ExternalEndpointEvidenceModel,
+  type ExternalEndpointLivenessModel,
   ExternalEndpointModel,
   type ExternalModelInputModel,
   ExternalModelModel,
   measurementSourceOf,
+  OperatorAlertTestModel,
   PinExternalEndpointDigestInputModel,
   RegisterExternalEndpointInputModel,
   RotateExternalEndpointKeyInputModel,
@@ -51,7 +56,18 @@ import {
  */
 const EVENT_LIMIT = 50;
 
-/** Every OpenAI-compatible upstream serves chat; the rest an operator states. */
+/**
+ * Every OpenAI-compatible upstream serves chat; the rest an operator states.
+ *
+ * Still only `chat`, and that no longer understates the model: what the
+ * catalogue reports is derived from this list rather than equal to it, so a
+ * model registered without a word about its routes is listed — correctly — as
+ * serving chat, the legacy completions route, streaming and tool calling
+ * (`catalog/served-capabilities.ts`, SUP-450). Declaring `completions` as well
+ * is a statement about the *upstream* — that it serves the legacy route itself —
+ * and the only thing it changes is that the route is forwarded rather than
+ * translated.
+ */
 const DEFAULT_CAPABILITIES = ['chat'] as const;
 
 /**
@@ -91,6 +107,7 @@ export class ExternalEndpointsResolver {
     private readonly evidence: ExternalEvidenceService,
     private readonly discovery: ExternalModelDiscoveryService,
     private readonly profiles: UserProfileService,
+    private readonly alerts: OperatorAlertsService,
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
 
@@ -185,7 +202,8 @@ export class ExternalEndpointsResolver {
   @Mutation(() => ExternalEndpointModel, {
     description:
       'Re-points or re-prices an endpoint. The name is immutable — it is the sidecar’s key for this upstream. ' +
-      'Restricted to auth.adminEmails.',
+      'Re-pointing withdraws the approved deployment, so an edit that means to keep one carries it as ' +
+      'evidenceDigest. Restricted to auth.adminEmails.',
   })
   @UseGuards(SessionGuard, AdminGuard)
   async updateExternalEndpoint(
@@ -197,10 +215,14 @@ export class ExternalEndpointsResolver {
       id,
       baseUrl: input.baseUrl,
       models: input.models?.map(modelSpec),
+      evidenceDigest: input.evidenceDigest,
     });
     this.logger.warn(
       `External endpoint "${view.endpoint.name}" updated by ${user.email} — ${view.endpoint.baseUrl}, ` +
-        `${view.models.filter((model) => model.enabled).length} model(s) listed.`,
+        `${view.models.filter((model) => model.enabled).length} model(s) listed` +
+        // An approval is attributable, so the line that names the operator is the
+        // line that names the digest they approved — as `pinExternalEndpointDigest` does.
+        `${input.evidenceDigest ? `, deployment ${view.endpoint.pinnedEvidenceDigest} approved` : ''}.`,
     );
     return this.presentOne(view, user);
   }
@@ -315,6 +337,39 @@ export class ExternalEndpointsResolver {
     return true;
   }
 
+  /**
+   * Sends one alert now, so an operator can prove the channel works (SUP-535).
+   *
+   * The acceptance criterion for an alerting path is a message that arrived, and
+   * the only honest way to produce one on a live deployment is to ask it to send
+   * one: inducing a real outage on production to watch the mail go out is what
+   * cost 28 minutes once already. The message says in its own body that nothing is
+   * wrong, so an operator who finds it later cannot mistake it for an incident.
+   *
+   * Admin-only and logged with the name of whoever asked — it writes to every
+   * address the deployment alerts to, which is a thing to be accountable for
+   * rather than a read.
+   */
+  @Mutation(() => OperatorAlertTestModel, {
+    description:
+      'Sends one test message on the operator alert channel, past the rate limit, to prove an outage alert would ' +
+      'arrive. Says in its body that nothing is wrong. Restricted to auth.adminEmails.',
+  })
+  @UseGuards(SessionGuard, AdminGuard)
+  async sendOperatorAlertTest(@CurrentUser() user: SessionUser): Promise<OperatorAlertTestModel> {
+    const delivery = await this.alerts.sendTest(user.email);
+    this.logger.warn(
+      `Operator alert channel tested by ${user.email}: ${delivery.delivered.length} delivered, ` +
+        `${delivery.failed.length} refused${delivery.skipped ? `, skipped (${delivery.skipped})` : ''}.`,
+    );
+    return {
+      sent: delivery.delivered.length > 0,
+      delivered: delivery.delivered.length,
+      failed: delivery.failed.length,
+      skipped: delivery.skipped ? delivery.skipped.toUpperCase() : null,
+    };
+  }
+
   private async presentOne(view: ExternalEndpointView, user: SessionUser): Promise<ExternalEndpointModel> {
     const [presented] = await this.present([view], user);
     if (!presented) {
@@ -344,6 +399,10 @@ export class ExternalEndpointsResolver {
     );
     const summaries = await this.evidence.summariesFor(wantedDigests(views, timelines));
 
+    // One clock for the whole page: two rows of the same table saying "31h" and
+    // "31h01m" because the map took a millisecond would be a difference nobody
+    // meant to publish.
+    const now = new Date();
     return views.map(({ endpoint, models }) => {
       const forEndpoint = summaries.get(endpoint.id);
       const events = timelines.get(endpoint.id) ?? [];
@@ -357,6 +416,7 @@ export class ExternalEndpointsResolver {
         lastCheckedAt: endpoint.lastCheckedAt,
         lastStage: endpoint.lastStage,
         lastReason: endpoint.lastReason,
+        liveness: livenessModel(endpoint, this.config.externalEndpoints.outage, now),
         measurementSeen: endpoint.measurementSeen,
         measurementSource: measurementSourceOf(endpoint.measurementSource),
         measurementInRegistry: endpoint.measurementInRegistry,
@@ -487,6 +547,31 @@ function modelSpec(input: ExternalModelInputModel): ExternalModelSpec {
     capabilities: input.capabilities ?? [...DEFAULT_CAPABILITIES],
     promptPer1mMicros: Number(input.promptPer1mMicros),
     completionPer1mMicros: Number(input.completionPer1mMicros),
+  };
+}
+
+/**
+ * The failure-run block, from the same pure rules the alert and `/health` use
+ * (SUP-517).
+ *
+ * Derived here rather than stored as a block, so a console row and a log line
+ * cannot drift: `livenessOf` is the one implementation of "is it serving, since
+ * when, and does that count as an outage", and the thresholds come from the same
+ * configuration the alerting reads.
+ */
+function livenessModel(
+  endpoint: ExternalEndpointView['endpoint'],
+  thresholds: OutageThresholds,
+  now: Date,
+): ExternalEndpointLivenessModel {
+  const liveness = livenessOf(endpoint, thresholds, now);
+  return {
+    reachability: liveness.reachability,
+    notServingSince: liveness.notServingSince,
+    lastSuccessAt: liveness.lastSuccessAt,
+    lastFailureAt: endpoint.lastFailureAt,
+    consecutiveFailures: liveness.consecutiveFailures,
+    outage: liveness.outage,
   };
 }
 

@@ -58,7 +58,7 @@ describe('the pinned Super Protocol key', () => {
   });
 
   it('is byte-identical to the key the Go gatekeeper pins', () => {
-    // `apps/gatekeeper/pkg/attestation/attestedroot/registry.go`,
+    // `libs/swarm-evidence-go/attestation/attestedroot/registry.go`,
     // `trustedRegistryKeySPKI`. If these two drift, the page and the gatekeeper
     // accept different sets of images — which is the one divergence that would
     // let the console show a tier the gatekeeper refuses.

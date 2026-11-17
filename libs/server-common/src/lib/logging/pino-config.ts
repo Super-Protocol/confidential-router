@@ -10,6 +10,12 @@ export interface PinoHttpConfigOptions {
   level: string;
   sensitiveKeys?: string[];
   /**
+   * Keys that hold request or response content, overriding
+   * `DEFAULT_CONTENT_KEYS`. Rarely set: the default list is the one `/privacy`
+   * §5 and §13 describe, and shrinking it narrows a published promise.
+   */
+  contentKeys?: string[];
+  /**
    * Paths whose automatic request/response lines are suppressed — health probes,
    * typically, which would otherwise be most of the log.
    *
@@ -31,7 +37,7 @@ export interface PinoHttpConfigOptions {
  * these options instead.
  */
 export function createPinoHttpConfig(options: PinoHttpConfigOptions) {
-  const { level, sensitiveKeys, quietPathPrefixes = [] } = options;
+  const { level, sensitiveKeys, contentKeys, quietPathPrefixes = [] } = options;
 
   return {
     level,
@@ -52,7 +58,7 @@ export function createPinoHttpConfig(options: PinoHttpConfigOptions) {
       censor: '[REDACTED]',
     },
     formatters: {
-      log: (object: Record<string, unknown>) => redact(object, sensitiveKeys) as Record<string, unknown>,
+      log: (object: Record<string, unknown>) => redact(object, sensitiveKeys, contentKeys) as Record<string, unknown>,
     },
     customProps: (req: IncomingMessage) => ({ requestId: (req as { id?: string }).id }),
   };

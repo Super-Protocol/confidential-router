@@ -383,6 +383,29 @@ describe('router-config rules', () => {
     expect(validate(cfg)).toBe(false);
   });
 
+  /**
+   * SUP-449: the keep-alive delay is the only duration in this file with a floor,
+   * because the two values below one second are each a different bug — `0s` makes
+   * the heartbeat a busy loop, and any sub-second value opens the event stream
+   * before the backend could plausibly have answered, costing every streamed
+   * failure its status code.
+   */
+  it('refuses a stream keep-alive delay under a second, however it is spelled', () => {
+    for (const bad of ['0s', '0ms', '100ms', '999ms', '0m', '0h500ms']) {
+      const cfg = base();
+      cfg.server.streamKeepAliveAfter = bad;
+      expect(validate(cfg), bad).toBe(false);
+    }
+  });
+
+  it('accepts a keep-alive delay of a second or more', () => {
+    for (const good of ['1s', '15s', '1000ms', '1s500ms', '2m', '1h30m']) {
+      const cfg = base();
+      cfg.server.streamKeepAliveAfter = good;
+      expect(validate(cfg), `${good}: ${errorsOf(validate)}`).toBe(true);
+    }
+  });
+
   it('a declared image must be pinned by a sha256 digest, not by a tag', () => {
     // The field's whole purpose is to be compared against a digest in the signed
     // evidence. A tag here would be a declaration nothing can be matched against,
