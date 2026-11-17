@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "description": "The recorded appraisal of the membership root's own TEE evidence that every case's `expect.claims` is written against. The bundle corpus pins what an appraisal establishes downstream of the quote; the quote's own vendor signature is covered against real recorded evidence in libs/swarm-evidence-go/attestation/attestedroot.",
+  "appraiser": "recorded-offline",
+  "appraisal": {
+    "platform": "snp-qemu",
+    "quote_verified": true,
+    "tcb_status": "ok",
+    "collateral_checked": true,
+    "key_binding": true,
+    "network_type": "untrusted",
+    "measurements": {
+      "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+    },
+    "platform_security": {
+      "vmpl": 0,
+      "debug_allowed": false,
+      "ciphertext_hiding": true,
+      "page_swap_disabled": true,
+      "snp_firmware_tcb": 23,
+      "report_version": 3,
+      "cpu_generation": "Genoa"
+    },
+    "mrenclave": "c9e148780ef1aa945a2b8578926dc9faaf1fc37038bce04e9613037f1fe42442",
+    "mrenclave_approved": true,
+    "mrenclave_source": "registry",
+    "spvm_build": "build-448-release"
+  }
+}

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { INVITE_COOKIE_NAME } from '../../lib/invite';
 import { clearSignedIn, SIGNED_IN_COOKIE_NAME } from '../../lib/signed-in-cookie';
 import { renderWithApollo } from '../../test-utils';
+import { signInMailStateMock } from './auth-mocks';
 import { SIGN_IN_OPTIONS_QUERY } from './operations';
 import { SignInForm } from './sign-in-form';
 
@@ -36,6 +37,7 @@ type Offers = Partial<{
   emailCodeLength: number;
   magicLink: boolean;
   inviteRequired: boolean;
+  supportEmail: string | null;
 }>;
 
 /**
@@ -58,6 +60,7 @@ function optionsMock(overrides: Offers = {}) {
           emailCodeLength: 6,
           magicLink: true,
           inviteRequired: false,
+          supportEmail: null,
           ...overrides,
         },
       },
@@ -111,6 +114,24 @@ async function requestCode(email = 'dev@example.com') {
 }
 
 describe('SignInForm', () => {
+  /**
+   * The wiring SUP-556 adds: the contact is deployment configuration, so it
+   * arrives with the sign-in options and has to reach the code step — which is
+   * the only screen that can tell a locked-out person anything at all.
+   */
+  it('hands the configured support contact to the code step', async () => {
+    routeCode();
+    renderForm([
+      optionsMock({ ...CODE_ONLY, supportEmail: 'community@superprotocol.com' }),
+      signInMailStateMock('REJECTING'),
+    ]);
+
+    await requestCode();
+
+    const contact = await screen.findByTestId('email-code-rejected-contact');
+    expect(contact).toHaveAttribute('href', 'mailto:community@superprotocol.com');
+  });
+
   it('offers both providers and an address to mail', async () => {
     renderForm();
 
@@ -763,9 +784,10 @@ describe('an invitation carried to a sign-in screen', () => {
     // account creation and nowhere else, so an existing one is not topped up
     // (SUP-142) and the console does not have to know which this is.
     expect(bodyOf(SIGN_IN)).toEqual({ email: 'invited@example.com', otp: '123456', inviteCode: 'ABCDEFGH' });
-    // The request for the code carries nothing of it: a code is asked for by
-    // address alone.
-    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in' });
+    // And the request that asks for the code, because an invite-only deployment
+    // will not mail an address it has no account for without one (SUP-410) —
+    // this screen registers an invited visitor who never opened `/signup`.
+    expect(bodyOf(SEND)).toEqual({ email: 'invited@example.com', type: 'sign-in', inviteCode: 'ABCDEFGH' });
   });
 });
 

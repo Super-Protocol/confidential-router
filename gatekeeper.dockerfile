@@ -9,7 +9,10 @@
 # (ADR-008 §2, §5). The entrypoint is the supervisor that watches that file and
 # reloads the gatekeeper in place; see apps/gatekeeper/pkg/sidecar.
 #
-# Build from the repository root; only apps/gatekeeper is in play.
+# Build from the repository root. Two paths are in play: apps/gatekeeper and the
+# libs/swarm-evidence-go module its go.mod replaces to a relative path, so the
+# builder has to reproduce that layout rather than flatten one directory into
+# /src (SUP-647).
 #
 #   docker build -f gatekeeper.dockerfile -t gatekeeper .
 #   docker run --rm -v ./config.yaml:/etc/gatekeeper/config.yaml:ro \
@@ -31,12 +34,16 @@ ARG RUNTIME_IMAGE=alpine:3.22
 # Builder
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS builder
-WORKDIR /src
+WORKDIR /src/apps/gatekeeper
 
 # Dependencies first, so a source edit does not re-download the module graph.
+# The replaced module's go.mod has to be here already or the graph cannot be
+# resolved; its sources come with the rest, below.
 COPY apps/gatekeeper/go.mod apps/gatekeeper/go.sum ./
+COPY libs/swarm-evidence-go/go.mod libs/swarm-evidence-go/go.sum /src/libs/swarm-evidence-go/
 RUN go mod download
 
+COPY libs/swarm-evidence-go/ /src/libs/swarm-evidence-go/
 COPY apps/gatekeeper/ ./
 
 # The version metadata `gatekeeper version` and the dashboard report. Passed in
@@ -85,10 +92,23 @@ RUN mkdir -p /etc/gatekeeper && chown nonroot:nonroot /etc/gatekeeper
 USER 65532:65532
 ENV GATEKEEPER_CONFIG=/etc/gatekeeper/config.yaml
 
-# No HEALTHCHECK: "is it serving?" is not a question this container can answer
-# about itself without a verdict, and a probe that reported healthy while every
-# endpoint was fail-closed would be worse than none. The admin API
-# (`admin.listen`) is what a readiness probe reads, and it is loopback-only by
-# construction — so the probe belongs to whoever shares the pod's network
-# namespace, not here.
+# "Is it serving?" is still not a question this container can answer about
+# itself: an endpoint that is fail-closed, denied, or awaiting an admin's
+# approval is a verdict, and a probe that failed on one would restart a
+# gatekeeper into the same refusal while dropping every working endpoint beside
+# it. So this answers the narrower question — is it *answering* — and
+# `--healthcheck` is what decides it (`pkg/sidecar/health.go`): healthy while
+# there is no configuration to run, healthy when the admin API answers whatever
+# it says, unhealthy only when a runnable configuration has an admin API that
+# does not.
+#
+# An `exec` rather than an `httpGet`, which is the whole reason this did not
+# exist before (SUP-583). The admin listener is loopback-only by construction,
+# so a kubelet could not reach it without this container growing a listener on
+# the pod IP; and it does not exist at all until router-api has rendered an
+# endpoint, so an HTTP probe would restart the state every deployment ships in.
+# Running the check inside the container has neither problem.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD ["/usr/local/bin/gatekeeper-sidecar", "--healthcheck"]
+
 ENTRYPOINT ["/usr/local/bin/gatekeeper-sidecar"]

@@ -1,7 +1,16 @@
 import type { AuthenticatedApiKey } from '../../api-keys/index.js';
-import type { GenerationStatus } from '../../db/entities/generation.entity.js';
+import type { GenerationClient, GenerationStatus } from '../../db/entities/generation.entity.js';
 import type { ModelCapability, ModelOrigin } from '../../db/entities/model.entity.js';
 import type { EvidenceCoverage } from '../../metering/evidence-coverage.service.js';
+
+/**
+ * Where the OpenAI-compatible surface lives, as a mount prefix.
+ *
+ * Shared because two things outside the controllers key off it: the body parser
+ * `configureApp` gives `/v1` its own, larger limit, and the middleware that turns
+ * a parser refusal on this prefix into an OpenAI-shaped error rather than Nest's.
+ */
+export const V1_BASE_PATH = '/v1';
 
 /** Which OpenAI route is being served; decides the upstream path and the shaping. */
 export type RouteKind = 'chat' | 'completions' | 'embeddings';
@@ -81,9 +90,26 @@ export interface GatewayContext {
   generationId: string;
   model: RoutedModel;
   auth: AuthenticatedApiKey;
-  /** The client's body, forwarded with only `model` rewritten. Never stored. */
+  /**
+   * The body the upstream will receive, bar the `model` rewrite the forwarding
+   * path applies: the client's own, or — for a bridged legacy completions
+   * request ({@link bridged}) — the chat body translated from it. Never stored.
+   */
   body: Record<string, unknown>;
   stream: boolean;
+  /**
+   * The upstream path this request is forwarded to. Normally
+   * `UPSTREAM_PATHS[kind]`; the chat one for a legacy completions request the
+   * router serves by translation ({@link bridged}).
+   */
+  upstreamPath: string;
+  /**
+   * True when `POST /v1/completions` is being served by wrapping the prompt in a
+   * chat request (`completions-bridge.ts`, SUP-450). The forwarding path, the
+   * relay and the meter are told nothing else about it: the translation happens
+   * on the way in and on the way out, and this flag is what the two edges read.
+   */
+  bridged: boolean;
   /**
    * True when the router asked the backend for a usage chunk the client did
    * not: the meter needs the real counts, the client asked for a stream that
@@ -105,6 +131,15 @@ export interface GatewayContext {
   rateLimitHeaders: Record<string, string>;
   requestId: string | null;
   clientIp: string | null;
+  /**
+   * Which client sent this request, derived once on the way in (SUP-466).
+   *
+   * On the context rather than re-read in the recorder, so the error and abort
+   * paths — which have no request object left to look at — meter the same label
+   * as the success path. The headers it came from are not carried any further;
+   * see `client-dimension.ts`.
+   */
+  client: GenerationClient;
   startedAt: number;
 }
 

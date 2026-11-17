@@ -9,7 +9,7 @@ import {
 } from '@confidential-router/ui/components/table';
 import { ExternalLink } from 'lucide-react';
 import type { CreditTransactionKind } from '../../generated/graphql';
-import { formatDate, formatUsd } from '../../lib/format';
+import { formatDate, formatUsdMetered } from '../../lib/format';
 import { descriptionTextOf, receiptUrlOf } from './amounts';
 
 export interface TransactionRow {
@@ -86,7 +86,9 @@ export function TransactionTable({ transactions }: { transactions: readonly Tran
                 className={`text-right font-mono whitespace-nowrap ${credit ? 'text-brand' : 'text-foreground'}`}
               >
                 {credit ? '+' : ''}
-                {formatUsd(entry.amountMicros)}
+                {/* Four decimals, as on Logs: a usage row is fractions of a cent
+                    and rounded to cents it read as `−$0.00` (SUP-424). */}
+                {formatUsdMetered(entry.amountMicros)}
               </TableCell>
               <TableCell className="text-right">
                 {receipt ? (

@@ -1,5 +1,6 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException, Logger } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { V1_BASE_PATH } from './gateway.types.js';
 import { asOpenAiError, OpenAiApiError, openAiErrors } from './openai-error.js';
 
 /**
@@ -71,9 +72,9 @@ function toOpenAiError(exception: unknown): OpenAiApiError {
 
 /**
  * Express body-parser failures never reach a Nest filter — they are thrown in
- * middleware, before routing. Mounted right after `express.json()` in
- * `configureApp`, this hands `/v1` clients `invalid_json` instead of Express's
- * HTML error page.
+ * middleware, before routing. Mounted right after the `express.json()` parsers in
+ * `configureApp`, this hands `/v1` clients the router's own error shape instead of
+ * Express's HTML page or Nest's `{ statusCode, message }`.
  */
 // biome-ignore lint/complexity/useMaxParams: Express recognises an error handler by its arity — four parameters is the signature.
 export function jsonErrorMiddleware(
@@ -82,12 +83,33 @@ export function jsonErrorMiddleware(
   response: Response,
   next: (error?: unknown) => void,
 ): void {
-  const isBodyParserError =
-    error instanceof SyntaxError && 'body' in error && (error as { status?: number }).status === 400;
-  if (!isBodyParserError || !request.path.startsWith('/v1')) {
+  const openAiError = request.path.startsWith(V1_BASE_PATH) ? bodyParserErrorOf(error) : null;
+  if (!openAiError) {
     next(error);
     return;
   }
-  const openAiError = openAiErrors.invalidJson();
   response.status(openAiError.status).type('application/json').send(openAiError.toBody());
+}
+
+/**
+ * The two ways `express.json` refuses a body, in the router's vocabulary — or
+ * null for anything that is not a parser refusal and belongs further down the
+ * chain.
+ *
+ * `entity.too.large` used to fall through to Nest and arrive as a bare
+ * `{"statusCode":413,"message":"request entity too large"}` (SUP-339): a shape no
+ * OpenAI SDK unpacks, carrying neither the code a client branches on nor the limit
+ * it would need in order to send something smaller. `body-parser` puts the
+ * configured ceiling on the error as `limit`, which is where that number comes
+ * from.
+ */
+function bodyParserErrorOf(error: unknown): OpenAiApiError | null {
+  const refusal = error as { status?: number; type?: string; limit?: number } | null;
+  if (error instanceof SyntaxError && 'body' in error && refusal?.status === 400) {
+    return openAiErrors.invalidJson();
+  }
+  if (refusal?.type === 'entity.too.large') {
+    return openAiErrors.requestTooLarge(typeof refusal.limit === 'number' ? refusal.limit : null);
+  }
+  return null;
 }
