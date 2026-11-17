@@ -155,7 +155,17 @@ export class EvidenceService {
     }
   }
 
-  /** The snapshot the console shows for an endpoint: the most recently issued one. */
+  /**
+   * The snapshot the console shows for an endpoint: the most recently issued one.
+   *
+   * Served by `IDX_evidence_snapshots_endpointId_issuedAt`, the composite over
+   * `(endpointId, issuedAt, fetchedAt)` — and by nothing before it (SUP-298).
+   * `IDX_evidence_snapshots_endpointId` covers one column and the identity index
+   * leads `endpointId, evidenceDigest`, so the ordering column sat behind a value
+   * this query does not constrain: SQLite narrowed to the endpoint and then put
+   * its *whole history* through a temp B-tree to return one row. `snapshots()`
+   * pages on the same key and is carried by the same index.
+   */
   async latestFor(endpointId: string): Promise<EvidenceSnapshot | null> {
     return this.dataSource
       .getRepository(EvidenceSnapshot)
@@ -171,7 +181,9 @@ export class EvidenceService {
    * — bundles and certificates included — to keep the last one made `models`
    * slower every day until the console timed out on it (SUP-598). A window
    * function would do it in one round trip but is not portable to SQLite, and
-   * a deployment has a handful of endpoints, so this is a handful of LIMIT 1s.
+   * a deployment has a handful of endpoints, so this is a handful of LIMIT 1s —
+   * each one an index seek rather than a sort over the endpoint's history, see
+   * {@link latestFor}.
    */
   async latestForMany(endpointIds: string[]): Promise<Map<string, EvidenceSnapshot>> {
     const unique = [...new Set(endpointIds)];

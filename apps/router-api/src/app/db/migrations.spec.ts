@@ -126,10 +126,22 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-423's partial index over the pending generations is the newest
-      // migration; the first undo drops that one index and leaves the two the
-      // Logs and Activity queries run on. First because this migration is
-      // numbered last — a migration is appended rather than inserted.
+      // SUP-298 adds one index and nothing else; the first undo drops it and
+      // leaves the indices that were already on the table. First because this
+      // migration is numbered last — a migration is appended, never inserted.
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        true,
+      );
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        false,
+      );
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId')).toBe(true);
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_identity')).toBe(true);
+
+      // SUP-423's partial index over the pending generations is next; the undo
+      // drops that one index and leaves the two the Logs and Activity queries
+      // run on.
       expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(false);
@@ -145,9 +157,9 @@ describe('SQLite', () => {
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. Third now that SUP-406's column and SUP-423's index are
-      // appended after it. The undo can only restore the NOT NULLs on a database
-      // the sweep has not run on yet, which is this one.
+      // `generations`. Fourth now that SUP-406's column, SUP-423's index and
+      // SUP-298's index are appended after it. The undo can only restore the
+      // NOT NULLs on a database the sweep has not run on yet, which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);
