@@ -323,7 +323,7 @@ export async function runEvidenceGate(options: GateOptions): Promise<GateResult>
   }
 
   const payload = signature.payload;
-  checks.push(checkFreshness(payload.issuedAt, options.now));
+  checks.push(checkFreshness(payload.issuedAt, options.now, source));
   checks.push(await checkBinding(payload.certFingerprint, bundle.tlsLeaf));
 
   const measurement = measurementOf(payload, bundle);
@@ -696,17 +696,38 @@ async function checkSignature(bundle: RawBundle, leaf: ChainLeaf): Promise<Signa
   }
 }
 
-function checkFreshness(issuedAt: string, now: Date | undefined): GateCheck {
+/**
+ * Whether the document is current, and — when it is not — which party let it age.
+ *
+ * `source` is here for the second half, and it is not a nicety. A producer
+ * republishes every few minutes, so a bundle read straight from the host and
+ * found a day old says the host stopped publishing. The same bundle arriving
+ * through the router's relay says nothing of the kind: the relay hands out the
+ * last copy *it* retrieved, so the honest reading is "this router's copy is
+ * old", and the upstream may be publishing a fresh one every minute. It was
+ * (SUP-615): the panel said the upstream's evidence did not check out for 37
+ * hours while the upstream was serving a one-minute-old bundle, and the sentence
+ * sent the reader to the wrong deployment.
+ */
+function checkFreshness(issuedAt: string, now: Date | undefined, source: BundleSource): GateCheck {
   const issued = Date.parse(issuedAt);
   if (!Number.isFinite(issued)) {
     return { id: 'freshness', status: 'fail', detail: `The signed issuedAt "${issuedAt}" is not a timestamp.` };
   }
   const age = (now ?? new Date()).getTime() - issued;
   if (age > MAX_BUNDLE_AGE_MS) {
+    const hours = Math.floor(age / 3_600_000);
     return {
       id: 'freshness',
       status: 'fail',
-      detail: `The evidence was signed ${Math.floor(age / 3_600_000)} hours ago, past the 24-hour window. A healthy deployment republishes every few minutes.`,
+      detail:
+        source === 'router'
+          ? `The copy this router relayed was signed ${hours} hours ago, past the 24-hour window. A healthy ` +
+            'deployment republishes every few minutes, so this is most likely this router having stopped ' +
+            'refreshing its copy rather than the endpoint having stopped publishing — its operator can tell ' +
+            'which from the router’s own logs.'
+          : `The evidence was signed ${hours} hours ago, past the 24-hour window. A healthy deployment ` +
+            'republishes every few minutes.',
     };
   }
   if (age < -ALLOWED_CLOCK_SKEW_MS) {

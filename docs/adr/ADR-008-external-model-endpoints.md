@@ -66,7 +66,9 @@ pinned digest. What changes, by layer:
   `DENIED_BY_THIS_ROUTER`, with the code as `lastStage`. `DIGEST_CHANGED` is therefore **gating**: at
   re-attest a mismatch denies, drops the models and closes in-flight connections (decision 5), and the
   timeline records both (on an endpoint that was admitted; one already refused records the change alone). `DIGEST_PINNED` records each approval with the digest approved. Re-pointing an
-  endpoint's base URL withdraws its pin (the new upstream has not been looked at); restarts do not (the
+  endpoint's base URL withdraws its pin (the new upstream has not been looked at) unless the edit
+  carries an approval of its own (`UpdateExternalEndpointInput.evidenceDigest`, SUP-435), and a
+  withdrawal is recorded as `DIGEST_UNPINNED`; restarts do not withdraw anything (the
   pin is trust, not a verdict — §8 is unchanged for every verdict column).
 - **Evidence before approval.** The evidence poller now files an upstream's bundle whenever the last
   report's cryptography held — admitted *or* refused only by a trust factor — binding it to the TLS leaf
@@ -83,6 +85,83 @@ pinned digest. What changes, by layer:
 - **SUP-251** (in flight beside this) keeps its trust-list form guards. The "operator pasted an evidence
   digest into the measurements list" confusion is resolved structurally: the digest has its own home on
   the endpoint, and the measurements form still validates shape and says what it wants.
+
+## Amendment (SUP-517) — a run of failed checks is an event in its own right
+
+The design as built detects a dead upstream on every single check and tells nobody. Each piece is
+correct in isolation: the verdict flips to `DENIED_BY_THIS_ROUTER`, §6's fail-closed drop takes the
+models out of `/v1/models`, decision 5's 503 names the stage, §8 holds the row at `pending` across a
+restart. None of it is an alert, and the row only ever held the *latest* verdict — so the question an
+operator asks first, "how long has this been failing?", had no answer anywhere. A published upstream
+lost the gateway route for its hostname at 2026-10-23 06:11 UTC and this router answered 503 for 30
+hours; a human found it, not the platform.
+
+What the amendment adds, in one sentence: **the run is projected beside the verdict, and crossing a
+configured threshold is an event.**
+
+- **Schema** (§6). Five columns on `external_endpoints`: `lastSuccessAt`, `lastFailureAt`,
+  `notServingSince`, `consecutiveFailures` and `upstreamUnreachable`. They are verdict projections under
+  §8's rule, not an exception to it — the boot reset clears them, the export bundle carries none, an
+  import lands them empty. The accepted cost is named: a router restarted during an outage reports the
+  outage as starting at the restart, because the alternative is a persisted verdict. The timeline keeps
+  the true start.
+- **Counting.** A failure is counted per *distinct check* — the verdict's own `checkedAt` moved — not per
+  status poll. The poll runs every 5 s against a 10-minute re-attestation, so counting readings would
+  make the threshold a number of seconds wearing a different name. A report carrying no `checkedAt`
+  cannot be told from the previous one and so does not advance the counter either; the core emits the
+  field unconditionally, which makes that a guard on the seam rather than a live case.
+- **Where the alert is evaluated.** On the status pass, in both of its forms: the one that read
+  `/verdicts`, and the one that runs from the rows alone when the sidecar could not be read at all. The
+  second is not a fallback for tidiness — one pod, one sidecar, same container group, so a sidecar that
+  wedges takes every external model down and is the single failure that yields *no verdict to notice it
+  by*. Evaluating only on the first form would have left `/health` reading `outage` while the log said
+  nothing, which is precisely the disagreement between readers this amendment forbids. One latch covers
+  both, so whichever pass gets there first declares the run.
+- **Thresholds** (`externalEndpoints.outage.afterFailures`, `.afterNoSuccess`; 3 and 15 minutes).
+  Configuration rather than constants: what counts as an outage is a property of the deployment. Both,
+  because they miss different failures — a count sees nothing when the checking itself has stopped, and
+  a sidecar that never answers leaves every row at `pending` with no counter moving.
+- **Expected to serve.** The thresholds apply only to an endpoint that is enabled *and* has a pinned
+  digest. `pinnedEvidenceDigest: null` is a registration awaiting its first approval (the SUP-252
+  amendment above made that the normal first state of every endpoint), which is this router waiting for
+  an admin rather than an upstream that went dark. Paging for it would have meant paging once for every
+  endpoint that upgrade touched. A stale pin — `digest-mismatch` after an unapproved redeploy — is *not*
+  exempt: the router was serving that upstream a moment ago.
+- **The outbound path (SUP-535).** One message to `alerts.emails`, falling back to `auth.adminEmails`,
+  per run and in each direction, rate-limited by `alerts.minInterval` — the recovery excepted, which
+  goes out past it. The channel is the deployment's own mail provider rather than a new one: an
+  `ERROR` line is an alert only where something watches the log, and nothing watches this one. The
+  message carries the endpoint name, the duration, the reachability and the stage, and never the
+  hostname, the pinned digest or the sidecar's own sentence (ruling 3 on SUP-221 — mail gets
+  forwarded, and `lastReason` is free text that routinely embeds the measurement hex). The interval is
+  armed by a message that landed, not by one that was attempted.
+- **The alert.** One `ERROR` log line per run, with the endpoint, the duration, the count, whether the
+  upstream answered at all and the sidecar's reason; one `recovered` line when an admitting verdict
+  closes it. `error` because a log sink can match on it; once per run because a line repeated every
+  five seconds is a line an alert is tuned to ignore.
+- **The timeline** (§7) gains `outage` and `recovered`, which are deliberately not `denied` / `verified`
+  renamed: a denial is one check that refused, an outage is this router declaring the run of them
+  actionable.
+- **`GET /health`** gains an `externalEndpoints` block — counts, two timestamps and one word. It never
+  decides the overall status (a dark upstream must not take a healthy process out of the
+  load-balancer rotation) and it names no endpoint, hostname, stage or reason, because `/health` is
+  unauthenticated and ruling 3 keeps upstream identity behind a session.
+- **Reachability.** "Could not reach it at all" is reported apart from every other refusal. That
+  distinction is the lesson of the outage: "the upstream is down" and "a deployment nobody approved"
+  rendered identically, and they call for opposite actions.
+
+  It is **read from the core, not re-derived here**: `Report.Unreachable` (SUP-422) is the authoritative
+  answer and is narrower than the `fetch` stage, which also covers a non-2xx answer to the bundle fetch,
+  an over-sized bundle and a hostname the gatekeeper refuses — all of them an upstream answering badly.
+  Inferring the flag from the stage would report an ingress that serves completions while its evidence
+  route 502s as "the upstream did not answer", sending an operator to a cloud that is fine; that is this
+  amendment's own mis-direction pointing the other way, and it is a plausible presentation of the gateway
+  misconfiguration behind SUP-491. The stage remains the fallback for a row that recorded no flag, which
+  a restart retires within one poll.
+
+What is *not* changed: no new verdict, no persisted trust, no second clock. The pure rules live in one
+module (`external-endpoint-liveness.ts`) read by all three surfaces — the alert, the timeline and
+`/health` — so an operator cannot catch them disagreeing.
 
 ## 1. What this does to ADR-002's one rule — and what it does not
 
@@ -122,14 +201,14 @@ held up against the code; the evidence:
 - **The TS port is three large subsystems, not one.** `libs/attestation` covers pipeline stages 1–6
   and is conformance-tested against the Go verifier (`libs/attestation-fixtures/vectors/`), but the
   spec'd semantics — "verify the TEE report" — is the attested-root path: AMD/Intel hardware report
-  verification (`apps/gatekeeper/pkg/attestation/attestedroot/`, 1,773 LOC on `go-sev-guest` /
+  verification (`libs/swarm-evidence-go/attestation/attestedroot/`, 1,773 LOC on `go-sev-guest` /
   `go-tdx-guest`), the OVMF launch-measurement rebuild (`internal/snpmeasure`, 734 LOC), and the
   Rego engine (`pkg/policy`, 721 LOC, embedded OPA). None has a TS equivalent, and the TS source
   says so itself (`libs/attestation/src/root-tee-evidence.ts:26-46`).
 - **Node cannot even observe the channel the way the pipeline requires.** The TS verifier takes
   `observedTlsFingerprint` as a parameter (`libs/attestation/src/verify.ts:101`); the Go fetcher
   observes the leaf on the very dial that carries the bundle and fails on more than one peer cert
-  per exchange (`pkg/attestation/fetch.go:131-146,239-250`).
+  per exchange (`libs/swarm-evidence-go/attestation/fetch.go:131-146,239-250`).
 - **The data plane we need already exists and is tested.** Pinned-cert upstream pools that verify
   against the pinned leaf only — never a CA bundle (`pkg/proxy/upstream.go:161-219`), fail-closed
   503 with an OpenAI-shaped body (`pkg/proxy/handler.go:84-111`), in-flight connections dropped on
@@ -178,7 +257,7 @@ fetch bundle (observed dial) ─▶ chain ─▶ root anchor ─▶ JWS ─▶ f
 
 - **"The measurement" is the normalised VM launch measurement of the upstream cloud's root CA**
   (mrEnclave hex) — the value the attested-root check derives, never asserts
-  (`pkg/attestation/attestedroot/`, ADR-003 §2a). This is the only measurement that exists for every
+  (`libs/swarm-evidence-go/attestation/attestedroot/`, ADR-003 §2a). This is the only measurement that exists for every
   Swarm deployment today (ADR-007 §3a records that no producer publishes deployment-level
   measurements), and it is what SUP-139 (draft PR #56) already teaches the core to pin:
   `attestedRoots.trustedMeasurements`, replacing exactly the registry-signature leg while the
@@ -269,6 +348,15 @@ that property:
    change. A reload that fails to load changes nothing and logs why (`pkg/cli/cmd_run.go`);
    unchanged endpoints keep their connections (`pkg/proxy/endpoint.go:156-158`).
 
+   **The declared set is reconciled, not applied once.** The supervisor re-checks every
+   `ReconcileInterval` that each endpoint in the configuration in force is holding a listener, and
+   starts the ones that are not (`pkg/proxy/supervisor.go`). This is the step that makes the egress
+   survive a bring-up that went wrong: a parked rollback once answered on every public surface and
+   could not serve a completion, because its one endpoint sat `PENDING` with
+   `lastReason: "listener stopped"` and `lastCheckedAt` null, and no path in the data plane ever
+   looked at it again (SUP-537). Reconciling cannot weaken anything — binding is not an admission
+   decision — and it stops short of an operator's own `Stop`.
+
    Two refinements the e2e stand forced (SUP-229), both about the difference between a file a *person*
    wrote and a file a control loop renders:
 
@@ -328,9 +416,14 @@ display; rotation is a new write). This is the repo's first reversible secret at
 pattern should be written once, in one module.
 
 Catalogue runtime behaviour: external models live in a second in-memory map beside the config
-catalogue, refreshed on admin mutation and on status flips from the sidecar poll — the
+catalogue, refreshed on admin mutation and on **every** pass of the sidecar poll — the
 `catalog.service.ts:49-51` assumption ("config cannot change underneath a running process") stays
-true for config models and is explicitly not extended to external ones. A model is listed in
+true for config models and is explicitly not extended to external ones. Refreshing only on a status
+flip *this process observed* was not the same rule and cost production an outage per deploy train
+(SUP-600): under the chart's default rolling update two pods write these rows, so the pod that
+boots can read a row another pod flipped, see no transition of its own, and keep an empty catalogue
+for its whole life. A cache of rows a second writer can move is only as good as the last time it was
+re-derived from them, and re-deriving it is two indexed reads of tens of rows. A model is listed in
 `/v1/models` and resolvable by the gateway **iff its endpoint status is `verified`** — the
 fail-closed drop of decision 5, enforced at admission as well as at the egress.
 

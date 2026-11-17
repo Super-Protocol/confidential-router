@@ -24,6 +24,7 @@ import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordingOperatorAlerts } from '../../../test/operator-alerts-recorder.js';
 import { createSqliteFixture, type SqliteFixture } from '../../../test/sqlite.js';
 import type { routerConfig } from '../config.js';
 import { type RouterConfig, RouterConfigSchema } from '../config.schema.js';
@@ -114,7 +115,11 @@ interface Harness {
 /** Controller over the real services and a migrated database — no mock in the path. */
 function controllerOn(publicBaseUrl: string): Harness {
   const service = new EvidenceService(config(publicBaseUrl) as ConfigType<typeof routerConfig>, fixture.dataSource);
-  const external = new ExternalEvidenceService(fixture.dataSource);
+  const external = new ExternalEvidenceService(
+    fixture.dataSource,
+    config(publicBaseUrl) as ConfigType<typeof routerConfig>,
+    new RecordingOperatorAlerts().asService(),
+  );
   return { controller: new EvidenceController(service, external), service, external };
 }
 

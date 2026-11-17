@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GatewayContext } from './gateway.types.js';
-import { deltaTextOf, finishReasonOf, readUsage, shapeResponse } from './response-shaping.js';
+import { deltaTextOf, finishReasonOf, hasAssistantOutput, readUsage, shapeResponse } from './response-shaping.js';
 
 const context = {
   generationId: 'gen-01J6TEST',
@@ -40,6 +40,45 @@ describe('deltaTextOf', () => {
     expect(deltaTextOf({ choices: [{ delta: { role: 'assistant' } }] })).toBe('');
     expect(deltaTextOf({ choices: [] })).toBe('');
     expect(deltaTextOf({})).toBe('');
+  });
+});
+
+describe('hasAssistantOutput', () => {
+  const chunk = (delta: Record<string, unknown>) => ({ choices: [{ index: 0, delta, finish_reason: null }] });
+
+  it('is true for a text delta', () => {
+    expect(hasAssistantOutput(chunk({ content: 'Hello' }))).toBe(true);
+  });
+
+  it('is true for a tool call, which streams no content at all', () => {
+    // The whole of SUP-424's missing time-to-first-token: an agent's turn opens
+    // with `tool_calls` and never sets `content`.
+    const toolCall = chunk({
+      tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read', arguments: '' } }],
+    });
+
+    expect(hasAssistantOutput(toolCall)).toBe(true);
+  });
+
+  it('is true for reasoning, under either spelling', () => {
+    expect(hasAssistantOutput(chunk({ reasoning_content: 'Let me think' }))).toBe(true);
+    expect(hasAssistantOutput(chunk({ reasoning: 'Let me think' }))).toBe(true);
+  });
+
+  it('is true for a refusal and for a legacy text completion', () => {
+    expect(hasAssistantOutput(chunk({ refusal: 'I cannot help with that.' }))).toBe(true);
+    expect(hasAssistantOutput({ choices: [{ index: 0, text: 'Hello' }] })).toBe(true);
+  });
+
+  it('is false for the opener, which announces the role before anything is generated', () => {
+    expect(hasAssistantOutput(chunk({ role: 'assistant', content: '' }))).toBe(false);
+    expect(hasAssistantOutput(chunk({ tool_calls: [] }))).toBe(false);
+  });
+
+  it('is false for a chunk that carries no choices', () => {
+    expect(hasAssistantOutput({ choices: [], usage: { completion_tokens: 7 } })).toBe(false);
+    expect(hasAssistantOutput({})).toBe(false);
+    expect(hasAssistantOutput(null)).toBe(false);
   });
 });
 

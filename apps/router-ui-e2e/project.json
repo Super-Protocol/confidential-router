@@ -1,5 +1,15 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "//": [
+    "`dependsOn` under `e2e` is a task edge — it builds the console and the API first,",
+    "but `nx affected` does not read it, and no spec here imports from either app. So a",
+    "console-only PR used to leave this whole suite unrun while the job still reported",
+    "green (SUP-414). These are the project edges that make `affected` see it."
+  ],
+  "implicitDependencies": [
+    "@confidential-router/router-ui",
+    "@confidential-router/router-api"
+  ],
   "targets": {
     "e2e": {
       "dependsOn": [

@@ -1,6 +1,7 @@
+import { Logger } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
 import { createHarness, type Harness } from './app-harness.js';
 import { bearer, createKey, routerConfigFor, seedWorkspace } from './gateway-fixture.js';
@@ -15,7 +16,16 @@ let upstreamUrl: string;
 
 beforeAll(async () => {
   upstreamUrl = await upstream.start();
-  harness = await createHarness({ config: routerConfigFor(upstreamUrl) });
+  harness = await createHarness({
+    config: routerConfigFor(upstreamUrl, {
+      // A `/v1` ceiling small enough for a test to cross with a string, and
+      // deadlines short enough for `mock/thinking` to expire inside one.
+      server: { maxInferenceRequestBytes: MAX_BODY_BYTES },
+      backends: {
+        litellm: { baseUrl: upstreamUrl, apiKey: 'mock-litellm-key', connectTimeout: '1s', readTimeout: '1s' },
+      },
+    }),
+  });
   const workspace = await seedWorkspace(harness.app);
   workspaceId = workspace.id;
   secret = (await createKey(harness.app, workspaceId)).secret;
@@ -36,6 +46,14 @@ function server() {
 
 function chat(model = 'mock/chat:tdx') {
   return { model, messages: [{ role: 'user', content: 'Hello there' }] };
+}
+
+/** This suite's `/v1` body ceiling: 2 MiB, twice the 1 MiB the console keeps. */
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+/** A chat body whose single message makes the request about `bytes` long. */
+function chatOfSize(bytes: number) {
+  return { model: 'mock/chat:tdx', messages: [{ role: 'user', content: 'x'.repeat(bytes - 128) }] };
 }
 
 /** Returns the supertest `Test` itself so callers can chain `.expect(...)`. */
@@ -75,6 +93,24 @@ describe('request validation', () => {
 
   it('accepts n = 1, which is what an SDK sends when it sends one at all', async () => {
     await post(secret, { ...chat(), n: 1 }).expect(200);
+  });
+});
+
+/**
+ * SUP-339: `/v1` used to share the console's 1 MiB parser limit, which made the
+ * `context_length` the catalogue advertises a figure no client could spend — prod
+ * advertises 262 144 tokens and serves them, and that is megabytes of prompt.
+ */
+describe('request size', () => {
+  it('accepts a prompt larger than the console surfaces take', async () => {
+    await post(secret, chatOfSize(1_500_000)).expect(200);
+  });
+
+  it('refuses a body over its own ceiling in the OpenAI shape, naming the ceiling', async () => {
+    const response = await post(secret, chatOfSize(MAX_BODY_BYTES + 100_000)).expect(413);
+
+    expect(response.body.error).toMatchObject({ type: 'invalid_request_error', code: 'request_too_large' });
+    expect(response.body.error.message).toContain('2 MiB');
   });
 });
 
@@ -245,10 +281,109 @@ describe('backend failures', () => {
     expect(row).toMatchObject({ status: 'error', errorCode: 'backend_unavailable', costMicros: 0 });
   });
 
+  /**
+   * SUP-339: the same message used to cover a refusal the router made itself. A
+   * prompt the upstream was still prefilling, and a burst it had merely queued,
+   * both came back as `backend_unavailable` — sending operators to inspect a model
+   * deployment that was answering the identical request fine one hop over.
+   */
+  it('names a backend that is slow rather than unreachable', async () => {
+    const response = await post(secret, chat('mock/thinking:tdx')).expect(504);
+
+    expect(response.body.error).toMatchObject({ type: 'upstream_error', code: 'upstream_timeout' });
+    expect(response.body.error.message).not.toContain('unreachable');
+    // Not retried: the socket was accepted, so the generation may be running.
+    expect(upstream.requests).toHaveLength(1);
+  });
+
   it('does not charge a refused request', async () => {
     const before = await harness.app.get(DataSource).getRepository(Generation).count();
     await post(secret, chat('nobody/nothing:tdx')).expect(404);
 
     expect(await harness.app.get(DataSource).getRepository(Generation).count()).toBe(before);
+  });
+});
+
+/**
+ * SUP-448, the conformance the issue asks for: a conversation the upstream reads
+ * and calls invalid must come back as a 4xx that names the field.
+ *
+ * It used to be `502 backend_error`. That is "transient, retry" to every
+ * OpenAI-compatible SDK — and the offending message is already in the history, so
+ * each retry rebuilt the same invalid request. One client slip (Continue merging
+ * two concurrent responses into a truncated `arguments`, SP-447) killed the
+ * session permanently and the user read it as our outage: 15 of 97 agent requests
+ * through production in one afternoon.
+ */
+describe('a request the model endpoint itself calls invalid', () => {
+  /** The body that killed the Continue sessions: `arguments` is truncated JSON. */
+  function poisoned(model = 'mock/invalid-tool-call:tdx') {
+    return {
+      model,
+      messages: [
+        { role: 'user', content: 'Read the readme' },
+        {
+          role: 'assistant',
+          tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read', arguments: '{"filepath": "RE' } }],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '# Readme' },
+      ],
+    };
+  }
+
+  it('comes back as a 4xx, so no SDK and no “Resubmit” retries it forever', async () => {
+    const response = await post(secret, poisoned()).expect(400);
+
+    expect(response.body.error).toMatchObject({
+      type: 'invalid_request_error',
+      code: 'upstream_invalid_request',
+    });
+    // The whole point: not the status that means "the gateway is broken, try again".
+    expect(response.status).not.toBe(502);
+  });
+
+  it('names the field that is wrong, which the router itself cannot know', async () => {
+    const response = await post(secret, poisoned()).expect(400);
+
+    expect(response.body.error.message).toContain('messages[8].tool_calls[0].function.arguments');
+    expect(response.body.error.param).toBe('messages[8].tool_calls[0].function.arguments');
+  });
+
+  it('is metered as an error that cost nothing, like any other refusal', async () => {
+    await post(secret, poisoned()).expect(400);
+
+    const row = await harness.app
+      .get(DataSource)
+      .getRepository(Generation)
+      .findOneOrFail({ where: { modelId: 'mock/invalid-tool-call:tdx' }, order: { createdAt: 'DESC' } });
+    expect(row).toMatchObject({ status: 'error', errorCode: 'upstream_invalid_request', costMicros: 0 });
+  });
+
+  it('is not retried upstream: the request cannot become valid on a second send', async () => {
+    await post(secret, poisoned()).expect(400);
+
+    expect(upstream.requests).toHaveLength(1);
+  });
+
+  it('reaches the client with the upstream’s wording and the log without it (SUP-497)', async () => {
+    /*
+     * The two halves of this request go to different places on purpose. The
+     * upstream's sentence is the only thing that names the bad field, so the
+     * caller gets it (SUP-448) — and a model server refusing a request is the
+     * one place on this path that quotes the request back, so the log does not
+     * (`describeUpstreamError`). `/privacy` §5 publishes the second half.
+     */
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const response = await post(secret, poisoned()).expect(400);
+    const lines = warn.mock.calls.map((call) => String(call[0])).join('\n');
+    warn.mockRestore();
+
+    expect(response.body.error.message).toContain('unterminated object');
+
+    expect(lines).toContain('LiteLLM answered 400');
+    expect(lines).toContain('param=messages[8].tool_calls[0].function.arguments');
+    expect(lines).not.toContain('unterminated object');
+    expect(lines).not.toContain('Invalid JSON in');
   });
 });

@@ -53,6 +53,56 @@ export const STREAM_CHUNKS: Record<string, unknown>[] = [
   },
 ];
 
+/**
+ * What `mock/stream-tools` streams: an agent's turn, which is the common shape
+ * in production and the one that used to record no time to first token at all.
+ * Not one `content` delta anywhere — the arguments arrive in `tool_calls`.
+ */
+export const TOOL_CALL_STREAM_CHUNKS: Record<string, unknown>[] = [
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+  },
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read', arguments: '' } }],
+        },
+        finish_reason: null,
+      },
+    ],
+  },
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [
+      {
+        index: 0,
+        delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":"README.md"}' } }] },
+        finish_reason: null,
+      },
+    ],
+  },
+  {
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion.chunk',
+    created: 1_756_550_000,
+    model: 'mock/stream-tools',
+    choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+  },
+];
+
 export const STREAM_USAGE = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };
 
 /**
@@ -62,11 +112,57 @@ export const STREAM_USAGE = { prompt_tokens: 11, completion_tokens: 7, total_tok
  * chunk inside the same millisecond, so the router measures a generation that
  * took no time at all, `tokensPerSecond` is `null` for want of a denominator,
  * and the e2e assertion on the recorded rate fails for reasons that have
- * nothing to do with the router. A couple of milliseconds per chunk makes a
- * streamed generation measurably longer than its first token without making the
- * suite slow.
+ * nothing to do with the router.
+ *
+ * Wide enough, now, that the generation window clears the floor the rate is
+ * reported above (`MIN_RATE_WINDOW_MS` in `pricing.ts`): a sample of a couple of
+ * milliseconds is one the router deliberately refuses to divide (SUP-424). Three
+ * gaps after the first token, so ~36 ms, and still some 40 ms per streaming test.
  */
-const CHUNK_GAP_MS = 2;
+const CHUNK_GAP_MS = 12;
+
+/**
+ * What the backend answers on its own `/v1/completions`, for a model whose
+ * router entry declares `completions`. A `text_completion`, not a chat one: the
+ * router forwards that request verbatim and must pass the answer back the same
+ * way — the translation path is for models that declare chat alone (SUP-450).
+ */
+export const TEXT_COMPLETION_BODY = {
+  id: 'cmpl-upstream',
+  object: 'text_completion',
+  created: 1_756_550_000,
+  model: 'mock/chat',
+  choices: [{ index: 0, text: 'native legacy text', logprobs: null, finish_reason: 'stop' }],
+  usage: STREAM_USAGE,
+};
+
+/** The chunks the backend streams on its own `/v1/completions`. */
+export const TEXT_COMPLETION_STREAM_CHUNKS: Record<string, unknown>[] = [
+  {
+    id: 'cmpl-upstream',
+    object: 'text_completion',
+    created: 1_756_550_000,
+    model: 'mock/chat',
+    choices: [{ index: 0, text: 'native', logprobs: null, finish_reason: null }],
+  },
+  {
+    id: 'cmpl-upstream',
+    object: 'text_completion',
+    created: 1_756_550_000,
+    model: 'mock/chat',
+    choices: [{ index: 0, text: ' legacy', logprobs: null, finish_reason: 'stop' }],
+  },
+];
+
+/**
+ * How long `mock/slow-*` sits on a request before answering at all.
+ *
+ * Production's version of this gap is 60 s (SUP-449); what the suite needs is
+ * only that it clears the `server.streamKeepAliveAfter` the slow-upstream
+ * harness boots with, so the router reaches the point of opening the stream on
+ * its own. That setting is floored at 1 s, so this cannot go below it.
+ */
+const SLOW_START_MS = 1_500;
 
 export const COMPLETION_BODY = {
   id: 'chatcmpl-upstream',
@@ -95,7 +191,7 @@ export class MockLiteLlm {
           metadata: request.headers['x-litellm-metadata'] as string | undefined,
           accept: request.headers.accept,
         });
-        this.respond(String(body.model ?? ''), body, response);
+        this.respond(body, response, request.url ?? '');
       });
     });
     this.server = server;
@@ -116,7 +212,8 @@ export class MockLiteLlm {
     this.requests.length = 0;
   }
 
-  private respond(model: string, body: Record<string, unknown>, response: ServerResponse): void {
+  private respond(body: Record<string, unknown>, response: ServerResponse, path: string): void {
+    const model = String(body.model ?? '');
     switch (model) {
       case 'mock/boom':
         json(response, 500, { error: { message: 'The worker crashed.', type: 'server_error' } });
@@ -128,6 +225,18 @@ export class MockLiteLlm {
       case 'mock/context':
         json(response, 400, {
           error: { message: "This model's maximum context length is 4096 tokens, however you requested 9000." },
+        });
+        return;
+      case 'mock/invalid-tool-call':
+        // What a vLLM-backed endpoint answers a poisoned conversation with: a
+        // flat body, no `error` wrapper, and the bad field named — the one piece
+        // of information the client has no other way to get (SUP-448).
+        json(response, 400, {
+          object: 'error',
+          message: 'Invalid JSON in messages[8].tool_calls[0].function.arguments: unterminated object.',
+          type: 'BadRequestError',
+          param: 'messages[8].tool_calls[0].function.arguments',
+          code: 400,
         });
         return;
       case 'mock/refuses':
@@ -142,6 +251,31 @@ export class MockLiteLlm {
         // the only failure the client is allowed to retry.
         response.socket?.destroy();
         return;
+      case 'mock/slow-start':
+        // Answers, but only after a wait no proxy on the path will sit through
+        // quietly: the long-prefill shape the keep-alive stream exists for.
+        setTimeout(() => {
+          if (body.stream === true) {
+            this.stream(body, response);
+          } else {
+            json(response, 200, COMPLETION_BODY);
+          }
+        }, SLOW_START_MS);
+        return;
+      case 'mock/slow-boom':
+        // The seven measured failures, in miniature: silence, then the 502 a
+        // gateway in front of the model mints when it gives up on it.
+        setTimeout(
+          () => json(response, 502, { error: { message: 'The gateway in front of the model gave up.' } }),
+          SLOW_START_MS,
+        );
+        return;
+      case 'mock/thinking':
+        // Took the request and never answered — a long prefill or a queued burst
+        // as the router sees it. The connection is up and the upstream is fine,
+        // so whatever the router says about this must not be "unreachable"
+        // (SUP-339). Left to the harness's own teardown to close.
+        return;
       case 'mock/embed':
         json(response, 200, {
           object: 'list',
@@ -154,6 +288,16 @@ export class MockLiteLlm {
         break;
     }
 
+    // The legacy route, served by the backend itself: the router only forwards
+    // here, so the shape has to be the legacy one both ways.
+    if (path === '/v1/completions') {
+      if (body.stream === true) {
+        this.stream(body, response, TEXT_COMPLETION_STREAM_CHUNKS);
+        return;
+      }
+      json(response, 200, TEXT_COMPLETION_BODY);
+      return;
+    }
     if (body.stream === true) {
       this.stream(body, response);
       return;
@@ -166,20 +310,21 @@ export class MockLiteLlm {
     json(response, 200, COMPLETION_BODY);
   }
 
-  private stream(body: Record<string, unknown>, response: ServerResponse): void {
+  private stream(body: Record<string, unknown>, response: ServerResponse, override?: Record<string, unknown>[]): void {
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
 
-    const events = STREAM_CHUNKS.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`);
+    const chunks = override ?? (body.model === 'mock/stream-tools' ? TOOL_CALL_STREAM_CHUNKS : STREAM_CHUNKS);
+    const events = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`);
     const includeUsage = Boolean((body.stream_options as { include_usage?: unknown } | undefined)?.include_usage);
     if (includeUsage && body.model !== 'mock/no-usage') {
       events.push(
         `data: ${JSON.stringify({
           id: 'chatcmpl-upstream',
-          object: 'chat.completion.chunk',
+          object: override ? 'text_completion' : 'chat.completion.chunk',
           created: 1_756_550_000,
           model: 'mock/chat',
           choices: [],
