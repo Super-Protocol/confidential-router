@@ -169,8 +169,9 @@ rateLimits:
 
 ```yaml
 evidence:
-  pollInterval: 5m        # how often each endpoint is retrieved
-  freshnessWindow: 24h    # past this, a publication reads as stale
+  pollInterval: 5m             # how often each endpoint is retrieved
+  freshnessWindow: 24h         # past this, a publication reads as stale
+  retentionSweepInterval: 6h   # how often archived bundles past their window are removed
 ```
 
 The poller fetches each endpoint's bundle, stores the publication and moves on.
@@ -198,6 +199,74 @@ What the console gets out of it:
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
+
+### The retention sweep
+
+`/privacy` publishes a period for archived evidence — *the raw bundle for as long
+as your Preferences say (90 days by default); the digests are kept* — and
+`Preferences → Evidence` offers the number
+(`UserPreferences.evidenceRetentionDays`, 1–3650 days). `retentionSweepInterval`
+is what keeps it: every pass removes the `bundle` and the `jws` of publications
+past their window, stamps `payloadStrippedAt`, and leaves the row — digests,
+certificate fingerprint, container images, measurements — exactly where it was.
+Nothing is ever deleted, so an endpoint's digest history is never shortened
+(SUP-498).
+
+Three rules decide a row, and all three are there to avoid doing harm:
+
+- **Whose window.** The published period is per account; the table is per
+  publication, and on a one-model deployment the same publication is the archived
+  evidence of everyone it served. A bundle is removed only once it is past the
+  *longest* window of every account that holds it — a generation of that
+  account's workspace having been served under it — so no account's setting is
+  quietly shortened by somebody else's. A publication no account holds is swept on
+  the 90-day default.
+- **Who is holding at all.** `Preferences → Evidence` also offers *Keep archived
+  quotes* (`UserPreferences.archiveEvidence`), and an account with it off is not
+  one of the holders: it contributes nothing to that maximum rather than its
+  window, so a publication only such accounts hold is past its window the moment
+  it is published and goes on the next pass (SUP-525). One an opted-in account
+  also holds stays until *that* window closes — a row is the archived evidence of
+  everyone served under it, and one account's switch cannot remove a document
+  others are still promised, which is why the switch is an opt-out of holding
+  rather than a delete button — though it *is* destructive, and the console says
+  so: within one sweep interval it empties every bundle no other account holds,
+  for good. It does not reach the poller either: every bundle is still fetched
+  and filed, because the live publication's bundle is what `GET /v1/evidence`
+  relays. One opt-out anywhere widens the candidate range to the whole unstripped
+  table, since no row is too young to be past nobody's window, and that does not
+  settle: every row inside an opted-in holder's open window stays a candidate on
+  every pass, so the steady state is a full ordered read rather than a shrinking
+  one. The write stays capped per pass, and `IDX_generations_evidenceSnapshotId`
+  / `IDX_generations_externalEndpointId_evidenceDigest` are what keep the holder
+  lookup in between off a sequential scan of `generations`. `MIN_RETENTION_DAYS`
+  is 1, so one account picking a one-day window already put the cutoff within a
+  day of `now`; this widens an edge that was always one setting away.
+- **What is never removed.** The publication a live surface still hands out:
+  the newest one per own endpoint (`GET /v1/evidence`, `GET /v1/models`, the
+  console's badge) and, for an external upstream, the one carrying the digest an
+  admin pinned and a verdict saw — which can be *older* than one that superseded
+  it. Those readers answer "what is running now", not "what was archived".
+
+**Check that it is running rather than that it is configured.** `/health` carries
+`evidenceRetention: { status, lastSweepAt, stripped, failed }`, and every pass
+logs its counts including the quiet ones — `evidenceRetentionDays` was published
+as a period and offered as a setting for a whole preview while nothing read it,
+and nothing in the running system could have said so. Setting
+`retentionSweepInterval: 0ms` switches the sweep off, which makes the deployment
+publish a period it does not keep; the service says so at `warn` on every boot
+and `/health` reports `disabled`.
+
+**A deploy train resets the record, not the promise.** `EvidenceSnapshot` is
+`notCarried` in the migration bundle (`data-migration/bundle-coverage.ts`) — a
+snapshot from the old deployment describes containers that no longer run — so
+`payloadStrippedAt` does not cross a rebuild, and neither does anything a
+previous deployment swept. The new one re-fetches its own evidence within a poll
+of boot and starts its own windows from those publications, which is the right
+outcome for a privacy period and a silent one for an auditor: after a rebuild the
+only evidence that a sweep has ever run is `/health` and the log line, both
+process-lifetime. Read them on the new deployment rather than looking for
+stripped rows.
 
 ## When an external upstream goes dark
 
@@ -1222,7 +1291,7 @@ built for the request that asked for it and kept nowhere on the server:
 | --- | --- |
 | `users` | id, address, name, `emailVerified`, sign-up date; plus `origin` (invite / bootstrap / open), `invitedByCodeId` and `role`, which are informational |
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
-| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
+| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
 | `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
@@ -1239,7 +1308,8 @@ mismatch — but nothing in the bundle proves who wrote it. The file is trusted
 because of where it was downloaded from and who carried it, not because of what
 it contains. Do not describe an export as signed.
 
-**Left behind, by design:** chats and messages, generations and activity,
+**Left behind, by design:** chats and messages, generations and activity (see
+`creditLedger` above for what that means for the spend they were charged for),
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
 read); and the upstream API key of an external endpoint, which is sealed under
@@ -1298,6 +1368,15 @@ Three things about what it writes:
   against, so a key that had $0.50 of its cap left still has $0.50; and a revoked
   key arrives revoked. The report says how many came across and how many of them
   are still live.
+- **Spend made before the migration arrives as one ledger entry per month.**
+  The money is identical to the micro-dollar; what is gone is the per-request
+  breakdown, which lived in the generation log the file does not carry — the
+  monthly shape survives, so a bill for a month before the migration is still
+  answerable. Activity and Logs on the new deployment therefore count only the
+  traffic it has served itself, and the Credits screen says in words where the
+  rest was spent. A file from a build before SUP-446 still carries the
+  per-request debits: the dry run reports how many, and the import collapses
+  them on the way in.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.
