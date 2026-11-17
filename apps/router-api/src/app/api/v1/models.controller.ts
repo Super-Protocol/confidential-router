@@ -73,7 +73,17 @@ export class ModelsController {
   private async teeLabels(models: RoutedModel[]): Promise<Map<string, string | null>> {
     const own = [...new Set(models.filter((model) => model.external === null).map((model) => model.endpoint.id))];
     const latest = await this.evidence.latestForMany(own);
-    return new Map([...latest].map(([endpointId, snapshot]) => [endpointId, teeLabelOfBundle(snapshot.bundle)]));
+    // `bundle` is null on a snapshot the retention sweep has stripped (SUP-498).
+    // The sweep exempts the live publication of every endpoint, which is exactly
+    // what `latestForMany` returns, so this branch is unreachable in a healthy
+    // deployment — and `null` is already this field's "no TEE we recognise"
+    // answer, so the honest degradation costs nothing.
+    return new Map(
+      [...latest].map(([endpointId, snapshot]) => [
+        endpointId,
+        snapshot.bundle ? teeLabelOfBundle(snapshot.bundle) : null,
+      ]),
+    );
   }
 }
 

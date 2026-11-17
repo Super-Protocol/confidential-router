@@ -38,7 +38,13 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
   User: { section: 'users', note: 'Read through Better Auth, which owns the table; the entity is a projection.' },
   Workspace: { section: 'workspaces' },
   WorkspaceMember: { section: 'workspaceMembers' },
-  CreditTransaction: { section: 'creditLedger' },
+  CreditTransaction: {
+    section: 'creditLedger',
+    note:
+      'The one section not copied row for row: a per-request `usage` debit names the generation it charged for, ' +
+      'and that row stays behind, so those debits travel as one carried entry per workspace per month instead ' +
+      '(`carryUsageForward`, SUP-446). The total is unchanged; nothing else about an entry is.',
+  },
   InviteCode: { section: 'inviteCodes' },
   InviteRedemption: { section: 'inviteRedemptions', note: 'The salted IP and user-agent digests stay behind.' },
   InviteCarriedRedemption: {
@@ -80,8 +86,10 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
   },
   Generation: {
     notCarried:
-      'Metering rows, the one table that grows without bound. Every debit they caused is a `usage` entry in the ' +
-      'credit ledger, which does travel, so balances survive — per-request history does not, and Activity starts empty.',
+      'Metering rows, the one table that grows without bound. Also the one table that *cannot* travel: `modelId` is ' +
+      'NOT NULL against `models`, which each deployment projects from its own `router.yaml` and no bundle carries. ' +
+      'The spend they caused survives as a monthly carried `usage` entry rather than as the per-request debits that ' +
+      'named them (SUP-446), so balances are exact — per-request history is not, and Activity starts empty.',
   },
   ActivityRollup: {
     notCarried:
