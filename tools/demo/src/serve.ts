@@ -162,7 +162,7 @@ async function registerUpstream(ready: ExternalStand): Promise<ExternalHandoff> 
   // would do.
   await pinExternalEndpointDigest(ready.admin, registered.id, upstreamDigest);
   await ready.sidecar.waitUntilStarted();
-  const verified = await waitForExternalStatus(ready.admin, registered.id, ['VERIFIED_BY_THIS_ROUTER']);
+  const verified = await waitForExternalStatus(ready.admin, registered.id, { status: ['VERIFIED_BY_THIS_ROUTER'] });
   await waitForRelayedBundle(ready.stack.router.baseUrl, EXTERNAL_ENDPOINT);
 
   if (!verified.evidenceDigestSeen || !verified.measurementSeen) {
