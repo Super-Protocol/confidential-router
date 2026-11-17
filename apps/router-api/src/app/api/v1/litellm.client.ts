@@ -40,7 +40,7 @@ export class LiteLlmClient {
   }
 
   async send(request: UpstreamRequest): Promise<Response> {
-    const { baseUrl, apiKey, connectTimeout } = this.config.backends.litellm;
+    const { baseUrl, apiKey, connectTimeout, readTimeout } = this.config.backends.litellm;
     const url = `${baseUrl.replace(/\/+$/, '')}${request.path}`;
 
     const headers: Record<string, string> = {
@@ -56,7 +56,11 @@ export class LiteLlmClient {
       url,
       headers,
       body: request.body,
-      connectTimeoutMs: connectTimeout,
+      // `connectTimeout + readTimeout`, because the one deadline `fetch` allows
+      // spans both phases: getting the connection, and the backend producing the
+      // first byte to answer with — which for a non-streaming completion is the
+      // whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
+      responseTimeoutMs: connectTimeout + readTimeout,
       signal: request.signal,
       onRetry: (attempt, attempts) =>
         this.logger.warn(`LiteLLM ${url} unreachable (attempt ${attempt}/${attempts}); retrying.`),

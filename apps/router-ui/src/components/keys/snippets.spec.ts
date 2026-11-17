@@ -53,6 +53,8 @@ describe('wiringSnippet', () => {
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+        apiKey: '${input:chat.lm.secret.-...}',
         models: [
           {
             id: 'gpt-oss:tdx',
@@ -77,24 +79,45 @@ describe('wiringSnippet', () => {
     });
   });
 
-  /**
-   * SUP-326. VS Code reads `apiKey` in this file as a key into its own secret
-   * storage, never as the key itself, so a key written here authenticates
-   * nothing and the request goes out with an empty bearer. The snippet must
-   * therefore not have the line at all — and a key in a settings file was never
-   * what this product should be teaching.
-   */
-  it('gives VS Code no apiKey line, whatever key the caller has', () => {
-    const snippet = wiringSnippet('vscode', { apiKey: 'sk-tee-v1-4f7a' });
-
-    expect(JSON.parse(snippet)[0]).not.toHaveProperty('apiKey');
-    expect(snippet).not.toContain('sk-tee-v1');
-    expect(snippet).not.toContain('apiKey');
-  });
-
   it('tells the reader where each file-shaped snippet goes', () => {
     for (const id of ['vscode', 'opencode'] as const) {
       expect(SNIPPET_LANGUAGES.find((language) => language.id === id)?.hint).toBeTruthy();
     }
+  });
+
+  it('names both ways to open the VS Code language-models file', () => {
+    const vscode = SNIPPET_LANGUAGES.find((language) => language.id === 'vscode');
+
+    expect(vscode?.steps).toEqual([
+      expect.stringContaining('Open Language Models (JSON)'),
+      expect.stringContaining('go-to-file icon'),
+    ]);
+    expect(vscode?.steps?.[1]).toContain('model selector');
+    expect(vscode?.steps?.[0]).toContain('Chat: Open Language Models (JSON)');
+    expect(vscode?.hint).toContain('Update API Key');
+    expect(vscode?.hint).not.toContain('routerKey');
+  });
+
+  it('sets the VS Code context window from the catalogue and keeps output inside it', () => {
+    const parsed = JSON.parse(wiringSnippet('vscode', { model: 'gpt-oss:tdx', contextLength: 131_072 }));
+    const limits = parsed[0].models[0];
+
+    expect(limits.contextWindow).toBe(131_072);
+    expect(limits.maxOutputTokens).toBe(8_192);
+    expect(limits.maxInputTokens).toBeUndefined();
+    expect(limits.maxOutputTokens).toBeLessThanOrEqual(limits.contextWindow);
+
+    const short = JSON.parse(wiringSnippet('vscode', { contextLength: 8_192 }));
+    expect(short[0].models[0]).toMatchObject({ contextWindow: 8_192, maxOutputTokens: 4_096 });
+  });
+
+  it('never writes a VS Code key into the file, even when one is supplied', () => {
+    const snippet = wiringSnippet('vscode', { apiKey: 'sk-tee-v1-4f7a', model: 'gpt-oss:tdx' });
+
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+    expect(snippet).toContain('"${input:chat.lm.secret.-...}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+    expect(snippet).not.toContain('${input:routerKey}');
+    expect(snippet).not.toContain('sk-tee-v1-4f7a');
   });
 });

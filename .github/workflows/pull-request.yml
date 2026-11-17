@@ -23,6 +23,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The attribution check below walks the PR's own commits.
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -42,6 +45,16 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: echo "$PR_TITLE" | pnpm exec commitlint --verbose
+
+      # The squash also copies the PR body verbatim, so the body and the
+      # branch's own commits are checked for attribution trailers too.
+      - name: Check authorship trailers
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/check-attribution.sh
 
   nx:
     name: Lint, typecheck, build & test (Nx)
@@ -73,14 +86,16 @@ jobs:
           echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
           echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
-      # `gatekeeper` is excluded here and owned by the `go` job below, which has
-      # the Go toolchain and golangci-lint installed.
+      # The three Go projects — `gatekeeper`, the `swarm-evidence-go` module it
+      # is built out of, and the `swarm-policy` artefacts — are excluded here
+      # and owned by the `go` job below, which has the Go toolchain,
+      # golangci-lint and the Sentinel CLI installed.
       - name: Lint, typecheck, build & test
         run: |
           pnpm nx affected -t lint typecheck build test \
             --base="${{ steps.nx-shas.outputs.base }}" \
             --head="${{ steps.nx-shas.outputs.head }}" \
-            --exclude=gatekeeper \
+            --exclude=gatekeeper,swarm-evidence-go,swarm-policy \
             --parallel=3 \
             --outputStyle=static
 
@@ -107,6 +122,29 @@ jobs:
         run: |
           pnpm nx run @confidential-router/router-ui:codegen
           git diff --exit-code -- apps/router-ui/src/generated
+
+      # The bundle conformance vectors are generated too, and their
+      # `expect.claims` blocks are derived by the generator rather than
+      # written per case — so regenerating has to be a no-op for the same
+      # reason the composite corpus's step exists in `go-checks`: an
+      # expectation edited by hand is an expectation fitted to the code.
+      - name: Attestation vectors are up to date
+        run: |
+          pnpm nx run @confidential-router/attestation-fixtures:generate
+          status=$(git status --porcelain -- libs/attestation-fixtures/vectors)
+          if [ -n "$status" ]; then
+            echo "$status"
+            git diff -- libs/attestation-fixtures/vectors
+            echo "::error::regenerating the attestation vectors was not a no-op"
+            exit 1
+          fi
+
+      # `docker/router-api/entrypoint.sh` belongs to no Nx project, so `nx
+      # affected` never runs anything for it. Unconditional and two seconds: it
+      # decides the heap ceiling the router actually runs under, and getting it
+      # wrong cost production a total outage (SUP-583).
+      - name: Image entrypoint heap ceiling
+        run: sh docker/router-api/entrypoint.heap.test.sh
 
       - name: Check formatting
         run: pnpm format:check
@@ -202,7 +240,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -277,7 +317,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: apps/gatekeeper/go.mod
-          cache-dependency-path: apps/gatekeeper/go.sum
+          cache-dependency-path: |
+            apps/gatekeeper/go.sum
+            libs/swarm-evidence-go/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -432,7 +474,7 @@ jobs:
           retention-days: 7
 
   go:
-    name: Go checks (gatekeeper)
+    name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

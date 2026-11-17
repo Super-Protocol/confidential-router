@@ -19,6 +19,8 @@ export interface HowToConnectProps {
   apiKey?: string;
   /** A model this router will actually route to, so the snippet is runnable as pasted. */
   model?: string;
+  /** That model's context length, written into the VS Code snippet as `contextWindow`. */
+  contextLength?: number;
 }
 
 /**
@@ -31,7 +33,7 @@ export interface HowToConnectProps {
  * chat's tier-3 panel shows — so the two cannot drift (SUP-193), and the client
  * examples are the same snippets the created-key dialog fills in.
  */
-export function HowToConnect({ apiKey, model }: HowToConnectProps) {
+export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps) {
   return (
     <Card id="how-to-connect" className="mt-6 scroll-mt-20">
       <CardHeader>
@@ -84,13 +86,14 @@ export function HowToConnect({ apiKey, model }: HowToConnectProps) {
           more={
             <p>
               Keys are stored hashed, so a snippet here carries only the visible prefix: in curl, Python and Node, paste
-              the full key you copied when it was created. The VS Code entry has no key in it and none belongs there —
-              VS Code asks for the key itself and keeps it in secret storage.
+              the full key you copied when it was created. Do not paste it into the VS Code entry — that{' '}
+              <code className="font-mono">apiKey</code> line is a reference to VS Code&rsquo;s own secret storage, so a
+              key written there is never sent; VS Code asks for it through Update API Key.
             </p>
           }
           moreLabel="About the key in this snippet"
         >
-          <WiringSnippet apiKey={apiKey} model={model} />
+          <WiringSnippet apiKey={apiKey} model={model} contextLength={contextLength} />
         </Step>
 
         <p className="flex items-center gap-2 text-sm">

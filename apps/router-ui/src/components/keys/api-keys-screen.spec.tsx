@@ -52,8 +52,14 @@ const REVOKED_KEY: MockedApiKey = {
 };
 
 const MODELS = [
-  { __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B Instruct', available: true },
-  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true },
+  {
+    __typename: 'Model',
+    id: 'meta/llama-3.3-70b-instruct:tdx',
+    name: 'Llama 3.3 70B Instruct',
+    available: true,
+    contextLength: 131_072,
+  },
+  { __typename: 'Model', id: 'gpt-oss-120b:tdx', name: 'GPT-OSS 120B', available: true, contextLength: 131_072 },
 ];
 
 function keysMock(keys: MockedApiKey[] = [LIVE_KEY, REVOKED_KEY]): MockLink.MockedResponse {
@@ -158,7 +164,7 @@ describe('APIKeysScreen', () => {
       expect(within(card as HTMLElement).getByTestId('gatekeeper-setup')).toBeInTheDocument();
     });
 
-    it('offers curl, Python, Node, VS Code and OpenCode examples, with a key only where one belongs', async () => {
+    it('fills the key prefix into the command snippets and leaves VS Code an input reference', async () => {
       renderScreen();
       await screen.findByText('production-agent');
 
@@ -169,8 +175,11 @@ describe('APIKeysScreen', () => {
       expect(screen.getByTestId('wiring-snippet-curl')).toHaveTextContent('sk-tee-v1-4f…');
       await userEvent.click(screen.getByRole('tab', { name: 'VS Code' }));
       expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('"vendor": "customendpoint"');
-      // No key, not even a prefix: VS Code reads this file's `apiKey` as a
-      // secret-storage lookup and asks for the key itself (SUP-326).
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+      expect(screen.getByTestId('wiring-snippet-vscode')).toHaveTextContent('${input:chat.lm.secret.-...}');
+      expect(screen.getByText(/Update API Key/)).toBeInTheDocument();
+      // No key, not even a prefix: VS Code resolves this file's `apiKey` against
+      // its own secret storage, so a literal there is never sent (SUP-326).
       expect(screen.getByTestId('wiring-snippet-vscode')).not.toHaveTextContent('sk-tee-v1');
       await userEvent.click(screen.getByRole('tab', { name: 'OpenCode' }));
       expect(screen.getByTestId('wiring-snippet-opencode')).toHaveTextContent('@ai-sdk/openai-compatible');
@@ -195,10 +204,11 @@ describe('APIKeysScreen', () => {
     /**
      * SUP-326. This paragraph is shared by all five tabs, and "paste the full
      * key" is the instruction that caused the incident when a reader on the VS
-     * Code tab followed it: a key written into `chatLanguageModels.json` is
+     * Code tab followed it: a key written into the language-models file is
      * resolved against VS Code's secret storage, never used as the key, so
      * every request goes out unauthenticated. It has to name which snippets it
-     * is talking about.
+     * is talking about — the VS Code entry has an `apiKey` line, which is
+     * exactly what invites the paste, and it is a reference rather than a key.
      */
     it('does not tell the VS Code reader to paste a key into the file', async () => {
       renderScreen();
@@ -207,7 +217,7 @@ describe('APIKeysScreen', () => {
 
       const note = await screen.findByText(/Keys are stored hashed/);
       expect(note).toHaveTextContent(/in curl, Python and Node, paste the full key/i);
-      expect(note).toHaveTextContent(/VS Code entry has no key in it and none belongs there/i);
+      expect(note).toHaveTextContent(/Do not paste it into the VS Code entry/i);
       expect(note).toHaveTextContent(/secret storage/i);
     });
 
@@ -276,6 +286,34 @@ describe('APIKeysScreen', () => {
       await userEvent.click(await screen.findByRole('button', { name: 'Copy the API key' }));
 
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(SECRET);
+    });
+
+    it('carries the Private Preview data notice beside the key it just handed over', async () => {
+      /*
+       * The second surface the restriction belongs on (SUP-501): a developer with
+       * a fresh key in hand is one paste away from pointing a real integration —
+       * and real data — at us. Inline it is the condition, counsel's sentence is
+       * behind the ⓘ, and the dialog still closes on `Done` with nothing to tick.
+       */
+      renderScreen([keysMock(), createMock()]);
+
+      await openCreateDialog();
+      await userEvent.type(screen.getByLabelText('Name'), 'ci-agent');
+      await userEvent.click(screen.getByRole('checkbox', { name: /Restrict this key to specific models/ }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'GPT-OSS 120B' }));
+      await userEvent.type(screen.getByLabelText('Spend limit (USD)'), '25');
+      await userEvent.click(screen.getByRole('button', { name: 'Create key' }));
+
+      expect(await screen.findByText('Copy your key now')).toBeInTheDocument();
+
+      const dialog = within(screen.getByRole('dialog'));
+      expect(dialog.getByText('Private Preview: use synthetic or non-personal data')).toBeInTheDocument();
+      expect(dialog.queryByText(/do not submit personal data/i)).not.toBeInTheDocument();
+
+      await userEvent.click(dialog.getByRole('button', { name: /what the private preview asks you not to submit/i }));
+
+      expect(await screen.findByText(/including sensitive personal data/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /acceptable use/i })).toBeInTheDocument();
     });
 
     it('refuses to submit a nameless key and never calls the API', async () => {
