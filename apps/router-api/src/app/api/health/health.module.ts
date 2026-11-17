@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AnalyticsModule } from '../../analytics/analytics.module.js';
 import { AuthModule } from '../../auth/index.js';
 import { MailModule } from '../../mail/mail.module.js';
+import { PreferencesModule } from '../../preferences/preferences.module.js';
 import { AdminHealthController } from './admin-health.controller.js';
 import { HealthController } from './health.controller.js';
 import { HealthService } from './health.service.js';
@@ -16,7 +17,7 @@ import { HealthService } from './health.service.js';
  * about health — so there is no cycle to break here, unlike `InviteCodesCsvModule`.
  */
 @Module({
-  imports: [MailModule, AnalyticsModule, AuthModule],
+  imports: [MailModule, AnalyticsModule, AuthModule, PreferencesModule],
   controllers: [HealthController, AdminHealthController],
   providers: [HealthService],
 })
