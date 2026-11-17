@@ -16,7 +16,8 @@ import { DropDeclaredTee1760100000000 } from './1760100000000-DropDeclaredTee.js
 import { GenerationClient1760200000000 } from './1760200000000-GenerationClient.js';
 import { MailAddressStates1760400000000 } from './1760400000000-MailAddressStates.js';
 import { ExternalEndpointLiveness1760500000000 } from './1760500000000-ExternalEndpointLiveness.js';
-import { EvidenceSnapshotsByIssuedAt1760600000000 } from './1760600000000-EvidenceSnapshotsByIssuedAt.js';
+import { EvidenceRetentionSweep1760600000000 } from './1760600000000-EvidenceRetentionSweep.js';
+import { EvidenceSnapshotsByIssuedAt1761000000000 } from './1761000000000-EvidenceSnapshotsByIssuedAt.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -43,5 +44,6 @@ export const MIGRATIONS = [
   GenerationClient1760200000000,
   MailAddressStates1760400000000,
   ExternalEndpointLiveness1760500000000,
-  EvidenceSnapshotsByIssuedAt1760600000000,
+  EvidenceRetentionSweep1760600000000,
+  EvidenceSnapshotsByIssuedAt1761000000000,
 ];

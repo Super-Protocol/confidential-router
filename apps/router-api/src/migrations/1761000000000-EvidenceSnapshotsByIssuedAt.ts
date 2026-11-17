@@ -28,8 +28,8 @@ const BY_ISSUED_AT = new TableIndex({
   columnNames: ['endpointId', 'issuedAt', 'fetchedAt'],
 });
 
-export class EvidenceSnapshotsByIssuedAt1760600000000 implements MigrationInterface {
-  name = 'EvidenceSnapshotsByIssuedAt1760600000000';
+export class EvidenceSnapshotsByIssuedAt1761000000000 implements MigrationInterface {
+  name = 'EvidenceSnapshotsByIssuedAt1761000000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.createIndex('evidence_snapshots', BY_ISSUED_AT);

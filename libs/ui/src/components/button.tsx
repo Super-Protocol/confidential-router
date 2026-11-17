@@ -4,7 +4,9 @@
  *
  * Deviation: a `brand` variant. `default` is the neutral high-contrast button;
  * `brand` is reserved for the one primary action on a screen so the accent keeps
- * its meaning.
+ * its meaning. Its hover is `--brand-hover`, an opaque token rather than
+ * `bg-brand/90`, so the label's contrast does not depend on the surface the
+ * button happens to sit on (SUP-414).
  */
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
@@ -25,7 +27,7 @@ const buttonVariants = cva(
         secondary: 'bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         link: 'text-primary underline-offset-4 hover:underline',
-        brand: 'bg-brand text-brand-foreground shadow-xs hover:bg-brand/90 focus-visible:ring-brand/40',
+        brand: 'bg-brand text-brand-foreground shadow-xs hover:bg-brand-hover focus-visible:ring-brand/40',
       },
       size: {
         default: 'h-9 px-4 py-2 has-[>svg]:px-3',

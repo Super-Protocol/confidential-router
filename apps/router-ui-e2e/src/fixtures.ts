@@ -34,6 +34,33 @@ export function viewerIsAdmin(isAdmin: boolean): OperationData {
   return { me: { id: SESSION_DATA.me.id, isAdmin } };
 }
 
+/**
+ * This deployment's own endpoint, as `DeploymentDigest` asks for it.
+ *
+ * Mocked by default alongside `Session`, and for the same reason: the block is
+ * on Overview and on the API Keys page, so a spec about the sidebar or about a
+ * key would otherwise have to mock an operation it is not testing. The digest
+ * is the one the SUP-524 walk pinned — specs assert all 64 characters of it.
+ */
+export const DEPLOYMENT_DIGEST_HEX = '3509d9f922d02ed3ec3faf50bbb26399661e93f8e44dbda83a4f84b3d0100f16';
+
+export const DEPLOYMENT_DIGEST_DATA = {
+  routerEndpoint: {
+    __typename: 'Endpoint',
+    id: 'ep-own',
+    hostname: 'api.router.superprotocol.com',
+    evidenceState: 'PUBLISHED',
+    latestEvidence: {
+      __typename: 'EvidenceSnapshot',
+      id: 'snap-own',
+      issuedAt: '2026-08-31T09:28:00.000Z',
+      tee: 'Intel TDX (Azure)',
+      evidenceDigest: 'sha256/NQnZ-SLQLtPsP69Qu7JjmWYek_jkTb2oOk-Es9AQDxY',
+      evidenceDigestHex: DEPLOYMENT_DIGEST_HEX,
+    },
+  },
+};
+
 /** The `data` object of a GraphQL response. */
 export type OperationData = Record<string, unknown>;
 
@@ -57,15 +84,17 @@ export type GraphQLFixtures = Record<string, OperationResponder>;
  * operations it needs (`apps/router-api/schema.graphql` is the contract). An
  * operation nobody mocked fails loudly rather than returning an empty object:
  * a screen quietly rendering "no data" is exactly the bug these tests exist to
- * catch. Two are answered by default: `Session`, because every console page asks
- * for it, and `SignedIn` — the sign-in screen's probe — with the refusal a
- * visitor who is not signed in gets. {@link signIn} overrides the second.
+ * catch. A few are answered by default: `Session`, because every console page
+ * asks for it; `SignedIn` — the sign-in screen's probe — with the refusal a
+ * visitor who is not signed in gets, which {@link signIn} overrides; and
+ * `DeploymentDigest`, which Overview and the API Keys page both carry.
  */
 export async function mockGraphQL(page: Page, operations: GraphQLFixtures = {}): Promise<void> {
   const responses: GraphQLFixtures = {
     Session: SESSION_DATA,
     SignedIn: UNAUTHENTICATED,
     ViewerIsAdmin: viewerIsAdmin(false),
+    DeploymentDigest: DEPLOYMENT_DIGEST_DATA,
     ...operations,
   };
 
