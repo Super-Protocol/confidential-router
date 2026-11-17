@@ -49,7 +49,7 @@ const PR_GATE_JOBS: Record<string, { mirroredAs: string } | { notMirrored: strin
   nx: { mirroredAs: 'verify' },
   'router-api-postgres': { mirroredAs: 'postgres' },
   // The console suite installs a browser and a Go toolchain and is budgeted at twenty minutes,
-  // against roughly five for everything in `main.yml`. The exposure that buys is real and
+  // against roughly nine for everything in `main.yml`. The exposure that buys is real and
   // unclosed: two PRs whose merge breaks a Playwright flow, with nothing between the merge and the
   // next release that would notice. A standing decision on cost, not an oversight — revisit it the
   // first time a merge-only e2e failure reaches a release.
@@ -232,10 +232,11 @@ describe('the trunk gate mirrors the pull-request gate', () => {
   it('excludes the same projects, each covered by the Go job both workflows run', () => {
     const trunkVerify = only(nxTargetRuns([job(trunk, 'verify')], 'run-many'), '`nx run-many`');
     expect(trunkVerify.excluded).toEqual(only(nxTargetRuns([job(pr, 'nx')], 'affected'), 'PR `nx affected`').excluded);
-    // Exclusions are only safe while something else checks the excluded project. Today that is one
+    // Exclusions are only safe while something else checks the excluded projects. Today that is one
     // composite action, shared so the PR gate, the trunk gate and the release workflow cannot
-    // disagree about what a green gatekeeper is.
-    expect(trunkVerify.excluded).toEqual(['gatekeeper']);
+    // disagree about what green Go is. Spelled out rather than only compared, so the set cannot
+    // grow unnoticed — it already grew from `gatekeeper` alone to these three.
+    expect(trunkVerify.excluded).toEqual(['gatekeeper', 'swarm-evidence-go', 'swarm-policy']);
     for (const [name, wf] of [
       ['pull-request.yml', pr],
       ['main.yml', trunk],

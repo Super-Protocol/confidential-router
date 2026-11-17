@@ -100,7 +100,12 @@ const UserSchema = z.object({
   createdAt: iso,
   /** Informational: operators are named by the *importing* deployment's `auth.adminEmails`. */
   role: z.enum(['admin', 'user']),
-  /** Informational: how the account came to exist. The redemptions are the record. */
+  /**
+   * Informational: how the account came to exist. Nothing reads it on import,
+   * and nothing has to — the importing deployment derives the same label from
+   * the rows that *are* the record: the redemption for an invited account, and
+   * `auth.bootstrapEmail` for the operator's own (SUP-309).
+   */
   origin: z.enum(['invite', 'bootstrap', 'open']),
   invitedByCodeId: id.nullable(),
 });

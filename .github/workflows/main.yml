@@ -67,8 +67,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # `gatekeeper` is excluded here and owned by the `go` job below, which has
-      # the Go toolchain and golangci-lint installed.
+      # The Go projects — `gatekeeper`, the `swarm-evidence-go` module the
+      # evidence chain is built out of, and the `swarm-policy` artefacts — are
+      # excluded here and owned by the `go` job below, which has the Go
+      # toolchain, golangci-lint and the Sentinel CLI installed.
       #
       # The Nx cache is left on and costs nothing in correctness: its keys are
       # content hashes of a target's inputs, so the merged tree — which is a
@@ -77,7 +79,7 @@ jobs:
       - name: Lint, typecheck, build & test
         run: |
           pnpm nx run-many -t lint typecheck build test \
-            --exclude=gatekeeper \
+            --exclude=gatekeeper,swarm-evidence-go,swarm-policy \
             --parallel=3 \
             --outputStyle=static
 
@@ -101,17 +103,31 @@ jobs:
           pnpm nx run @confidential-router/router-ui:codegen
           git diff --exit-code -- apps/router-ui/src/generated
 
+      # Same shape, same reason as the step above, and the same merge hazard:
+      # one PR editing the generator and another adding a vector case are each a
+      # no-op against their own base and stale against each other's.
+      - name: Attestation vectors are up to date
+        run: |
+          pnpm nx run @confidential-router/attestation-fixtures:generate
+          status=$(git status --porcelain -- libs/attestation-fixtures/vectors)
+          if [ -n "$status" ]; then
+            echo "$status"
+            git diff -- libs/attestation-fixtures/vectors
+            echo "::error::regenerating the attestation vectors was not a no-op"
+            exit 1
+          fi
+
       - name: Check formatting
         run: pnpm format:check
 
   # Deliberately duplicated, not overlooked: `release-gatekeeper.yml`'s `checks`
   # job already runs this composite action on every push to `main`. It is here
-  # anyway because `report` can only report on jobs it `needs`, and a gatekeeper
-  # failure that lands as a red tick on a release workflow is the silence this
-  # workflow exists to end. Do not delete it as redundant — delete it only
-  # together with the reporting it feeds.
+  # anyway because `report` can only report on jobs it `needs`, and a Go failure
+  # that lands as a red tick on a release workflow is the silence this workflow
+  # exists to end. Do not delete it as redundant — delete it only together with
+  # the reporting it feeds.
   go:
-    name: Go checks (gatekeeper)
+    name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -285,7 +301,7 @@ jobs:
             echo '| Job | Result |'
             echo '| --- | --- |'
             printf '| Lint, typecheck, build & test (whole workspace) | %s |\n' "$VERIFY"
-            printf '| Go checks (gatekeeper) | %s |\n' "$GO"
+            printf '| Go checks | %s |\n' "$GO"
             printf '| router-api migrations (PostgreSQL) | %s |\n' "$POSTGRES"
             printf '| End-to-end demo (gatekeeper → router → model) | %s |\n' "$DEMO"
             echo

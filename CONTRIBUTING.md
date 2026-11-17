@@ -48,6 +48,12 @@ chore(ci): cache the pnpm store
 Allowed scopes are free-form; prefer the project directory name
 (`gatekeeper`, `router-api`, `router-ui`, `types`, `ci`, `deps`).
 
+A commit records the people who worked on it and nothing else. `Co-authored-by`
+is for a second author; tool and assistant attribution trailers do not belong in
+a commit message or a PR description, and CI rejects them
+(`.github/scripts/check-attribution.sh`). The PR body is squash-merged into
+`main` verbatim, so it is held to the same rule as the commits.
+
 ## Pull requests
 
 Every PR body uses the template and must fill in:

@@ -169,7 +169,7 @@ export class InviteAdminService {
    * Every account, newest first, with how it came to exist.
    *
    * `bootstrapEmail` is `auth.bootstrapEmail`; see {@link bootstrapAccountId} for
-   * why that and the account's position are what identify it.
+   * why that address is what identifies the operator's own account.
    */
   async signUps(filter: SignUpFilter, bootstrapEmail: string): Promise<Page<AdminSignUp>> {
     const bootstrapId = await this.bootstrapAccountId(bootstrapEmail);
@@ -181,6 +181,10 @@ export class InviteAdminService {
     if (filter.origin === 'invite') {
       query.andWhere('redemption.id IS NOT NULL');
     } else if (filter.origin === 'bootstrap') {
+      // The redemption is excluded for the reason `signUpOrigin` reads it first:
+      // an operator who also redeemed a code is labelled `invite`, and a page
+      // that listed it here would disagree with the label on its own row.
+      query.andWhere('redemption.id IS NULL');
       // No bootstrapped account means nothing can match; an impossible id keeps
       // the query shape rather than special-casing an empty page.
       query.andWhere('account.id = :bootstrapId', { bootstrapId: bootstrapId ?? '' });
@@ -217,21 +221,47 @@ export class InviteAdminService {
   /**
    * The account `POST /auth/bootstrap` created, or null.
    *
-   * Nothing records that an account was bootstrapped, and nothing needs to: the
-   * plugin only ever creates the *first* account, under `auth.bootstrapEmail`. So
-   * the bootstrapped account is the earliest one, if — and only if — it carries
-   * that address. A deployment whose first account signed up any other way has
-   * none, which is what this answers.
+   * Nothing records that an account was bootstrapped, so it is recognised by the
+   * one address it can carry: `auth.bootstrapEmail`, which that endpoint is the
+   * only writer of and which `user.email` keeps unique. The deployment export
+   * labels the same account the same way, so the file and this screen agree.
+   *
+   * It used to be recognised by position as well — the earliest account, since
+   * the endpoint only ever creates the *first* one — and the deployment import
+   * (SUP-271) is what ended that. The import writes accounts from another
+   * deployment under their original `createdAt`, so the operator who claimed
+   * *this* deployment minutes ago is no longer the earliest row in it, and the
+   * statistics went on to call the administrator's own account `open`: a sign-up
+   * path an invite-only deployment does not even offer (SUP-309).
+   *
+   * What position bought was the one reading the address cannot make — that the
+   * token was never used, and somebody signed up under the operator's configured
+   * address by another path. A redemption still outranks this
+   * ({@link signUpOrigin}), so an invited account is never relabelled; an open
+   * sign-up under that address, on a deployment that has open registration at
+   * all, now reads `bootstrap`. That is the single account this can be wrong
+   * about, and it is the operator's own either way.
    */
   async bootstrapAccountId(bootstrapEmail: string): Promise<string | null> {
-    const [first] = await this.dataSource
+    const configured = bootstrapEmail.trim();
+    const email = configured.toLowerCase();
+    if (!email) {
+      return null;
+    }
+    const matches = await this.dataSource
       .getRepository(User)
       .createQueryBuilder('account')
-      .orderBy('account.createdAt', 'ASC')
-      .addOrderBy('account.id', 'ASC')
-      .take(1)
+      .where('LOWER(account.email) = :email', { email })
+      .orderBy('account.id', 'ASC')
       .getMany();
-    return first && first.email.toLowerCase() === bootstrapEmail.toLowerCase() ? first.id : null;
+    // Matched case-insensitively, so more than one row can answer: `user.email`
+    // is unique but case-sensitive on both drivers, which leaves a case variant
+    // of one address free to exist beside it. `/auth/bootstrap` writes
+    // `auth.bootstrapEmail` verbatim, so the exact spelling is the row it made,
+    // and `account.id` settles whatever is left — without an order the row
+    // chosen is the driver's to pick, and `adminSignUps` and `inviteStatistics`
+    // could then disagree about the operator inside one page load.
+    return (matches.find((account) => account.email === configured) ?? matches[0])?.id ?? null;
   }
 
   private async redemptionsOf(codeIds: readonly string[]): Promise<InviteRedemption[]> {
