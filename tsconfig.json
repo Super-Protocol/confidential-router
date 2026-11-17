@@ -19,6 +19,9 @@
       "path": "./libs/types"
     },
     {
+      "path": "./tools/contract-conformance"
+    },
+    {
       "path": "./tools/demo"
     },
     {

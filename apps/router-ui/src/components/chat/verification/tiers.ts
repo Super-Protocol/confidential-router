@@ -28,7 +28,7 @@ import type { BridgeOutcome } from './extension-bridge';
  *
  * ADR-002 forbids the *router* from asserting a verdict, and nothing here breaks
  * that: each of these is the viewer's own agent reporting what it did, and the
- * router never learns the answer.
+ * answer is never sent to the router.
  *
  * Tier 1 comes in two flavours, and {@link UPSTREAM_TIER} is why: the same
  * verifier run over *this* deployment's evidence and over a copy of another

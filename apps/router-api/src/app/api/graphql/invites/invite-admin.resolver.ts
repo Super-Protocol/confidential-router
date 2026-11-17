@@ -185,5 +185,7 @@ function signUpOf(signUp: AdminSignUp): AdminSignUpModel {
     inviteCode: signUp.invite ? formatInviteCode(signUp.invite.code) : null,
     campaign: signUp.invite?.campaign ?? null,
     redeemedAt: signUp.invite?.redeemedAt ?? null,
+    workspaceId: signUp.workspaceId,
+    balanceMicros: signUp.balanceMicros === null ? null : String(signUp.balanceMicros),
   };
 }

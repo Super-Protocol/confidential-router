@@ -7,7 +7,10 @@ emitted from the resolvers, committed, and checked on every CI run against both 
 the schema the running application serves; `apps/router-ui` generates its Apollo client from that file
 (never edit generated client code by hand). The SDL below is the *design target* this document has carried
 since SUP-66 — where the two differ, the committed file wins and the difference is listed under "As
-shipped" at the end. Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
+shipped" at the end. Every SDL block under an "As shipped" heading is the opposite: a contract the
+committed schema must satisfy verbatim — every type, field, argument, enum value and nullability it names
+— and `tools/contract-conformance` fails the pull request that breaks it (SUP-237).
+Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
 carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
 string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
 field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
@@ -135,6 +138,59 @@ extend type Mutation {
   setAutoTopUp(workspaceId: ID!, enabled: Boolean!, threshold: Micros, amount: Micros): Workspace!
 }
 
+# ---------- the operator credit grant (SUP-406) ----------
+
+enum AdminCreditGrantKind { GRANT ADJUSTMENT }
+type CreditGrant {
+  creditTransactionId: ID!              # the ledger row it wrote
+  workspaceId: ID!
+  accountEmail: String                  # set when the workspace was named by its account holder
+  kind: AdminCreditGrantKind!
+  amountMicros: Micros!                 # signed, as written
+  balanceMicros: Micros!                # the balance after the entry
+  note: String!                         # the reason recorded — the first call's, on a replay
+  replayed: Boolean!                    # this requestId was already recorded; nothing was written
+  createdAt: DateTime!
+}
+# Mutation.grantCredit(input: { accountEmail | workspaceId (exactly one), amountMicros (signed),
+#   kind = GRANT, note!, requestId! }): CreditGrant!   # auth.adminEmails only
+#
+# The only way credit reaches an account that already exists: before it, a balance
+# could be raised by a checkout the user paid for or by a code redeemed *at
+# sign-up*, and topping up a tester afterwards was impossible. One ledger entry,
+# `grant` or `adjustment`, through the same `LedgerService.record` the invitation
+# and sign-up grants use — so invariant 3 holds by the same construction.
+#
+# Three things a hand-written entry needs and an automatic one does not:
+#  - `credit_transactions.grantedByUserId` names the operator on the row, not only
+#    in a log line that rotates.
+#  - `billing.maxCreditGrantMicros` bounds the magnitude of one call the way
+#    `maxTopUpMicros` bounds one checkout ($10 000 by default).
+#  - A negative amount has to be an ADJUSTMENT, needs `billing.allowCreditDebits`
+#    (off by default) and a note; and `adjustment` may not overdraw, so no call
+#    can push a balance below zero.
+#
+# `note` is required in both directions: `grantedByUserId` says who and
+# `reference` says it was by hand, so `description` is the only field left that
+# says *why*, and an operator entry is the one ledger row with no outside event
+# to explain it.
+#
+# Idempotency is the caller's to name. `requestId` is a UUID the console mints
+# when the dialog opens and holds across retries, and the ledger key is
+# `operator:<operatorId>:<requestId>` — operator-scoped, so two callers cannot
+# collide on the same value. The same submission arriving twice replays the
+# first row and answers `replayed: true`; a second *deliberate* grant opens the
+# dialog again and sends a new id, so two decisions still make two entries. The
+# result is read off the stored row, so a retry carrying an edited amount is
+# shown what actually stands, and a replay names the workspace that row credited
+# rather than the one the retry pointed at.
+#
+# `grantedByUserId` is carried by the deployment export and remapped on import
+# the way `issuedByUserId` is, so a redeploy does not turn every operator row
+# into "nobody granted this". The note reaches the account holder verbatim: the
+# Credits screen applies the `description`-carries-the-receipt-link convention
+# only to rows a provider wrote, so an incident URL in a note is not a receipt.
+
 # ---------- invitations ----------
 
 type InviteGrant {                      # the viewer's credit, or null
@@ -223,6 +279,10 @@ type AdminInviteCode {
 type AdminSignUp {
   userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
   inviteCodeId: ID  inviteCode: String  campaign: String  redeemedAt: DateTime   # set exactly when origin = INVITE
+  workspaceId: ID  balanceMicros: Micros   # the workspace they own and what it holds; null when they own none.
+                                           # Here because this is the console's only account list, so it is also
+                                           # where `grantCredit` is reached for — "who has run out" has to be
+                                           # answerable without signing in as them (SUP-406)
 }
 type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: [InviteCampaignStats!]! }
 # Query.adminInviteCodes(campaign, status, offset = 0, limit = 50 ≤ 200): AdminInviteCodePage!   { totalCount, nodes }
@@ -589,8 +649,9 @@ router-ui's codegen reads. The overlay the console was built against while the r
 flight is gone with it; `apps/router-ui/src/components/admin/schema-contract.spec.ts` keeps the two
 guards that are about the schema rather than about the overlay — the external vocabulary never
 collapses into the own-endpoint one, and nothing readable can carry the upstream key (threat T15).
-A contract change still lands **here first**, and both sides follow; SUP-237 is the standing
-document-↔-schema conformance check that will hold that rule mechanically.
+A contract change still lands **here first**, and both sides follow — and since SUP-237 that rule is
+enforced rather than asked: CI fails any pull request whose `schema.graphql` does not satisfy this
+block.
 
 Three decisions in this block are worth reading before the SDL:
 
