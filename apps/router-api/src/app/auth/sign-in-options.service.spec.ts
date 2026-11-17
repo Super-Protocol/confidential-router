@@ -53,6 +53,21 @@ describe('SignInOptionsService', () => {
     });
   });
 
+  /**
+   * SUP-556. A suppressed address cannot be mailed and sign-in is a mailed code,
+   * so the console has to be able to name somewhere else to write. `mail.replyTo`
+   * is that address — the deployment already names a mailbox someone reads.
+   */
+  it('publishes the reply-to mailbox as the contact for an address we cannot reach', async () => {
+    const options = await build({}, false, { provider: 'smtp', replyTo: 'community@example.com' }).service.get();
+
+    expect(options).toMatchObject({ supportEmail: 'community@example.com' });
+  });
+
+  it('names no contact where the deployment named no mailbox', async () => {
+    expect(await build({}, false, { provider: 'smtp' }).service.get()).not.toHaveProperty('supportEmail');
+  });
+
   it('reports nothing about passwords: there are none', async () => {
     const options = await build({}).service.get();
 

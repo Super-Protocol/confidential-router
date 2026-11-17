@@ -53,7 +53,8 @@ describe('wiringSnippet', () => {
       {
         name: 'Confidential Router',
         vendor: 'customendpoint',
-        apiKey: 'sk-tee-v1-4f7a',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+        apiKey: '${input:chat.lm.secret.-...}',
         models: [
           {
             id: 'gpt-oss:tdx',
@@ -82,5 +83,41 @@ describe('wiringSnippet', () => {
     for (const id of ['vscode', 'opencode'] as const) {
       expect(SNIPPET_LANGUAGES.find((language) => language.id === id)?.hint).toBeTruthy();
     }
+  });
+
+  it('names both ways to open the VS Code language-models file', () => {
+    const vscode = SNIPPET_LANGUAGES.find((language) => language.id === 'vscode');
+
+    expect(vscode?.steps).toEqual([
+      expect.stringContaining('Open Language Models (JSON)'),
+      expect.stringContaining('go-to-file icon'),
+    ]);
+    expect(vscode?.steps?.[1]).toContain('model selector');
+    expect(vscode?.steps?.[0]).toContain('Chat: Open Language Models (JSON)');
+    expect(vscode?.hint).toContain('Update API Key');
+    expect(vscode?.hint).not.toContain('routerKey');
+  });
+
+  it('sets the VS Code context window from the catalogue and keeps output inside it', () => {
+    const parsed = JSON.parse(wiringSnippet('vscode', { model: 'gpt-oss:tdx', contextLength: 131_072 }));
+    const limits = parsed[0].models[0];
+
+    expect(limits.contextWindow).toBe(131_072);
+    expect(limits.maxOutputTokens).toBe(8_192);
+    expect(limits.maxInputTokens).toBeUndefined();
+    expect(limits.maxOutputTokens).toBeLessThanOrEqual(limits.contextWindow);
+
+    const short = JSON.parse(wiringSnippet('vscode', { contextLength: 8_192 }));
+    expect(short[0].models[0]).toMatchObject({ contextWindow: 8_192, maxOutputTokens: 4_096 });
+  });
+
+  it('never writes a VS Code key into the file, even when one is supplied', () => {
+    const snippet = wiringSnippet('vscode', { apiKey: 'sk-tee-v1-4f7a', model: 'gpt-oss:tdx' });
+
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+    expect(snippet).toContain('"${input:chat.lm.secret.-...}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's own `${input:…}` syntax.
+    expect(snippet).not.toContain('${input:routerKey}');
+    expect(snippet).not.toContain('sk-tee-v1-4f7a');
   });
 });

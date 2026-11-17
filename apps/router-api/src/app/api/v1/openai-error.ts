@@ -97,6 +97,53 @@ export const openAiErrors = {
       param: 'messages',
     }),
 
+  /**
+   * The upstream read the request and called it invalid — so the client hears a
+   * 4xx, with the upstream's own wording.
+   *
+   * SUP-448. This used to be `502 backend_error`, and that one line killed every
+   * Continue session in SP-447: a 502 is "transient, retry" to every
+   * OpenAI-compatible SDK, the offending message was already in the conversation
+   * history, so each retry rebuilt the same invalid request, got the same 502, and
+   * the user read a permanent client-side bug as our outage. 15 of 97 agent
+   * requests in one afternoon, every one of them unrecoverable.
+   *
+   * Two things make it fixable from the client side. The status says *fix the
+   * request*, not *try again*. And the upstream's message comes with it: it is the
+   * only place that names which field is wrong, and the router cannot know — here
+   * it was one `tool_calls[].function.arguments` holding truncated JSON. That is a
+   * deliberate exception to this surface's rule of not forwarding upstream wording
+   * (see {@link backendUnavailable}): a 4xx body is *about the caller's request*,
+   * not about how this cluster is put together.
+   *
+   * Which is also the exception's limit, and why `detail` may be empty: it holds
+   * wording the upstream put in an error field, never a raw body. An
+   * intermediary's HTML page says nothing about the request, so it is logged and
+   * the caller gets the no-reason sentence below (`upstream-failure.ts`,
+   * `UpstreamErrorBody.structured`).
+   *
+   * `status` is the upstream's own unless an SDK would retry it; `upstreamStatus`
+   * is always what the upstream actually said, because the two can differ and the
+   * client should be able to see both.
+   */
+  upstreamRejectedRequest: (upstream: {
+    who: string;
+    status: number;
+    upstreamStatus: number;
+    detail: string;
+    param?: string;
+  }) =>
+    new OpenAiApiError({
+      status: upstream.status,
+      type: 'invalid_request_error',
+      code: 'upstream_invalid_request',
+      message: upstream.detail
+        ? `${upstream.who} rejected this request as invalid (${upstream.upstreamStatus}): ${upstream.detail}`
+        : `${upstream.who} rejected this request as invalid (${upstream.upstreamStatus}) and gave no reason. ` +
+          'Retrying it unchanged will fail the same way.',
+      ...(upstream.param ? { param: upstream.param } : {}),
+    }),
+
   invalidApiKey: () =>
     new OpenAiApiError({
       status: 401,
@@ -163,6 +210,25 @@ export const openAiErrors = {
       message: 'Unknown endpoint.',
     }),
 
+  /**
+   * The body is over the `/v1` parser's limit, so nothing was parsed.
+   *
+   * Its own code rather than `invalid_json`: the JSON was fine and the client can
+   * act on this one by sending less. The limit is named because the number is a
+   * deployment's choice (`server.maxInferenceRequestBytes`) and a client has no
+   * other way to learn it — SUP-339, where this arrived as Nest's bare
+   * `{"statusCode":413}` and an SDK saw neither the shape nor the reason.
+   */
+  requestTooLarge: (limitBytes: number | null) =>
+    new OpenAiApiError({
+      status: 413,
+      type: 'invalid_request_error',
+      code: 'request_too_large',
+      message: limitBytes
+        ? `Request body is larger than the ${mebibytes(limitBytes)} this router accepts.`
+        : 'Request body is larger than this router accepts.',
+    }),
+
   rateLimited: (message: string, headers: Record<string, string>) =>
     new OpenAiApiError({ status: 429, type: 'rate_limit_error', code: 'rate_limit_exceeded', message, headers }),
 
@@ -171,6 +237,20 @@ export const openAiErrors = {
 
   backendError: (message: string) =>
     new OpenAiApiError({ status: 502, type: 'upstream_error', code: 'backend_error', message }),
+
+  /**
+   * The router stopped waiting for the upstream; the upstream itself never failed.
+   *
+   * A separate code from {@link backendUnavailable} because it names a different
+   * party. `backend_unavailable` says the backend could not be reached, and SUP-339
+   * is what that costs when it is not true: a long prompt and a concurrent burst
+   * both answered perfectly on the direct path, and an operator reading
+   * "unreachable" went and looked at a model deployment that was fine. 504, not
+   * 502: a deadline on a healthy upstream is a gateway timeout, and the request is
+   * worth retrying as-is once the queue drains.
+   */
+  upstreamTimeout: (message: string) =>
+    new OpenAiApiError({ status: 504, type: 'upstream_error', code: 'upstream_timeout', message }),
 
   /**
    * No live verdict admits the upstream this model lives on, so nothing was sent
@@ -224,4 +304,10 @@ export const openAiErrors = {
  */
 export function asOpenAiError(error: unknown): OpenAiApiError {
   return error instanceof OpenAiApiError ? error : openAiErrors.internal();
+}
+
+/** A byte limit as the client is likelier to recognise it: `8 MiB`, `1.5 MiB`. */
+function mebibytes(bytes: number): string {
+  const value = bytes / 1024 / 1024;
+  return `${Number.isInteger(value) ? value : value.toFixed(1)} MiB`;
 }
