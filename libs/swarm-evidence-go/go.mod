@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/google/go-sev-guest v0.15.0
-	github.com/google/go-tdx-guest v0.3.1
+	github.com/google/go-tdx-guest v0.3.2-0.20261102220254-19b50fc35dcd
 	github.com/gowebpki/jcs v1.0.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
