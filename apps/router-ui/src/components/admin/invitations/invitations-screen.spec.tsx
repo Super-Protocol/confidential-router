@@ -106,6 +106,31 @@ function codesMock(nodes: unknown[]): MockLink.MockedResponse {
   };
 }
 
+function signUp(overrides: Record<string, unknown> = {}) {
+  return {
+    __typename: 'AdminSignUp' as const,
+    userId: 'u-1',
+    email: 'tester@example.com',
+    createdAt: '2026-10-09T09:00:00.000Z',
+    origin: 'INVITE',
+    inviteCodeId: 'code-1',
+    inviteCode: CODE,
+    campaign: 'launch',
+    redeemedAt: '2026-10-09T09:00:00.000Z',
+    workspaceId: 'ws-tester',
+    balanceMicros: '40000000',
+    ...overrides,
+  };
+}
+
+function signUpsMock(nodes: unknown[]): MockLink.MockedResponse {
+  return {
+    request: { query: ADMIN_SIGN_UPS_QUERY, variables: { origin: null, offset: 0, limit: 50 } },
+    result: { data: { adminSignUps: { __typename: 'AdminSignUpPage', totalCount: nodes.length, nodes } } },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
 function renderScreen({ admin = true, mocks = [] }: { admin?: boolean; mocks?: MockLink.MockedResponse[] } = {}) {
   return renderWithSession(<InvitationsScreen />, {
     mocks: [sessionMock(), isAdminMock(admin), statisticsMock(), ...mocks],
@@ -474,6 +499,8 @@ describe('InvitationsScreen', () => {
                     inviteCode: CODE,
                     campaign: 'launch',
                     redeemedAt: '2026-10-09T09:00:00.000Z',
+                    workspaceId: 'ws-2',
+                    balanceMicros: '100000000',
                   },
                   {
                     __typename: 'AdminSignUp',
@@ -485,6 +512,8 @@ describe('InvitationsScreen', () => {
                     inviteCode: null,
                     campaign: null,
                     redeemedAt: null,
+                    workspaceId: 'ws-1',
+                    balanceMicros: '0',
                   },
                 ],
               },
@@ -503,5 +532,31 @@ describe('InvitationsScreen', () => {
     expect(invited).toHaveTextContent('ABCD-••••-••••');
     expect(invited).not.toHaveTextContent(CODE);
     expect(within(table).getByRole('row', { name: /admin@example\.com/ })).toHaveTextContent('Bootstrap');
+  });
+});
+
+describe('the accounts list as the place an operator credits one (SUP-406)', () => {
+  it('shows each account’s balance and offers to credit it', async () => {
+    renderScreen({ mocks: [signUpsMock([signUp()])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    const table = await screen.findByRole('table', { name: 'Sign-ups' });
+    const row = within(table).getByRole('row', { name: /tester@example.com/ });
+
+    expect(row).toHaveTextContent('$40.00');
+    await userEvent.click(within(row).getByRole('button', { name: 'Credit' }));
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Credit tester@example.com');
+    expect(screen.getByRole('dialog')).toHaveTextContent('They hold $40.00 today');
+  });
+
+  it('has nothing to credit on an account with no workspace', async () => {
+    renderScreen({ mocks: [signUpsMock([signUp({ workspaceId: null, balanceMicros: null })])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    const table = await screen.findByRole('table', { name: 'Sign-ups' });
+    const row = within(table).getByRole('row', { name: /tester@example.com/ });
+
+    expect(within(row).getByRole('button', { name: 'Credit' })).toBeDisabled();
   });
 });

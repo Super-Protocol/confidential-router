@@ -139,12 +139,19 @@ describe('SQLite', () => {
       expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId')).toBe(true);
       expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_identity')).toBe(true);
 
+      // SUP-406's operator column is one additive column; the next undo drops
+      // only that and leaves the ledger it hangs off.
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(false);
+      expect(await queryRunner.hasColumn('credit_transactions', 'idempotencyKey')).toBe(true);
+
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. The next undo takes all of that back; it can only restore
-      // the NOT NULLs on a database the sweep has not run on yet, which is this
-      // one.
+      // `generations`. Third now that SUP-406's column and SUP-298's index are
+      // appended after it. The undo can only restore the NOT NULLs on a database
+      // the sweep has not run on yet, which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);
