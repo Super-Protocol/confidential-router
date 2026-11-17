@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { postToUpstream, UpstreamUnavailableError } from './upstream-fetch.js';
+import { postToUpstream, UpstreamTimeoutError, UpstreamUnavailableError } from './upstream-fetch.js';
 
 /**
  * The retry rule both legs share, and the one property that makes it safe: a
@@ -46,7 +46,7 @@ function call(url: string, overrides: Partial<Parameters<typeof postToUpstream>[
     url,
     headers: { 'content-type': 'application/json' },
     body: { model: 'x' },
-    connectTimeoutMs: 2_000,
+    responseTimeoutMs: 2_000,
     signal: AbortSignal.timeout(5_000),
     ...overrides,
   });
@@ -110,10 +110,8 @@ describe('postToUpstream', () => {
   });
 
   it('gives up on a never-answered socket without retrying: bytes may already have landed', async () => {
-    // The deadline aborts with a reason, and `fetch` re-throws that reason as-is,
-    // so the failure is a plain `Error` rather than an `AbortError` — which is
-    // exactly why `isConnectionError` refuses it. Retrying here could re-run a
-    // generation the upstream had already started.
+    // Retrying here could re-run a generation the upstream had already started:
+    // the socket was accepted, so the request bytes may be on it.
     const retries: number[] = [];
     const url = await serving((request) => {
       // Accepted at the TCP level and then ignored for ever, which is the hang the
@@ -121,10 +119,30 @@ describe('postToUpstream', () => {
       request.resume();
     });
 
-    await expect(
-      call(url, { connectTimeoutMs: 40, onRetry: (attempt) => retries.push(attempt) }),
-    ).rejects.toBeInstanceOf(UpstreamUnavailableError);
+    const failure = await call(url, { responseTimeoutMs: 40, onRetry: (attempt) => retries.push(attempt) }).catch(
+      (error: unknown) => error,
+    );
 
+    expect(failure).toBeInstanceOf(UpstreamTimeoutError);
+    // The deadline reads as itself. Rounding it to whole seconds would print "0s"
+    // to a client whose deployment configured a sub-second one.
+    expect((failure as Error).message).toContain('0.04s');
     expect(retries).toEqual([]);
+  });
+
+  it('waits past the old 5s ceiling for an upstream that is simply still working', async () => {
+    const url = await serving((request, response) => {
+      request.resume();
+      // Longer than the 5s the deadline used to allow, shorter than what a real
+      // `connectTimeout + readTimeout` now permits.
+      setTimeout(() => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end('{"ok":true}');
+      }, 120);
+    });
+
+    const response = await call(url, { responseTimeoutMs: 2_000 });
+
+    expect(response.status).toBe(200);
   });
 });

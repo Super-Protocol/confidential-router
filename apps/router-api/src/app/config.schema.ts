@@ -25,12 +25,78 @@ const name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'must be a lowercase 
 export const MIN_REATTEST_INTERVAL_MS = 60_000;
 export const MAX_REATTEST_INTERVAL_MS = 3_600_000;
 
+/**
+ * How old a bundle may be before the verifiers that read one reject it: the
+ * console's chat gate (`evidence-gate.ts`, `MAX_BUNDLE_AGE_MS`), the browser
+ * extension and the Gatekeeper all draw the line at 24 hours.
+ *
+ * Not a knob — it is somebody else's rule, restated here because
+ * `externalEndpoints.evidenceStaleAfter` is only an *alert* if it fires on the
+ * near side of it (SUP-615).
+ */
+export const RELAYED_EVIDENCE_REJECTED_AFTER_MS = 24 * 60 * 60 * 1000;
+
 const ServerSchema = z
   .strictObject({
     port: integerish().pipe(z.number().int().min(1).max(65535)).prefault(3000),
     host: z.string().prefault('0.0.0.0'),
     publicBaseUrl: z.url().prefault('http://localhost:3000'),
     validClientOrigins: stringArrayish().prefault([]),
+    /**
+     * Largest `/v1` request body the router accepts, in bytes.
+     *
+     * Its own limit, well above the 1 MiB the console surfaces keep, because the
+     * two carry different things: a console mutation is a form, and a prompt that
+     * fills the context window `GET /v1/models` advertises is megabytes of JSON.
+     * Sharing the console's 1 MiB is what made the advertised `context_length` a
+     * figure no client could spend (SUP-339): prod advertises 262 144 tokens and
+     * serves them, and at the ~6 bytes per token prose measures that is ~1.6 MiB
+     * of body — refused by the parser before any model saw it.
+     *
+     * 8 MiB by default: five times the window prod advertises today, which leaves
+     * room for JSON escaping, long tool schemas and a bigger window later, while
+     * still bounding what one request can buffer. Raise it for a deployment
+     * serving a larger context or base64 attachments, and keep the arithmetic in
+     * mind — this number times the concurrency the deployment expects is memory.
+     */
+    maxInferenceRequestBytes: integerish().pipe(z.number().int().min(1_048_576).max(268_435_456)).prefault(8_388_608),
+    /**
+     * How long a *streaming* `/v1` request may wait in silence before the router
+     * opens its event stream and starts heart-beating into it.
+     *
+     * It has to stay below the read timeout of the ingress in front of this
+     * deployment. Seven of 97 agent turns measured against production waited
+     * exactly 60 s on a stalled model endpoint, and in three of them the ingress
+     * gave up first and answered an openresty HTML page — not the router's error
+     * envelope, with no `x-request-id`, and with no row in Logs, because the
+     * request never came back through the code that writes one (SUP-449). nginx
+     * and OpenResty default to 60 s, so 15 s leaves room for an ingress tuned
+     * tighter and matches the heartbeat interval the stream then keeps.
+     *
+     * The cost of opening early is the status line: past this point a failure
+     * before the first token is delivered as a `data:` error event rather than a
+     * 502. Everything that fails faster — all but those seven of 169 measured
+     * requests — is unaffected.
+     *
+     * Floored at 1 s, because `durationMs` would otherwise accept `0s` and that
+     * value is two bugs at once: `setInterval` on a zero delay is a write loop
+     * per concurrent stream, and opening the stream before the backend has had
+     * any chance to answer costs *every* streamed failure its status line —
+     * including a `429` and its `Retry-After`. A deployment that wants the old
+     * behaviour raises this above its ingress's timeout rather than lowering it
+     * to nothing.
+     */
+    streamKeepAliveAfter: durationMs('15s').pipe(
+      z
+        .number()
+        .int()
+        .min(
+          1_000,
+          'server.streamKeepAliveAfter must be at least 1s: a shorter delay opens the event stream before the ' +
+            'backend could plausibly have answered, which costs every streamed failure its status code, and 0s ' +
+            'turns the heartbeat into a busy loop.',
+        ),
+    ),
   })
   .prefault({});
 
@@ -113,6 +179,18 @@ const ModelSchema = z.strictObject({
   litellmModel: z.string().min(1),
   endpoint: name,
   contextLength: integerish().pipe(z.number().int().positive()),
+  /**
+   * Which OpenAI routes the *backend* serves for this model, which is not the
+   * same list `/v1/models` reports: that one is derived, and includes the
+   * streaming and tool calling the surface has always done plus the legacy
+   * completions route it serves for a chat model by wrapping the prompt
+   * (`catalog/served-capabilities.ts`, SUP-450).
+   *
+   * So `completions` here is a statement about the backend — vLLM and SGLang
+   * serve `/v1/completions` themselves — and what it buys is a verbatim forward
+   * rather than a translation, which is what keeps `suffix` infilling working.
+   * Dropping it costs infilling and nothing else.
+   */
   capabilities: z.array(z.enum(['chat', 'completions', 'embeddings'])).prefault(['chat', 'completions']),
   pricing: z.strictObject({
     promptPer1mMicros: integerish().pipe(z.number().int().nonnegative()),
@@ -301,12 +379,48 @@ const MailSchema = z
     /** The display name in front of `from`. */
     fromName: z.string().trim().min(1).max(100).prefault('Confidential Router'),
     /**
+     * Where a reply goes (SUP-409). `from` is a no-reply address on a domain
+     * that need not receive mail at all, so without this a reply — or a bounce
+     * a human sends back by hand — lands nowhere. Set it to a mailbox someone
+     * reads; unset leaves the message with no `Reply-To`, which is what every
+     * deployment before this had.
+     */
+    replyTo: z.email().optional(),
+    /**
      * The console's own origin, which every link in a mail points at. Defaults
      * to the first entry of `server.validClientOrigins` — the console a chart
      * renders there — so it only needs setting when that list says `*`.
      */
     consoleUrl: z.url().optional(),
     resendApiKey: optionalSecret(1),
+    /**
+     * Signs the provider's delivery notifications (SUP-551).
+     *
+     * Unset, `POST /v1/webhooks/resend` is a 404 and this deployment learns
+     * nothing about what happened to a message after the relay took it — which
+     * is the state every deployment before this was in. It is the Svix signing
+     * secret the provider shows when the endpoint is created (`whsec_…`), and
+     * it is read whatever `provider` is set to: production sends through the
+     * same provider's SMTP relay, and the events are the account's rather than
+     * the transport's.
+     */
+    webhookSecret: optionalSecret(16),
+    /**
+     * Provider deliveries accepted per minute per source address.
+     *
+     * The signature is the authority, not this; the budget exists so that an
+     * unsigned flood cannot spend the service's time on HMAC verification.
+     */
+    webhooksPerMinute: integerish().pipe(z.number().int().positive()).prefault(120),
+    /**
+     * How often one source address may ask whether an address is being
+     * rejected (`signInMailState`).
+     *
+     * The console asks once per code-entry screen. The budget is what stops the
+     * query being used to walk a list of addresses looking for the ones the
+     * provider has suppressed.
+     */
+    stateLookupsPerMinute: integerish().pipe(z.number().int().positive()).prefault(30),
     smtp: z
       .strictObject({
         host: z.string().trim().min(1),
@@ -635,6 +749,36 @@ const ExternalEndpointsSchema = z
     /** How often router-api reads the sidecar's `/status` and `/verdicts` back. */
     statusPollInterval: durationMs('5s'),
     /**
+     * When a run of failed checks against a registered upstream stops being noise
+     * and becomes an outage worth waking somebody for (SUP-517).
+     *
+     * A threshold rather than a constant because what counts as an outage is a
+     * property of the deployment, not of the code: a stand that re-points
+     * endpoints all afternoon wants a looser one than production, where a model
+     * that has not served for a quarter of an hour is the only thing anybody
+     * cares about.
+     *
+     * Both halves, because they miss different failures. `afterFailures` is the
+     * honest unit while checks are happening on schedule and says nothing at all
+     * when the checking itself has stopped — a sidecar that never answers leaves
+     * every row at `pending` and increments no counter. `afterNoSuccess` notices
+     * that, and is what the 30-hour outage this comes from would have tripped
+     * within fifteen minutes. `0` disables either.
+     */
+    outage: z
+      .strictObject({
+        /**
+         * Distinct failed checks in a row. Three, against a 10-minute
+         * re-attestation, is roughly half an hour of a model refusing every
+         * request — long enough that one bad fetch does not page, short enough
+         * that nobody finds out from a user.
+         */
+        afterFailures: integerish().pipe(z.number().int().min(0).max(1_000)).prefault(3),
+        /** Since the endpoint was last known to serve, however little has been checked in between. */
+        afterNoSuccess: durationMs('15m'),
+      })
+      .prefault({}),
+    /**
      * How often router-api fetches a verified upstream's published bundle, so the
      * admin section can render what a cloud-level admission let in (SUP-221
      * ruling 1, ADR-008 §7).
@@ -646,6 +790,42 @@ const ExternalEndpointsSchema = z
      * has no snapshot for anyway.
      */
     evidencePollInterval: durationMs('1m'),
+    /**
+     * How old this router's filed copy of an upstream's publication may get
+     * before a pass fetches that upstream again — even though its digest has not
+     * changed (SUP-615).
+     *
+     * The digest is a statement about *what* is deployed and it does not move
+     * while a deployment stands; `issuedAt` is a statement about *when* the
+     * upstream last said so, and it moves every time it republishes. Polling on
+     * the digest alone therefore files one copy on the day an upstream is
+     * approved and relays that same copy for as long as the deployment lives —
+     * which is what made the console report for 37 hours that a production
+     * upstream's evidence did not check out, every verifier having correctly
+     * refused a bundle signed the day before while that upstream was publishing
+     * a one-minute-old one.
+     *
+     * An hour against a 24-hour rejection window
+     * ({@link RELAYED_EVIDENCE_REJECTED_AFTER_MS}) leaves 23 attempts' worth of
+     * headroom and costs one HTTPS fetch per upstream per hour. `0` re-fetches
+     * on every pass, which is `evidencePollInterval` and is a stand's setting,
+     * not production's.
+     */
+    evidenceRefreshAfter: durationMs('1h'),
+    /**
+     * When the copy the relay hands out has aged enough to wake somebody
+     * (SUP-615).
+     *
+     * Deliberately far inside the 24 hours at which the verifiers refuse it: the
+     * alert exists so that an operator hears about a relay that stopped
+     * advancing *before* the console starts reporting that an upstream's
+     * evidence did not check out, rather than from whoever read that sentence.
+     * Six hours is five failed refreshes at the default, which no longer reads
+     * as one bad fetch.
+     *
+     * `0` turns the alert off, like `outage.afterNoSuccess`.
+     */
+    evidenceStaleAfter: durationMs('6h'),
     /**
      * How long the egress leg waits for the sidecar's loopback listener to accept
      * a connection. Its own value rather than LiteLLM's: a refusal here means the
@@ -662,6 +842,27 @@ const ExternalEndpointsSchema = z
     readTimeout: durationMs('120s'),
   })
   .check((ctx) => {
+    const { evidenceRefreshAfter, evidenceStaleAfter } = ctx.value;
+    if (evidenceStaleAfter > 0 && evidenceStaleAfter >= RELAYED_EVIDENCE_REJECTED_AFTER_MS) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['evidenceStaleAfter'],
+        message:
+          'externalEndpoints.evidenceStaleAfter must be below 24h: that is when every verifier rejects a relayed ' +
+          'bundle outright, so an alert at or past it reports a console that is already locked (SUP-615).',
+      });
+    }
+    if (evidenceStaleAfter > 0 && evidenceRefreshAfter >= evidenceStaleAfter) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        path: ['evidenceStaleAfter'],
+        message:
+          'externalEndpoints.evidenceStaleAfter must be greater than evidenceRefreshAfter: otherwise the alert ' +
+          'fires on copies this router has not yet tried to refresh, and every upstream pages once an hour.',
+      });
+    }
     const { reattestInterval } = ctx.value;
     if (reattestInterval < MIN_REATTEST_INTERVAL_MS || reattestInterval > MAX_REATTEST_INTERVAL_MS) {
       ctx.issues.push({
@@ -674,6 +875,57 @@ const ExternalEndpointsSchema = z
           'the hour Denis accepted as the worst case.',
       });
     }
+  })
+  .prefault({});
+
+/**
+ * Where an alert goes so that a human reads it (SUP-535).
+ *
+ * The router already had alerts; what it did not have was an outbound path. An
+ * `ERROR` line is an alert only for a deployment with a log sink somebody has
+ * wired an alarm to, and this one has none — two production outages were found
+ * by a person stumbling over them. So the alert leaves the process by the one
+ * channel this deployment demonstrably has: the mail provider the sign-in codes
+ * already go out through.
+ *
+ * `emails` is empty by default and **falls back to `auth.adminEmails`**, which
+ * every deployment with an admin section already sets. That default is the point:
+ * a channel nobody had to configure is a channel that works on the deployment
+ * that is already running, and the failure this exists to catch is exactly the
+ * one nobody got round to configuring for.
+ */
+const AlertsSchema = z
+  .strictObject({
+    /**
+     * Who to write to. Empty means `auth.adminEmails`; a deployment that wants a
+     * shared inbox or an on-call alias instead names it here, and `['']`-style
+     * emptiness is not expressible — an address that is not an address is a
+     * configuration error at boot rather than a silent non-delivery.
+     */
+    emails: stringArrayish()
+      .pipe(z.array(z.email('must be an email address')))
+      .prefault([]),
+    /**
+     * Off switches the outbound path only. The log line, the `/health` block and
+     * the endpoint timeline are unchanged, because they are the record; this is
+     * the thing that wakes somebody, and a deployment with a real pager wired to
+     * its log sink may legitimately not want a second one.
+     */
+    email: booleanish().prefault(true),
+    /**
+     * The least time between two outbound alerts, whatever raised them.
+     *
+     * The latch in `ExternalEndpointStatusService` already sends one message per
+     * outage run. This is the second belt: a flapping upstream is a run that ends
+     * and begins again, and the honest answer to twenty of those in an hour is
+     * one mail and a line in the log saying how many it stood for. A mailbox that
+     * has been flooded once is a mailbox with a filter on it.
+     *
+     * Armed by a message that *landed*, not by one that was attempted: a send
+     * that reached nobody put nothing in a mailbox, and arming on it would spend
+     * the next interval's budget on a message that does not exist.
+     */
+    minInterval: durationMs('15m'),
   })
   .prefault({});
 
@@ -738,6 +990,7 @@ export const RouterConfigSchema = z.strictObject({
   analytics: AnalyticsSchema,
   feedback: FeedbackSchema,
   chat: ChatSchema,
+  alerts: AlertsSchema,
   log: LogSchema,
   graphql: GraphqlSchema,
   gatekeeper: GatekeeperSchema,
@@ -749,3 +1002,4 @@ export type DatabaseConfig = RouterConfig['database'];
 export type AuthConfig = RouterConfig['auth'];
 export type MailConfig = RouterConfig['mail'];
 export type ExternalEndpointsConfig = RouterConfig['externalEndpoints'];
+export type AlertsConfig = RouterConfig['alerts'];

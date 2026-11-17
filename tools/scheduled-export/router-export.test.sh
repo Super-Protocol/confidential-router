@@ -1014,6 +1014,74 @@ write_config
 reset_state
 set_scenario '{"users":2,"codes":3}'
 
+# --- verify-bundle.mjs: the API-key section (SUP-445) -------------------------
+#
+# Driven directly rather than through a scenario, because what is being pinned
+# is the checker's reading of one section and nothing else. The section is
+# defaulted in the router (`export-bundle.ts`), so the checker has to accept a
+# bundle written before it existed and still catch a bundle written after it
+# that has lost the rows — which is exactly what the last rebuild did, voiding
+# every configured key while the balances migrated perfectly.
+
+keys_bundle() {
+  # $1 = how many keys `data.apiKeys` holds, $2 = what `counts.apiKeys` claims
+  # ('omit' leaves both the section and its counts out, as an old file does).
+  python3 - "$1" "$2" "$workdir/keys.json.gz" << 'PYKEYS'
+import gzip, hashlib, json, sys
+
+def canonical(value):
+    if isinstance(value, list):
+        return '[' + ','.join(canonical(v) for v in value) + ']'
+    if isinstance(value, dict):
+        return '{' + ','.join(json.dumps(k) + ':' + canonical(v) for k, v in sorted(value.items())) + '}'
+    return json.dumps(value)
+
+held, claimed, out = sys.argv[1], sys.argv[2], sys.argv[3]
+data = {
+    'users': [{'id': 'u0', 'email': 'u0@example.test'}],
+    'workspaces': [], 'workspaceMembers': [], 'creditLedger': [],
+    'inviteCodes': [], 'inviteRedemptions': [],
+    'externalEndpoints': [], 'trustedMeasurements': [],
+}
+counts = {
+    'users': 1, 'workspaces': 0, 'workspaceMembers': 0, 'creditEntries': 0,
+    'inviteCampaigns': 0, 'inviteCodes': 0, 'inviteCodesUnredeemed': 0,
+    'inviteRedemptions': 0, 'externalEndpoints': 0, 'externalModels': 0,
+    'trustedMeasurements': 0,
+}
+if held != 'omit':
+    # One revoked, so `apiKeysLive` is not simply the section's length.
+    data['apiKeys'] = [{'id': f'k{i}', 'revokedAt': '2026-10-01T00:00:00.000Z' if i == 0 else None}
+                       for i in range(int(held))]
+if claimed != 'omit':
+    counts['apiKeys'] = int(claimed)
+    counts['apiKeysLive'] = max(int(claimed) - 1, 0)
+doc = {
+    'format': 'router-export', 'schemaVersion': 1,
+    'exportedAt': '2026-10-17T03:17:00.000Z',
+    'source': {'publicBaseUrl': 'http://127.0.0.1', 'routerVersion': '0.0.0-test'},
+    'counts': counts, 'totalBalanceMicros': '0', 'data': data,
+    'integrity': {'contentSha256': hashlib.sha256(canonical(data).encode()).hexdigest()},
+}
+with open(out, 'wb') as f:
+    f.write(gzip.compress(json.dumps(doc).encode()))
+PYKEYS
+  node "$here/verify-bundle.mjs" "$workdir/keys.json.gz"
+}
+
+out="$(keys_bundle 3 3)"
+expect_eq 'a bundle whose key count matches is accepted' "$?" '0'
+expect_contains 'and the keys are reported' "$out" '"apiKeys": 3'
+expect_contains 'live keys separately from revoked ones' "$out" '"apiKeysLive": 2'
+
+out="$(keys_bundle omit omit)"
+expect_eq 'a bundle written before the section existed still verifies' "$?" '0'
+expect_contains 'reading as no keys rather than as a broken file' "$out" '"apiKeys": 0'
+
+out="$(keys_bundle 0 3)"
+expect_eq 'a bundle that lost its keys is refused' "$?" '1'
+expect_contains 'and the refusal names the section' "$out" 'apiKeys'
+
 printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf '%d failure(s)\n' "$failures"

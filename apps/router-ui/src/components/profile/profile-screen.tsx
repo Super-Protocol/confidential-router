@@ -22,9 +22,12 @@ export function ProfileScreen() {
   // Frozen for the life of the mount: a range recomputed on every render would
   // change the query variables and refetch the screen in a loop.
   const range = React.useMemo(() => lastUtcDays(SPEND_DAYS), []);
+  // Same `to` as the spend week, so the two windows end together and the one
+  // `activitySummary` alias pair stays coherent.
+  const heatmapFrom = React.useMemo(() => lastUtcDays(HEATMAP_DAYS).from, []);
 
   const { data, error, refetch } = useQuery(PROFILE_QUERY, {
-    variables: { workspaceId: workspaceId ?? '', ...range, heatmapDays: HEATMAP_DAYS },
+    variables: { workspaceId: workspaceId ?? '', ...range, heatmapFrom, heatmapDays: HEATMAP_DAYS },
     skip: workspaceId === null,
     fetchPolicy: 'cache-and-network',
   });
@@ -95,7 +98,7 @@ export function ProfileScreen() {
           <TopModelsCard usage={data.usageByModel} />
         </div>
 
-        <SignedDaysCard signedDays={data.signedResponseDays} />
+        <SignedDaysCard signedDays={data.signedResponseDays} totals={data.heatmapTotals} />
       </div>
     </>
   );

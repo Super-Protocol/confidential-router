@@ -37,8 +37,10 @@ router-export.sh [--local-only] [--quiet] [--accept-shrink '<reason>']
 4. **verifies** before keeping anything: the bundle is readable gzipped JSON, its
    `data` hashes to the `integrity.contentSha256` it declares, that hash equals
    the `X-Export-Sha256` the response declared, every count in its manifest
-   matches the rows it carries, the codes CSV starts with the header the importer
-   accepts and holds a row per code the bundle counted;
+   matches the rows it carries — the API-key section included, because a rebuild
+   once voided every configured key while the balances migrated perfectly
+   (SUP-445) — the codes CSV starts with the header the importer accepts and
+   holds a row per code the bundle counted;
 5. **refuses an empty or shrinking export**: zero accounts is never a true
    reading of a live deployment, and counts that fall between two runs mean
    either a loss or a restore from something older. Either way the bundle is kept
@@ -473,7 +475,7 @@ bash tools/scheduled-export/router-export.test.sh   # or: pnpm nx run scheduled-
 
 A fake router on loopback, built by the same canonical form the real one hashes
 with, so "the hash matches" means something, and a stand-in `az` in place of the
-real CLI. **127 assertions**, covering:
+real CLI. **134 assertions**, covering:
 
 | | |
 |---|---|
@@ -486,6 +488,7 @@ real CLI. **127 assertions**, covering:
 | values this host does not control | a `"` and a `\` in the marketplace's `appVersion` leaving `state.json` and the run manifest parseable, the odd version readable back verbatim, and — the point of it — the shrink guard still firing against the real baseline instead of against zero |
 | the file that arrived | a failing export, a truncated bundle, a hash the header disagrees with, a missing hash header, a foreign `format`, a newer `schemaVersion` |
 | what it carries | an empty export, a codes CSV shorter than the bundle's count, a codes CSV with the wrong header |
+| the API-key section | a bundle whose `counts.apiKeys` matches its rows accepted and reported, revoked keys counted apart from live ones, a bundle written before the section existed reading as *no keys* rather than as a broken file, and a bundle that declares keys and carries none refused by name |
 | between runs | a shrinking export naming what shrank, a growing one accepted, local rotation to `LOCAL_KEEP` |
 | retention | a run directory past `LOCAL_MAX_AGE_DAYS` pruned and one inside it kept, the age limit holding on a run the shrink guard refuses, `0` and a non-number refused |
 | overruling the shrink guard | a bare re-run refusing identically, the refusal naming the flag in text a Markdown renderer cannot eat, `--accept-shrink` getting through and becoming the new baseline, the acceptance said even under `--quiet`, the acceptance log surviving the next successful run, appending rather than replacing, keeping one acceptance to one line through a reason with a newline in it, travelling with the upload and passing the read-back, the flag as a no-op when nothing shrank, a missing reason, a blank one and a flag-shaped one refused, a single-dash one accepted |

@@ -39,6 +39,14 @@ function countsOf(data) {
     inviteCodes: data.inviteCodes.length,
     inviteCodesUnredeemed: data.inviteCodes.filter((code) => code.status === 'unredeemed').length,
     inviteRedemptions: data.inviteRedemptions.length,
+    // Defaulted here for the same reason the section and its counts are
+    // defaulted in the router (`export-bundle.ts`): a bundle written before
+    // SUP-445 added the section reads as "no keys" rather than as a broken
+    // file. A bundle written *after* it that has lost them does not — that is
+    // the whole reason this section is counted at all, since the last rebuild
+    // voided every configured key while the balances migrated perfectly.
+    apiKeys: (data.apiKeys ?? []).length,
+    apiKeysLive: (data.apiKeys ?? []).filter((key) => key.revokedAt === null).length,
     externalEndpoints: data.externalEndpoints.length,
     externalModels: data.externalEndpoints.reduce((sum, endpoint) => sum + endpoint.models.length, 0),
     trustedMeasurements: data.trustedMeasurements.length,
@@ -86,6 +94,13 @@ for (const section of [
     refuse(`the bundle has no ${section} section; it is not the document this build knows how to read.`);
   }
 }
+// Defaulted sections: absent is legal — the file predates them — but present
+// and not an array is a malformed document, not an old one.
+for (const section of ['apiKeys']) {
+  if (bundle.data?.[section] !== undefined && !Array.isArray(bundle.data[section])) {
+    refuse(`the bundle's ${section} section is not a list; it is not the document this build knows how to read.`);
+  }
+}
 
 const recomputed = createHash('sha256').update(canonicalJson(bundle.data), 'utf8').digest('hex');
 const declared = bundle.integrity?.contentSha256;
@@ -100,11 +115,15 @@ if (header && header !== declared) {
   );
 }
 
+/** Counts the router defaults to 0, so an older bundle still adds up. */
+const DEFAULTED_TO_ZERO = new Set(['apiKeys', 'apiKeysLive']);
+
 const counts = countsOf(bundle.data);
 for (const [key, value] of Object.entries(counts)) {
-  if (bundle.counts?.[key] !== value) {
+  const declaredCount = bundle.counts?.[key] ?? (DEFAULTED_TO_ZERO.has(key) ? 0 : undefined);
+  if (declaredCount !== value) {
     refuse(
-      `the bundle counts ${bundle.counts?.[key]} ${key} but carries ${value}; its manifest does not describe its contents.`,
+      `the bundle counts ${declaredCount} ${key} but carries ${value}; its manifest does not describe its contents.`,
     );
   }
 }
