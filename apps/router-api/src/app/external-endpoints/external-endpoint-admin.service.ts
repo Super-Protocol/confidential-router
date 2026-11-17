@@ -84,7 +84,26 @@ const PENDING_VERDICT = {
   evidenceDigestSeen: null,
   pinnedCertFingerprint: null,
   observedCertFingerprint: null,
+  // The failure run goes with the verdict (SUP-517): a re-point is a different
+  // upstream, so the old one's run of denials is not this one's. `notServingSince`
+  // is not here because it needs a clock — see {@link notServingFrom}.
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  consecutiveFailures: 0,
+  upstreamUnreachable: null,
 } as const satisfies Partial<ExternalEndpoint>;
+
+/**
+ * `notServingSince` for a row that just had its verdict cleared.
+ *
+ * `now` while the endpoint is on — it is not serving as of this moment, and
+ * that is what the outage thresholds measure from. Null while it is off: a row
+ * an operator took out of service is not failing to serve, it has been withdrawn,
+ * and a clock running on it would be counting a non-event.
+ */
+function notServingFrom(enabled: boolean, now: Date): Date | null {
+  return enabled ? now : null;
+}
 
 /** The four values both catalogue writes need, grouped so neither takes four positional arguments. */
 interface ModelWrite {
@@ -238,6 +257,14 @@ export class ExternalEndpointAdminService {
         pinnedEvidenceDigest: null,
         pinnedCertFingerprint: null,
         observedCertFingerprint: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        // Registered and not serving as of now. It stays that way until an admin
+        // approves the deployment the first check reports, which is why a fresh
+        // registration is exempt from the outage thresholds (`expectedToServe`).
+        notServingSince: now,
+        consecutiveFailures: 0,
+        upstreamUnreachable: null,
         apiKeyCiphertext: sealed.ciphertext,
         apiKeyPrefix: sealed.prefix,
         createdByUserId: spec.createdByUserId,
@@ -314,7 +341,7 @@ export class ExternalEndpointAdminService {
         {
           baseUrl,
           hostname: new URL(baseUrl).hostname,
-          ...(repointed && endpoint.enabled ? PENDING_VERDICT : {}),
+          ...(repointed && endpoint.enabled ? { ...PENDING_VERDICT, notServingSince: notServingFrom(true, now) } : {}),
           ...(pinned === endpoint.pinnedEvidenceDigest ? {} : { pinnedEvidenceDigest: pinned }),
           updatedAt: now,
         },
@@ -375,7 +402,13 @@ export class ExternalEndpointAdminService {
     const now = new Date();
     await this.endpoints().update(
       { id },
-      { ...PENDING_VERDICT, enabled, status: enabled ? 'pending' : 'disabled', updatedAt: now },
+      {
+        ...PENDING_VERDICT,
+        enabled,
+        status: enabled ? 'pending' : 'disabled',
+        notServingSince: notServingFrom(enabled, now),
+        updatedAt: now,
+      },
     );
     if (!enabled) {
       await this.status.recordEvent(id, 'disabled', { now });

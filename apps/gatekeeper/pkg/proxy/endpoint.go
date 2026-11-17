@@ -131,6 +131,13 @@ type endpoint struct {
 	server   *http.Server
 	cancel   context.CancelFunc
 	loopDone chan struct{}
+	// serveDone is closed when this generation's Serve goroutine has returned,
+	// and with it released the socket: [http.Server.Shutdown] only closes the
+	// listeners Serve has already registered, so a stop that lands in the
+	// window between `go server.Serve(listener)` and that registration closes
+	// nothing itself and leaves the address bound until the goroutine runs.
+	// Waiting on it is what makes "stopped" mean the port is free (SUP-704).
+	serveDone chan struct{}
 
 	verdict *verdict
 	// firstVerdict is closed once the first verification has finished, whatever
@@ -281,14 +288,18 @@ func (e *endpoint) startListener(ctx context.Context, req startRequest) (bool, e
 	e.generation++
 	e.listener, e.server, e.cancel = listener, server, cancel
 	e.loopDone = make(chan struct{})
+	e.serveDone = make(chan struct{})
 	e.stats.reset()
-	loopDone, generation := e.loopDone, e.generation
+	loopDone, serveDone, generation := e.loopDone, e.serveDone, e.generation
 	e.mu.Unlock()
 
 	e.sup.metrics.listening.WithLabelValues(e.name).Set(1)
 	e.sup.log("info", e.name, "listening on "+e.listen+" → "+e.upstream)
 
 	go func() {
+		// Serve closes the listener on its way out, whatever it returns, so
+		// this channel is the moment the address is free.
+		defer close(serveDone)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			e.serveFailed(generation, err)
 		}
@@ -320,7 +331,9 @@ func (e *endpoint) serveFailed(generation int, err error) {
 	e.generation++
 	torn := e.generation
 	e.serveErr = err.Error()
-	e.listener, e.server, e.cancel, e.loopDone = nil, nil, nil, nil
+	// serveDone is this goroutine's own, and Serve has already closed the
+	// listener on its way here: cleared, never waited on.
+	e.listener, e.server, e.cancel, e.loopDone, e.serveDone = nil, nil, nil, nil, nil
 	// Same reasoning as stop(): an endpoint that is not being re-attested must
 	// not keep the verdict that admitted traffic.
 	e.verdict = nil
@@ -379,11 +392,11 @@ func (e *endpoint) stop(ctx context.Context) error {
 		e.mu.Unlock()
 		return nil
 	}
-	server, cancel, loopDone := e.server, e.cancel, e.loopDone
+	server, cancel, loopDone, serveDone := e.server, e.cancel, e.loopDone, e.serveDone
 	e.running = false
 	e.generation++
 	torn := e.generation
-	e.server, e.listener, e.cancel, e.loopDone = nil, nil, nil, nil
+	e.server, e.listener, e.cancel, e.loopDone, e.serveDone = nil, nil, nil, nil, nil
 	// A stopped endpoint has no verdict: it is not being re-attested, so the
 	// one it had would go stale unnoticed and the next start would admit
 	// traffic on it before the first check completed.
@@ -403,6 +416,12 @@ func (e *endpoint) stop(ctx context.Context) error {
 	}
 	cancel()
 	<-loopDone
+	// The address is this endpoint's to hand over: a reload that retires an
+	// endpoint starts its replacement on the same `listen` as soon as this
+	// returns, and a bind that races the old socket's close fails for good
+	// (SUP-704). Shutdown has made Serve return — or will have stopped it from
+	// ever accepting — so this is bounded by one goroutine's wake-up.
+	<-serveDone
 
 	e.release(torn)
 	e.sup.log("info", e.name, "listener stopped")

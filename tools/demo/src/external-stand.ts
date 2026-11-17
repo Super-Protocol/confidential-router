@@ -60,12 +60,17 @@ const REGISTRY_ENV = 'GATEKEEPER_TESTSTAND_REGISTRY_BASE_URL';
  * package tests against (its testdata/README.md lists what is in it). Served
  * by the stand as the registry, so the folders SUP-251 added are what the
  * gatekeeper under test actually probes.
+ *
+ * It lives in the `swarm-evidence-go` module since SUP-647. This is the only
+ * place the path is spelled on the TypeScript side — `registry-server.spec.ts`
+ * imports it rather than rebuilding it — because the first time it moved, a
+ * second copy assembled from `join()` segments survived a repository-wide text
+ * search for the old path and 404'd every lookup in the stand.
  */
 export const REGISTRY_FIXTURE_DIR = join(
   REPO_ROOT,
-  'apps',
-  'gatekeeper',
-  'pkg',
+  'libs',
+  'swarm-evidence-go',
   'attestation',
   'attestedroot',
   'testdata',
@@ -437,6 +442,15 @@ export interface RegisteredExternalEndpoint {
   pinnedEvidenceDigest: string | null;
   lastStage: string | null;
   lastReason: string | null;
+  /** The failure run behind the verdict (SUP-517) — how long dark, and whether that is an outage. */
+  liveness: {
+    reachability: string;
+    notServingSince: string | null;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    consecutiveFailures: number;
+    outage: boolean;
+  } | null;
   models: { id: string; name: string }[];
   /** The evidence summary behind the digest seen, once the router has filed it. */
   latestEvidence: { evidenceDigest: string; containerImages: string[] } | null;
@@ -457,6 +471,7 @@ const ENDPOINT_FIELDS = `
   pinnedEvidenceDigest
   lastStage
   lastReason
+  liveness { reachability notServingSince lastSuccessAt lastFailureAt consecutiveFailures outage }
   models { id name }
   latestEvidence { evidenceDigest containerImages }
   pinnedEvidence { evidenceDigest containerImages }

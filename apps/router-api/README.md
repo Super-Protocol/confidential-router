@@ -375,7 +375,16 @@ This service drives it through a file and reads it back over a socket:
   leaf it claims is the leaf the sidecar pinned, and it is only ever surfaced for
   the digest a verdict actually saw. Endpoints with no verdict are not polled at
   all — there is no pin to bind a document to — so `latestEvidence` is null while
-  one is `pending`.
+  one is `pending`. A filed copy is re-fetched once it is
+  `externalEndpoints.evidenceRefreshAfter` old even though the digest has not
+  moved: the digest says *what* is deployed and only `issuedAt` says *when* the
+  upstream last asserted it, and a relay that stops advancing is rejected by
+  every verifier after 24 hours (SUP-615 — the console reported for 37 hours
+  that a production upstream's evidence did not check out, while that upstream
+  was publishing a one-minute-old bundle). A copy that ages past
+  `externalEndpoints.evidenceStaleAfter` anyway is an `ERROR` line and an
+  operator alert, once per run, with the "it is current again" line when a
+  refresh lands.
 - **`ExternalCatalogService`** holds the routable external models — a model is in
   it **iff** its endpoint is enabled and `verified`, which is the fail-closed drop
   of a failed re-attestation as seen from the admission side. The sidecar refuses

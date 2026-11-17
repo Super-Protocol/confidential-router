@@ -72,6 +72,7 @@ const ENDPOINT: RegisteredExternalEndpoint = {
   pinnedEvidenceDigest: 'sha256:aaa',
   lastStage: null,
   lastReason: null,
+  liveness: null,
   models: [],
   latestEvidence: null,
   pinnedEvidence: null,
