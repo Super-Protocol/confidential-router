@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { blockingViolations } from './axe';
-import { type GraphQLFixtures, mockClipboard, signIn } from './fixtures';
+import { DEPLOYMENT_DIGEST_HEX, type GraphQLFixtures, mockClipboard, signIn } from './fixtures';
 import { API_ORIGIN } from './origins';
 
 /**
@@ -55,6 +55,22 @@ test.describe('How to connect', () => {
     await expect(page.getByRole('link', { name: 'Connect a client' })).toHaveAttribute('href', '/keys#how-to-connect');
   });
 
+  /**
+   * Step 2 prints `--from-upstream`, which asks a y/n the reader can only
+   * answer against a digest they already hold. Sending them to another screen
+   * for it is what made the documented comparison unfollowable (SUP-541), so
+   * the value is on this page, above the command that needs it.
+   */
+  test('carries the digest the pin step must print back, in full', async ({ page, baseURL }) => {
+    await signIn(page, baseURL as string, OPERATIONS);
+    await page.goto('/keys');
+
+    const card = page.locator('#how-to-connect');
+    await expect(card.getByTestId('deployment-digest-value')).toHaveText(`sha256:${DEPLOYMENT_DIGEST_HEX}`);
+    await expect(card.getByText('The digest this step must print back')).toBeVisible();
+    await expect(card.getByText(/Compare all 64 characters of what it prints/)).toBeVisible();
+  });
+
   test('explains the flow, then the pre-filled setup, then the client — with nothing to substitute', async ({
     page,
     baseURL,
@@ -95,6 +111,12 @@ test.describe('How to connect', () => {
     await card.getByRole('tab', { name: 'VS Code' }).click();
     const vscode = card.getByTestId('wiring-snippet-vscode');
     await expect(vscode).toContainText('"vendor": "customendpoint"');
+    // SUP-326: VS Code resolves this file's `apiKey` against its own secret
+    // storage, so a key written here authenticates nothing. The entry carries
+    // the reference Update API Key writes, and never the key itself — not even
+    // the prefix the other four tabs show.
+    await expect(vscode).toContainText('chat.lm.secret');
+    await expect(vscode).not.toContainText('sk-tee-v1');
     await expect(vscode).toContainText('http://127.0.0.1:8787/v1/chat/completions');
     await expect(vscode).toContainText('meta/llama-3.3-70b-instruct:tdx');
 

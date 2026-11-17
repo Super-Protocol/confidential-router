@@ -456,7 +456,7 @@ func validateListen(p *problems, path, addr string) {
 	}
 	m := listenPattern.FindStringSubmatch(addr)
 	if m == nil {
-		p.addf(path, "must be host:port, e.g. 127.0.0.1:8443, got %q", addr)
+		p.addf(path, "must be host:port, e.g. 127.0.0.1:8787, got %q", addr)
 		return
 	}
 	port, err := strconv.Atoi(m[2])

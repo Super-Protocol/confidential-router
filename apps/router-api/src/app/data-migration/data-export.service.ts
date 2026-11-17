@@ -14,8 +14,15 @@ import { TrustedMeasurement } from '../db/entities/trusted-measurement.entity.js
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { EvidenceService } from '../evidence/index.js';
-import { inviteCodeStatus } from '../invites/index.js';
-import { buildBundle, type ExportBundle, type ExportData, type ExportedInviteCode } from './export-bundle.js';
+import { inviteCodeStatus, signUpOrigin } from '../invites/index.js';
+import {
+  buildBundle,
+  carryUsageForward,
+  type ExportBundle,
+  type ExportData,
+  type ExportedInviteCode,
+  sourceLabelOf,
+} from './export-bundle.js';
 
 const isoOf = (value: Date): string => value.toISOString();
 const isoOrNull = (value: Date | null): string | null => (value ? value.toISOString() : null);
@@ -36,6 +43,11 @@ const microsOrNull = (value: number | null): string | null => (value === null ? 
  * `export-bundle.ts`. Which table belongs in which half is not left to this
  * comment: `bundle-coverage.ts` holds the decision for every entity in the
  * schema and a spec fails the build when a new one is not in it (SUP-445).
+ *
+ * The ledger is the one section that cannot simply be copied past that list: a
+ * per-request usage debit names the generation it charged for, so it is carried
+ * forward as one entry per workspace per month instead — `carryUsageForward`,
+ * SUP-446.
  *
  * Nothing is cached or written to disk: the bundle is built for the request
  * that asked for it and is gone when the response has been sent.
@@ -80,7 +92,12 @@ export class DataExportService {
       ]);
 
     const invitedBy = new Map(redemptions.map((row) => [row.userId, row.inviteCodeId]));
-    const bootstrapEmail = this.config.auth.bootstrapEmail.toLowerCase();
+    const bootstrapEmail = this.config.auth.bootstrapEmail.trim().toLowerCase();
+    // The operator's own account, found the way the console's statistics find it
+    // (`InviteAdminService.bootstrapAccountId`) and labelled by the same rule, so
+    // what this file says about an account is what the importing deployment
+    // re-derives for it (SUP-309).
+    const bootstrapId = users.find((user) => user.email.trim().toLowerCase() === bootstrapEmail)?.id ?? null;
     // A membership or redemption whose account is gone points at nothing; the
     // import would refuse a bundle that carried one.
     const known = new Set(users.map((user) => user.id));
@@ -94,11 +111,7 @@ export class DataExportService {
         image: user.image,
         createdAt: isoOf(user.createdAt),
         role: isAdminEmail(user.email, this.config.auth.adminEmails) ? ('admin' as const) : ('user' as const),
-        origin: invitedBy.has(user.id)
-          ? ('invite' as const)
-          : user.email.toLowerCase() === bootstrapEmail
-            ? ('bootstrap' as const)
-            : ('open' as const),
+        origin: signUpOrigin(user.id, invitedBy.has(user.id), bootstrapId),
         invitedByCodeId: invitedBy.get(user.id) ?? null,
       })),
       workspaces: workspaces.map((workspace) => ({
@@ -122,16 +135,24 @@ export class DataExportService {
           role: row.role,
           createdAt: isoOf(row.createdAt),
         })),
-      creditLedger: ledger.map((entry) => ({
-        id: entry.id,
-        workspaceId: entry.workspaceId,
-        kind: entry.kind,
-        amountMicros: microsOf(entry.amountMicros),
-        reference: entry.reference,
-        description: entry.description,
-        idempotencyKey: entry.idempotencyKey,
-        createdAt: isoOf(entry.createdAt),
-      })),
+      // Per-request usage debits are carried as one entry per workspace per
+      // month: the generations they name stay behind, and a debit for a request
+      // the importing deployment has no row for is what SUP-446 was. The money
+      // is unchanged.
+      creditLedger: carryUsageForward(
+        ledger.map((entry) => ({
+          id: entry.id,
+          workspaceId: entry.workspaceId,
+          kind: entry.kind,
+          amountMicros: microsOf(entry.amountMicros),
+          reference: entry.reference,
+          description: entry.description,
+          idempotencyKey: entry.idempotencyKey,
+          grantedByUserId: entry.grantedByUserId,
+          createdAt: isoOf(entry.createdAt),
+        })),
+        sourceLabelOf(this.config.server.publicBaseUrl),
+      ),
       inviteCodes: codes.map((code) => ({
         id: code.id,
         value: code.code,

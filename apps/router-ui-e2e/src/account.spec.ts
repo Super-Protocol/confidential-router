@@ -217,7 +217,7 @@ test.describe('Preferences', () => {
     });
 
     await page.goto('/preferences');
-    await expect(page.getByRole('switch', { name: 'Archive quotes' })).toBeChecked();
+    await expect(page.getByRole('switch', { name: 'Keep archived quotes' })).toBeChecked();
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
@@ -258,7 +258,7 @@ test.describe('Preferences', () => {
     await mockConsole(page, { Preferences: preferencesResponder(() => PREFERENCES) });
 
     await page.goto('/preferences');
-    await expect(page.getByRole('switch', { name: 'Archive quotes' })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Keep archived quotes' })).toBeVisible();
 
     expect(await blockingViolations(page)).toEqual([]);
   });

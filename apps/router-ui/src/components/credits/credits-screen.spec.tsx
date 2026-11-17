@@ -114,6 +114,25 @@ describe('CreditsScreen', () => {
     );
   });
 
+  /*
+   * `--brand` is a fill, and only reaches 3.74:1 as text on the light card —
+   * below AA. Both accents on this screen are text, so both take the emphasis
+   * token (7.80:1 light, 10.31:1 dark). SUP-414.
+   */
+  it('paints its two accents with the token that is readable as text', async () => {
+    render([creditsMock()]);
+    await screen.findByTestId('credit-balance');
+
+    const row = screen.getByRole('row', { name: /Credit purchase/ });
+    const amount = within(row).getByText('+$25.00');
+    expect(amount).toHaveClass('text-brand-emphasis');
+    expect(amount).not.toHaveClass('text-brand');
+
+    const preset = screen.getByRole('button', { name: '$25' });
+    expect(preset).toHaveClass('aria-pressed:text-brand-emphasis');
+    expect(preset).not.toHaveClass('aria-pressed:text-brand');
+  });
+
   it('welcomes an invited account with the grant, above the balance it explains', async () => {
     search.current = new URLSearchParams('welcome=invite');
     vi.stubGlobal('location', { ...window.location, search: '?welcome=invite' });
@@ -422,6 +441,44 @@ describe('CreditsScreen', () => {
 
     expect(await screen.findByText('Sign-up credit')).toBeInTheDocument();
     expect(screen.getByText('+$20.00')).toBeInTheDocument();
+  });
+
+  it('names an operator credit, and never reads its note as a receipt (SUP-406)', async () => {
+    const note = 'goodwill after the 14 Oct outage, see https://status.example.com/incidents/42';
+    const operated = transaction({
+      id: 'txn-operator',
+      kind: 'GRANT',
+      amountMicros: '50000000',
+      reference: 'operator',
+      description: `Credit granted by an operator · ${note}`,
+    });
+
+    render([creditsMock(BALANCE, [operated])]);
+
+    // Not "Invitation credit": no campaign ever existed for this row.
+    expect(await screen.findByText('Operator credit')).toBeInTheDocument();
+    // The note reaches the account holder whole — the incident link included,
+    // as text. Stripped, it would read "…see" and end mid-sentence.
+    expect(screen.getByText(`Credit granted by an operator · ${note}`)).toBeInTheDocument();
+    // And the operator's link is not a receipt: a status page under the Receipt
+    // heading of a billing screen is what this guards against.
+    const row = screen.getByRole('row', { name: /Operator credit/ });
+    expect(within(row).queryByRole('link', { name: /Receipt/ })).not.toBeInTheDocument();
+  });
+
+  it('names an operator correction that takes credit away (SUP-406)', async () => {
+    const operated = transaction({
+      id: 'txn-operator-debit',
+      kind: 'ADJUSTMENT',
+      amountMicros: '-10000000',
+      reference: 'operator',
+      description: 'Credit removed by an operator · Duplicate grant on 18 Oct',
+    });
+
+    render([creditsMock(BALANCE, [operated])]);
+
+    expect(await screen.findByText('Operator adjustment')).toBeInTheDocument();
+    expect(screen.getByText('-$10.00')).toBeInTheDocument();
   });
 
   it('shows the feedback offer when the server is making one', async () => {

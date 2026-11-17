@@ -5,6 +5,8 @@ import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemptio
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { User } from '../db/entities/user.entity.js';
+import { Workspace } from '../db/entities/workspace.entity.js';
+import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAttributionService, type UserInviteAttribution } from './invite-attribution.service.js';
 import { type GeneratedInvite, type GenerateInvitesRequest, generateInvites } from './invite-generator.js';
 
@@ -56,6 +58,17 @@ export interface AdminSignUp {
   origin: SignUpOrigin;
   /** Present exactly when `origin` is `invite`. */
   invite: UserInviteAttribution | null;
+  /**
+   * The balance of the workspace this account owns, in micro-USD — null when it
+   * owns none.
+   *
+   * On the account list because this is where an operator decides whether to
+   * credit somebody (SUP-406): "who has run out" is the question that sends them
+   * here, and answering it from the Credits screen would mean signing in as the
+   * tester.
+   */
+  workspaceId: string | null;
+  balanceMicros: number | null;
 }
 
 export interface Page<T> {
@@ -169,7 +182,7 @@ export class InviteAdminService {
    * Every account, newest first, with how it came to exist.
    *
    * `bootstrapEmail` is `auth.bootstrapEmail`; see {@link bootstrapAccountId} for
-   * why that and the account's position are what identify it.
+   * why that address is what identifies the operator's own account.
    */
   async signUps(filter: SignUpFilter, bootstrapEmail: string): Promise<Page<AdminSignUp>> {
     const bootstrapId = await this.bootstrapAccountId(bootstrapEmail);
@@ -181,6 +194,10 @@ export class InviteAdminService {
     if (filter.origin === 'invite') {
       query.andWhere('redemption.id IS NOT NULL');
     } else if (filter.origin === 'bootstrap') {
+      // The redemption is excluded for the reason `signUpOrigin` reads it first:
+      // an operator who also redeemed a code is labelled `invite`, and a page
+      // that listed it here would disagree with the label on its own row.
+      query.andWhere('redemption.id IS NULL');
       // No bootstrapped account means nothing can match; an impossible id keeps
       // the query shape rather than special-casing an empty page.
       query.andWhere('account.id = :bootstrapId', { bootstrapId: bootstrapId ?? '' });
@@ -199,39 +216,117 @@ export class InviteAdminService {
       .getManyAndCount();
 
     const invites = await this.attribution.forUsers(accounts.map((account) => account.id));
+    const balances = await this.balancesOf(accounts.map((account) => account.id));
     return {
       totalCount,
       nodes: accounts.map((account) => {
         const invite = invites.get(account.id) ?? null;
+        const balance = balances.get(account.id) ?? null;
         return {
           userId: account.id,
           email: account.email,
           createdAt: account.createdAt,
           origin: signUpOrigin(account.id, invite !== null, bootstrapId),
           invite,
+          workspaceId: balance?.workspaceId ?? null,
+          balanceMicros: balance?.balanceMicros ?? null,
         };
       }),
     };
   }
 
   /**
+   * The workspace each of these accounts owns, with its balance, keyed by user.
+   *
+   * The *oldest* owned workspace, which is the one the console opens on
+   * (`WorkspaceScopeService.defaultForUser`) and the only one a personal account
+   * has — so the two surfaces name the same balance. One query per page rather
+   * than per row, like every other enrichment here.
+   */
+  private async balancesOf(
+    userIds: readonly string[],
+  ): Promise<Map<string, { workspaceId: string; balanceMicros: number }>> {
+    const unique = [...new Set(userIds)];
+    /** userId → their oldest owned workspace. A later membership never replaces it. */
+    const owned = new Map<string, string>();
+    for (let at = 0; at < unique.length; at += ID_CHUNK) {
+      const memberships = await this.dataSource.getRepository(WorkspaceMember).find({
+        where: { userId: In(unique.slice(at, at + ID_CHUNK)), role: 'owner' },
+        order: { createdAt: 'ASC' },
+      });
+      for (const membership of memberships) {
+        if (!owned.has(membership.userId)) {
+          owned.set(membership.userId, membership.workspaceId);
+        }
+      }
+    }
+
+    const workspaceIds = [...new Set(owned.values())];
+    const byId = new Map<string, number>();
+    for (let at = 0; at < workspaceIds.length; at += ID_CHUNK) {
+      const workspaces = await this.dataSource.getRepository(Workspace).find({
+        where: { id: In(workspaceIds.slice(at, at + ID_CHUNK)) },
+        select: { id: true, balanceMicros: true },
+      });
+      for (const workspace of workspaces) {
+        byId.set(workspace.id, workspace.balanceMicros);
+      }
+    }
+
+    const balances = new Map<string, { workspaceId: string; balanceMicros: number }>();
+    for (const [userId, workspaceId] of owned) {
+      const balanceMicros = byId.get(workspaceId);
+      if (balanceMicros !== undefined) {
+        balances.set(userId, { workspaceId, balanceMicros });
+      }
+    }
+    return balances;
+  }
+
+  /**
    * The account `POST /auth/bootstrap` created, or null.
    *
-   * Nothing records that an account was bootstrapped, and nothing needs to: the
-   * plugin only ever creates the *first* account, under `auth.bootstrapEmail`. So
-   * the bootstrapped account is the earliest one, if — and only if — it carries
-   * that address. A deployment whose first account signed up any other way has
-   * none, which is what this answers.
+   * Nothing records that an account was bootstrapped, so it is recognised by the
+   * one address it can carry: `auth.bootstrapEmail`, which that endpoint is the
+   * only writer of and which `user.email` keeps unique. The deployment export
+   * labels the same account the same way, so the file and this screen agree.
+   *
+   * It used to be recognised by position as well — the earliest account, since
+   * the endpoint only ever creates the *first* one — and the deployment import
+   * (SUP-271) is what ended that. The import writes accounts from another
+   * deployment under their original `createdAt`, so the operator who claimed
+   * *this* deployment minutes ago is no longer the earliest row in it, and the
+   * statistics went on to call the administrator's own account `open`: a sign-up
+   * path an invite-only deployment does not even offer (SUP-309).
+   *
+   * What position bought was the one reading the address cannot make — that the
+   * token was never used, and somebody signed up under the operator's configured
+   * address by another path. A redemption still outranks this
+   * ({@link signUpOrigin}), so an invited account is never relabelled; an open
+   * sign-up under that address, on a deployment that has open registration at
+   * all, now reads `bootstrap`. That is the single account this can be wrong
+   * about, and it is the operator's own either way.
    */
   async bootstrapAccountId(bootstrapEmail: string): Promise<string | null> {
-    const [first] = await this.dataSource
+    const configured = bootstrapEmail.trim();
+    const email = configured.toLowerCase();
+    if (!email) {
+      return null;
+    }
+    const matches = await this.dataSource
       .getRepository(User)
       .createQueryBuilder('account')
-      .orderBy('account.createdAt', 'ASC')
-      .addOrderBy('account.id', 'ASC')
-      .take(1)
+      .where('LOWER(account.email) = :email', { email })
+      .orderBy('account.id', 'ASC')
       .getMany();
-    return first && first.email.toLowerCase() === bootstrapEmail.toLowerCase() ? first.id : null;
+    // Matched case-insensitively, so more than one row can answer: `user.email`
+    // is unique but case-sensitive on both drivers, which leaves a case variant
+    // of one address free to exist beside it. `/auth/bootstrap` writes
+    // `auth.bootstrapEmail` verbatim, so the exact spelling is the row it made,
+    // and `account.id` settles whatever is left — without an order the row
+    // chosen is the driver's to pick, and `adminSignUps` and `inviteStatistics`
+    // could then disagree about the operator inside one page load.
+    return (matches.find((account) => account.email === configured) ?? matches[0])?.id ?? null;
   }
 
   private async redemptionsOf(codeIds: readonly string[]): Promise<InviteRedemption[]> {

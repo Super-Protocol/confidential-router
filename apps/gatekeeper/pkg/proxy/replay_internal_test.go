@@ -46,11 +46,12 @@ func TestIdleConnectionsAreDroppedBeforeAGatewayDropsThem(t *testing.T) {
 type replayUpstream struct {
 	server *httptest.Server
 
-	mu       sync.Mutex
-	bodies   []string
-	conns    []*staleableConn
-	dials    atomic.Int32
-	failDial atomic.Int32 // dials still to fail before one succeeds
+	mu          sync.Mutex
+	bodies      []string
+	credentials []string
+	conns       []*staleableConn
+	dials       atomic.Int32
+	failDial    atomic.Int32 // dials still to fail before one succeeds
 }
 
 func newReplayUpstream(t *testing.T, handler http.HandlerFunc) *replayUpstream {
@@ -60,6 +61,7 @@ func newReplayUpstream(t *testing.T, handler http.HandlerFunc) *replayUpstream {
 		body, _ := io.ReadAll(r.Body)
 		u.mu.Lock()
 		u.bodies = append(u.bodies, string(body))
+		u.credentials = append(u.credentials, r.Header.Get("Authorization"))
 		u.mu.Unlock()
 		if handler != nil {
 			handler(w, r)
@@ -104,6 +106,13 @@ func (u *replayUpstream) received() []string {
 	return append([]string(nil), u.bodies...)
 }
 
+// presented is the `Authorization` header of every request the upstream read.
+func (u *replayUpstream) presented() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.credentials...)
+}
+
 // staleableConn is a raw upstream connection that can be turned into one the
 // remote has closed but this side has not noticed yet: it still looks alive to
 // the pool, and its first write fails without a byte reaching the peer.
@@ -127,6 +136,7 @@ func post(t *testing.T, rt http.RoundTripper, u *replayUpstream, body string) (*
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("Authorization", replayCredential)
 	// What the reverse proxy hands the transport: a body it cannot rewind.
 	req.Body = io.NopCloser(req.Body)
 	req.GetBody = nil
@@ -187,6 +197,33 @@ func TestAStaleKeepAliveConnectionIsReplayedOnAFreshOne(t *testing.T) {
 	}
 	if dials := u.dials.Load(); dials != 2 {
 		t.Errorf("dials = %d, want the replay on a fresh connection", dials)
+	}
+}
+
+// replayCredential stands in for the end-to-end API key every request on this
+// path carries. The gatekeeper never reads it; it only has to not lose it.
+const replayCredential = "Bearer sk-tee-v1-0123456789abcdef"
+
+// TestAReplayCarriesTheCredential pins SUP-326 on the one path that builds a
+// second request: a replay that reached the upstream without the key would make
+// the router answer "Incorrect API key provided" for a key that is correct —
+// the exact shape a tester reported, and indistinguishable from a bad key.
+func TestAReplayCarriesTheCredential(t *testing.T) {
+	u := newReplayUpstream(t, nil)
+	p := newPool("router.example.test", 443, u.dial)
+
+	mustOK(t, p.roundTripper, u, `{"n":1}`)
+	u.goStale()
+	mustOK(t, p.roundTripper, u, `{"n":2}`)
+
+	presented := u.presented()
+	if len(presented) != 2 {
+		t.Fatalf("upstream read %d requests, want 2", len(presented))
+	}
+	for i, got := range presented {
+		if got != replayCredential {
+			t.Errorf("attempt %d presented %q, want %q", i+1, got, replayCredential)
+		}
 	}
 }
 

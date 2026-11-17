@@ -144,7 +144,7 @@ $ gatekeeper config validate
 
 Nothing in the file is wrong — it is not finished.
 
-Next: front the endpoint you want to verify
+Next: finish the setup
   gatekeeper endpoint add router --upstream https://<host> --listen 127.0.0.1:8787
 
 $ gatekeeper endpoint add llama-33-70b \
@@ -227,7 +227,7 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  ENDPOINT          LISTEN            UPSTREAM          STATUS            LAST ATTEST   REQ/S   │
 │ ────────────────────────────────────────────────────────────────────────────────────────────── │
-│  llama-33-70b      127.0.0.1:8443    https://llama-3…  confidential      now           0.8     │
+│  llama-33-70b      127.0.0.1:8787    https://llama-3…  confidential      now           0.8     │
 │  qwen25-72b        127.0.0.1:8444    https://qwen25-…  non-confidential  now           2.5     │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -268,7 +268,7 @@ gatekeeper  1 confidential · 1 non-confidential
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  ENDPOINT          LISTEN            UPSTREAM          STATUS            LAST ATTEST   REQ/S   │
 │ ────────────────────────────────────────────────────────────────────────────────────────────── │
-│  llama-33-70b      127.0.0.1:8443    https://llama-3…  confidential      now           0.8     │
+│  llama-33-70b      127.0.0.1:8787    https://llama-3…  confidential      now           0.8     │
 │  qwen25-72b        127.0.0.1:8444    https://qwen25-…  non-confidential  now           2.5     │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -456,6 +456,18 @@ The same workflow also publishes
 with the matching semver tags, and on every push to `main` as `:main` and
 `:main-<sha>`. The digest is in the job summary, because the digest is what a
 chart pins (ADR-008 §2: the sidecar is inside the snapshot a user verifies).
+
+Only a push publishes the image, so `:main-<sha>` is written by the push that
+advanced the branch and by nothing else — not by the nightly, not by a dispatch
+— which is what keeps re-resolving it a usable check on a chart's pins. A
+rebuild of the same commit is not byte-identical, so a second publish hands out
+a different digest for source that never changed (SUP-316).
+
+One way to move it is left: re-running that push's workflow from the Actions UI,
+which is still a `push` event. GHCR has no immutable tags to lean on, so that
+one is convention rather than mechanism — re-run a release run only when you
+mean to replace what it published, and re-pin whatever declared the old digest.
+`:main` is the one moving tag; `:build<run number>` names a run.
 
 The image is the *cluster* packaging, not a replacement for the binaries: it
 exists for a pod running the gatekeeper as an attested egress, where the

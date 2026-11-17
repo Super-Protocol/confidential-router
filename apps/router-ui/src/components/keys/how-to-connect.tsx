@@ -3,6 +3,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@confidential-router/ui/components/card';
 import { BookOpen } from 'lucide-react';
 import type * as React from 'react';
+import { DeploymentDigest } from '../evidence/deployment-digest';
 import { DataFlowDiagram } from '../gatekeeper/data-flow-diagram';
 import { GatekeeperSetupBlock } from '../gatekeeper/setup-block';
 import { InfoPopover } from '../info-popover';
@@ -52,8 +53,8 @@ export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps
             itself for you — a verdict is only worth something when the party you are trusting did not produce it. The
             gatekeeper is that party: it fetches the router’s evidence, checks the cloud’s measurement against the Super
             Protocol registry of signed measurements, pins the TLS certificate the evidence names, and refuses to
-            forward if any check fails. Nothing about that decision depends on the router being honest, and the router
-            is never told that anyone verified it.
+            forward if any check fails. Nothing about that decision depends on the router being honest, and no verdict
+            is ever sent back to the router.
           </p>
           <DataFlowDiagram />
         </Step>
@@ -76,6 +77,16 @@ export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps
           }
           moreLabel="About these commands"
         >
+          {/*
+            The pin step's `--from-upstream` asks a y/n that is only answerable
+            against a digest the reader already holds, and sending them to
+            another screen for it is what made the documented comparison
+            unfollowable (SUP-541). It sits above the commands because it has to
+            be read before step 4 is run, not after.
+          */}
+          <div className="mb-3">
+            <DeploymentDigest title="The digest this step must print back" headingLevel="h4" />
+          </div>
           <GatekeeperSetupBlock />
         </Step>
 
@@ -85,8 +96,10 @@ export function HowToConnect({ apiKey, model, contextLength }: HowToConnectProps
           lead="Any OpenAI-compatible client works. Swap the base URL for the gatekeeper’s local address and nothing else changes."
           more={
             <p>
-              Keys are stored hashed, so the snippet carries only the visible prefix. Paste the full key you copied when
-              it was created.
+              Keys are stored hashed, so a snippet here carries only the visible prefix: in curl, Python and Node, paste
+              the full key you copied when it was created. Do not paste it into the VS Code entry — that{' '}
+              <code className="font-mono">apiKey</code> line is a reference to VS Code&rsquo;s own secret storage, so a
+              key written there is never sent; VS Code asks for it through Update API Key.
             </p>
           }
           moreLabel="About the key in this snippet"
