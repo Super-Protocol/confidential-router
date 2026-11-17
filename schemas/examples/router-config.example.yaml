@@ -10,6 +10,12 @@ server:
   # Largest /v1 body, in bytes. Sized against the widest context window the
   # catalogue below advertises — a 262 144-token prompt is ~1.6 MiB of JSON.
   maxInferenceRequestBytes: 8388608
+  # How long a streamed /v1 request may wait in silence before the router opens
+  # its event stream and heartbeats into it. Keep it below the read timeout of
+  # the ingress in front of this deployment — nginx and OpenResty default to 60s
+  # — so a slow model endpoint ends in the router's error envelope rather than
+  # the ingress's HTML page (SUP-449).
+  streamKeepAliveAfter: 15s
 
 database:
   type: postgres
@@ -111,6 +117,9 @@ externalEndpoints:
   listenPortRange: 256
   reattestInterval: 10m                         # bounded to [1m, 1h]
   statusPollInterval: 5s
+  outage:                                       # when a run of failed checks becomes a page
+    afterFailures: 3                            # distinct checks in a row; 0 disables
+    afterNoSuccess: 15m                         # since last known to serve; 0 disables
   connectTimeout: 5s                            # loopback: a refusal means the listener is not up yet
   readTimeout: 120s                             # patience for an upstream in another cloud
 
@@ -155,6 +164,7 @@ mail:
   provider: smtp                   # none | console (not in production) | resend | smtp
   from: no-reply@tee.swarm.cloud
   fromName: Confidential Router
+  replyTo: support@tee.swarm.cloud   # where a reply goes; `from` receives nothing
   # consoleUrl defaults to the first entry of server.validClientOrigins.
   smtp:
     host: smtp.example.com
@@ -163,6 +173,11 @@ mail:
     user: no-reply@tee.swarm.cloud
     password: ${CR_API_SMTP_PASSWORD}
   # resendApiKey: ${CR_API_RESEND_KEY}   # with `provider: resend` instead
+  # What the provider says became of a message once it accepted it (SUP-551).
+  # Without this the route is a 404 and a suppressed address stays invisible:
+  # the send succeeds and the message is discarded. Read whatever `provider` is
+  # — the events belong to the mail account, not to the transport.
+  webhookSecret: ${CR_API_MAIL__WEBHOOK_SECRET}   # the provider's signing secret, `whsec_…`
 
 billing:
   # `auto` is Stripe when the block below is set. The manual provider it otherwise
@@ -188,7 +203,7 @@ invites:
   lookupsPerMinute: 30
 
 # Product analytics (ADR-006). The console makes no third-party request: its two
-# browser events are posted to POST /v1/analytics/events here, and the six the
+# browser events are posted to POST /v1/console-events here, and the six the
 # database already knows are captured server-side. `projectKey` normally arrives
 # as POSTHOG_PROJECT_KEY; with no key every event is discarded.
 analytics:
@@ -210,6 +225,13 @@ feedback:
     provider: typeform
     url: https://superprotocol.typeform.com/to/REPLACE_ME
     webhookSecret: ${CR_FEEDBACK_WEBHOOK_SECRET}
+
+# Where an outage alert goes so a human reads it. Nothing here has to be set:
+# `emails` falls back to auth.adminEmails.
+alerts:
+  email: true                                   # the outbound path; the log line and /health are unaffected
+  emails: []                                    # empty -> auth.adminEmails
+  minInterval: 15m                              # least gap between two alerts; a recovery ignores it
 
 log:
   level: info

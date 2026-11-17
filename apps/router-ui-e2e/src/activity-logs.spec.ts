@@ -50,9 +50,12 @@ function summary(spendMicros: string, requests: number) {
     promptTokens: 640_000,
     completionTokens: 160_000,
     coveredRequests: requests,
+    coverableRequests: requests,
     evidenceCoverage: 1,
     avgTimeToFirstTokenMs: 312,
     avgTokensPerSecond: 48.23,
+    timedRequests: requests,
+    ratedRequests: requests,
   };
 }
 
@@ -99,6 +102,8 @@ const ACTIVITY = {
         promptTokens: 500_000,
         completionTokens: 98_000,
         spendMicros: '1000000',
+        coveredRequests: 700,
+        coverableRequests: 700,
         evidenceCoverage: 1,
       },
     ],

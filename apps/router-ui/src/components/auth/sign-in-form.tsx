@@ -53,6 +53,9 @@ const OFFER_EVERYTHING = {
   // the code field wakes up, and the router checks the code either way.
   emailCodeLength: 6,
   magicLink: true,
+  // No guess: the contact only ever appears beside "this address is being
+  // rejected", which is an answer the same unreachable API would have to give.
+  supportEmail: null,
 };
 
 export function SignInForm() {
@@ -150,7 +153,11 @@ export function SignInForm() {
     setError(null);
     setPending(kind);
     try {
-      await requestSignInCode(email);
+      // The invitation goes with it: on an invite-only deployment an address
+      // with no account is only mailed a code while the request carries one
+      // (SUP-410), and this screen registers an invited visitor who never
+      // opened `/signup`.
+      await requestSignInCode(email, inviteCode);
       if (kind === 'code-resend') {
         // The code on screen may still be good, but the one in the newest mail
         // is the one the viewer is about to read — so the field starts over.
@@ -202,6 +209,7 @@ export function SignInForm() {
         key={attempt}
         email={email}
         length={options.emailCodeLength}
+        supportEmail={options.supportEmail ?? null}
         submitLabel="Sign in"
         submittingLabel="Signing in…"
         pending={pending === 'code-verify' ? 'verify' : pending === 'code-resend' ? 'resend' : null}

@@ -104,12 +104,19 @@ export async function signInWithMagicLink(email: string, inviteCode?: string | n
  * `signInOptions.emailCode` is true: a deployment with no mailer does not
  * register the route at all and answers 404.
  *
- * Nothing about an invitation rides this request. The code is asked for by
- * address alone, and the account — if there is to be one — is created by the
- * request that hands the code back.
+ * The invitation rides this request too, and on an invite-only deployment it
+ * has to (SUP-410): an address with no account is only mailed a code while the
+ * request carries a code the router would admit, and a refusal is the same 200
+ * with no mail behind it. It still means nothing for an address that already has
+ * an account — the account is created, and the invitation redeemed, by the
+ * request that hands the mailed code back, and by nothing else.
  */
-export async function requestSignInCode(email: string): Promise<void> {
-  await postToAuth('/email-otp/send-verification-otp', { email, type: 'sign-in' });
+export async function requestSignInCode(email: string, inviteCode?: string | null): Promise<void> {
+  await postToAuth('/email-otp/send-verification-otp', {
+    email,
+    type: 'sign-in',
+    ...(inviteCode ? { inviteCode } : {}),
+  });
 }
 
 /**

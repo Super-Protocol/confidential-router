@@ -161,6 +161,38 @@ describe('the verdict labels', () => {
     expect(eventPresentation('DENIED_BY_THIS_ROUTER').label).toBe(EXTERNAL_VERDICT_LABELS.DENIED_BY_THIS_ROUTER);
   });
 
+  it('do not lend themselves to the sustained-failure pair (SUP-517)', async () => {
+    // An `OUTAGE` is not a verdict and must not be spelled as one: a
+    // `DENIED_BY_THIS_ROUTER` is one check that refused, an `OUTAGE` is this
+    // router declaring the run of them actionable. The timeline shows both, so a
+    // reader who found them wearing the same words could not tell what changed.
+    const { eventPresentation } = await import('../admin/endpoint-status');
+
+    for (const kind of ['OUTAGE', 'RECOVERED'] as const) {
+      const { label, variant } = eventPresentation(kind);
+      expect(label).toBeTruthy();
+      expect(Object.values(EXTERNAL_VERDICT_LABELS)).not.toContain(label);
+      expect(variant).toBe(kind === 'OUTAGE' ? 'destructive' : 'success');
+    }
+
+    // And it reads at least as severe as the denial it follows.
+    expect(eventPresentation('OUTAGE').variant).toBe(eventPresentation('DENIED_BY_THIS_ROUTER').variant);
+  });
+
+  it('do not lend themselves to an expired verdict either (SUP-583)', async () => {
+    // A `VERDICT_EXPIRED` is the one entry in the timeline that is not about the
+    // upstream: the egress sidecar stopped confirming the verdict and this router
+    // let it go. Spelling it as a refusal would send an operator to look at a
+    // cloud nobody judged.
+    const { eventPresentation } = await import('../admin/endpoint-status');
+
+    const { label, variant } = eventPresentation('VERDICT_EXPIRED');
+    expect(label).toBeTruthy();
+    expect(Object.values(EXTERNAL_VERDICT_LABELS)).not.toContain(label);
+    expect(variant).not.toBe(eventPresentation('DENIED_BY_THIS_ROUTER').variant);
+    expect(variant).not.toBe(eventPresentation('OUTAGE').variant);
+  });
+
   it('are what the public catalogue\u2019s badge renders', () => {
     expect(EXTERNAL_STATUS_PRESENTATION.VERIFIED_BY_THIS_ROUTER.label).toBe(
       EXTERNAL_VERDICT_LABELS.VERIFIED_BY_THIS_ROUTER,
