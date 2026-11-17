@@ -1,0 +1,19 @@
+{
+  "name": "prod-exports-expire-28d",
+  "enabled": true,
+  "type": "Lifecycle",
+  "definition": {
+    "filters": {
+      "blobTypes": ["blockBlob"],
+      "prefixMatch": ["prod-exports/"]
+    },
+    "actions": {
+      "baseBlob": {
+        "delete": { "daysAfterCreationGreaterThan": 28 }
+      },
+      "version": {
+        "delete": { "daysAfterCreationGreaterThan": 1 }
+      }
+    }
+  }
+}
