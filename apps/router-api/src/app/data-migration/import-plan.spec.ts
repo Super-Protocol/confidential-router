@@ -126,6 +126,20 @@ function exported(): ExportData {
         issuedByUserId: 'op-old',
         createdAt: AT,
       },
+      {
+        id: 'code-3',
+        value: 'GGGGHHHHJKMN',
+        campaign: 'launch',
+        grantMicros: '100000000',
+        maxRedemptions: 1,
+        redemptionCount: 1,
+        status: 'redeemed',
+        expiresAt: null,
+        withdrawnAt: null,
+        note: null,
+        issuedByUserId: null,
+        createdAt: AT,
+      },
     ],
     inviteRedemptions: [
       {
@@ -136,6 +150,10 @@ function exported(): ExportData {
         creditTransactionId: 'tx-ada',
         redeemedAt: AT,
       },
+    ],
+    // code-3 came in by CSV already spent: its redeemer is a carried one.
+    inviteCarriedRedemptions: [
+      { id: 'car-1', inviteCodeId: 'code-3', email: 'bo@elsewhere.test', redeemedAt: AT, importedAt: AT },
     ],
     apiKeys: [apiKey('key-ada', 'ws-ada', ADA_KEY_HASH), apiKey('key-op', 'ws-op', OP_KEY_HASH)],
     externalEndpoints: [],
@@ -160,6 +178,7 @@ const EMPTY: LocalState = {
   ledger: [],
   inviteCodes: [],
   redemptions: [],
+  carriedRedemptions: [],
   apiKeys: [],
   externalEndpoints: [],
   models: [],
@@ -262,8 +281,9 @@ describe('planImport', () => {
     // The sign-up grant was already made to the operator here: not credited twice.
     expect(plan.writes.creditLedger.map((row) => row.id)).toEqual(['tx-ada']);
     expect(plan.notes.join(' ')).toContain('not credited twice');
-    // Attribution follows the operator to the id they have here.
-    expect(plan.writes.inviteCodes.every((code) => code.issuedByUserId === 'op-new')).toBe(true);
+    // Attribution follows the operator to the id they have here; a code nobody
+    // here minted — code-3 arrived by CSV — keeps its empty issuer.
+    expect(plan.writes.inviteCodes.map((code) => code.issuedByUserId)).toEqual(['op-new', 'op-new', null]);
     expect(plan.writes.trustedMeasurements[0]?.addedByUserId).toBe('op-new');
   });
 
@@ -382,6 +402,7 @@ describe('planImport', () => {
       ledger: data.creditLedger.map(({ id, idempotencyKey }) => ({ id, idempotencyKey })),
       inviteCodes: data.inviteCodes.map(({ id, value }) => ({ id, code: value })),
       redemptions: data.inviteRedemptions.map(({ id, userId }) => ({ id, userId })),
+      carriedRedemptions: data.inviteCarriedRedemptions.map(({ id }) => ({ id })),
       apiKeys: data.apiKeys.map(({ id, keyHash }) => ({ id, keyHash })),
       externalEndpoints: [],
       models: [],
@@ -454,6 +475,72 @@ describe('planImport', () => {
     expect(conflicts.inviteCodes?.[0]).not.toContain('DDDDEEEEFFFF');
   });
 
+  it('writes a carried redemption as it stands, and a second run writes it once', () => {
+    const data = exported();
+    const plan = planImport(bundleOf(data), EMPTY, options);
+
+    expect(plan.writes.inviteCarriedRedemptions).toEqual(data.inviteCarriedRedemptions);
+
+    // Already here under its own id: a retry, not a second redeemer on the code.
+    const again = planImport(bundleOf(data), { ...EMPTY, carriedRedemptions: [{ id: 'car-1' }] }, options);
+    expect(again.writes.inviteCarriedRedemptions).toEqual([]);
+    expect(again.sections.find((section) => section.section === 'inviteCarriedRedemptions')).toMatchObject({
+      inBundle: 1,
+      toCreate: 0,
+      alreadyPresent: 1,
+      conflicts: [],
+    });
+  });
+
+  it('does not re-record a degraded redemption the deployment still holds live', () => {
+    // What `DataExportService` writes when an account is gone: the redemption
+    // travels as a carried row under the id it has in `invite_redemptions`.
+    const data = exported();
+    const live = data.inviteRedemptions[0] as ExportData['inviteRedemptions'][number];
+    data.inviteRedemptions = [];
+    data.inviteCarriedRedemptions.push({
+      id: live.id,
+      inviteCodeId: live.inviteCodeId,
+      email: null,
+      redeemedAt: AT,
+      importedAt: AT,
+    });
+    data.users = data.users.filter((user) => user.id !== live.userId);
+    data.workspaceMembers = data.workspaceMembers.filter((row) => row.userId !== live.userId);
+
+    // Applied back to a deployment that still has the live row: it is the same
+    // redemption, so nothing is written and the code keeps one redeemer.
+    const plan = planImport(bundleOf(data), { ...EMPTY, redemptions: [{ id: live.id, userId: live.userId }] }, options);
+
+    expect(planIsClean(plan)).toBe(true);
+    expect(plan.writes.inviteCarriedRedemptions.map((row) => row.id)).toEqual(['car-1']);
+    expect(plan.sections.find((section) => section.section === 'inviteCarriedRedemptions')).toMatchObject({
+      inBundle: 2,
+      toCreate: 1,
+      alreadyPresent: 1,
+      conflicts: [],
+    });
+  });
+
+  it('refuses a live redemption this deployment already holds as a carried one', () => {
+    // The mirror of the case above: an older export of the same source, taken
+    // after a newer one whose account was already gone. Writing the live row
+    // would be a second record of one spent seat; skipping it would leave the
+    // account without the row that attributes its code.
+    const data = exported();
+    const live = data.inviteRedemptions[0] as ExportData['inviteRedemptions'][number];
+
+    const plan = planImport(bundleOf(data), { ...EMPTY, carriedRedemptions: [{ id: live.id }] }, options);
+
+    expect(planIsClean(plan)).toBe(false);
+    expect(plan.sections.find((section) => section.section === 'inviteRedemptions')).toMatchObject({
+      inBundle: 1,
+      toCreate: 0,
+      conflicts: [`Redemption ${live.id} is already recorded here as carried from another deployment.`],
+    });
+    expect(plan.writes.inviteRedemptions).toEqual([]);
+  });
+
   it('notes that imported endpoints arrive switched off and without a key', () => {
     const data = exported();
     data.externalEndpoints.push({
@@ -485,6 +572,35 @@ describe('bundleInconsistencies', () => {
     (data.workspaces[1] as { balanceMicros: string }).balanceMicros = '999000000';
 
     expect(bundleInconsistencies(data).join(' ')).toContain('do not equal the sum of their ledger entries');
+    expect(planIsClean(planImport(bundleOf(data), EMPTY, options))).toBe(false);
+  });
+
+  it('refuses a carried redemption whose code the export does not carry', () => {
+    const data = exported();
+    data.inviteCarriedRedemptions.push({
+      id: 'car-2',
+      inviteCodeId: 'code-gone',
+      email: null,
+      redeemedAt: AT,
+      importedAt: AT,
+    });
+
+    expect(bundleInconsistencies(data).join(' ')).toContain('carried redemption(s) name a code');
+    expect(planIsClean(planImport(bundleOf(data), EMPTY, options))).toBe(false);
+  });
+
+  it('refuses a file that tells one redemption twice, live and carried', () => {
+    const data = exported();
+    const live = data.inviteRedemptions[0] as ExportData['inviteRedemptions'][number];
+    data.inviteCarriedRedemptions.push({
+      id: live.id,
+      inviteCodeId: live.inviteCodeId,
+      email: null,
+      redeemedAt: AT,
+      importedAt: AT,
+    });
+
+    expect(bundleInconsistencies(data).join(' ')).toContain('same redemption more than once');
     expect(planIsClean(planImport(bundleOf(data), EMPTY, options))).toBe(false);
   });
 
