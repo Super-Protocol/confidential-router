@@ -265,6 +265,34 @@ describe('APIKeysScreen', () => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(SECRET);
     });
 
+    it('carries the Private Preview data notice beside the key it just handed over', async () => {
+      /*
+       * The second surface the restriction belongs on (SUP-501): a developer with
+       * a fresh key in hand is one paste away from pointing a real integration —
+       * and real data — at us. Inline it is the condition, counsel's sentence is
+       * behind the ⓘ, and the dialog still closes on `Done` with nothing to tick.
+       */
+      renderScreen([keysMock(), createMock()]);
+
+      await openCreateDialog();
+      await userEvent.type(screen.getByLabelText('Name'), 'ci-agent');
+      await userEvent.click(screen.getByRole('checkbox', { name: /Restrict this key to specific models/ }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'GPT-OSS 120B' }));
+      await userEvent.type(screen.getByLabelText('Spend limit (USD)'), '25');
+      await userEvent.click(screen.getByRole('button', { name: 'Create key' }));
+
+      expect(await screen.findByText('Copy your key now')).toBeInTheDocument();
+
+      const dialog = within(screen.getByRole('dialog'));
+      expect(dialog.getByText('Private Preview: use synthetic or non-personal data')).toBeInTheDocument();
+      expect(dialog.queryByText(/do not submit personal data/i)).not.toBeInTheDocument();
+
+      await userEvent.click(dialog.getByRole('button', { name: /what the private preview asks you not to submit/i }));
+
+      expect(await screen.findByText(/including sensitive personal data/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /acceptable use/i })).toBeInTheDocument();
+    });
+
     it('refuses to submit a nameless key and never calls the API', async () => {
       renderScreen();
 
