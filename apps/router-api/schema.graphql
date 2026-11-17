@@ -1167,7 +1167,17 @@ type InviteCampaignStats {
   carried: Int!
 
   """
-  Micro-USD handed out so far. This deployment’s ledger only, so carried redemptions add nothing.
+  The high end of the same range; equal to `codeGrantMicrosMin` as a rule.
+  """
+  codeGrantMicrosMax: String!
+
+  """
+  Micro-USD one redemption of this campaign grants — its face value. Equal to `codeGrantMicrosMax` unless the tag collects batches issued at different grants. Spans every code of the campaign, withdrawn ones included, as `issued` does.
+  """
+  codeGrantMicrosMin: String!
+
+  """
+  Micro-USD handed out so far — a cumulative payout, not a code’s face value. A campaign whose codes are all unredeemed reads 0 however much each one grants. This deployment’s ledger only, so carried redemptions add nothing.
   """
   grantedMicros: String!
 
@@ -1562,7 +1572,7 @@ type Mutation {
   revokeApiKey(id: ID!): ApiKey!
 
   """
-  Replaces the stored upstream API key. There is no read path for the old one. Restricted to auth.adminEmails.
+  Replaces the stored upstream API key. There is no read path for the old one. Takes effect on the next request this router proxies to the endpoint. Restricted to auth.adminEmails.
   """
   rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 

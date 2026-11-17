@@ -52,7 +52,7 @@ const STATISTICS = `
     inviteStatistics(days: $days) {
       totals { issued redeemed carried withdrawn redemptionRate grantedMicros signUps }
       daily { date codesIssued codesRedeemed signUpsInvited signUpsBootstrap signUpsOpen }
-      campaigns { campaign issued redeemed carried redemptionRate grantedMicros }
+      campaigns { campaign issued redeemed carried redemptionRate activated codeGrantMicrosMin codeGrantMicrosMax grantedMicros }
     }
   }
 `;
@@ -240,6 +240,8 @@ describe('who came from which code', () => {
       signUpsBootstrap: 1,
       signUpsOpen: 1,
     });
+    // One of two codes redeemed: the campaign has paid out one grant, and both
+    // codes are still worth one grant each (SUP-390).
     expect(stats.inviteStatistics.campaigns).toEqual([
       {
         campaign: 'launch-2026-10',
@@ -247,6 +249,9 @@ describe('who came from which code', () => {
         redeemed: 1,
         carried: 0,
         redemptionRate: 0.5,
+        activated: 0,
+        codeGrantMicrosMin: GRANT_MICROS,
+        codeGrantMicrosMax: GRANT_MICROS,
         grantedMicros: GRANT_MICROS,
       },
     ]);

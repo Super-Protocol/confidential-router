@@ -79,6 +79,8 @@ const INVITATION_OPERATIONS = {
           carried: 1,
           redemptionRate: 0.06,
           activated: 2,
+          codeGrantMicrosMin: '100000000',
+          codeGrantMicrosMax: '100000000',
           grantedMicros: '300000000',
         },
         {
@@ -89,6 +91,8 @@ const INVITATION_OPERATIONS = {
           carried: 0,
           redemptionRate: 0,
           activated: 0,
+          codeGrantMicrosMin: '500000000',
+          codeGrantMicrosMax: '500000000',
           grantedMicros: '0',
         },
       ],
@@ -233,6 +237,26 @@ test.describe('the Invitations section', () => {
     await expect(row).not.toContainText('0%');
     await expect(page.getByText('Includes 1 imported')).toBeVisible();
     await shot(page, testInfo, 'invitations-statistics-imported');
+  });
+
+  test('reads a code\u2019s face value beside what the campaign has paid out', async ({ page, baseURL }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+
+    // The tile over a cumulative figure says cumulative (SUP-390).
+    await expect(page.getByText('Credit paid out')).toBeVisible();
+    await expect(page.getByText('Credit granted', { exact: true })).toHaveCount(0);
+    await shot(page, testInfo, 'statistics-credit-tile');
+
+    const campaigns = page.getByRole('table', { name: 'Campaigns' });
+    await expect(campaigns.getByRole('columnheader', { name: 'Per code' })).toBeVisible();
+    await expect(campaigns.getByRole('columnheader', { name: 'Paid out' })).toBeVisible();
+    // One code issued under `vip`, nobody has redeemed it: $0 paid out, $500 of
+    // face value — which is what the operator in SUP-389 could not see.
+    const vip = campaigns.getByRole('row', { name: /vip/ });
+    await expect(vip.getByRole('cell').nth(5)).toHaveText('$500');
+    await expect(vip.getByRole('cell').nth(6)).toHaveText('$0');
+    await campaigns.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, 'statistics-campaign-credit');
   });
 
   test('masks every code until an operator reveals one', async ({ page, baseURL }) => {
