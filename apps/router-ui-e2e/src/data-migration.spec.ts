@@ -1,5 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
+import { blockingViolations, settleAnimations } from './axe';
 import { signIn, viewerIsAdmin } from './fixtures';
 
 /**
@@ -10,43 +10,9 @@ import { signIn, viewerIsAdmin } from './fixtures';
  *
  * `CR_E2E_SCREENSHOT_DIR` saves a full-page image of each state the PR shows.
  */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
 const SCREENSHOT_DIR = process.env.CR_E2E_SCREENSHOT_DIR;
 const SHA = '8135904c9572ff34b97a3fe397ed7957054940afa6c6cb12cdea3e3e6c590659';
 const FILE_NAME = 'router-export-20261010-1200-api.router.example.json.gz';
-
-/**
- * Audits once the transitions have finished.
- *
- * `Button` is `transition-all` with `disabled:opacity-50`, so a control that has
- * just become enabled spends a few frames at a blended opacity. axe exempts a
- * *disabled* control from the contrast rule and judges an enabled one, so those
- * frames are the one window in which `import-apply` reads as a contrast failure
- * — which is what a dry-run report arriving flips it out of. A CI runner is slow
- * enough to land the audit inside that window and a developer's machine is not,
- * so the failure only ever appeared on CI. Same shape as SUP-296, same remedy as
- * `invitations.spec.ts` uses around its dialog.
- *
- * `finished` rejects on a cancelled animation, which is not a failure here: a
- * transition that was interrupted is one that is no longer running.
- */
-async function settled(page: Page): Promise<void> {
-  await page.evaluate(() =>
-    Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
-  );
-}
-
-async function blockingViolations(page: Page) {
-  await settled(page);
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-  return results.violations
-    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
-    .map((violation) => ({
-      id: violation.id,
-      help: violation.help,
-      nodes: violation.nodes.map((node) => node.target.join(' ')),
-    }));
-}
 
 async function capture(page: Page, name: string): Promise<void> {
   if (SCREENSHOT_DIR) {
@@ -210,6 +176,38 @@ test.describe('the Export & import section', () => {
     await capture(page, 'import-refused-dark');
   });
 
+  /**
+   * The regression test for SUP-296, on the node CI reported.
+   *
+   * Import is `disabled={!canImport || busy !== null}` and the shared button
+   * carries both `transition-all` and `disabled:opacity-50`, so the dry-run
+   * report landing fades it in from half opacity. The fade is slowed here so the
+   * race a loaded runner lost is wide enough to see on any machine: every gate
+   * the audit below could wait on resolves while the button is still part-way
+   * through it, which is exactly the half-transparent brand button axe measured
+   * against the card and failed for `color-contrast`.
+   */
+  test('settles the Import button’s fade in before an audit samples its colour', async ({ page, baseURL }) => {
+    await mockDataApi(page, [report()]);
+    await openAsAdmin(page, baseURL as string);
+    await page.addStyleTag({ content: '[data-testid="import-apply"] { transition-duration: 3s !important; }' });
+
+    const apply = page.getByTestId('import-apply');
+    await chooseFile(page);
+    await expect(apply).toBeDisabled();
+    await page.getByTestId('import-check').click();
+
+    await expect(page.getByTestId('import-report')).toBeVisible();
+    await expect(apply).toBeEnabled();
+    const midFade = Number(await apply.evaluate((element) => getComputedStyle(element).opacity));
+    expect(midFade).toBeLessThan(1);
+
+    // Read once, not polled: a retrying assertion would outlast the fade on its
+    // own and pass even if `settleAnimations` did nothing.
+    await settleAnimations(page);
+    expect(await apply.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+  });
+
   for (const theme of ['dark', 'light'] as const) {
     test(`has no serious axe violations before, during or after an import, in ${theme} mode`, async ({
       page,
@@ -226,6 +224,10 @@ test.describe('the Export & import section', () => {
       await chooseFile(page);
       await page.getByTestId('import-check').click();
       await expect(page.getByTestId('import-report')).toBeVisible();
+      // The control axe is about to judge, not only the report beside it: the
+      // report landing is what enables Import, and `axe.ts` waits out the fade
+      // that enabling starts.
+      await expect(page.getByTestId('import-apply')).toBeEnabled();
       expect(await blockingViolations(page)).toEqual([]);
       await capture(page, `import-dry-run-${theme}`);
 
