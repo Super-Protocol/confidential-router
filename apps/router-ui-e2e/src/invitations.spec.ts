@@ -1,5 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { signIn, viewerIsAdmin } from './fixtures';
 import { API_ORIGIN } from './origins';
 
@@ -9,19 +9,6 @@ import { API_ORIGIN } from './origins';
  * the other admin screens to. The live round trip (issue → redeem → see it) is
  * `cross-app.spec.ts`; this one is the screen against fixtures.
  */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
-
-async function blockingViolations(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-  return results.violations
-    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
-    .map((violation) => ({
-      id: violation.id,
-      help: violation.help,
-      nodes: violation.nodes.map((node) => node.target.join(' ')),
-    }));
-}
-
 /** A screenshot kept with the run's output — what a PR for this screen shows a reviewer. */
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const path = testInfo.outputPath(`${name}.png`);
@@ -75,6 +62,8 @@ const INVITATION_OPERATIONS = {
           redeemed: 3,
           redemptionRate: 0.06,
           activated: 2,
+          codeGrantMicrosMin: '100000000',
+          codeGrantMicrosMax: '100000000',
           grantedMicros: '300000000',
         },
         {
@@ -84,6 +73,8 @@ const INVITATION_OPERATIONS = {
           redeemed: 0,
           redemptionRate: 0,
           activated: 0,
+          codeGrantMicrosMin: '500000000',
+          codeGrantMicrosMax: '500000000',
           grantedMicros: '0',
         },
       ],
@@ -210,6 +201,26 @@ test.describe('the Invitations section', () => {
     await expect(page.getByTestId('invitations-restricted')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Invitations' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Issue codes' })).toHaveCount(0);
+  });
+
+  test('reads a code\u2019s face value beside what the campaign has paid out', async ({ page, baseURL }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+
+    // The tile over a cumulative figure says cumulative (SUP-390).
+    await expect(page.getByText('Credit paid out')).toBeVisible();
+    await expect(page.getByText('Credit granted', { exact: true })).toHaveCount(0);
+    await shot(page, testInfo, 'statistics-credit-tile');
+
+    const campaigns = page.getByRole('table', { name: 'Campaigns' });
+    await expect(campaigns.getByRole('columnheader', { name: 'Per code' })).toBeVisible();
+    await expect(campaigns.getByRole('columnheader', { name: 'Paid out' })).toBeVisible();
+    // One code issued under `vip`, nobody has redeemed it: $0 paid out, $500 of
+    // face value — which is what the operator in SUP-389 could not see.
+    const vip = campaigns.getByRole('row', { name: /vip/ });
+    await expect(vip.getByRole('cell').nth(5)).toHaveText('$500');
+    await expect(vip.getByRole('cell').nth(6)).toHaveText('$0');
+    await campaigns.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, 'statistics-campaign-credit');
   });
 
   test('masks every code until an operator reveals one', async ({ page, baseURL }) => {
@@ -381,11 +392,6 @@ test.describe('the Invitations section', () => {
       await page.getByRole('button', { name: 'Issue codes' }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      // Audited once the open animation has finished: mid-fade, every colour in
-      // the dialog is a blend with the overlay and fails contrast for a frame.
-      await dialog.evaluate((element) =>
-        Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
-      );
       expect(await blockingViolations(page)).toEqual([]);
     });
   }

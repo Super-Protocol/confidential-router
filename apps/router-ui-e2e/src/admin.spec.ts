@@ -1,6 +1,6 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import { ADMIN_OPERATIONS, PENDING_ENDPOINT, TRUSTED_MEASUREMENT, VERIFIED_ENDPOINT } from './admin-fixtures';
+import { blockingViolations } from './axe';
 import { signIn, viewerIsAdmin } from './fixtures';
 
 /**
@@ -8,21 +8,6 @@ import { signIn, viewerIsAdmin } from './fixtures';
  * of each in both themes — the same bar `accessibility.spec.ts` holds the shell
  * and the attestation inspector to.
  */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
-
-async function auditPage(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-
-  return results.violations
-    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
-    .map((violation) => ({
-      id: violation.id,
-      impact: violation.impact,
-      help: violation.help,
-      nodes: violation.nodes.map((node) => node.target.join(' ')),
-    }));
-}
-
 /**
  * The operations a discovery round trip makes (SUP-249). The verdict answers
  * Pending twice before Verified, so the chips are seen changing; `calls`
@@ -357,7 +342,7 @@ test.describe('the admin section', () => {
       await expect(page.getByLabel('Prompt, USD / 1M')).toBeVisible();
 
       await expectLabelsClearOfInputs(page);
-      expect(await auditPage(page)).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
       const path = testInfo.outputPath('register-dialog-link-parsed.png');
       await page.getByRole('dialog').screenshot({ path });
       await testInfo.attach('register-dialog-link-parsed', { path, contentType: 'image/png' });
@@ -373,7 +358,7 @@ test.describe('the admin section', () => {
       await expect(page.getByLabel('Prompt, USD / 1M')).toBeVisible();
 
       await expectLabelsClearOfInputs(page);
-      expect(await auditPage(page)).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
       const path = testInfo.outputPath('register-dialog-discovery.png');
       await page.getByRole('dialog').screenshot({ path });
       await testInfo.attach('register-dialog-discovery', { path, contentType: 'image/png' });
@@ -400,7 +385,7 @@ test.describe('the admin section', () => {
       await page.goto('/admin/endpoints');
       await expect(page.getByRole('heading', { level: 1, name: 'External endpoints' })).toBeVisible();
 
-      expect(await auditPage(page)).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
     });
 
     test(`the endpoint drawer has no serious axe violations in ${theme} mode`, async ({ page, baseURL }) => {
@@ -411,7 +396,7 @@ test.describe('the admin section', () => {
       await page.getByRole('button', { name: /^Open qwen3-coder:/ }).click();
       await expect(page.getByRole('dialog').getByRole('region', { name: 'Evidence summary (current)' })).toBeVisible();
 
-      expect(await auditPage(page)).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
     });
 
     test(`the trust list has no serious axe violations in ${theme} mode`, async ({ page, baseURL }) => {
@@ -421,7 +406,7 @@ test.describe('the admin section', () => {
       await page.goto('/admin/trust');
       await expect(page.getByRole('heading', { level: 1, name: 'Trust list' })).toBeVisible();
 
-      expect(await auditPage(page)).toEqual([]);
+      expect(await blockingViolations(page)).toEqual([]);
     });
   }
 
@@ -436,7 +421,7 @@ test.describe('the admin section', () => {
     await page.getByLabel('Endpoint URL or connection link').fill('https://llama.example/v1');
     await expect(page.getByLabel('Upstream API key')).toBeVisible();
 
-    expect(await auditPage(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test('the add-measurement dialog has no serious axe violations', async ({ page, baseURL }) => {
@@ -446,6 +431,6 @@ test.describe('the admin section', () => {
     await page.getByRole('button', { name: 'Trust a measurement' }).click();
     await expect(page.getByLabel('Launch measurement')).toBeVisible();
 
-    expect(await auditPage(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });

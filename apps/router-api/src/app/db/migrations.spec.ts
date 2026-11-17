@@ -44,14 +44,6 @@ afterEach(() => {
 });
 
 /**
- * Whether one column admits NULL, read back from the live schema.
- *
- * Through TypeORM's own table introspection rather than `PRAGMA` or
- * `information_schema`, so the assertion reads the same on both dialects — which
- * is the point of writing the migration against the `Table` API in the first
- * place.
- */
-/**
  * Whether one named index exists, read back from the live schema.
  *
  * Through TypeORM's table introspection for the same reason {@link isNullable}
@@ -66,6 +58,14 @@ async function hasIndex(queryRunner: QueryRunner, table: string, name: string): 
   return found.indices.some((index) => index.name === name);
 }
 
+/**
+ * Whether one column admits NULL, read back from the live schema.
+ *
+ * Through TypeORM's own table introspection rather than `PRAGMA` or
+ * `information_schema`, so the assertion reads the same on both dialects — which
+ * is the point of writing the migration against the `Table` API in the first
+ * place.
+ */
 async function isNullable(queryRunner: QueryRunner, table: string, column: string): Promise<boolean> {
   const found = (await queryRunner.getTable(table))?.findColumnByName(column);
   if (!found) {
@@ -126,10 +126,21 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-406's operator column is one additive column; the first undo drops
-      // only that and leaves the ledger it hangs off. First because this
-      // migration is numbered last — several of main's landed while this branch
-      // was in review, and a migration is appended rather than inserted.
+      // SUP-298 adds one index and nothing else; the first undo drops it and
+      // leaves the indices that were already on the table. First because this
+      // migration is numbered last — a migration is appended, never inserted.
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        true,
+      );
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        false,
+      );
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId')).toBe(true);
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_identity')).toBe(true);
+
+      // SUP-406's operator column is one additive column; the next undo drops
+      // only that and leaves the ledger it hangs off.
       expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(false);
@@ -138,9 +149,9 @@ describe('SQLite', () => {
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. Second now that SUP-406's column is appended after it.
-      // The undo can only restore the NOT NULLs on a database the sweep has not
-      // run on yet, which is this one.
+      // `generations`. Third now that SUP-406's column and SUP-298's index are
+      // appended after it. The undo can only restore the NOT NULLs on a database
+      // the sweep has not run on yet, which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);
