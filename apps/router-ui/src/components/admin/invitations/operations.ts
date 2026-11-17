@@ -78,7 +78,24 @@ export const ADMIN_SIGN_UPS_QUERY = graphql(`
         inviteCode
         campaign
         redeemedAt
+        workspaceId
+        balanceMicros
       }
+    }
+  }
+`);
+
+export const GRANT_CREDIT = graphql(`
+  mutation GrantCredit($input: GrantCreditInput!) {
+    grantCredit(input: $input) {
+      creditTransactionId
+      workspaceId
+      accountEmail
+      kind
+      amountMicros
+      balanceMicros
+      note
+      replayed
     }
   }
 `);

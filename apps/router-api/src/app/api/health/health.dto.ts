@@ -149,6 +149,33 @@ export class AlertsHealthDto {
   suppressed?: number;
 }
 
+export class EvidenceRetentionHealthDto {
+  @ApiProperty({
+    enum: ['enabled', 'disabled'],
+    description:
+      'Whether this process has a retention sweep scheduled. `disabled`: `evidence.retentionSweepInterval` ' +
+      'is 0, so archived evidence bundles are kept past the period `/privacy` publishes.',
+  })
+  status!: 'enabled' | 'disabled';
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'When the last pass finished. Null until the first one has, which is within seconds of boot.',
+  })
+  lastSweepAt!: string | null;
+
+  @ApiProperty({
+    description:
+      'Snapshots whose bundle and JWS this process removed since boot; the digests are kept. ' +
+      'Monotonic; read it twice and subtract.',
+  })
+  stripped!: number;
+
+  @ApiProperty({ description: 'Passes that ended in an error since boot. A pass that throws is retried, not fatal.' })
+  failed!: number;
+}
+
 export class HealthResponseDto {
   @ApiProperty({ enum: ['ok', 'error'] })
   status!: 'ok' | 'error';
@@ -182,4 +209,10 @@ export class HealthResponseDto {
       '`alerts.state: unconfigured` is the pair that says nobody has been told.',
   })
   alerts!: AlertsHealthDto;
+
+  @ApiProperty({
+    type: () => EvidenceRetentionHealthDto,
+    description: 'Reported only; never makes the status `error`.',
+  })
+  evidenceRetention!: EvidenceRetentionHealthDto;
 }

@@ -169,8 +169,9 @@ rateLimits:
 
 ```yaml
 evidence:
-  pollInterval: 5m        # how often each endpoint is retrieved
-  freshnessWindow: 24h    # past this, a publication reads as stale
+  pollInterval: 5m             # how often each endpoint is retrieved
+  freshnessWindow: 24h         # past this, a publication reads as stale
+  retentionSweepInterval: 6h   # how often archived bundles past their window are removed
 ```
 
 The poller fetches each endpoint's bundle, stores the publication and moves on.
@@ -198,6 +199,74 @@ What the console gets out of it:
 
 If the platform publishes nothing, the endpoints read "Not published" and the
 screens are empty. That is the honest state, and it is what a laptop shows.
+
+### The retention sweep
+
+`/privacy` publishes a period for archived evidence — *the raw bundle for as long
+as your Preferences say (90 days by default); the digests are kept* — and
+`Preferences → Evidence` offers the number
+(`UserPreferences.evidenceRetentionDays`, 1–3650 days). `retentionSweepInterval`
+is what keeps it: every pass removes the `bundle` and the `jws` of publications
+past their window, stamps `payloadStrippedAt`, and leaves the row — digests,
+certificate fingerprint, container images, measurements — exactly where it was.
+Nothing is ever deleted, so an endpoint's digest history is never shortened
+(SUP-498).
+
+Three rules decide a row, and all three are there to avoid doing harm:
+
+- **Whose window.** The published period is per account; the table is per
+  publication, and on a one-model deployment the same publication is the archived
+  evidence of everyone it served. A bundle is removed only once it is past the
+  *longest* window of every account that holds it — a generation of that
+  account's workspace having been served under it — so no account's setting is
+  quietly shortened by somebody else's. A publication no account holds is swept on
+  the 90-day default.
+- **Who is holding at all.** `Preferences → Evidence` also offers *Keep archived
+  quotes* (`UserPreferences.archiveEvidence`), and an account with it off is not
+  one of the holders: it contributes nothing to that maximum rather than its
+  window, so a publication only such accounts hold is past its window the moment
+  it is published and goes on the next pass (SUP-525). One an opted-in account
+  also holds stays until *that* window closes — a row is the archived evidence of
+  everyone served under it, and one account's switch cannot remove a document
+  others are still promised, which is why the switch is an opt-out of holding
+  rather than a delete button — though it *is* destructive, and the console says
+  so: within one sweep interval it empties every bundle no other account holds,
+  for good. It does not reach the poller either: every bundle is still fetched
+  and filed, because the live publication's bundle is what `GET /v1/evidence`
+  relays. One opt-out anywhere widens the candidate range to the whole unstripped
+  table, since no row is too young to be past nobody's window, and that does not
+  settle: every row inside an opted-in holder's open window stays a candidate on
+  every pass, so the steady state is a full ordered read rather than a shrinking
+  one. The write stays capped per pass, and `IDX_generations_evidenceSnapshotId`
+  / `IDX_generations_externalEndpointId_evidenceDigest` are what keep the holder
+  lookup in between off a sequential scan of `generations`. `MIN_RETENTION_DAYS`
+  is 1, so one account picking a one-day window already put the cutoff within a
+  day of `now`; this widens an edge that was always one setting away.
+- **What is never removed.** The publication a live surface still hands out:
+  the newest one per own endpoint (`GET /v1/evidence`, `GET /v1/models`, the
+  console's badge) and, for an external upstream, the one carrying the digest an
+  admin pinned and a verdict saw — which can be *older* than one that superseded
+  it. Those readers answer "what is running now", not "what was archived".
+
+**Check that it is running rather than that it is configured.** `/health` carries
+`evidenceRetention: { status, lastSweepAt, stripped, failed }`, and every pass
+logs its counts including the quiet ones — `evidenceRetentionDays` was published
+as a period and offered as a setting for a whole preview while nothing read it,
+and nothing in the running system could have said so. Setting
+`retentionSweepInterval: 0ms` switches the sweep off, which makes the deployment
+publish a period it does not keep; the service says so at `warn` on every boot
+and `/health` reports `disabled`.
+
+**A deploy train resets the record, not the promise.** `EvidenceSnapshot` is
+`notCarried` in the migration bundle (`data-migration/bundle-coverage.ts`) — a
+snapshot from the old deployment describes containers that no longer run — so
+`payloadStrippedAt` does not cross a rebuild, and neither does anything a
+previous deployment swept. The new one re-fetches its own evidence within a poll
+of boot and starts its own windows from those publications, which is the right
+outcome for a privacy period and a silent one for an auditor: after a rebuild the
+only evidence that a sweep has ever run is `/health` and the log line, both
+process-lifetime. Read them on the new deployment rather than looking for
+stripped rows.
 
 ## When an external upstream goes dark
 
@@ -708,6 +777,8 @@ billing:
   maxTopUpMicros: 10000000000          # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0              # how far a generation may push a balance negative
   signupGrantMicros: 0                 # credit granted to every new account (ledger `grant`, reference `signup`); 0 disables
+  maxCreditGrantMicros: 10000000000    # $10 000, the ceiling on one operator grantCredit call
+  allowCreditDebits: false             # whether grantCredit may also remove credit (a negative adjustment)
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h                # floor between two automatic top-ups of one workspace
   stripe:
@@ -780,6 +851,78 @@ mailboxes are free, so with registration open each throwaway address collects th
 the grant is once per *account*, not per person. Pair a non-zero value with
 invite-only registration (`auth.requireInviteForSignUp`) where that matters, or
 keep it small enough to be an evaluation allowance rather than a prize.
+
+## Crediting an account that already exists
+
+Everything above puts credit on an account *as it is created*, or sells it. The
+one thing missing was the ordinary request: top up the testers who already signed
+up. `grantCredit` is that operation (SUP-406) — an admin mutation restricted to
+`auth.adminEmails`, with a button beside every account on the console's
+**Invitations → Sign-ups** tab, where each row now also shows what that account
+holds.
+
+```graphql
+mutation {
+  grantCredit(
+    input: {
+      accountEmail: "tester@example.com"
+      amountMicros: "100000000"
+      note: "SUP-389: topped up after the verification grant"
+      requestId: "3f1c8c6e-6f1a-4a2f-9a0e-0d6a9f2b7c41"
+    }
+  ) {
+    amountMicros
+    balanceMicros
+    replayed
+  }
+}
+```
+
+Name the account by `accountEmail` or by `workspaceId` — exactly one. The call
+writes **one** ledger entry through the same path as every other grant, so the
+Credits screen renders it and the balance moves by exactly that amount. Four
+things make it an operator's operation rather than a back door:
+
+- `credit_transactions.grantedByUserId` carries the operator, and the reason goes
+  on the row, so the ledger says who granted it and why without a log search.
+  Both survive a redeploy: the export bundle carries the operator and remaps it
+  to the id that account has on the new deployment.
+- The reason is **required**, in both directions. It is the only field that says
+  why an entry nobody paid for exists.
+- `billing.maxCreditGrantMicros` ($10 000) is the ceiling on **one** call — the
+  same kind of blast-radius bound `billing.maxTopUpMicros` puts on a checkout,
+  and the same number that bounds the credit per invitation code.
+- Taking credit *away* is a separate decision. It has to be `kind: ADJUSTMENT`
+  and it needs `billing.allowCreditDebits`, which is **off** by default. Even
+  switched on it cannot push a balance below zero: `adjustment` may not overdraw.
+
+`requestId` names the decision and is required. The ledger entry is keyed on
+`operator:<operator>:<requestId>`, so the same submission arriving twice — a
+proxy timeout, then the obvious retry — replays the first row and answers
+`replayed: true` instead of crediting again; the console says *already recorded*
+rather than reporting a second success. A second deliberate grant is a second
+decision and carries a new `requestId`, so it lands as a second row. The console
+mints one UUID when the dialog opens and keeps it across retries.
+
+One decision moves credit on **one** account: the same `requestId` sent against a
+different account is refused rather than answered, because the alternative is
+telling an operator that somebody was credited who was not. That is the mistake a
+hand-written mutation makes — copy the call for the next person, change the
+address, forget the `requestId`. The composed key has to fit
+`credit_transactions.idempotencyKey` (`varchar(128)`), so a `requestId` and an
+operator id that together overflow it are refused too; PostgreSQL would answer
+`22001` where SQLite would not, and the refusal makes the two agree.
+
+A correction is a new row, never an edit — the ledger has no update path at all
+(`docs/contracts/data-model.md` invariant 3).
+
+The reason reaches the account holder **as the operator wrote it**. That needs
+saying because `description` is not free text anywhere else in the ledger: it
+"carries the receipt link when there is one", and the Credits screen pulls the
+first `https://…` out of it to render a **Receipt** link. A goodwill note citing
+an incident would otherwise arrive as a truncated sentence next to a Receipt
+pointing at a status page, so the screen scopes that convention by `reference`
+and leaves an operator's row alone (`credits/amounts.ts`).
 
 ## Invitation codes
 
@@ -1222,7 +1365,7 @@ built for the request that asked for it and kept nowhere on the server:
 | --- | --- |
 | `users` | id, address, name, `emailVerified`, sign-up date; plus `origin` (invite / bootstrap / open), `invitedByCodeId` and `role`, which are informational |
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
-| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys |
+| `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
 | `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
@@ -1239,7 +1382,8 @@ mismatch — but nothing in the bundle proves who wrote it. The file is trusted
 because of where it was downloaded from and who carried it, not because of what
 it contains. Do not describe an export as signed.
 
-**Left behind, by design:** chats and messages, generations and activity,
+**Left behind, by design:** chats and messages, generations and activity (see
+`creditLedger` above for what that means for the spend they were charged for),
 evidence snapshots, feedback answers, preferences; sessions and every credential
 Better Auth holds (the `account`, `session` and `verification` tables are never
 read); and the upstream API key of an external endpoint, which is sealed under
@@ -1298,6 +1442,15 @@ Three things about what it writes:
   against, so a key that had $0.50 of its cap left still has $0.50; and a revoked
   key arrives revoked. The report says how many came across and how many of them
   are still live.
+- **Spend made before the migration arrives as one ledger entry per month.**
+  The money is identical to the micro-dollar; what is gone is the per-request
+  breakdown, which lived in the generation log the file does not carry — the
+  monthly shape survives, so a bill for a month before the migration is still
+  answerable. Activity and Logs on the new deployment therefore count only the
+  traffic it has served itself, and the Credits screen says in words where the
+  rest was spent. A file from a build before SUP-446 still carries the
+  per-request debits: the dry run reports how many, and the import collapses
+  them on the way in.
 - **External endpoints arrive switched off, with no key.** Enter each upstream
   key again under Administration → External endpoints, then enable the endpoint;
   it is attested before it serves, like any other. The trust list is live at once.
@@ -1428,6 +1581,48 @@ serving; a hand-written zone is slower.
 - The deployment's own evidence digest changes, as on any redeploy: anyone who
   pinned the old one — a gatekeeper, a tenant — has to approve the new one.
 
+### Taking the export on a schedule
+
+The export step above is the one that is not there when it matters: production
+lost its data on 2026-10-13 because the only copy lived inside the deployment
+that died, and nobody had run an export (SUP-308, SUP-313). An export taken when
+somebody remembers is not a backup.
+
+[`tools/scheduled-export/`](../tools/scheduled-export/README.md) is a systemd
+timer for an operator's own machine that takes the bundle and the codes CSV once
+a day, verifies both against what the deployment declared, copies them to object
+storage, and says so loudly when a run fails or comes back empty. It signs in
+with `auth.bootstrapToken` — the only credential that works unattended, since
+every other sign-in path is a code mailed to a mailbox — so each run leaves a
+`Break-glass sign-in` line in the log.
+
+It is operator tooling and not part of the router: nothing in it deploys, and the
+deployment does not know it exists. Because that credential belongs to one
+deployment and a redeploy mints a new one, the timer reads it off the current
+deployment at run time — from the marketplace that made it, the same value its
+credentials dialog shows — rather than keeping a copy that a redeploy turns into
+a 401 (SUP-438). A stored `ROUTER_BOOTSTRAP_TOKEN` is still honoured, as the
+fallback for a marketplace that cannot be reached and as the whole credential
+for a deployment that was not made by one; a run that falls back says so on the
+alert issue, because a backup quietly back on a deployment-scoped secret is the
+defect re-arming itself.
+
+**A redeploy re-arms it or kills it.** The credential is one deployment's, so
+the old deployment's token is a 401 the moment the new one serves. With
+`MARKETPLACE_ORIGIN` configured the timer host finds the new token by itself and
+there is nothing to do — confirm it with one manual run. Without it, paste the
+new token into `ROUTER_BOOTSTRAP_TOKEN` in `~/.config/router-export/env` on the
+timer host and run `router-export.sh --local-only` to prove it. **A redeploy that
+skips this leaves the backup dead until the next failed run is noticed**, which
+is how the 2026-10-20 export came to 401 (SUP-438). Do it in the same window as
+the cutover, not afterwards.
+
+The right version of this is the router
+pushing its own bundle to an export target given as a deployment parameter, the
+way the SMTP password is given, so the file never transits an operator's machine
+at all. Until that exists, the timer is what stands between an incident and a
+rebuild from an empty database.
+
 ### A parked rollback is not finished until it serves a completion
 
 A deploy train ends by parking the previous deployment on its own hostnames so
@@ -1514,6 +1709,15 @@ SQLite applies migrations at boot (`database.migrationsRun: true`, the
 development default). PostgreSQL deployments run the migration CLI **once**,
 from a job or an init container, and leave `migrationsRun` off — otherwise
 every replica races the others at startup.
+
+**The migration runs before the new image serves, not after.** TypeORM writes
+every column the entities declare, so an image started against a schema it is
+newer than fails on *writes it did not change*. The current example is
+`credit_transactions.grantedByUserId` (SUP-406): a router booted before that
+migration lands rejects every ledger write — purchases and usage debits
+included, not merely the operator grants the column was added for. Order the
+rollout `router-api-migrate` → router, and treat any release that adds a column
+to a hot table as one that cannot go image-first.
 
 Container image: `router-api.dockerfile`, published to ghcr by the release
 workflow. `docker/docker-compose.yml` runs the API, the console and PostgreSQL
