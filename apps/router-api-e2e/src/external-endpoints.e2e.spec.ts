@@ -187,13 +187,14 @@ describe('registration', () => {
 
   it('a trusted cloud alone admits nothing — the deployment is the second factor (T13)', async () => {
     await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
+    const edited = Date.now();
 
     // The trust-list edit reloads the sidecar and forces a re-check at once;
     // several re-attestation intervals later the endpoint is still waiting for
     // its deployment to be approved. Under ADR-008's original ruling 1 this is
     // exactly where it would have been admitted.
     await sleep(3 * 2_000);
-    const still = await waitForExternalStatus(stand.admin, endpointId, [PENDING]);
+    const still = await waitForExternalStatus(stand.admin, endpointId, { status: [PENDING], since: edited });
     expect(still.lastStage).toBe('digest-not-pinned');
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
     expect((await chat({})).status).toBe(503);
@@ -209,7 +210,7 @@ describe('registration', () => {
     const pinned = await pinExternalEndpointDigest(stand.admin, endpointId, approvedDigest);
     expect(pinned.pinnedEvidenceDigest).toBe(approvedDigest);
 
-    const verified = await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    const verified = await waitForExternalStatus(stand.admin, endpointId, { status: [VERIFIED], since: Date.now() });
     expect(verified.measurementSeen).toBe(STAND_MEASUREMENT);
     expect(verified.evidenceDigestSeen).toBe(approvedDigest);
     expect(await listedModels()).toContain(EXTERNAL_MODEL);
@@ -524,7 +525,7 @@ describe('sustained failure', () => {
     // No threshold override: the stand re-attests every 2 s, so the shipped
     // default of three consecutive failed checks is reached in about six.
     const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
-    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    await waitForExternalStatus(stand.admin, endpointId, { status: [VERIFIED], since: Date.now() });
     expect((await health()).externalEndpoints).toMatchObject({ status: 'ok', registered: 1, serving: 1 });
 
     stand.sidecar.denyAttestation('the stand withdrew the hardware report');
@@ -568,7 +569,7 @@ describe('sustained failure', () => {
     // as "the upstream did not answer" would send the operator to a cloud that
     // is fine.
     const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
-    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    await waitForExternalStatus(stand.admin, endpointId, { status: [VERIFIED], since: Date.now() });
 
     stand.upstream.evidenceHost.stopPublishing();
 
@@ -590,7 +591,7 @@ describe('sustained failure', () => {
     // `/health` could not tell it from a deployment nobody had approved — and the
     // two ask for opposite things.
     const trusted = await addTrustedMeasurement(stand.admin, STAND_MEASUREMENT);
-    await waitForExternalStatus(stand.admin, endpointId, [VERIFIED]);
+    await waitForExternalStatus(stand.admin, endpointId, { status: [VERIFIED], since: Date.now() });
 
     await stand.upstream.stop();
 
