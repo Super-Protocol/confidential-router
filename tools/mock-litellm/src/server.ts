@@ -161,36 +161,51 @@ function textCompletion(model: string, body: CompletionRequest) {
 }
 
 /**
- * Streams a completion as server-sent events.
+ * Streams a completion as server-sent events, in the shape the route asks for.
  *
  * The router always forwards `stream_options.include_usage: true` so its meter
  * is exact, and strips the extra chunk again if the client did not ask for it.
  * Honouring the flag is therefore not optional here.
+ *
+ * `legacy` picks `/v1/completions`'s own stream — `text_completion` objects
+ * carrying `choices[].text` — rather than chat's `delta`. A backend that served
+ * the legacy route with a single JSON body, as this one used to, left the
+ * forwarded streaming path of SUP-450 untestable on the shipped stand: the
+ * router relayed a non-SSE body and then its own `[DONE]`. vLLM and SGLang
+ * stream it, so this does too.
  */
 function stream(
-  request: { model: string; body: CompletionRequest; chunkGapMs: number },
+  request: { model: string; body: CompletionRequest; chunkGapMs: number; legacy?: boolean },
   response: ServerResponse,
 ): void {
-  const { model, body, chunkGapMs } = request;
+  const { model, body, chunkGapMs, legacy = false } = request;
   response.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
     connection: 'keep-alive',
   });
 
-  const id = `chatcmpl-mock-${Date.now().toString(36)}`;
+  const id = `${legacy ? 'cmpl' : 'chatcmpl'}-mock-${Date.now().toString(36)}`;
   const created = Math.floor(Date.now() / 1000);
   const content = replyFor(body);
+  const object = legacy ? 'text_completion' : 'chat.completion.chunk';
   const chunk = (choices: unknown[], extra: Record<string, unknown> = {}): string =>
-    `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices, ...extra })}\n\n`;
+    `data: ${JSON.stringify({ id, object, created, model, choices, ...extra })}\n\n`;
+  // One choice, in whichever of the two spellings the route uses.
+  const piece = (text: string, finishReason: string | null): unknown =>
+    legacy
+      ? { index: 0, text, logprobs: null, finish_reason: finishReason }
+      : { index: 0, delta: text ? { content: text } : {}, finish_reason: finishReason };
 
   // Word by word, keeping the leading space so concatenating the deltas
   // reproduces the text exactly.
   const words = content.match(/\s*\S+/g) ?? [content];
   const events = [
-    chunk([{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }]),
-    ...words.map((word) => chunk([{ index: 0, delta: { content: word }, finish_reason: null }])),
-    chunk([{ index: 0, delta: {}, finish_reason: 'stop' }]),
+    // Chat opens with the role and an empty delta; the legacy route has no such
+    // opener, so it goes straight to text.
+    ...(legacy ? [] : [chunk([{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }])]),
+    ...words.map((word) => chunk([piece(word, null)])),
+    chunk([piece('', 'stop')]),
   ];
   if (body.stream_options?.include_usage) {
     // A usage-only chunk: `choices` present and empty, as OpenAI defines it.
@@ -307,6 +322,10 @@ export function startMockLiteLLM(options: MockLiteLLMOptions = {}): Promise<Mock
         return;
       }
       if (path.endsWith('/completions')) {
+        if (body.stream === true) {
+          stream({ model, body, chunkGapMs, legacy: true }, response);
+          return;
+        }
         json(response, 200, textCompletion(model, body));
         return;
       }

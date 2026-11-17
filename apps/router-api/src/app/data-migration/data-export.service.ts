@@ -4,6 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { AuthService, isAdminEmail } from '../auth/index.js';
 import { routerConfig, serviceVersion } from '../config.js';
+import { ApiKey } from '../db/entities/api-key.entity.js';
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
@@ -13,7 +14,7 @@ import { TrustedMeasurement } from '../db/entities/trusted-measurement.entity.js
 import { Workspace } from '../db/entities/workspace.entity.js';
 import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { EvidenceService } from '../evidence/index.js';
-import { inviteCodeStatus } from '../invites/index.js';
+import { inviteCodeStatus, signUpOrigin } from '../invites/index.js';
 import {
   buildBundle,
   carryUsageForward,
@@ -31,14 +32,17 @@ const microsOrNull = (value: number | null): string | null => (value === null ? 
 /**
  * Writes the deployment export (SUP-271).
  *
- * Every section names the columns it carries, one by one. That is the whole
- * mechanism behind "no secrets in the file": nothing here spreads an entity, so
- * a column added to a table tomorrow is not exported until somebody adds it to
- * this file on purpose. Left out by design, and absent from the list below:
- * chats, generations and activity, evidence snapshots, feedback answers, API
- * keys (stored hashed — their owners issue new ones), the upstream API key of an
- * external endpoint (sealed under this deployment's secrets key), sessions, and
- * every credential Better Auth holds.
+ * Every section names the columns it carries, one by one. Nothing here spreads
+ * an entity, so a column added to a table tomorrow is not exported until
+ * somebody adds it to this file on purpose. Left out by design, and absent from
+ * the list below: chats, generations and activity, evidence snapshots, feedback
+ * answers, the upstream API key of an external endpoint (sealed under this
+ * deployment's secrets key), sessions, and every credential Better Auth holds.
+ *
+ * `apiKeys` *is* carried, hash included — see the paragraph on it in
+ * `export-bundle.ts`. Which table belongs in which half is not left to this
+ * comment: `bundle-coverage.ts` holds the decision for every entity in the
+ * schema and a spec fails the build when a new one is not in it (SUP-445).
  *
  * The ledger is the one section that cannot simply be copied past that list: a
  * per-request usage debit names the generation it charged for, so it is carried
@@ -73,22 +77,27 @@ export class DataExportService {
 
   private async read(now: Date): Promise<ExportData> {
     const order = { createdAt: 'ASC', id: 'ASC' } as const;
-    const [users, workspaces, members, ledger, codes, redemptions, endpoints, models, measurements] = await Promise.all(
-      [
+    const [users, workspaces, members, ledger, codes, redemptions, keys, endpoints, models, measurements] =
+      await Promise.all([
         this.auth.listUsers(),
         this.dataSource.getRepository(Workspace).find({ order }),
         this.dataSource.getRepository(WorkspaceMember).find({ order: { createdAt: 'ASC', workspaceId: 'ASC' } }),
         this.dataSource.getRepository(CreditTransaction).find({ order }),
         this.dataSource.getRepository(InviteCode).find({ order }),
         this.dataSource.getRepository(InviteRedemption).find({ order: { redeemedAt: 'ASC', id: 'ASC' } }),
+        this.dataSource.getRepository(ApiKey).find({ order }),
         this.dataSource.getRepository(ExternalEndpoint).find({ order }),
         this.dataSource.getRepository(Model).find({ where: { origin: 'external' }, order: { id: 'ASC' } }),
         this.dataSource.getRepository(TrustedMeasurement).find({ order: { addedAt: 'ASC', id: 'ASC' } }),
-      ],
-    );
+      ]);
 
     const invitedBy = new Map(redemptions.map((row) => [row.userId, row.inviteCodeId]));
-    const bootstrapEmail = this.config.auth.bootstrapEmail.toLowerCase();
+    const bootstrapEmail = this.config.auth.bootstrapEmail.trim().toLowerCase();
+    // The operator's own account, found the way the console's statistics find it
+    // (`InviteAdminService.bootstrapAccountId`) and labelled by the same rule, so
+    // what this file says about an account is what the importing deployment
+    // re-derives for it (SUP-309).
+    const bootstrapId = users.find((user) => user.email.trim().toLowerCase() === bootstrapEmail)?.id ?? null;
     // A membership or redemption whose account is gone points at nothing; the
     // import would refuse a bundle that carried one.
     const known = new Set(users.map((user) => user.id));
@@ -102,11 +111,7 @@ export class DataExportService {
         image: user.image,
         createdAt: isoOf(user.createdAt),
         role: isAdminEmail(user.email, this.config.auth.adminEmails) ? ('admin' as const) : ('user' as const),
-        origin: invitedBy.has(user.id)
-          ? ('invite' as const)
-          : user.email.toLowerCase() === bootstrapEmail
-            ? ('bootstrap' as const)
-            : ('open' as const),
+        origin: signUpOrigin(user.id, invitedBy.has(user.id), bootstrapId),
         invitedByCodeId: invitedBy.get(user.id) ?? null,
       })),
       workspaces: workspaces.map((workspace) => ({
@@ -173,6 +178,29 @@ export class DataExportService {
           creditTransactionId: row.creditTransactionId,
           redeemedAt: isoOf(row.redeemedAt),
         })),
+      // The credential, as stored: a hash nobody can read a key out of, and the
+      // limit, counter and revocation that say what the key may still do. Every
+      // column of the table is here on purpose (`bundle-coverage.ts`).
+      apiKeys: keys.map((key) => ({
+        id: key.id,
+        workspaceId: key.workspaceId,
+        name: key.name,
+        keyHash: key.keyHash,
+        prefix: key.prefix,
+        purpose: key.purpose,
+        modelScope: key.modelScope,
+        spendLimitMicros: microsOrNull(key.spendLimitMicros),
+        spentTotalMicros: microsOf(key.spentTotalMicros),
+        requestsPerMinute: key.requestsPerMinute,
+        tokensPerMinute: key.tokensPerMinute,
+        expiresAt: isoOrNull(key.expiresAt),
+        lastUsedAt: isoOrNull(key.lastUsedAt),
+        revokedAt: isoOrNull(key.revokedAt),
+        // The column is already nulled when its creator is deleted; an id this
+        // file does not carry would be a dangling reference in the new database.
+        createdByUserId: key.createdByUserId !== null && known.has(key.createdByUserId) ? key.createdByUserId : null,
+        createdAt: isoOf(key.createdAt),
+      })),
       // The registration and the operator's trust decisions — the pinned digest
       // — and none of the verdict columns, which are re-derived from a live
       // attestation and never carried anywhere (data-model invariant 2).

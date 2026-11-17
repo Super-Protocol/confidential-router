@@ -152,11 +152,17 @@ async function selectModel(page: Page, name: string): Promise<void> {
 test('verifies a relayed external bundle in the browser, and names where it came from', async ({ page }) => {
   const dialog = await openUpstreamPanel(page, external);
 
-  // Tier 1 over the upstream's document, run by this page: the relay fetched,
-  // the chain validated, the JWS verified against the chain leaf. The badge is
-  // the same one the own-endpoint panel reaches, because it is the same verifier
-  // over the same checks — which is what "rendered the same way" was asked for.
-  await expect(dialog.getByText('Verified by this page')).toBeVisible({ timeout: 30_000 });
+  /*
+   * Tier 1 over the upstream's document, run by this page: the relay fetched,
+   * the chain validated, the JWS verified against the chain leaf. The same
+   * verifier over the same checks, which is what "rendered the same way" asked
+   * for — but deliberately *not* the same badge as the own-endpoint panel
+   * (SUP-618). What this page established about a relayed copy of someone else's
+   * document is a different claim from what it established about the host the
+   * browser is talking to, and only the second one unlocks anything.
+   */
+  await expect(dialog.getByText('Upstream evidence checked by this page')).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByText('Verified by this page')).toHaveCount(0);
 
   // The row that must be read before any other: this is not a document the page
   // fetched from the host, and it is not fresher than the verdict that named it.
@@ -180,7 +186,7 @@ test('verifies a relayed external bundle in the browser, and names where it came
 
 test('draws the upstream’s deployment graph, with nothing to compare it against', async ({ page }) => {
   const dialog = await openUpstreamPanel(page, external);
-  await expect(dialog.getByText('Verified by this page')).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByText('Upstream evidence checked by this page')).toBeVisible({ timeout: 30_000 });
 
   await dialog.getByRole('tab', { name: 'Deployment graph' }).click();
   await expect(dialog.getByRole('button', { name: /^Workload router-api/ })).toBeVisible();

@@ -115,7 +115,7 @@ export function setupSteps(input: SetupInput): SetupStep[] {
       id: 'endpoint',
       command: `gatekeeper endpoint add ${ENDPOINT_NAME} --upstream ${upstream} --listen ${GATEKEEPER_LISTEN}`,
       title: 'Front this endpoint',
-      detail: `The upstream is this deployment’s API origin; ${GATEKEEPER_LISTEN} is what your agents will point at instead. Nothing is registered with the router at any point — it never learns that a gatekeeper exists.`,
+      detail: `The upstream is this deployment’s API origin; ${GATEKEEPER_LISTEN} is what your agents will point at instead. Nothing is registered with the router at any point, and the request it forwards is your client’s own, so no header reveals that a gatekeeper is in the path.`,
     },
     evidenceDigestHex
       ? {

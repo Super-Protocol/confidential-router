@@ -7,7 +7,7 @@
  * and normalised. The accepted and rejected encodings are not invented here —
  * they are the language-neutral vectors in
  * `@confidential-router/attestation-fixtures` (`vectors/evidence-digest.json`),
- * which the Go parser in `apps/gatekeeper/pkg/attestation` is held to as well
+ * which the Go parser in `libs/swarm-evidence-go/attestation` is held to as well
  * (SUP-87). `evidence-digest.spec.ts` runs this parser over every one of them.
  */
 

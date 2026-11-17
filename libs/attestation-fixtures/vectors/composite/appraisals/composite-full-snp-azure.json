@@ -1,0 +1,55 @@
+{
+  "description": "The quote appraisal composite-full-snp-azure is appraised against, in the neutral spelling and in each EAT profile's.",
+  "root": {
+    "platform": "tdx-qemu",
+    "quote_verified": true,
+    "tcb_status": "ok",
+    "collateral_checked": true,
+    "key_binding": true,
+    "network_type": "untrusted",
+    "measurements": {
+      "tdattributes": "0000001000000000",
+      "mrtd": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+      "rtmr0": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+      "rtmr1": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "rtmr2": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "rtmr3": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
+    },
+    "mrenclave": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+    "mrenclave_approved": true,
+    "mrenclave_source": "registry"
+  },
+  "quote": {
+    "platform": "snp-azure",
+    "quote_verified": true,
+    "tcb_status": "ok",
+    "collateral_checked": true,
+    "key_binding": false,
+    "binding_data": "2bbc1a15b84890efb5d69ca68ec6023f911c8952e88a0dafed129dd74e5be2209b73e90cea052932a26f68fc37985f8e91b2da8d5fe58fd9ca05b272d9ff0668",
+    "binding_data_source": "hcl-user-data",
+    "measurements": {
+      "launch_digest": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+    },
+    "platform_security": {
+      "vmpl": 0,
+      "debug_allowed": false,
+      "ciphertext_hiding": true,
+      "page_swap_disabled": true,
+      "snp_firmware_tcb": 23,
+      "report_version": 3,
+      "cpu_generation": "Genoa"
+    },
+    "mrenclave": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+    "mrenclave_approved": true,
+    "mrenclave_source": "registry",
+    "spvm_build": "build-448-release"
+  },
+  "eat": {
+    "verifier-a": {
+      "tokens": {}
+    },
+    "verifier-b": {
+      "tokens": {}
+    }
+  }
+}
