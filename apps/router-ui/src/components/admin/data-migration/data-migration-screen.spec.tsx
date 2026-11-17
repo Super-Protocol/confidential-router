@@ -27,11 +27,20 @@ function report(overrides: Partial<ImportReport> = {}): ImportReport {
     totalBalanceMicros: '73500000',
     refusals: [],
     sections: [
-      { section: 'users', inBundle: 4, toCreate: 3, alreadyPresent: 1, conflicts: [] },
-      { section: 'inviteCodes', inBundle: 5, toCreate: 5, alreadyPresent: 0, conflicts: [] },
-      { section: 'apiKeys', inBundle: 2, toCreate: 2, alreadyPresent: 0, conflicts: [] },
+      { section: 'users', inBundle: 4, toCreate: 3, alreadyPresent: 1, toRefresh: 0, localOnly: 0, conflicts: [] },
+      {
+        section: 'inviteCodes',
+        inBundle: 5,
+        toCreate: 5,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      { section: 'apiKeys', inBundle: 2, toCreate: 2, alreadyPresent: 0, toRefresh: 0, localOnly: 0, conflicts: [] },
     ],
     notes: [],
+    lastImport: null,
     ...overrides,
   };
 }
@@ -129,7 +138,10 @@ describe('DataMigrationScreen', () => {
     expect(screen.getByTestId('import-total-balance')).toHaveTextContent('$73.50');
     const users = within(screen.getByTestId('import-section-users'));
     expect(users.getByText('Accounts')).toBeInTheDocument();
-    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts4310');
+    // In file, created, already here, updated, kept here, clashes.
+    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts431000');
+    // Nothing has been imported here before, so there is no line about one.
+    expect(screen.queryByTestId('import-last')).not.toBeInTheDocument();
     const [checkUrl, checkInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(checkUrl).toMatch(/\/admin\/data\/import$/);
     expect(checkInit).toMatchObject({ method: 'POST', credentials: 'include' });
@@ -164,6 +176,66 @@ describe('DataMigrationScreen', () => {
     expect(screen.getByTestId('import-next-steps')).toHaveTextContent('The file carried no API keys');
   });
 
+  it('shows what a second import keeps, and which export this deployment already took', async () => {
+    // The cutover's catch-up import (SUP-481): the operator has to see that the
+    // account which verified this deployment is kept, not quietly dropped.
+    fetchMock.mockResolvedValueOnce(
+      json(
+        report({
+          sections: [
+            {
+              section: 'users',
+              inBundle: 5,
+              toCreate: 1,
+              alreadyPresent: 4,
+              toRefresh: 0,
+              localOnly: 1,
+              conflicts: [],
+            },
+            {
+              section: 'inviteCodes',
+              inBundle: 5,
+              toCreate: 0,
+              alreadyPresent: 5,
+              toRefresh: 1,
+              localOnly: 0,
+              conflicts: [],
+            },
+            {
+              section: 'apiKeys',
+              inBundle: 2,
+              toCreate: 0,
+              alreadyPresent: 2,
+              toRefresh: 1,
+              localOnly: 1,
+              conflicts: [],
+            },
+          ],
+          notes: ['1 account(s) here are not in the export: they signed up on this deployment after it was imported.'],
+          lastImport: {
+            sourcePublicBaseUrl: 'https://old.router.example',
+            bundleExportedAt: '2026-10-10T08:48:00.000Z',
+            importedAt: '2026-10-10T09:05:00.000Z',
+          },
+        }),
+      ),
+    );
+    renderScreen();
+
+    await userEvent.upload(await screen.findByTestId('import-file'), exportFile());
+    await userEvent.click(screen.getByTestId('import-check'));
+
+    expect(await screen.findByTestId('import-verdict')).toHaveTextContent('Ready to import — nothing written yet');
+    expect(screen.getByTestId('import-section-users')).toHaveTextContent('Accounts514010');
+    // A code whose seat the old deployment spent, and a key it revoked: brought
+    // up to date rather than skipped (SUP-481).
+    expect(screen.getByTestId('import-section-inviteCodes')).toHaveTextContent('Invitation codes505100');
+    expect(screen.getByTestId('import-section-apiKeys')).toHaveTextContent('API keys202110');
+    expect(screen.getByTestId('import-last')).toHaveTextContent('An export of https://old.router.example');
+    expect(screen.getByTestId('import-notes')).toHaveTextContent('are not in the export');
+    expect(screen.getByTestId('import-apply')).toBeEnabled();
+  });
+
   it('will not import a file the check refused, and says why', async () => {
     fetchMock.mockResolvedValueOnce(
       json(
@@ -178,6 +250,8 @@ describe('DataMigrationScreen', () => {
               inBundle: 5,
               toCreate: 4,
               alreadyPresent: 0,
+              toRefresh: 0,
+              localOnly: 0,
               conflicts: ['The value of invitation code c-2 is already issued here under another id.'],
             },
           ],

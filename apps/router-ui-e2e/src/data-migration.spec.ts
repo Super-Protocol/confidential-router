@@ -48,17 +48,82 @@ function report(overrides: Record<string, unknown> = {}) {
     totalBalanceMicros: '3187250000',
     refusals: [],
     sections: [
-      { section: 'users', inBundle: 42, toCreate: 41, alreadyPresent: 1, conflicts: [] },
-      { section: 'workspaces', inBundle: 42, toCreate: 41, alreadyPresent: 1, conflicts: [] },
-      { section: 'workspaceMembers', inBundle: 42, toCreate: 41, alreadyPresent: 1, conflicts: [] },
-      { section: 'creditLedger', inBundle: 118, toCreate: 118, alreadyPresent: 0, conflicts: [] },
-      { section: 'inviteCodes', inBundle: 50, toCreate: 50, alreadyPresent: 0, conflicts: [] },
-      { section: 'inviteRedemptions', inBundle: 19, toCreate: 19, alreadyPresent: 0, conflicts: [] },
-      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, conflicts: [] },
-      { section: 'externalEndpoints', inBundle: 2, toCreate: 2, alreadyPresent: 0, conflicts: [] },
-      { section: 'externalModels', inBundle: 5, toCreate: 5, alreadyPresent: 0, conflicts: [] },
-      { section: 'trustedMeasurements', inBundle: 3, toCreate: 3, alreadyPresent: 0, conflicts: [] },
+      { section: 'users', inBundle: 42, toCreate: 41, alreadyPresent: 1, toRefresh: 0, localOnly: 0, conflicts: [] },
+      {
+        section: 'workspaces',
+        inBundle: 42,
+        toCreate: 41,
+        alreadyPresent: 1,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'workspaceMembers',
+        inBundle: 42,
+        toCreate: 41,
+        alreadyPresent: 1,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'creditLedger',
+        inBundle: 118,
+        toCreate: 118,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'inviteCodes',
+        inBundle: 50,
+        toCreate: 50,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'inviteRedemptions',
+        inBundle: 19,
+        toCreate: 19,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      { section: 'apiKeys', inBundle: 37, toCreate: 37, alreadyPresent: 0, toRefresh: 0, localOnly: 0, conflicts: [] },
+      {
+        section: 'externalEndpoints',
+        inBundle: 2,
+        toCreate: 2,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'externalModels',
+        inBundle: 5,
+        toCreate: 5,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
+      {
+        section: 'trustedMeasurements',
+        inBundle: 3,
+        toCreate: 3,
+        alreadyPresent: 0,
+        toRefresh: 0,
+        localOnly: 0,
+        conflicts: [],
+      },
     ],
+    lastImport: null,
     notes: [
       '1 operator account(s) already exist here under a new id; the exported account of the same address is merged into each, with its workspace, balance and attribution.',
       '37 API key(s) are imported, 29 of them still live: a key configured in a Gatekeeper, an IDE or a script keeps working here, and nobody has to issue a new one. A revoked key arrives revoked.',
@@ -152,9 +217,9 @@ test.describe('the Export & import section', () => {
     await expect(page.getByTestId('import-sha')).toHaveText(SHA);
     await expect(page.getByTestId('import-total-balance')).toHaveText('$3,187.25');
     const accounts = page.getByTestId('import-section-users').getByRole('cell');
-    await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0']);
+    await expect(accounts).toHaveText(['Accounts', '42', '41', '1', '0', '0', '0']);
     const keys = page.getByTestId('import-section-apiKeys').getByRole('cell');
-    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0']);
+    await expect(keys).toHaveText(['API keys', '37', '37', '0', '0', '0', '0']);
     await expect(page.getByTestId('import-notes')).toContainText('29 of them still live');
     await expect(page.getByTestId('import-notes')).toContainText('without an upstream API key');
     expect(api.urls).toHaveLength(1);
@@ -174,7 +239,7 @@ test.describe('the Export & import section', () => {
       report({
         ok: false,
         refusals: [
-          'This deployment is not fresh: 7 account(s) exist here that are neither in the export nor an operator’s own. An export is only imported into a deployment nobody has signed up to yet.',
+          'This deployment is not fresh: 7 account(s) exist here that are neither in the export nor an operator’s own, and nothing here came from this export’s deployment. An export is only imported into a deployment nobody else has signed up to yet — or again, into the one it was already imported into.',
         ],
       }),
     ]);
@@ -186,6 +251,80 @@ test.describe('the Export & import section', () => {
     await expect(page.getByTestId('import-refusals')).toContainText('This deployment is not fresh: 7 account(s)');
     await expect(page.getByTestId('import-apply')).toBeDisabled();
     await capture(page, 'import-refused-dark');
+  });
+
+  /**
+   * A seven-column report has to stay inside its card (SUP-481).
+   *
+   * A table cannot shrink below its min-content width and the shared `Table` has
+   * no wrapper of its own, so before this the report pushed the page sideways on
+   * a laptop and, on a browser that measures the headers wider than this one
+   * does, painted over the card's footer — which is what an axe `color-contrast`
+   * finding on the button underneath actually was.
+   */
+  for (const width of [1280, 1024] as const) {
+    test(`keeps the report inside its card and the page unscrolled at ${width}px`, async ({ page, baseURL }) => {
+      await page.setViewportSize({ width, height: 720 });
+      await mockDataApi(page, [report()]);
+      await openAsAdmin(page, baseURL as string);
+      await chooseFile(page);
+      await page.getByTestId('import-check').click();
+      await expect(page.getByTestId('import-report')).toBeVisible();
+
+      const fits = await page.evaluate(() => {
+        const scroller = document.querySelector('[data-testid="import-report"] table')?.parentElement as HTMLElement;
+        const card = document.querySelector('[data-testid="import-card"]') as HTMLElement;
+        return {
+          // The table's scroller is the thing that has to fit, not the table.
+          overhang: Math.round(scroller.getBoundingClientRect().right - card.getBoundingClientRect().right),
+          pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+        };
+      });
+
+      expect(fits.overhang).toBeLessThanOrEqual(0);
+      expect(fits.pageOverflow).toBeLessThanOrEqual(0);
+      expect(await blockingViolations(page)).toEqual([]);
+      await capture(page, `import-dry-run-${width}`);
+    });
+  }
+
+  /**
+   * And the scroller carries the overflow when the table cannot fit at all.
+   *
+   * The shorter headers brought min-content to 633px while the card bottoms out
+   * around 652px however narrow the viewport gets — the console's shell stops
+   * shrinking first — so on this machine's font metrics nothing can make the
+   * table overflow, and the case above passes with or without the wrapper. The
+   * failure on CI was 19px of exactly that margin going the other way.
+   *
+   * So the precondition is injected rather than waited for: the card is narrowed
+   * until the table cannot fit, which is the state a wider-measuring browser
+   * reaches on its own. That is the one test here that holds the wrapper in
+   * place; without it the table escapes the card by ~200px and takes the page
+   * with it.
+   */
+  test('scrolls the report rather than the page when the table cannot fit its card', async ({ page, baseURL }) => {
+    await mockDataApi(page, [report()]);
+    await openAsAdmin(page, baseURL as string);
+    await page.addStyleTag({ content: '[data-testid="import-card"] { width: 420px; }' });
+    await chooseFile(page);
+    await page.getByTestId('import-check').click();
+    await expect(page.getByTestId('import-report')).toBeVisible();
+
+    const fits = await page.evaluate(() => {
+      const scroller = document.querySelector('[data-testid="import-report"] table')?.parentElement as HTMLElement;
+      const card = document.querySelector('[data-testid="import-card"]') as HTMLElement;
+      return {
+        overhang: Math.round(scroller.getBoundingClientRect().right - card.getBoundingClientRect().right),
+        scrolls: scroller.scrollWidth > scroller.clientWidth,
+        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+
+    expect(fits.scrolls).toBe(true);
+    expect(fits.overhang).toBeLessThanOrEqual(0);
+    expect(fits.pageOverflow).toBeLessThanOrEqual(0);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   for (const theme of ['dark', 'light'] as const) {
