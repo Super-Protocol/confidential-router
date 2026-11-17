@@ -7,6 +7,10 @@ out-tsc
 /apps/gatekeeper/bin
 /apps/gatekeeper/bin-teststand
 # Copied in by GoReleaser's before-hooks so the archives can carry them.
+# GoReleaser copies these in so the licence travels with the binaries
+# (apps/gatekeeper/.goreleaser.yaml); the originals are at the repository root.
+# libs/swarm-evidence-go/LICENSE and NOTICE are *not* here — that module is
+# published on its own, so its copies are committed.
 /apps/gatekeeper/LICENSE
 /apps/gatekeeper/NOTICE
 

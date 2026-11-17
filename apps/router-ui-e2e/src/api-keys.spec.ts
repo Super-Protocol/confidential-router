@@ -87,6 +87,33 @@ test.describe('API keys', () => {
     await expect(dialog.getByTestId('wiring-snippet-python')).toContainText(`api_key="${CREATED_SECRET}"`);
   });
 
+  test('shows the Private Preview data restriction with the new key, without scrolling to it', async ({
+    page,
+    baseURL,
+  }) => {
+    /*
+     * The other surface the restriction belongs on (SUP-501): a developer
+     * holding a fresh key is one paste away from pointing a real integration at
+     * us. It sits outside the dialog's scrolling column, which is the half only
+     * a real browser can check — content this dialog scrolls is content a reader
+     * can finish without ever seeing.
+     */
+    await signIn(page, baseURL as string, OPERATIONS);
+
+    await page.goto('/keys');
+    await page.getByRole('button', { name: 'New key' }).click();
+    await page.getByLabel('Name').fill('ci-agent');
+    await page.getByRole('button', { name: 'Create key' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Private Preview: use synthetic or non-personal data')).toBeInViewport();
+    await expect(dialog.getByText(/do not submit personal data/i)).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: /what the private preview asks you not to submit/i }).click();
+
+    await expect(page.getByText(/including sensitive personal data/i)).toBeVisible();
+  });
+
   test('offers the drop-in snippet on the screen itself, with only the key prefix', async ({ page, baseURL }) => {
     await signIn(page, baseURL as string, OPERATIONS);
 

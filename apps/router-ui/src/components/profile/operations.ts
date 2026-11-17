@@ -4,9 +4,16 @@ import { graphql } from '../../generated';
  * The whole screen in one round trip: who the viewer is, what the workspace
  * spent over the last week, which models it went on, and the days a generation
  * came back with published evidence.
+ *
+ * `heatmapTotals` is the same window as `signedResponseDays`, not the spend
+ * week: the heatmap counts days this platform published a bundle for, and
+ * without the totals behind it an empty graph cannot tell "you served nothing"
+ * apart from "every one of your generations went to an external endpoint this
+ * router verified" (SUP-421). The aliases keep one `activitySummary` field
+ * answering two windows in one document.
  */
 export const PROFILE_QUERY = graphql(`
-  query Profile($workspaceId: ID!, $from: DateTime!, $to: DateTime!, $heatmapDays: Int!) {
+  query Profile($workspaceId: ID!, $from: DateTime!, $to: DateTime!, $heatmapFrom: DateTime!, $heatmapDays: Int!) {
     me {
       id
       name
@@ -28,6 +35,12 @@ export const PROFILE_QUERY = graphql(`
       requests
     }
     signedResponseDays(workspaceId: $workspaceId, days: $heatmapDays)
+    heatmapTotals: activitySummary(workspaceId: $workspaceId, from: $heatmapFrom, to: $to) {
+      requests
+      coveredRequests
+      coverableRequests
+      evidenceCoverage
+    }
   }
 `);
 

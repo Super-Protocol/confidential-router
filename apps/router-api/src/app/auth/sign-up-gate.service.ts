@@ -5,6 +5,7 @@ import { routerConfig } from '../config.js';
 import {
   SIGN_UP_REFUSAL_MESSAGES,
   type SignUpRefusalCode,
+  type SignUpRefusalReason,
   signUpRefusalCodeOf,
 } from '../invites/invite-requirement.js';
 import { InvitesService } from '../invites/invites.service.js';
@@ -28,6 +29,12 @@ import type { SignUpInvite } from '../invites/sign-up-invite.js';
  * here; a *requirement* enforced after the insert could only be met by deleting
  * an account that had already been created, which is the half-created account
  * this exists to prevent.
+ *
+ * One decision, two callers. `admit` is the one that holds the account, in that
+ * hook; `admits` answers the same question for the step before it, where the two
+ * routes that mail an address have to decide whether to send to one that has no
+ * account yet (`sign-up-mail-gate.plugin.ts`, SUP-410). Both read the invitation
+ * off the request and neither writes.
  *
  * **The check is a read, and it cannot be anything else.** Claiming the seat here
  * — which would make two sign-ups racing for the last seat of one code resolve to
@@ -67,17 +74,46 @@ export class SignUpGate {
     if (!this.required || bootstrap) {
       return;
     }
-    if (!invite.code) {
-      throw this.refuse('missing');
-    }
-
-    const found = await this.invites.lookup(invite.code);
-    if (!found.valid) {
-      throw this.refuse(found.reason);
+    const reason = await this.refusalFor(invite);
+    if (reason) {
+      throw this.refuse(reason);
     }
   }
 
-  private refuse(reason: Parameters<typeof signUpRefusalCodeOf>[0]): APIError {
+  /**
+   * The same decision as {@link admit}, answered rather than thrown (SUP-410).
+   *
+   * For the one caller that must refuse by doing nothing: the hook that decides
+   * whether a sign-up may have mail sent to it (`sign-up-mail-gate.plugin.ts`).
+   * A refused *send* answers exactly as an accepted one does, so there is no
+   * refusal to carry — only a mail that does not go out, and the log line below
+   * saying why.
+   *
+   * No `bootstrap` parameter, because nothing mails the bootstrap token: it
+   * arrives on `/auth/bootstrap` and creates its account there.
+   */
+  async admits(invite: SignUpInvite): Promise<boolean> {
+    if (!this.required) {
+      return true;
+    }
+    const reason = await this.refusalFor(invite);
+    if (!reason) {
+      return true;
+    }
+    this.logger.log(`Sign-up mail withheld: ${signUpRefusalCodeOf(reason)} (${reason}).`);
+    return false;
+  }
+
+  /** Why this invitation cannot create an account, or `null` when it can. */
+  private async refusalFor(invite: SignUpInvite): Promise<SignUpRefusalReason | null> {
+    if (!invite.code) {
+      return 'missing';
+    }
+    const found = await this.invites.lookup(invite.code);
+    return found.valid ? null : found.reason;
+  }
+
+  private refuse(reason: SignUpRefusalReason): APIError {
     const code = signUpRefusalCodeOf(reason);
     // The real reason, which the refusal deliberately does not carry: on a launch
     // running grants-only this line is the difference between a mailing that went

@@ -2,7 +2,7 @@ import type { Response as ExpressResponse } from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GatewayContext } from './gateway.types.js';
 import { openAiErrors } from './openai-error.js';
-import { relayStream } from './stream-relay.js';
+import { openStreamIfSlow, relayStream } from './stream-relay.js';
 
 /**
  * The two behaviours the e2e suites cannot reach: the heartbeat that keeps a
@@ -30,15 +30,24 @@ const context = {
 class RecordingResponse {
   readonly written: string[] = [];
   writableEnded = false;
+  headersSent = false;
+  destroyed = false;
+  /** Every `status()` the response was given, so a double preamble is visible. */
+  readonly statuses: number[] = [];
   private readonly listeners = new Map<string, () => void>();
 
-  status(): this {
+  status(code?: number): this {
+    if (typeof code === 'number') {
+      this.statuses.push(code);
+    }
     return this;
   }
   setHeader(): this {
     return this;
   }
-  flushHeaders(): void {}
+  flushHeaders(): void {
+    this.headersSent = true;
+  }
   write(chunk: string): boolean {
     this.written.push(chunk);
     return true;
@@ -275,5 +284,77 @@ describe('a leg’s own account of a broken stream', () => {
     expect(outcome.status).toBe('aborted');
     expect(outcome.errorCode).toBeNull();
     expect(consulted).toBe(false);
+  });
+});
+
+describe('a stream opened before the upstream answered', () => {
+  it('stays shut while the upstream answers in time', async () => {
+    const response = new RecordingResponse();
+    const slow = openStreamIfSlow({ context, response: response.as(), openAfterMs: 50 });
+
+    await sleep(10);
+    slow.stop();
+    await sleep(60);
+
+    expect(slow.opened).toBe(false);
+    expect(response.written).toEqual([]);
+    expect(response.headersSent).toBe(false);
+  });
+
+  it('opens and heartbeats once the upstream has been silent for too long', async () => {
+    const response = new RecordingResponse();
+    const slow = openStreamIfSlow({
+      context,
+      response: response.as(),
+      openAfterMs: 10,
+      heartbeatIntervalMs: 10,
+    });
+
+    await sleep(45);
+    slow.stop();
+
+    expect(slow.opened).toBe(true);
+    expect(response.headersSent).toBe(true);
+    // One the moment the stream opened — a proxy's read deadline started when
+    // the request arrived, not when this timer fired — and then the interval.
+    expect(response.written.filter((event) => event === ': ping\n\n').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('stops beating once stopped, and leaves the preamble for the relay to reuse', async () => {
+    const abort = new AbortController();
+    const source = upstream(abort);
+    const response = new RecordingResponse();
+    const slow = openStreamIfSlow({
+      context,
+      response: response.as(),
+      openAfterMs: 10,
+      heartbeatIntervalMs: 10,
+    });
+
+    await sleep(35);
+    slow.stop();
+    const beatenBefore = response.written.filter((event) => event === ': ping\n\n').length;
+
+    // The relay takes over the stream the keep-alive opened: one preamble
+    // between them, not two.
+    const relay = relayStream({
+      context: { ...context, startedAt: Date.now() },
+      upstream: source.response,
+      response: response.as(),
+      readTimeoutMs: 5_000,
+      abort,
+      heartbeatIntervalMs: 10_000,
+    });
+    pending = relay;
+    source.push(CONTENT);
+    source.close();
+    const outcome = await relay;
+
+    expect(outcome.status).toBe('ok');
+    expect(response.statuses).toEqual([200]);
+    // One beat on takeover, so the handoff does not add a second interval's
+    // silence to the gap since the keep-alive's last one.
+    expect(response.written.filter((event) => event === ': ping\n\n').length).toBe(beatenBefore + 1);
+    expect(response.written.at(-1)).toBe('data: [DONE]\n\n');
   });
 });

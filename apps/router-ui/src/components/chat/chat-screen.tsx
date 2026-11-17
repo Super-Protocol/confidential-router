@@ -9,6 +9,7 @@ import * as React from 'react';
 import type { ChatScreenQuery } from '../../generated/graphql';
 import { ExternalInspectButton } from '../external/external-inspect-button';
 import { InfoPopover } from '../info-popover';
+import { PreviewDataNotice } from '../preview-data-notice';
 import { useSession } from '../session/session-provider';
 import { InspectAttestationButton } from './attestation/inspect-button';
 import { type PendingMessage, promptMessages } from './chat-history';
@@ -565,16 +566,24 @@ function ChatSession({ workspaceId, models, routerEndpoint, settings }: ChatSess
       </div>
 
       {/*
-        One footer line for the two facts about keeping conversations: where
+        One footer line for the two facts about keeping conversations — where
         they are kept, and how many. They used to sit in the sidebar's gutter,
         one under the list and one under the grid, which read as two stray notes
         rather than one footer (SUP-262).
+
+        The Private Preview's data restriction joins the left group rather than
+        taking a line of its own: it is a condition on what a reader is about to
+        type, which is the same subject as the note beside it, and a second row
+        under the composer is how a footer turns into a banner (SUP-501).
       */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <StorageNote
-          copy={historyCopy}
-          onRevealDelete={activeRowRendered ? () => activeRow.current?.focus() : undefined}
-        />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <StorageNote
+            copy={historyCopy}
+            onRevealDelete={activeRowRendered ? () => activeRow.current?.focus() : undefined}
+          />
+          <PreviewDataNotice />
+        </div>
         <p className="text-muted-foreground text-xs">
           {threads.length} of {settings.maxThreads} conversations kept. The oldest is dropped past that.
         </p>
