@@ -7,7 +7,10 @@ emitted from the resolvers, committed, and checked on every CI run against both 
 the schema the running application serves; `apps/router-ui` generates its Apollo client from that file
 (never edit generated client code by hand). The SDL below is the *design target* this document has carried
 since SUP-66 — where the two differ, the committed file wins and the difference is listed under "As
-shipped" at the end. Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
+shipped" at the end. Every SDL block under an "As shipped" heading is the opposite: a contract the
+committed schema must satisfy verbatim — every type, field, argument, enum value and nullability it names
+— and `tools/contract-conformance` fails the pull request that breaks it (SUP-237).
+Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
 carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
 string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
 field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
@@ -644,8 +647,9 @@ router-ui's codegen reads. The overlay the console was built against while the r
 flight is gone with it; `apps/router-ui/src/components/admin/schema-contract.spec.ts` keeps the two
 guards that are about the schema rather than about the overlay — the external vocabulary never
 collapses into the own-endpoint one, and nothing readable can carry the upstream key (threat T15).
-A contract change still lands **here first**, and both sides follow; SUP-237 is the standing
-document-↔-schema conformance check that will hold that rule mechanically.
+A contract change still lands **here first**, and both sides follow — and since SUP-237 that rule is
+enforced rather than asked: CI fails any pull request whose `schema.graphql` does not satisfy this
+block.
 
 Three decisions in this block are worth reading before the SDL:
 
