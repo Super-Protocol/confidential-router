@@ -154,7 +154,8 @@ export type GenerationSortField =
 export type GenerationStatus =
   | 'ABORTED'
   | 'ERROR'
-  | 'OK';
+  | 'OK'
+  | 'PENDING';
 
 export type GrantCreditInput = {
   /** The account holder to credit. Exactly one of this and `workspaceId`. */

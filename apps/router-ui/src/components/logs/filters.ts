@@ -41,6 +41,7 @@ export const SORT_FIELD_LABELS: Record<GenerationSortField, string> = {
 };
 
 export const STATUS_LABELS: Record<GenerationStatus, string> = {
+  PENDING: 'In flight',
   OK: 'OK',
   ERROR: 'Error',
   ABORTED: 'Aborted',

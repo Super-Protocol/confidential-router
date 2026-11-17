@@ -1,5 +1,6 @@
 export * from './credits.gateway.js';
 export * from './evidence-coverage.service.js';
+export * from './incomplete-generations.service.js';
 export * from './metering.module.js';
 export * from './metering.service.js';
 export * from './pricing.js';

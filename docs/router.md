@@ -165,6 +165,18 @@ rateLimits:
   tokensPerMinute: 2000000
 ```
 
+A `generations` row is written when a request is admitted and replaced when it
+ends. `metering.incompleteAfter` is how long a row may stay `pending` before it
+is closed as `error` / `no_response` — the case where the second write never
+happened because the process did not survive the request (SUP-423). It has to
+stay longer than the longest generation the deployment serves; `0` disables the
+sweep and leaves such rows pending:
+
+```yaml
+metering:
+  incompleteAfter: 15m
+```
+
 ## Evidence
 
 ```yaml
@@ -820,7 +832,7 @@ threshold, no more often than `autoTopUpCooldown`.
 POST /v1/chat/completions      streaming and not
 POST /v1/completions           legacy; forwarded, or translated into a chat call
 GET  /v1/models
-GET  /v1/generation?id=…       what one request cost, after the fact
+GET  /v1/generation?id=…       what one request cost, after the fact (`status: pending` = not yet)
 ```
 
 Full contract: `docs/contracts/router-api.md`, and Swagger at `/docs` when

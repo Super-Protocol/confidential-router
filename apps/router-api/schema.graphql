@@ -1125,6 +1125,7 @@ enum GenerationStatus {
   ABORTED
   ERROR
   OK
+  PENDING
 }
 
 input GrantCreditInput {

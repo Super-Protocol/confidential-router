@@ -15,6 +15,14 @@ import { OpenAiExceptionFilter } from './openai-exception.filter.js';
  *
  * Scoped to the calling key's workspace. Never any content: there is none to
  * return (`data-model.md` invariant 1).
+ *
+ * The row now exists from admission rather than from completion (SUP-423), so
+ * this route can answer with `status: "pending"` where it used to answer `404`
+ * — the zeros beside it mean "not known yet", and `router-api.md` tells an
+ * integrator to reconcile only on a terminal status. Returned rather than
+ * suppressed: an in-flight generation is information the caller may want, and a
+ * route that hides a row the Logs screen is already showing would be the one
+ * surface disagreeing with the rest.
  */
 @ApiExcludeController()
 @ApiBearerAuth()
