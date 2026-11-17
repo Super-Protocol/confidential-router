@@ -114,6 +114,25 @@ describe('CreditsScreen', () => {
     );
   });
 
+  /*
+   * `--brand` is a fill, and only reaches 3.74:1 as text on the light card —
+   * below AA. Both accents on this screen are text, so both take the emphasis
+   * token (7.80:1 light, 10.31:1 dark). SUP-414.
+   */
+  it('paints its two accents with the token that is readable as text', async () => {
+    render([creditsMock()]);
+    await screen.findByTestId('credit-balance');
+
+    const row = screen.getByRole('row', { name: /Credit purchase/ });
+    const amount = within(row).getByText('+$25.00');
+    expect(amount).toHaveClass('text-brand-emphasis');
+    expect(amount).not.toHaveClass('text-brand');
+
+    const preset = screen.getByRole('button', { name: '$25' });
+    expect(preset).toHaveClass('aria-pressed:text-brand-emphasis');
+    expect(preset).not.toHaveClass('aria-pressed:text-brand');
+  });
+
   it('welcomes an invited account with the grant, above the balance it explains', async () => {
     search.current = new URLSearchParams('welcome=invite');
     vi.stubGlobal('location', { ...window.location, search: '?welcome=invite' });

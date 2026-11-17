@@ -38,7 +38,10 @@ export interface AttestationInspectorProps {
    * mismatch against an empty list.
    */
   declaredImages: readonly DeclaredImage[] | null;
-  /** Whose endpoint this is. `external` changes the provenance copy and nothing else. */
+  /**
+   * Whose endpoint this is. `external` changes the provenance copy and which
+   * tier presentation the badge reads — see {@link UPSTREAM_TIER}.
+   */
   endpointKind?: EndpointKind;
 }
 
@@ -80,7 +83,13 @@ export default function AttestationInspector({
 }: AttestationInspectorProps) {
   const { gate, extension, checkedAt } = verification;
   const evidence = gate?.evidence ?? null;
-  const tier = badgeTier(verification.pageState, verification.extensionState);
+  /*
+   * The kind is part of the question, not a decoration on the answer (SUP-618).
+   * Tier 1's own copy says the composer stays locked on a failure, which is true
+   * of the endpoint this page is served by and false of an upstream whose panel
+   * gates nothing — and this dialog is the one surface that renders both.
+   */
+  const tier = badgeTier(verification.pageState, verification.extensionState, endpointKind);
   const [openNode, setOpenNode] = React.useState<GraphNode | null>(null);
   /*
    * Which tab is open, held here rather than left to `Tabs`' own `defaultValue`.
@@ -143,7 +152,16 @@ export default function AttestationInspector({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        {/*
+          `tabIndex` on a plain div, which is the remedy axe asks for and not an
+          oversight: this region scrolls, and in the states that have no tabs and
+          no graph — every failed gate, on both the own-endpoint and the upstream
+          panel — it contains nothing focusable, so a keyboard reader could not
+          reach the checks that explain the failure. The graph's own nodes are
+          each a button and keep their order; this stop sits before them.
+        */}
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: WCAG 2.1.1 wins over the rule here — see above. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5" tabIndex={0}>
           {gate === null ? (
             <p className="text-muted-foreground text-sm" role="status">
               {endpointKind === 'external'
@@ -151,7 +169,7 @@ export default function AttestationInspector({
                 : 'Fetching this endpoint’s signed evidence and checking it here in your browser…'}
             </p>
           ) : evidence === null ? (
-            <Degraded gate={gate} />
+            <Degraded gate={gate} endpointKind={endpointKind} />
           ) : (
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
@@ -208,12 +226,19 @@ export default function AttestationInspector({
  * The same rows the badge's panel lists, through the same component, so the
  * failure reads identically wherever a reader meets it.
  */
-function Degraded({ gate }: { gate: NonNullable<VerificationState['gate']> }) {
+function Degraded({
+  gate,
+  endpointKind,
+}: {
+  gate: NonNullable<VerificationState['gate']>;
+  endpointKind: EndpointKind;
+}) {
   return (
     <div className="space-y-4">
       <p className="max-w-prose text-sm">
-        Nothing below is drawn from this endpoint’s evidence, because the evidence did not check out. A graph of a
-        document whose signature or chain failed would look exactly like one that passed, so none is rendered.
+        {endpointKind === 'external'
+          ? 'Nothing below is drawn from this upstream’s relayed evidence, because the copy this page read did not check out. A graph of a document whose signature or chain failed would look exactly like one that passed, so none is rendered.'
+          : 'Nothing below is drawn from this endpoint’s evidence, because the evidence did not check out. A graph of a document whose signature or chain failed would look exactly like one that passed, so none is rendered.'}
       </p>
       <ul className="space-y-2">
         {gate.checks.map((check) => (

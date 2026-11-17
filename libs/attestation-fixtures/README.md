@@ -3,7 +3,7 @@
 Language-neutral conformance vectors for the `/.well-known/swarm-evidence` verifier.
 
 The vectors are the contract. Every implementation — the TypeScript
-`@confidential-router/attestation` and the Go `apps/gatekeeper/pkg/attestation` — must
+`@confidential-router/attestation` and the Go `libs/swarm-evidence-go/attestation` — must
 produce the same verdict for every case. A verifier that passes its own unit tests but
 not these has drifted.
 
@@ -14,11 +14,23 @@ the same JSON files with `go:embed` and reads them directly.
 
 ```
 vectors/
-  manifest.json           the cases
-  roots.json              the trust anchors cases refer to by name
-  evidence-digest.json    accepted/rejected spellings of a pinned evidenceDigest
-  bundles/<case-id>.json  the document each case's evidence endpoint serves
+  manifest.json              the bundle cases
+  roots.json                 the trust anchors cases refer to by name
+  evidence-digest.json       accepted/rejected spellings of a pinned evidenceDigest
+  root-quote-appraisal.json  the recorded root-quote appraisal the claim sets are written against
+  bundles/<case-id>.json     the document each case's evidence endpoint serves
+  composite/                 the composite-evidence corpus (see below)
+    manifest.json            the appraiser profiles and the cases
+    roots.json               the trust anchors those cases pin
+    collections/<id>.json    the CMW collection each case presents
+    appraisals/<id>.json     the recorded quote appraisal, neutral and as tokens
 ```
+
+There are two corpora, for the two forms of Super Swarm evidence. The bundle
+corpus is the `/.well-known/swarm-evidence` contract a hostname publishes; the
+composite corpus is the CMW collection one credential request presents. Both
+pin a `SwarmClaims` document per case, and the composite one additionally
+replays every case through every appraiser profile.
 
 ### `roots.json`
 
@@ -82,6 +94,39 @@ Only `stage` and `reasonContains` are normative. Full reason strings are deliber
 **not** pinned — wording is allowed to differ between implementations, the stage and the
 substring are not.
 
+Every case additionally carries `expect.claims`: what the **claim core**
+(`libs/swarm-evidence-go`) must establish, which is a different assertion from
+the verdict beside it.
+
+```jsonc
+"claims": {
+  "ok": false,
+  "stage": "root-quote",                 // the claim set's vocabulary, not the pipeline's
+  "reasonContains": "not readable",
+  "document": { "schema_version": "1", "denial": { "stage": "root-quote" } }
+}
+```
+
+`document` is the whole `SwarmClaims` document and is compared member by
+member. Two members are not compared literally: `quote_appraiser` is written
+as the placeholder `<appraiser>` and resolves to whichever appraiser replayed
+the case, and a denial's `denial.reason` is dropped before the comparison, for
+the same reason full reason strings are not pinned anywhere else here.
+
+A verdict and a claim set are not the same assertion, and three cases show it:
+`valid-ec-deployment`, `valid-ec-deployment-high-s` and `valid-ec-chain-high-s`
+are sound bundles whose claim set is a denial, because the claim core reads the
+root's public key to check that its TEE evidence commits to it and `crypto/x509`
+has no secp256k1 parser. A corpus that pinned only verdicts would have left that
+difference to a comment.
+
+The claims are written against `root-quote-appraisal.json`, a recorded
+appraisal of the membership root's own TEE evidence. No fixture can carry a
+vendor signature over a certificate this repository minted, so the quote
+appraisal is held fixed and what the corpus pins is everything downstream of
+it; the vendor-signature half is covered against real recorded evidence in
+`libs/swarm-evidence-go/attestation/attestedroot`.
+
 ### `evidence-digest.json`
 
 Spellings of a pinned `evidenceDigest` that must be accepted (with their canonical
@@ -92,6 +137,175 @@ several spellings of the same bytes, and pins are compared as exact strings.
 
 Consumed by `@confidential-router/types` (`normalizeEvidenceDigest`) and by the Go pin
 loader in `apps/gatekeeper/pkg/config`.
+
+## The composite corpus
+
+`vectors/composite/` pins the other form: a RATS Conceptual Message Wrapper
+collection carrying the hardware quote, the PKI membership chain, the leader's
+workload statement and the node's request envelope, appraised into
+`SwarmClaims` for **one credential request** (SUP-638, SUP-636, SUP-637).
+
+### A case
+
+```jsonc
+{
+  "id": "composite-full-tdx-qemu",
+  "description": "…",
+  "request": {
+    "freshnessInput": "5a5a…",                       // hex, verbatim, the Freshness Kind's size
+    "target": "aHR0cHM6Ly92YXVsdC…",                 // unpadded base64url, prepared Target octets
+    "subject": "MFkwE0NFS3B1Yi…",                    // unpadded base64url, DER SubjectPublicKeyInfo
+    "trustedRoots": ["swarm-cloud-conformance-root"],
+    "now": "2026-01-15T12:00:00.000Z",
+    "maxEvidenceAge": 60000,                         // optional, milliseconds
+    "referenceValues": ["5c5c…"],                    // optional, the relying party's own
+    "registrySignedMeasurements": ["85ae…"]          // optional, what the registry vouches for
+  },
+  "evidenceFile": "composite/collections/composite-full-tdx-qemu.json",
+  "appraisalFile": "composite/appraisals/composite-full-tdx-qemu.json",
+  "expect": {
+    "ok": true,
+    "claims": { /* the whole SwarmClaims document */ },
+    "appraisers": {                                  // optional per-profile overrides
+      "verifier-a": { "ok": false, "stage": "coverage", "reasonContains": "…", "claims": { … }, "note": "…" }
+    }
+  }
+}
+```
+
+An absent `appraisers` entry is the point of the corpus: **the claim set may
+not depend on which appraiser produced it**, beyond the `quote_appraiser`
+claim that names it. An entry says why one profile legitimately differs, and
+`note` is where that reason is written down. There are exactly two reasons in
+the corpus today, and both are properties of the delegated path rather than
+of a case:
+
+- **Coverage.** SEV-SNP and both Azure forms are denied at `coverage`: a
+  quote-only Verifier establishes no image identity on them, and the refusal
+  is typed rather than a partial verdict. `coverage` is the one stage that
+  says nothing about the evidence (`libs/swarm-evidence-go/DENIAL-STAGES.md`).
+- **An appraiser contract the delegated path cannot have.** Two cases are
+  about an appraiser that reports no image identity, and one that will not
+  name the field it read the binding digest from. A production
+  `DelegatedQuoteAppraiser` is neither — it replays the RTMR0 event list
+  itself and reads the guest-chosen field out of the quote — so it reaches
+  the sound answer, and the override records it.
+
+### Appraiser profiles
+
+`manifest.json` declares the appraisers every case is replayed through:
+
+| profile | what it is |
+| --- | --- |
+| `recorded-offline` | the appraisal read straight out of the fixture, in the claim set's own spelling — the offline built-in appraiser's stand-in |
+| `verifier-a` | a Verifier consumed as an EAT: flat claim names, hex octets, its own issuer and signing key |
+| `verifier-b` | a second EAT-emitting Verifier: nested claim paths that share none of the first's, base64url registers, a base64 report data, a different issuer and a **different signing key** |
+
+An `eat` profile is not a decoder of its own: it configures the production
+`swarmevidence.DelegatedQuoteAppraiser`, so what the corpus exercises is the
+adapter a bank runs — its JWS check, its claim mapping, its register
+cross-check and its image-identity derivation. There is one EAT
+implementation in the repository, and the vectors are run through it.
+
+The second profile is what makes the swap acceptance of SUP-648 checkable
+rather than asserted: a fake that reused the first's claim paths and key would
+only show the same decoder running twice. Everything that distinguishes the
+two — token format, issuer, verification key, claim paths, encodings — is data
+in `manifest.json`, and no implementation names either of them.
+
+**Neither is named after a real Verifier, and that is a rule.** These tokens
+are this repository's invention; a profile carrying a vendor's name would
+publish claim names that vendor does not emit, which is exactly what
+`tdx_tdattributes` and `attester_held_data`-as-report-data once did under
+Intel's name. The configuration for a real Verifier lives beside the adapter —
+`swarmevidence.ITAClaimMapping`, written against Intel's published token
+reference — and `composite.spec.ts` fails a profile named after one.
+
+```jsonc
+{
+  "name": "verifier-b",
+  "kind": "eat",
+  "tokenFormat": "jwt",
+  "issuer": "https://verifier.bank.example/eat",
+  "verificationKey": { "kid": "bank-verifier-2026", "pem": "-----BEGIN PUBLIC KEY-----…" },
+  "claimMapping": {
+    // a claim path is a sequence of member names, because claim names
+    // contain dots: a Veraison EAR nests its evidence under one
+    "mrtd": ["ear.veraison.annotated-evidence", "tdx", "measurement"],
+    "encoding": "base64url",
+    "binding_data_encoding": "base64"
+  },
+  "platforms": ["tdx-qemu", "tdx-gcp"],
+  "outsideCoverage": { "stage": "coverage", "reason": "…" }
+}
+```
+
+### What is recorded, and what that does not cover
+
+`appraisals/<case>.json` holds two appraisals in the neutral spelling — the
+membership root's own quote and the per-request quote — and, per EAT profile,
+the token that Verifier issued about the per-request quote, keyed by the
+SHA-256 of the serialised TeeEvidence it appraises. An empty token map is a
+coverage limit: the delegated path denies at `coverage` before it asks a
+Verifier anything.
+
+Two things the tokens deliberately do **not** carry:
+
+- **The image identity, and everything downstream of it.** No `mrenclave`, no
+  approval, no sp-vm release. A quote-only Verifier does not know any of them:
+  mrEnclave is `SHA-256(TDATTRIBUTES ‖ MRTD ‖ normalizedRTMR0 ‖ RTMR1 ‖ RTMR2
+  ‖ RTMR3)`, and the normalisation replays an RTMR0 event list the Verifier
+  never consumed. A token carrying the finished answer would be a corpus the
+  production appraiser could not be run against.
+- **A Verifier's wire format.** What is recorded is the EAT shape the adapter
+  consumes. Which Verifier a deployment runs is configuration, and a corpus
+  written against one vendor's wire format would have to be rebuilt the day it
+  is replaced.
+
+The root appraisal stays recorded on every path, and that is the architecture
+rather than a limit of the corpus: the membership root's quote is part of the
+Super Swarm chain rather than of the credential request, so the delegated
+appraiser hands it to the built-in offline appraiser too.
+
+The collections themselves carry **parseable TeeEvidence**. On the two TDX
+branches that is a real message — the registers, the event list that explains
+RTMR0, and the guest-chosen field holding the case's binding digest — because
+a delegated appraisal reads all three out of the quote in hand rather than out
+of anything an intermediary says about it. On the other branches it is the
+smallest well-formed message of that branch, so the refusal the corpus records
+comes from the platform and not from evidence that failed to parse.
+
+The limit worth stating plainly: no fixture can carry a TDX or SEV-SNP
+*signature* over a request this repository invented, so the quote's ECDSA
+signature is filler and the corpus pins everything else — the registers, the
+event replay, the image identity, the binding, the chain, the envelope, the
+statement, the pairing and the claim set. The vendor-signature half is covered
+where real recorded evidence exists, in
+`libs/swarm-evidence-go/attestation/attestedroot`.
+
+### Coverage
+
+30 cases: all five platforms, both serialisations of the collection, the three
+legal collections and the fourth that is refused, an image identity that is
+approved / unapproved / admitted by reference values / absent altogether, a
+GPU token hash, an unlocked cluster space and a `privileged` Pod Security
+Standard — both claims rather than denials — and the threat list: wrong
+target, replayed nonce in the quote and in the envelope, modified CEKpub, a
+foreign envelope subject and a foreign envelope target, an envelope signed by
+a foreign node certificate, a statement signed outside the pinned PKI, a chain
+to another PKI root, **a statement about another pod attached to this quote**,
+a statement with no envelope, a GPU token beside an envelope that does not
+verify, an event log that does not replay to the quote's RTMR0, and evidence
+older than the caller accepts.
+
+Two of those deserve their own note:
+
+- *a statement about another pod attached to this quote* is the attester
+  substitution the `NodeRequestEnvelope` exists to catch. Every other check in
+  the case passes.
+- *`locked: false`* and *`pss_enforce: privileged`* are **not** denials. The
+  core reports; the policy decides, and a corpus that denied them would make
+  the predicate mechanism unreachable.
 
 ## Coverage
 
@@ -123,8 +337,15 @@ of the signatures differs.
 ## Regenerating
 
 ```
-pnpm nx run attestation-fixtures:generate
+pnpm nx run attestation-fixtures:generate     # the bundle corpus and its claims
+pnpm nx run swarm-evidence-go:generate-vectors # the composite corpus
 ```
+
+The second one is a Go program
+(`libs/swarm-evidence-go/internal/vectorgen`), because the composite corpus
+needs the module's own element identifiers and the JCS digest its signed
+objects are named by. Both write into `vectors/`, neither touches the other's
+files, and CI fails if re-running either is not a no-op.
 
 The generator is run directly by Node (`node tools/generate.ts`) and relies on
 type stripping, which is on by default from Node 22.18 — hence the workspace's
@@ -142,3 +363,77 @@ Go verifier's suite before merging.
 
 > The private keys under `tools/keys` are throwaway test material committed on purpose so
 > the vectors are reproducible. They protect nothing.
+
+## Adding a case
+
+Cases are never hand-written into `vectors/` — both corpora are generated, and
+CI fails when regenerating them is not a no-op. A hand-edited expectation is
+also the one way a corpus stops asserting anything: it ends up fitted to
+whatever the code happens to do.
+
+**A bundle case** goes into `tools/generate.ts`, as one more `addCase({…})`
+beside the stage it belongs to. Its `expect.claims` is derived centrally by
+`claimsFor`, so a new case needs nothing beyond its verdict — unless it is a
+case whose *claim set* differs in a new way, which is a deliberate edit to
+`claimsFor` and should be reviewed as one.
+
+**A composite case** goes into `cases()` in
+`libs/swarm-evidence-go/internal/vectorgen/cases.go`, declared as the
+differences from a sound appraisal:
+
+```go
+{
+    id:          "composite-deny-envelope-foreign-target",
+    description: "…what the case is about, in one sentence…",
+    platform:    swarmevidence.PlatformTDXQemu,
+    envelope:    func(e map[string]any) { e["target"] = b64([]byte("https://…")) },
+    denyStage:   "envelope",
+    denyReason:  "envelope target",
+}
+```
+
+Everything the case does not mention is the canonical case, so the denial is
+attributable to exactly one broken fact. A case that is appraisable declares
+no `denyStage`, and its claim set is assembled by `expectation` from the facts
+the case itself declares — the recorded appraisal, the certificates, the
+statement. Then:
+
+```
+pnpm nx run swarm-evidence-go:generate-vectors
+pnpm nx run swarm-evidence-go:test
+```
+
+Review the generated diff as a change to the contract. Both suites that read
+the corpora (`libs/swarm-evidence-go`, and this project's `vitest` specs) must
+pass before it is a vector.
+
+## Recording a Verifier token
+
+The EAT fixtures are minted by the generator from the committed keys
+`tools/keys/eat-*.key.pem`, so the corpus runs offline in CI. Recording a
+**real** token — against the Intel Trust Authority tenant of SUP-642, or
+against whichever Verifier replaces it — is the same shape of work:
+
+1. Submit the case's serialised TeeEvidence to the Verifier and keep the raw
+   response. For Intel Trust Authority that is `POST /appraisal/v2/attest`
+   with the quote and the runtime data; the response is a JWT signed by a key
+   published at the tenant's JWKS URL.
+2. Record the token under the SHA-256 of the evidence it appraises, which is
+   what makes it a token about *that* quote. What the adapter reads out of it
+   is the registers, the report data and the TCB verdict — nothing about the
+   image, which the Verifier does not know.
+3. Add the Verifier as an appraiser profile in `composite/manifest.json`
+   (through the generator): its issuer, the verification key or `kid` from its
+   JWKS, and the claim paths and encodings. None of *those* may need code — if
+   one does, that is the finding, not the configuration. Give the profile a
+   neutral name unless its claim paths are that Verifier's published ones.
+   `platforms` is the exception: the coverage an `eat` profile is held to is
+   the delegated appraiser's own, so a Verifier covering less than bare-metal
+   and GCP TDX is a change to that appraiser rather than to a profile.
+4. Regenerate, and expect the same claim sets as every other profile. A case
+   the new Verifier cannot appraise gets an `expect.appraisers` entry naming
+   the typed denial, which is how the coverage difference stays asserted.
+
+The live test against a real tenant stays **manual** until the tenant owner is
+named (SUP-642); CI runs on the recorded tokens, which is why they are
+committed.

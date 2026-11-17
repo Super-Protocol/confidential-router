@@ -13,9 +13,12 @@ const FORM_URL = 'https://form.example/to/aBcDeF?t=signed-token';
 /** The analytics ingest is the only request this card makes over `fetch`. */
 const fetchMock = vi.fn();
 
-// The path the console actually posts to, imported rather than re-spelled: a
-// third copy of the literal is how these two specs came to hold the first
-// spelling for a release after SUP-463 renamed it off a blocked path.
+/**
+ * The path `captureConsoleEvent` really posts to, imported rather than spelled
+ * out: it moved once already, off a spelling the ad blocklists cancelled
+ * (SUP-463), and a copy here only records where the ingest used to be. The
+ * literal is asserted in one place, `lib/console-analytics.spec.ts`.
+ */
 const INGEST = CONSOLE_EVENTS_PATH;
 
 beforeEach(() => {

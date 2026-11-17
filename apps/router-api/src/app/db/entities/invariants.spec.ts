@@ -72,6 +72,38 @@ describe('Generation', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  /**
+   * SUP-466 put the client dimension on this table, and the one way that change
+   * could go wrong is by keeping the thing it was derived from.
+   *
+   * A raw `User-Agent` is a fingerprinting vector — `InviteRedemption` stores
+   * only `userAgentHash`, salted, and only for abuse review. On a metering row,
+   * written once per request for every account, it would be the single most
+   * regrettable column in the schema. `client` is a label from a closed set and
+   * `client-dimension.ts` is the only place the agent string exists at all.
+   */
+  it('records which client sent the request without keeping the agent string', () => {
+    const columns = dataSource.getMetadata(Generation).columns.map((column) => column.propertyName);
+
+    expect(columns).toContain('client');
+    const normalised = columns.map((name) => name.toLowerCase().replaceAll('_', ''));
+
+    // A substring rule for this one, because the names a "just for debugging"
+    // column would actually be given are `clientUserAgent`, `userAgentRaw` and
+    // `rawUserAgent` — all of which an equality rule waves through.
+    expect(normalised.filter((name) => name.includes('useragent'))).toEqual([]);
+    // The two short ones stay exact: `agent` as a substring would catch an
+    // unrelated `agentlessEndpointId`-shaped name, and `ua` is in half the
+    // alphabet.
+    for (const forbidden of ['agent', 'ua']) {
+      expect(normalised.filter((name) => name === forbidden)).toEqual([]);
+    }
+    // Bounded like an identifier, which a browser's agent string is not: the
+    // longest value the closed set can produce is thirteen characters.
+    const client = dataSource.getMetadata(Generation).columns.find((column) => column.propertyName === 'client');
+    expect(Number(client?.length)).toBeLessThanOrEqual(32);
+  });
 });
 
 describe('EvidenceSnapshot', () => {

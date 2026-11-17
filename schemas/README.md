@@ -9,7 +9,7 @@ process boundary. TypeScript consumers import them through `@confidential-router
 | --- | --- | --- |
 | `gatekeeper-config.schema.json` | `apps/gatekeeper` (`pkg/config`), docs | `examples/gatekeeper-config.example.yaml` |
 | `rego-input.schema.json` | `apps/gatekeeper` (`pkg/policy`), policy authors | `examples/rego-input.example.json` |
-| `swarm-evidence-bundle.schema.json` | `libs/attestation`, `apps/gatekeeper/pkg/attestation`, router evidence poller | `examples/swarm-evidence-bundle.example.json` |
+| `swarm-evidence-bundle.schema.json` | `libs/attestation`, `libs/swarm-evidence-go/attestation`, router evidence poller | `examples/swarm-evidence-bundle.example.json` |
 | `router-config.schema.json` | `apps/router-api` (config loader) | `examples/router-config.example.yaml` |
 | `analytics-taxonomy.schema.json` | `analytics-taxonomy.json` itself, `libs/types` (event allow-list), the landing repository | the taxonomy *is* the instance — [`analytics-taxonomy.json`](./analytics-taxonomy.json) |
 

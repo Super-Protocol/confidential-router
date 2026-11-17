@@ -613,8 +613,12 @@ func startSupervisorTuned(t *testing.T, cfg *config.Config, u *fakeUpstream,
 		Dial:            u.dial,
 		Now:             now,
 		PublishInterval: 50 * time.Millisecond,
-		DenyBackoff:     denyBackoff,
-		Verifier:        verifierFor(u, now),
+		// The reconcile loop runs at the same cadence as the snapshot one, so
+		// every test in this package exercises it rather than only the ones
+		// that are about it. The production interval is seconds (SUP-537).
+		ReconcileInterval: 50 * time.Millisecond,
+		DenyBackoff:       denyBackoff,
+		Verifier:          verifierFor(u, now),
 	}
 	supervisor, err := proxy.New(t.Context(), opts)
 	if err != nil {

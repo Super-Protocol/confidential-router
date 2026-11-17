@@ -403,6 +403,37 @@ describe('pinning a deployment (SUP-252 — two-factor trust)', () => {
     expect(withdrawal.reason).toContain('https://elsewhere.example');
   });
 
+  it('carries the failure run beside the verdict, from registration on (SUP-517)', async () => {
+    const ops = await operator();
+    const endpoint = await register(ops);
+
+    const body = await graphql(
+      ops,
+      `{ externalEndpoints { id status liveness {
+           reachability notServingSince lastSuccessAt lastFailureAt consecutiveFailures outage
+         } } }`,
+    );
+
+    expect(body.errors).toBeUndefined();
+    // A fresh registration: nothing checked, nothing approved, so nothing has
+    // failed and nothing is an outage — but it is already on the clock, which is
+    // what "advertised and not serving" needs to be answerable.
+    expect(body.data.externalEndpoints).toEqual([
+      {
+        id: endpoint.id,
+        status: 'PENDING',
+        liveness: {
+          reachability: 'UNKNOWN',
+          notServingSince: expect.any(String),
+          lastSuccessAt: null,
+          lastFailureAt: null,
+          consecutiveFailures: 0,
+          outage: false,
+        },
+      },
+    ]);
+  });
+
   it('shows the pin to a signed-in non-admin: the approved deployment is part of the transparency surface', async () => {
     const ops = await operator();
     const endpoint = await register(ops);

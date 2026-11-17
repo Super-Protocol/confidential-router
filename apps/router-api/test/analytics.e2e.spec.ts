@@ -358,17 +358,25 @@ describe('the activation events', () => {
     await request(server())
       .post('/v1/chat/completions')
       .set(bearer(created.createApiKey.secret))
+      // What Roo Code 3.54.0 sent through SUP-447's proxy, verbatim.
+      .set('user-agent', 'RooCode/3.54.0')
       .send(CHAT)
       .expect(200);
 
-    expect(harness.events.one('first_request_sent')).toMatchObject({
+    const activation = harness.events.one('first_request_sent');
+    expect(activation).toMatchObject({
       properties: {
         campaign: 'activation-campaign',
         had_invite_grant: true,
         model_slug: 'mock/chat:tdx',
         hours_since_signup: 0,
+        // SUP-466: which client the account activated with. A label, never the
+        // agent string — the taxonomy declares the closed set, and an undeclared
+        // property would be dropped here without a word to the caller.
+        client: 'roo',
       },
     });
+    expect(JSON.stringify(activation)).not.toContain('3.54.0');
 
     await request(server())
       .post('/v1/chat/completions')
@@ -437,13 +445,20 @@ describe('the whole funnel, and the code that is spent', () => {
       .send(CHAT)
       .expect(200);
 
-    expect(harness.events.sent.map((event) => event.event)).toEqual([
+    // `model_requested` is excluded from the ordered funnel on purpose: it is the
+    // one event the request does not await (SUP-542), so where it lands in this
+    // list is a race and asserting it would make the rehearsal flaky. That it
+    // arrives at all is `v1-model-demand.e2e.spec.ts`'s subject, and the line
+    // below keeps this suite's hold on it.
+    const funnel = harness.events.sent.map((event) => event.event).filter((event) => event !== 'model_requested');
+    expect(funnel).toEqual([
       'signup_started',
       'signup_completed',
       'invite_redeemed',
       'api_key_created',
       'first_request_sent',
     ]);
+    expect(await harness.events.waitFor('model_requested')).toHaveLength(1);
 
     // The ledger holds the grant and nothing but — the debit for the request is
     // the only other entry.
