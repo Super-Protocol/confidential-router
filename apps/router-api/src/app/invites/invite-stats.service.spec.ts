@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Catalog, createTestDataSource, seedCatalog, seedGeneration, testConfig } from '../../../test/seed.js';
-import { LedgerService } from '../billing/ledger.service.js';
+import { type LedgerEntry, LedgerService } from '../billing/ledger.service.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { generateInvites } from './invite-generator.js';
 import { InviteStatsService } from './invite-stats.service.js';
@@ -12,12 +12,20 @@ import { NO_SIGN_UP_INVITE } from './sign-up-invite.js';
 let dataSource: DataSource;
 let stats: InviteStatsService;
 let invites: InvitesService;
+let ledger: LedgerService;
 
 beforeEach(async () => {
   dataSource = await createTestDataSource();
   const config = testConfig();
   stats = new InviteStatsService(dataSource);
-  invites = new InvitesService(dataSource, config, new LedgerService(dataSource, config));
+  ledger = new LedgerService(dataSource, config);
+  invites = new InvitesService(dataSource, config, ledger);
+  // Better Auth owns `user` and creates it with its own migration, which a unit
+  // test does not run; `totals()` counts it. The columns `User` maps are all the
+  // reads here need.
+  await dataSource.query(
+    'CREATE TABLE "user" ("id" varchar PRIMARY KEY, "email" varchar NOT NULL, "name" varchar NOT NULL, "image" varchar, "createdAt" date NOT NULL)',
+  );
 });
 
 afterEach(async () => {
@@ -53,6 +61,21 @@ async function signUpWith(code: string): Promise<Catalog> {
   });
   expect(outcome.status).toBe('granted');
   return catalog;
+}
+
+/**
+ * Credit an operator moved by hand: an `adjustment`, the one kind the ledger
+ * lets a human write in either direction.
+ */
+async function adjust(workspaceId: string, amountMicros: number, description: string): Promise<LedgerEntry> {
+  return ledger.record({
+    workspaceId,
+    kind: 'adjustment',
+    amountMicros,
+    reference: 'operator',
+    description,
+    idempotencyKey: `adjustment:${randomUUID()}`,
+  });
 }
 
 describe('a campaign nobody redeemed', () => {
@@ -99,6 +122,66 @@ describe('a campaign in flight', () => {
     await seedGeneration(dataSource, sent, { createdAt: new Date('2026-10-02T11:00:00Z') });
 
     expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({ redeemed: 1, activated: 1 });
+  });
+});
+
+describe('credit that did not come from an invitation', () => {
+  /**
+   * Invitation statistics measure the *campaign*, not the balance (SUP-398).
+   *
+   * `grantedMicros` is `SUM(code.grantMicros)` over the redemptions, so what a
+   * campaign handed out is fixed the moment its codes are minted: an operator
+   * topping an invited account up afterwards, or correcting it down, is credit
+   * the campaign never promised. If those entries leaked in, every number the
+   * launch is judged on would drift with support work that has nothing to do
+   * with it — and the drift would be invisible, because the figure would still
+   * look like a campaign total.
+   *
+   * The structure already guarantees it; these pin it so a later rewrite of
+   * `sumGranted` towards the ledger cannot quietly change what the number means.
+   */
+  it('leaves a campaign untouched when an operator adjusts an invited balance', async () => {
+    const codes = await issue('launch-2026-10', 4);
+    const invited = await signUpWith(codes[0]);
+    await signUpWith(codes[1]);
+    const before = await stats.campaigns('launch-2026-10');
+
+    await adjust(invited.workspaceId, 50_000_000, 'SUP-389: topped up after the verification grant');
+    await adjust(invited.workspaceId, -20_000_000, 'SUP-389: clawing part of it back');
+
+    expect(await stats.campaigns('launch-2026-10')).toEqual(before);
+    expect(before[0]).toMatchObject({ redeemed: 2, grantedMicros: 200_000_000 });
+  });
+
+  it('leaves the deployment totals untouched too', async () => {
+    const codes = await issue('launch-2026-10', 2);
+    const invited = await signUpWith(codes[0]);
+    const before = await stats.totals();
+
+    await adjust(invited.workspaceId, 100_000_000, 'operator top-up');
+
+    expect(await stats.totals()).toEqual(before);
+    expect(before.grantedMicros).toBe(100_000_000);
+  });
+
+  it('counts nothing for an account that never redeemed a code, however it was credited', async () => {
+    await issue('launch-2026-10', 2);
+    const uninvited = await seedCatalog(dataSource);
+
+    await adjust(uninvited.workspaceId, 100_000_000, 'SUP-408: signed up without a code');
+
+    expect((await stats.campaigns('launch-2026-10'))[0]).toMatchObject({ redeemed: 0, grantedMicros: 0 });
+    expect(await stats.totals()).toMatchObject({ redeemed: 0, grantedMicros: 0 });
+  });
+
+  it('moved the balance it was supposed to move, so the invariance is not an inert test', async () => {
+    const codes = await issue('launch-2026-10', 1);
+    const invited = await signUpWith(codes[0]);
+
+    const entry = await adjust(invited.workspaceId, 50_000_000, 'operator top-up');
+
+    // The redemption grant plus the adjustment, exact to the micro.
+    expect(entry.balanceMicros).toBe(150_000_000);
   });
 });
 

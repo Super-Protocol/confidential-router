@@ -63,6 +63,7 @@ function data(): ExportData {
         reference: 'signup',
         description: null,
         idempotencyKey: 'signup:u1',
+        grantedByUserId: null,
         createdAt: AT,
       },
     ],
@@ -112,7 +113,12 @@ function data(): ExportData {
 }
 
 const source = { publicBaseUrl: 'https://old.router.test', routerVersion: '0.17.0', evidenceDigest: 'sha256/abc' };
-const bundle = () => buildBundle({ data: data(), source, exportedAt: new Date(AT) });
+/** The fixture, optionally with the one ledger row overridden. */
+const bundle = (ledger: Partial<ExportData['creditLedger'][number]> = {}) => {
+  const fixture = data();
+  fixture.creditLedger[0] = { ...fixture.creditLedger[0], ...ledger };
+  return buildBundle({ data: fixture, source, exportedAt: new Date(AT) });
+};
 const repack = (value: unknown): Buffer => gzipSync(Buffer.from(JSON.stringify(value), 'utf8'));
 
 function refusal(file: Buffer): string {
@@ -135,6 +141,7 @@ function debit(input: { generationId: string; micros: string; at: string; worksp
     reference: input.generationId,
     description: null,
     idempotencyKey: generationLedgerKey(input.generationId),
+    grantedByUserId: null,
     createdAt: input.at,
   };
 }
@@ -153,6 +160,7 @@ describe('carryUsageForward', () => {
       reference: null,
       description: `Metered usage carried over from older.router.test: 3 requests served in ${input.month}.`,
       idempotencyKey: carriedUsageKey(workspaceId, input.month),
+      grantedByUserId: null,
       createdAt: input.at,
     };
   }
@@ -181,6 +189,8 @@ describe('carryUsageForward', () => {
         'Metered usage carried over from old.router.test: 3 requests served in 2026-10. ' +
         'The per-request log stayed on the deployment that served it.',
       idempotencyKey: 'carried-usage:2026-10:w1',
+      // The export's own arithmetic, so nobody granted it by hand (SUP-406).
+      grantedByUserId: null,
       // The instant the month's spend stopped, not the first one: the entry is
       // where the Credits list expects the last charge of that month to be.
       createdAt: '2026-10-20T11:00:00.000Z',
@@ -239,6 +249,7 @@ describe('carryUsageForward', () => {
       reference: null,
       description: 'operator correction',
       idempotencyKey: 'correction:2026-10',
+      grantedByUserId: null,
       createdAt: AT,
     };
 
@@ -421,6 +432,20 @@ describe('decodeBundle', () => {
     raw.integrity.contentSha256 = contentSha256(raw.data);
 
     expect(decodeBundle(repack(raw)).data.users[0]).not.toHaveProperty('locale');
+  });
+
+  it('carries the operator behind a hand-written ledger entry', () => {
+    const operated = bundle({ grantedByUserId: 'op-1' });
+
+    expect(decodeBundle(encodeBundle(operated)).data.creditLedger[0].grantedByUserId).toBe('op-1');
+  });
+
+  it('reads a bundle written before the operator column existed, as a null', () => {
+    const raw = JSON.parse(gunzipSync(encodeBundle(bundle())).toString('utf8'));
+    delete raw.data.creditLedger[0].grantedByUserId;
+    raw.integrity.contentSha256 = contentSha256(raw.data);
+
+    expect(decodeBundle(repack(raw)).data.creditLedger[0].grantedByUserId).toBeNull();
   });
 
   it('refuses another schema version before it reads anything else', () => {
