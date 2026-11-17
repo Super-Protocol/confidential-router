@@ -65,6 +65,24 @@ export class CatalogViewService {
   }
 
   /**
+   * The console's endpoint table: {@link endpointViews}, preceded by one ask when
+   * nothing is stored for the hostname this deployment answers on.
+   *
+   * Somebody looking is the moment to find out. Nothing stored for that hostname
+   * means a rename has just moved it, and the alternative to asking the
+   * publisher now is a screen that reads "not published" about a deployment that
+   * has been publishing all along (SUP-437).
+   *
+   * Separate from `endpointViews` because that one also backs `modelViews`, and
+   * the model catalogue — public, hit on every page — must not pay for a fetch
+   * nobody on it is waiting for.
+   */
+  async endpointTable(workspaceId: string | null, now: Date = new Date()): Promise<EndpointModel[]> {
+    await this.evidence.refreshOwnIfUnknown(now);
+    return this.endpointViews(workspaceId, now);
+  }
+
+  /**
    * The endpoint that *is* this deployment, projected like any other, or null
    * when the router cannot tell which of its endpoints is its own.
    *
@@ -81,7 +99,7 @@ export class CatalogViewService {
     if (!own) {
       return null;
     }
-    const views = await this.endpointViews(workspaceId, now);
+    const views = await this.endpointTable(workspaceId, now);
     return views.find((view) => view.id === own.id) ?? null;
   }
 

@@ -3,7 +3,7 @@ import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { routerConfig } from '../config.js';
-import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
+import { snapshotsOnCurrentHostname } from '../evidence/current-hostname.js';
 
 /** What the platform had published for an endpoint when a request was served. */
 export interface EvidenceCoverage {
@@ -40,11 +40,14 @@ export class EvidenceCoverageService {
       return cached.coverage;
     }
 
-    const snapshot = await this.dataSource.getRepository(EvidenceSnapshot).findOne({
-      where: { endpointId },
-      order: { issuedAt: 'DESC' },
-      select: { id: true, evidenceDigest: true, issuedAt: true },
-    });
+    // Restricted to the hostname the endpoint answers on now: after a rename the
+    // most recently issued row under it can belong to the name it moved off, and
+    // this digest is stamped onto every generation as what covered it (SUP-437).
+    const snapshot = await snapshotsOnCurrentHostname(this.dataSource, [endpointId])
+      .select(['snapshot.id', 'snapshot.evidenceDigest', 'snapshot.issuedAt'])
+      .orderBy('snapshot.issuedAt', 'DESC')
+      .limit(1)
+      .getOne();
 
     // A snapshot older than the freshness window is not coverage: the platform
     // published *something*, but not for the deployment serving this request.

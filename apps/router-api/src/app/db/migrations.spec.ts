@@ -126,14 +126,21 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
+      // SUP-437 records which hostname a stored publication was served under;
+      // the first undo drops that column and nothing else. First because this
+      // migration is numbered last — three of main's landed while this branch
+      // was in review, and a migration is appended rather than inserted.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'hostname')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'hostname')).toBe(false);
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'workloads')).toBe(true);
+
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. First because this migration is numbered last — it was
-      // renumbered past SUP-466's, SUP-551's and SUP-517's when they landed on
-      // `main` during review, because a migration is appended, never inserted.
-      // The undo can only restore the NOT NULLs on a database the sweep has not
-      // run on yet, which is this one.
+      // `generations`. The next undo takes all of that back; it can only restore
+      // the NOT NULLs on a database the sweep has not run on yet, which is this
+      // one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);

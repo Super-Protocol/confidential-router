@@ -96,7 +96,7 @@ export class CatalogResolver {
     @Args('workspaceId', { type: () => ID }) workspaceId: string,
   ): Promise<EndpointModel[]> {
     const workspace = await this.workspaces.requireMembership(user.id, workspaceId);
-    return this.view.endpointViews(workspace.id);
+    return this.view.endpointTable(workspace.id);
   }
 
   /**

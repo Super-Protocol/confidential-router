@@ -93,6 +93,10 @@ export class EvidenceController {
       '`evidence_not_fetched`: no bundle retrieved for it yet. `evidence_expired`: past its retention window.',
   })
   async own(): Promise<Record<string, unknown>> {
+    // A gatekeeper asking is as good a trigger as a poll: after a rename nothing
+    // is stored for the hostname it just connected to, and the 503 below is
+    // worth one short fetch to avoid (SUP-437).
+    await this.evidence.refreshOwnIfUnknown();
     const endpoint = await this.evidence.ownEndpoint();
     if (!endpoint) {
       throw new NotFoundException(
