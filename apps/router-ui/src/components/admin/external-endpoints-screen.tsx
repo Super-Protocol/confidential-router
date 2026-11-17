@@ -199,7 +199,19 @@ export function ExternalEndpointsScreen() {
                     <TableCell>
                       <Badge variant={presentation.variant}>{presentation.label}</Badge>
                       {endpoint.lastReason ? (
-                        <span className="mt-1 block max-w-60 text-muted-foreground text-xs">{endpoint.lastReason}</span>
+                        /*
+                          The list compares endpoints, so here the reason is a
+                          summary and clamped — a full denial runs 332 characters
+                          and would set the height of every other row (SUP-243).
+                          Whole in the drawer and on the timeline, and on the
+                          tooltip for a reader who only wants this row.
+                        */
+                        <span
+                          className="mt-1 line-clamp-3 max-w-60 wrap-anywhere text-muted-foreground text-xs"
+                          title={endpoint.lastReason}
+                        >
+                          {endpoint.lastReason}
+                        </span>
                       ) : null}
                     </TableCell>
                     <TableCell className="font-mono text-xs">

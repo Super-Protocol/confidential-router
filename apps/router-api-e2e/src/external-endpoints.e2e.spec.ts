@@ -67,6 +67,36 @@ const PENDING = 'PENDING';
 const OTHER_CLOUD_MEASUREMENT = '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0';
 
 /**
+ * The whole sentence a cloud the trust list no longer admits produces, composed
+ * the way the core composes it: `explain` in `pkg/policy`, `cloudFactorDetail` in
+ * `pkg/verifier`, and the `policy: ` prefix `pkg/proxy/endpoint.go` puts on it.
+ *
+ * Asserted entire rather than by a phrase, which is what SUP-243 is about. At 332
+ * characters it did not fit `lastReason`'s `varchar(255)`, and the half that was
+ * cut was the half that mattered: the console showed an operator "the Super
+ * Protocol registry does sign it, but in this mode the …" — the misreading SUP-221
+ * ruling 2 was written to pre-empt — and clipped the correction. An assertion on
+ * the prefix was the shape of that problem rather than a check on it: it passed
+ * just as happily on the truncated sentence.
+ */
+const REGISTRY_SIGNED_DENIAL =
+  'policy: the built-in pin policy (gatekeeper.default) denied ' +
+  `(measurement ${STAND_MEASUREMENT} is not listed in attestedRoots.trustedMeasurements — the Super Protocol ` +
+  'registry does sign it, but in this mode the list is the sole authority and a registry signature admits ' +
+  'nothing on its own)';
+
+/**
+ * …and the same denial about a cloud image nobody signed, which is the shorter
+ * wording: the clause above exists only to correct a registry signature, and
+ * `ROTATED_MEASUREMENT` has none. The two asserted side by side are what shows
+ * the clause is driven by the registry lookup rather than pasted onto every
+ * measurement denial.
+ */
+const UNSIGNED_DENIAL =
+  'policy: the built-in pin policy (gatekeeper.default) denied ' +
+  `(measurement ${ROTATED_MEASUREMENT} is not listed in attestedRoots.trustedMeasurements)`;
+
+/**
  * Chunks every 400 ms, so a generation lives long enough for an admin to
  * withdraw a cloud while it is streaming. The reply is some fifty words, which
  * is twenty seconds of stream — the abort lands in the first few.
@@ -349,10 +379,10 @@ describe('fail-closed', () => {
     // The refused factor, not the generic `policy` stage: the console's fix for
     // it is "Add to trust list", and the stage is what tells it so.
     const denied = await waitUntilDeniedAt('measurement-not-trusted');
-    // The denial names the measurement and the rule, which is what makes it
-    // actionable rather than "the built-in pin policy denied".
-    expect(denied.lastReason).toContain(STAND_MEASUREMENT);
-    expect(denied.lastReason).toContain('attestedRoots.trustedMeasurements');
+    // The denial names the measurement, the rule, and — because this cloud's
+    // image *is* registry-signed — the clause that stops "but Super Protocol
+    // signed it" being the operator's conclusion. Whole, not its prefix (SUP-243).
+    expect(denied.lastReason).toBe(REGISTRY_SIGNED_DENIAL);
 
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
     await request(stand.stack.router.baseUrl)
@@ -430,7 +460,9 @@ describe('fail-closed', () => {
     expect(stand.sidecar.rotateMeasurement()).toBe(ROTATED_MEASUREMENT);
 
     const denied = await waitUntilDeniedAt('measurement-not-trusted');
-    expect(denied.lastReason).toContain(ROTATED_MEASUREMENT);
+    // Nobody signed this image, so the sentence is the plain one: the registry
+    // clause is a correction to a signature, not decoration on every denial.
+    expect(denied.lastReason).toBe(UNSIGNED_DENIAL);
     expect(await listedModels()).not.toContain(EXTERNAL_MODEL);
 
     const kinds = (await externalEndpointEvents(stand.admin, endpointId)).map((event) => event.kind);

@@ -10,9 +10,11 @@ import {
   DIGEST_APPROVED_HEX,
   discoverMock,
   endpointsMock,
+  FULL_MEASUREMENT_DENIAL,
   MEASUREMENT_ROGUE,
   measurementsMock,
   PENDING_ENDPOINT,
+  REGISTRY_DENIED_ENDPOINT,
   TRUSTED,
   VERIFIED_ENDPOINT,
   verdictMock,
@@ -211,6 +213,28 @@ describe('ExternalEndpointsScreen', () => {
       // Nothing pinned means egress refuses, and the drawer says so rather than
       // rendering an empty field.
       expect(within(drawer).getByText('Not pinned — egress refuses')).toBeInTheDocument();
+    });
+
+    /**
+     * SUP-243: the one denial an operator is most likely to misread reaches the
+     * console whole. A 255-character column cut it mid-correction, leaving
+     * "the Super Protocol registry does sign it, but in this mode the …" — the
+     * misreading SUP-221 ruling 2 was written to pre-empt, with the ruling gone.
+     */
+    it('renders a registry-signed cloud denial whole, in the drawer and on the timeline', async () => {
+      renderScreen({ mocks: [endpointsMock([REGISTRY_DENIED_ENDPOINT])] });
+      const drawer = await openDrawer('gemma-registry-signed');
+
+      // Longer than the column that used to hold it, which is why asserting on a
+      // phrase would have passed on the clipped sentence too.
+      expect(FULL_MEASUREMENT_DENIAL.length).toBeGreaterThan(255);
+      const verdict = within(drawer).getByRole('region', { name: 'Last verdict' });
+      expect(within(verdict).getByText(FULL_MEASUREMENT_DENIAL)).toBeInTheDocument();
+      const timeline = within(drawer).getByTestId('endpoint-timeline');
+      expect(within(timeline).getByText(FULL_MEASUREMENT_DENIAL)).toBeInTheDocument();
+      // The list behind it compares endpoints, so there the sentence is clamped —
+      // and still whole on the row's tooltip rather than dropped.
+      expect(screen.getByTitle(FULL_MEASUREMENT_DENIAL)).toBeInTheDocument();
     });
 
     it('renders the timeline newest first, naming the verifying party in every entry', async () => {
