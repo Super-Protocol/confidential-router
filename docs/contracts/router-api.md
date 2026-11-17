@@ -551,7 +551,7 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | --- | --- | --- |
 | 400 | `invalid_request_error` | `invalid_json`, `missing_field`, `unsupported_parameter`, `context_length_exceeded` |
 | the upstream's own 4xx (`400`, `422`, …) | `invalid_request_error` | `upstream_invalid_request` — see below |
-| 401 | `authentication_error` | `invalid_api_key`, `api_key_revoked`, `api_key_expired` |
+| 401 | `authentication_error` | `invalid_api_key`, `api_key_placeholder`, `api_key_revoked`, `api_key_expired` |
 | 402 | `insufficient_credits` | `insufficient_credits`, `key_spend_limit_reached` |
 | 403 | `permission_error` | `model_not_in_key_scope` |
 | 404 | `invalid_request_error` | `model_not_found`, `not_found` |
@@ -589,6 +589,27 @@ every OpenAI-compatible SDK, the message that upset the upstream was already in 
 history, so each retry rebuilt the identical invalid request. One truncated
 `tool_calls[].function.arguments` from a client killed the session permanently and the user read it as
 the platform being down.
+
+Every `message` is written to stand on its own, because the status does not always reach the user. An
+IDE that reaches the router through a local bridge can lose it: VS Code's agent host forwards a BYOK
+model failure as a bare message and re-stamps it `502 api_error`, which reads as a model outage and
+earns a client-side retry storm on a request that can never succeed (SUP-326). So every 401 message
+says that nothing was sent to a model, and names the fix; the causes read differently, and none of
+them quotes `sk-tee-v1-…` as the example of a key — that literal is the placeholder the console and
+the docs put in a config file, and quoting it back makes a wrong value look right.
+
+`invalid_api_key` therefore covers two sentences rather than one. **No credential arrived** — no
+header, another scheme, or `Bearer` with nothing after it — is the one a config file produces, and
+it is told as itself: *"No API key was provided"*, naming a secret reference that resolved to
+nothing as the usual reason. A client that holds a key it cannot find sends an empty bearer rather
+than failing locally, so this is what the user sees while being certain they configured a key. **A
+credential arrived and matches nothing** keeps the *"Incorrect API key provided"* wording. The code
+is shared because a caller branching on it is asking one question.
+
+**`api_key_placeholder`** is a credential that was never a key: `sk-tee-v1-…` as it stands in a
+pasted command, or a `${…}` reference forwarded verbatim by a client with no substitution of its
+own. It is *not* the config-file case — the two IDEs these docs wire up both resolve an unknown
+reference to an empty string, and land on `invalid_api_key` above.
 
 The two 5xx upstream codes name different parties, and the difference is the point. **`backend_unavailable`**
 means the backend could not be reached — refused, reset, unresolvable — or answered 5xx itself.
