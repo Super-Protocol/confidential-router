@@ -165,6 +165,18 @@ rateLimits:
   tokensPerMinute: 2000000
 ```
 
+A `generations` row is written when a request is admitted and replaced when it
+ends. `metering.incompleteAfter` is how long a row may stay `pending` before it
+is closed as `error` / `no_response` — the case where the second write never
+happened because the process did not survive the request (SUP-423). It has to
+stay longer than the longest generation the deployment serves; `0` disables the
+sweep and leaves such rows pending:
+
+```yaml
+metering:
+  incompleteAfter: 15m
+```
+
 ## Evidence
 
 ```yaml
@@ -484,11 +496,25 @@ if that domain publishes SPF and DKIM records that cover the provider sending it
 
 **Reachability is reported, not assumed.** With `smtp`, the API connects and
 authenticates once at boot without sending anything, and `/health` carries the
-outcome as `mail: { provider, state, reason }` — `ok`, or `failing` with
-`unreachable` (no connection at all), `auth_failed` or `rejected`. Every later
-send updates it. It never makes `/health` itself fail: a lost welcome mail is
-not an outage. On a deployment, read it through `GET /admin/health` — `/health`
-itself is the kubelet's and is not published (SUP-479). The log line says which host and port, and never the password.
+outcome as `mail: { provider, state, reason, signUpGate }` — `ok`, or `failing`
+with `unreachable` (no connection at all), `auth_failed` or `rejected`. Every
+later send updates it. It never makes `/health` itself fail: a lost welcome mail
+is not an outage. On a deployment, read it through `GET /admin/health` —
+`/health` itself is the kubelet's and is not published (SUP-479). The log line
+says which host and port, and never the password.
+
+`signUpGate` is `invite_only` or `open`, and it is there so the rest of the
+block is not read wrong: on an invite-only deployment a healthy `state` and a
+`200` from the send route are both compatible with nothing having been sent, so
+"mail is not arriving" has three answers — sent, withheld, or the transport is
+broken — with three different remedies. `state` only ever describes the
+transport. The *counts* are on the console API's `mailDelivery`, behind
+`auth.adminEmails`, and deliberately not on `/health`: a number a stranger could
+read before and after naming an address would tell them by subtraction whether
+that address was mailed, which is the account-existence oracle
+[the mail gate](#what-an-invite-only-deployment-will-not-mail) exists to deny.
+`signUpGate` is configuration, so it moves for nobody.
+
 On a Swarm cluster space, outbound connections to public addresses are open and
 private ranges are not, so the SMTP host has to resolve to a public address;
 some clouds also block outbound port 25, which is what 587 and 465 are for.
@@ -643,7 +669,14 @@ address and is rate-limited per source (429). One recipient is mailed at most
 `mailsPerAddressPerHour` codes — past that the answer is the same 200 and
 nothing is sent, so the limit cannot be used to learn or to silence anything. A
 send an invite-only deployment withheld is the same 200 again, for the same
-reason.
+reason. So is a request for a code `type` this deployment does not mail.
+
+**What it tells the operator.** Each of those is a `200` with nothing sent, and
+they have different remedies, so each is counted on `mailDelivery`
+(`auth.adminEmails`, per replica, since it started): `withheld.noInvitation`,
+`withheld.rateLimited`, `withheld.unusedCodeType`, and a failing transport as
+`state`/`reason`. Counts only — never which address — because a queryable list
+would say which addresses have accounts (SUP-462).
 
 **A send that failed is not a 200.** While the mailer is down — `/health`
 reports `mail.state: failing` — both mail routes answer
@@ -820,7 +853,7 @@ threshold, no more often than `autoTopUpCooldown`.
 POST /v1/chat/completions      streaming and not
 POST /v1/completions           legacy; forwarded, or translated into a chat call
 GET  /v1/models
-GET  /v1/generation?id=…       what one request cost, after the fact
+GET  /v1/generation?id=…       what one request cost, after the fact (`status: pending` = not yet)
 ```
 
 Full contract: `docs/contracts/router-api.md`, and Swagger at `/docs` when
@@ -1135,7 +1168,14 @@ A withheld send is therefore **indistinguishable from a sent one**: the route
 runs to completion and answers exactly as it always did — `200 {"success":
 true}`, or `{"status": true}` for the link, or whatever 400 the body earned —
 and the only difference is that nothing left the process. The reason is in the
-log (`Sign-up mail withheld: …`) and nowhere else. A sign-in code is still
+log (`Sign-up mail withheld: …`) and, since SUP-462, in `mailDelivery` on the
+console API — `withheld { noInvitation, rateLimited, unusedCodeType,
+lastWithheldAt }`, counted since this replica started, behind
+`auth.adminEmails`. That is the whole of what changed:
+the caller still cannot tell a refusal from a send, and the deployment's own
+operator no longer has to read a log inside a cluster space they cannot enter to
+tell a withheld send from a dead mail server. Aggregate counts only — a
+queryable list of withheld addresses would rebuild the oracle. A sign-in code is still
 *generated* and stored hashed for a withheld send, as it is for every other type
 the route accepts; it was never delivered, and the sign-up it would belong to is
 refused by the gate in any case.

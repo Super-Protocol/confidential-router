@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { Pool } from 'pg';
 import type { RouterConfig } from '../config.schema.js';
 import { type SignUpInvite, signUpInviteOf } from '../invites/sign-up-invite.js';
+import type { MailWithheldReason } from '../mail/mail.service.js';
 import { emailCodeEnabled, magicLinkEnabled } from '../mail/mail-settings.js';
 import { bootstrapAdmin } from './bootstrap-admin.plugin.js';
 import {
@@ -78,6 +79,15 @@ export const EMAIL_CODE_LENGTH = 6;
 export interface AuthMail extends MailStateReader {
   sendMagicLink(email: string, url: string): Promise<void>;
   sendSignInCode(email: string, code: string): Promise<void>;
+  /**
+   * Counts a mail these callbacks decided not to send, so the deployment's
+   * operator can tell a withheld send from a broken transport (SUP-462).
+   *
+   * Synchronous, never awaited and never throws, because a withheld send must
+   * leave the response and its timing exactly as a send leaves them — that is
+   * the constraint the gate's whole argument rests on.
+   */
+  recordWithheld(reason: MailWithheldReason): void;
 }
 
 export interface AuthOptionsDeps {
@@ -278,12 +288,22 @@ function authPlugins(
           // credential would leave the process, so no route, body shape or
           // code type can get past it — see `mayMailSignUp`.
           if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
+            // Counted, not answered. Nothing about the refusal reaches the
+            // caller — that is `mayMailSignUp`'s argument and it is unchanged —
+            // but it now reaches the operator, who otherwise reads a withheld
+            // send as the transport having stopped (SUP-462).
+            mail.recordWithheld('no_invitation');
             return;
           }
           // The send route accepts three types and this deployment uses one;
           // the other two belong to flows whose routes are disabled above, and
-          // mailing a code nothing will accept would only be noise.
+          // mailing a code nothing will accept would only be noise. Counted for
+          // the same reason the gate's refusal is: a client asking for a type
+          // this deployment does not mail is answered `200` and sent nothing,
+          // which is indistinguishable from mail that stopped arriving
+          // (SUP-462).
           if (type !== 'sign-in') {
+            mail.recordWithheld('unused_code_type');
             return;
           }
           try {
@@ -316,6 +336,11 @@ function authPlugins(
           // (SUP-410). The code rides the `callbackURL` the console names,
           // which this route's schema keeps.
           if (mailGate && !(await mayMailSignUp(email, context, mailGate))) {
+            mail.recordWithheld('no_invitation');
+            // Counted first and refused after, when the deployment's mail is
+            // failing: the withholding happened either way, and the refusal is
+            // about the deployment's state rather than about this address
+            // (SUP-460).
             if (failing) {
               throw mailSendFailure('link');
             }

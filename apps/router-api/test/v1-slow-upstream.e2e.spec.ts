@@ -75,16 +75,30 @@ function generations() {
   return harness.app.get(DataSource).getRepository(Generation);
 }
 
-/** The row for a model, once the handler that writes it has got there. */
+/**
+ * The row for a model, once the handler that writes it has **closed** it.
+ *
+ * Waits for a terminal `status` rather than for the row to exist: since SUP-423
+ * the row is inserted at admission as `pending`, so "a row is there" is true
+ * from before the upstream is dialled and says nothing about the outcome. The
+ * first reading this helper used to return is now the write-ahead row, and
+ * every assertion below is about what the request turned out to be.
+ */
 async function rowFor(modelId: string): Promise<Generation> {
+  let pending: Generation | null = null;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const row = await generations().findOne({ where: { modelId }, order: { createdAt: 'DESC' } });
-    if (row) {
+    if (row && row.status !== 'pending') {
       return row;
     }
+    pending = row;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`No generation row was ever written for ${modelId}.`);
+  throw new Error(
+    pending
+      ? `The generation row for ${modelId} was still pending after two seconds; nothing closed it.`
+      : `No generation row was ever written for ${modelId}.`,
+  );
 }
 
 describe('a streamed request the upstream is slow to answer', () => {
