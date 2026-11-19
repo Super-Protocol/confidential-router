@@ -100,7 +100,7 @@ func (v *Verifier) verifyTdxQuote(quote []byte, out *Result) error {
 	options := tdxverify.DefaultOptions()
 	options.GetCollateral = false
 	options.CheckRevocations = false
-	options.Now = v.clock()
+	options.Now = tdxTimeSet(v.clock())
 	if v.TdxGetter != nil {
 		options.Getter = v.TdxGetter
 	}

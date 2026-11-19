@@ -11,6 +11,7 @@ export const INVITE_STATISTICS_QUERY = graphql(`
       totals {
         issued
         redeemed
+        carried
         withdrawn
         redemptionRate
         grantedMicros
@@ -28,8 +29,11 @@ export const INVITE_STATISTICS_QUERY = graphql(`
         campaign
         issued
         redeemed
+        carried
         redemptionRate
         activated
+        codeGrantMicrosMin
+        codeGrantMicrosMax
         grantedMicros
       }
     }
@@ -83,6 +87,8 @@ export const ADMIN_SIGN_UPS_QUERY = graphql(`
           live
           lastUsedAt
         }
+        workspaceId
+        balanceMicros
       }
     }
   }
@@ -91,7 +97,8 @@ export const ADMIN_SIGN_UPS_QUERY = graphql(`
 /**
  * The deployment's credential totals (SUP-454) — what a key-affecting change
  * would void, which no per-page sum can give: a key in a shared workspace
- * belongs to every member of it, and one in a memberless workspace to nobody.
+ * belongs to every member of it, and `liveKeysWithoutAccount` is held by no
+ * account the deployment can name.
  */
 export const ADMIN_API_KEY_POPULATION_QUERY = graphql(`
   query AdminApiKeyPopulation {
@@ -100,6 +107,21 @@ export const ADMIN_API_KEY_POPULATION_QUERY = graphql(`
       liveKeys
       accountsHoldingLiveKey
       liveKeysWithoutAccount
+    }
+  }
+`);
+
+export const GRANT_CREDIT = graphql(`
+  mutation GrantCredit($input: GrantCreditInput!) {
+    grantCredit(input: $input) {
+      creditTransactionId
+      workspaceId
+      accountEmail
+      kind
+      amountMicros
+      balanceMicros
+      note
+      replayed
     }
   }
 `);
@@ -127,6 +149,24 @@ export const WITHDRAW_INVITE_CODE = graphql(`
       withdrawn
       alreadyWithdrawn
       spent
+    }
+  }
+`);
+
+export const MAIL_DELIVERY_QUERY = graphql(`
+  query MailDelivery {
+    mailDelivery {
+      provider
+      state
+      reason
+      since
+      inviteOnly
+      withheld {
+        noInvitation
+        rateLimited
+        unusedCodeType
+        lastWithheldAt
+      }
     }
   }
 `);

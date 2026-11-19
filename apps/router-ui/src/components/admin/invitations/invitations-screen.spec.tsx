@@ -10,6 +10,7 @@ import {
   ADMIN_SIGN_UPS_QUERY,
   INVITE_STATISTICS_QUERY,
   ISSUE_INVITE_CODES,
+  MAIL_DELIVERY_QUERY,
   WITHDRAW_INVITE_CODE,
 } from './operations';
 
@@ -37,29 +38,36 @@ function day(date: string, values: Partial<Record<string, number>> = {}) {
   };
 }
 
-/** An account row, with its credential census (SUP-454). */
-function signUp(
-  email: string,
-  values: Partial<{
-    userId: string;
-    origin: string;
-    inviteCode: string | null;
-    campaign: string | null;
-    apiKeys: { total: number; live: number; lastUsedAt: string | null };
-  }> = {},
-) {
-  const apiKeys = values.apiKeys ?? { total: 0, live: 0, lastUsedAt: null };
+/**
+ * An account row. `main`'s override bag (SUP-406 gave it a workspace and a
+ * balance), plus the credential census SUP-454 hangs off the same node.
+ */
+function signUp({
+  apiKeys,
+  ...overrides
+}: Record<string, unknown> & { apiKeys?: { total: number; live: number; lastUsedAt: string | null } } = {}) {
   return {
     __typename: 'AdminSignUp' as const,
-    userId: values.userId ?? email,
-    email,
+    userId: 'u-1',
+    email: 'tester@example.com',
     createdAt: '2026-10-09T09:00:00.000Z',
-    origin: values.origin ?? 'OPEN',
-    inviteCodeId: values.inviteCode ? 'code-1' : null,
-    inviteCode: values.inviteCode ?? null,
-    campaign: values.campaign ?? null,
-    redeemedAt: values.inviteCode ? '2026-10-09T09:00:00.000Z' : null,
-    apiKeys: { __typename: 'AccountApiKeys' as const, ...apiKeys },
+    origin: 'INVITE',
+    inviteCodeId: 'code-1',
+    inviteCode: CODE,
+    campaign: 'launch',
+    redeemedAt: '2026-10-09T09:00:00.000Z',
+    workspaceId: 'ws-tester',
+    balanceMicros: '40000000',
+    // Spread apart from the rest so an override cannot drop the `__typename`
+    // the cache needs on the nested object.
+    apiKeys: {
+      __typename: 'AccountApiKeys' as const,
+      total: 0,
+      live: 0,
+      lastUsedAt: null,
+      ...(apiKeys ?? {}),
+    },
+    ...overrides,
   };
 }
 
@@ -105,7 +113,8 @@ function populationMock(
   };
 }
 
-function statisticsMock(days = 30): MockLink.MockedResponse {
+/** `carried` is how many of the three redemptions a CSV import brought over. */
+function statisticsMock(days = 30, carried = 0): MockLink.MockedResponse {
   return {
     request: { query: INVITE_STATISTICS_QUERY, variables: { days } },
     result: {
@@ -116,6 +125,7 @@ function statisticsMock(days = 30): MockLink.MockedResponse {
             __typename: 'InviteTotals',
             issued: 51,
             redeemed: 3,
+            carried,
             withdrawn: 1,
             redemptionRate: 3 / 51,
             grantedMicros: '300000000',
@@ -131,9 +141,49 @@ function statisticsMock(days = 30): MockLink.MockedResponse {
               campaign: 'launch',
               issued: 51,
               redeemed: 3,
+              carried,
               redemptionRate: 3 / 51,
               activated: 2,
+              codeGrantMicrosMin: '100000000',
+              codeGrantMicrosMax: '100000000',
               grantedMicros: '300000000',
+            },
+            // Issued and untouched — the state SUP-390 was filed over.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'vip',
+              issued: 2,
+              redeemed: 0,
+              redemptionRate: 0,
+              activated: 0,
+              codeGrantMicrosMin: '500000000',
+              codeGrantMicrosMax: '500000000',
+              grantedMicros: '0',
+            },
+            // One tag, two batches at different grants.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'mixed',
+              issued: 4,
+              redeemed: 1,
+              redemptionRate: 0.25,
+              activated: 0,
+              codeGrantMicrosMin: '25000000',
+              codeGrantMicrosMax: '100000000',
+              grantedMicros: '25000000',
+            },
+            // Two batches that differ below a cent — the issue dialog takes six
+            // decimals and the column prints two.
+            {
+              __typename: 'InviteCampaignStats',
+              campaign: 'subcent',
+              issued: 2,
+              redeemed: 0,
+              redemptionRate: 0,
+              activated: 0,
+              codeGrantMicrosMin: '25123456',
+              codeGrantMicrosMax: '25123999',
+              grantedMicros: '0',
             },
           ],
         },
@@ -175,9 +225,52 @@ function codesMock(nodes: unknown[]): MockLink.MockedResponse {
   };
 }
 
-function renderScreen({ admin = true, mocks = [] }: { admin?: boolean; mocks?: MockLink.MockedResponse[] } = {}) {
+/** `mailDelivery` — per-replica, so it is its own query and its own mock (SUP-462). */
+function deliveryMock(overrides: Record<string, unknown> = {}): MockLink.MockedResponse {
+  return {
+    request: { query: MAIL_DELIVERY_QUERY },
+    result: {
+      data: {
+        mailDelivery: {
+          __typename: 'MailDelivery',
+          provider: 'SMTP',
+          state: 'OK',
+          reason: null,
+          since: '2026-10-21T09:00:00.000Z',
+          inviteOnly: true,
+          withheld: null,
+          ...overrides,
+        },
+      },
+    },
+    maxUsageCount: Number.POSITIVE_INFINITY,
+  };
+}
+
+function withheld(values: { noInvitation?: number; rateLimited?: number; unusedCodeType?: number } = {}) {
+  return {
+    __typename: 'MailWithheld' as const,
+    noInvitation: 0,
+    rateLimited: 0,
+    unusedCodeType: 0,
+    lastWithheldAt: '2026-10-21T10:00:00.000Z',
+    ...values,
+  };
+}
+
+function renderScreen({
+  admin = true,
+  mocks = [],
+  carried = 0,
+  delivery = deliveryMock(),
+}: {
+  admin?: boolean;
+  mocks?: MockLink.MockedResponse[];
+  carried?: number;
+  delivery?: MockLink.MockedResponse;
+} = {}) {
   return renderWithSession(<InvitationsScreen />, {
-    mocks: [sessionMock(), isAdminMock(admin), statisticsMock(), ...mocks],
+    mocks: [sessionMock(), isAdminMock(admin), statisticsMock(30, carried), delivery, ...mocks],
   });
 }
 
@@ -203,6 +296,116 @@ describe('InvitationsScreen', () => {
     expect(screen.getAllByText('$300')).toHaveLength(2);
     const campaigns = screen.getByRole('table', { name: 'Campaigns' });
     expect(within(campaigns).getByRole('row', { name: /launch/ })).toHaveTextContent('5.8%');
+    // Nothing imported: no parenthetical to explain, and the plain hint.
+    expect(within(campaigns).getByRole('row', { name: /launch/ })).not.toHaveTextContent('imported');
+    expect(screen.getByText('Accounts created with a code')).toBeInTheDocument();
+  });
+
+  /**
+   * SUP-396: before the fix the campaign row read `Redeemed 0 · Rate 0%` for a
+   * campaign whose redemptions had all arrived with a codes CSV import, while the
+   * Codes tab showed the very same codes as used.
+   */
+  it('counts redemptions carried over by an import, and says how many were', async () => {
+    renderScreen({ carried: 2 });
+
+    const campaigns = await screen.findByRole('table', { name: 'Campaigns' });
+    const row = within(campaigns).getByRole('row', { name: /launch/ });
+    expect(row).toHaveTextContent('5.8%');
+    expect(row).toHaveTextContent(/3\s*\(2 imported\)/);
+    expect(screen.getByText('Includes 2 imported')).toBeInTheDocument();
+  });
+
+  /**
+   * SUP-462. The gate's silence towards the caller is correct; its silence
+   * towards the operator read as a transport outage and cost a false
+   * production incident, so the three answers are side by side here: sent,
+   * withheld because uninvited, or the transport is broken.
+   */
+  it('separates mail withheld for want of an invitation from a failing transport', async () => {
+    renderScreen({
+      delivery: deliveryMock({ withheld: withheld({ noInvitation: 5, rateLimited: 2, unusedCodeType: 1 }) }),
+    });
+
+    expect(await screen.findByTestId('withheld-no-invitation')).toHaveTextContent('5');
+    const card = screen.getByTestId('mail-delivery');
+    expect(within(card).getByTestId('withheld-rate-limited')).toHaveTextContent('2');
+    expect(within(card).getByTestId('withheld-unused-type')).toHaveTextContent('1');
+    // Withheld, and the mail server is fine — which is exactly the pair that
+    // used to be unreadable from outside the cluster space.
+    expect(card).toHaveTextContent('Working');
+    expect(card).toHaveTextContent('Not an outage');
+  });
+
+  it('names the transport fault when that is what it is, and withholds nothing', async () => {
+    renderScreen({
+      delivery: deliveryMock({ state: 'FAILING', reason: 'UNREACHABLE', withheld: null }),
+    });
+
+    expect(await screen.findByTestId('withheld-no-invitation')).toHaveTextContent('0');
+    const card = screen.getByTestId('mail-delivery');
+
+    expect(card).toHaveTextContent('Failing');
+    expect(card).toHaveTextContent('could not be reached');
+    expect(within(card).getByTestId('withheld-no-invitation')).toHaveTextContent('0');
+  });
+
+  it('says nothing is withheld for want of an invitation on an open deployment', async () => {
+    renderScreen({ delivery: deliveryMock({ inviteOnly: false }) });
+
+    expect(await screen.findByTestId('withheld-no-invitation')).toHaveTextContent('0');
+    const card = screen.getByTestId('mail-delivery');
+
+    expect(card).toHaveTextContent('Registration is open');
+    expect(within(card).getByTestId('withheld-no-invitation')).toHaveTextContent('0');
+  });
+
+  it('says the mail panel could not be read rather than quietly disappearing', async () => {
+    renderScreen({
+      delivery: { request: { query: MAIL_DELIVERY_QUERY }, error: new Error('unreachable') },
+    });
+
+    // The only place a withheld send shows. A panel that vanished on a failed
+    // query would put the operator back where SUP-462 found them.
+    expect(await screen.findByTestId('mail-delivery-error')).toHaveTextContent('could not be read');
+    expect(screen.getByRole('button', { name: /Try again|Retry/i })).toBeInTheDocument();
+  });
+
+  it("keeps a code's face value and the campaign's payout in separate columns", async () => {
+    renderScreen();
+
+    const campaigns = await screen.findByRole('table', { name: 'Campaigns' });
+    const headers = within(campaigns)
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent);
+    expect(headers).toEqual(['Campaign', 'Issued', 'Redeemed', 'Rate', 'Activated', 'Per code', 'Paid out']);
+
+    const cells = (name: RegExp) =>
+      within(within(campaigns).getByRole('row', { name }))
+        .getAllByRole('cell')
+        .map((cell) => cell.textContent);
+    // Two codes out, none redeemed: $0 paid out — and now the $500 each one is
+    // worth, beside it, so the row cannot be read as "these codes grant nothing".
+    expect(cells(/vip/)).toEqual(['vip', '2', '0', '0%', '0', '$500', '$0']);
+    expect(cells(/launch/)).toEqual(['launch', '51', '3', '5.8%', '2', '$100', '$300']);
+    // A tag whose batches were issued at different grants quotes neither end alone.
+    expect(cells(/mixed/)).toEqual(['mixed', '4', '1', '25%', '0', '$25–$100', '$25']);
+    // Uniformity is decided on the micros, so batches differing below a cent
+    // still read as a range. Both ends print the same, and the dash is the point:
+    // deciding on the rendered string would collapse this to a flat "$25.12" and
+    // call a mixed campaign uniform — the misreading this column exists to end.
+    expect(cells(/subcent/)).toEqual(['subcent', '2', '0', '0%', '0', '$25.12–$25.12', '$0']);
+  });
+
+  it('no longer calls the cumulative payout a grant', async () => {
+    renderScreen();
+
+    // The table is what tells the tiles apart from their skeletons, which carry
+    // the same labels and no hint.
+    await screen.findByRole('table', { name: 'Campaigns' });
+    expect(screen.getByText('Credit paid out')).toBeInTheDocument();
+    expect(screen.getByText('Granted by redemptions so far')).toBeInTheDocument();
+    expect(screen.queryByText('Credit granted')).not.toBeInTheDocument();
   });
 
   it('masks codes until asked, and copies or reveals one row at a time', async () => {
@@ -525,9 +728,49 @@ describe('InvitationsScreen', () => {
   it('lists accounts with how each came to exist', async () => {
     renderScreen({
       mocks: [
+        {
+          request: { query: ADMIN_SIGN_UPS_QUERY, variables: { origin: null, offset: 0, limit: 50 } },
+          result: {
+            data: {
+              adminSignUps: {
+                __typename: 'AdminSignUpPage',
+                totalCount: 2,
+                nodes: [
+                  {
+                    __typename: 'AdminSignUp',
+                    userId: 'u-2',
+                    email: 'dev@example.com',
+                    createdAt: '2026-10-09T09:00:00.000Z',
+                    origin: 'INVITE',
+                    inviteCodeId: 'code-1',
+                    inviteCode: CODE,
+                    campaign: 'launch',
+                    redeemedAt: '2026-10-09T09:00:00.000Z',
+                    workspaceId: 'ws-2',
+                    balanceMicros: '100000000',
+                  },
+                  {
+                    __typename: 'AdminSignUp',
+                    userId: 'u-1',
+                    email: 'admin@example.com',
+                    createdAt: '2026-10-08T09:00:00.000Z',
+                    origin: 'BOOTSTRAP',
+                    inviteCodeId: null,
+                    inviteCode: null,
+                    campaign: null,
+                    redeemedAt: null,
+                    workspaceId: 'ws-1',
+                    balanceMicros: '0',
+                  },
+                ],
+              },
+            },
+          },
+          maxUsageCount: Number.POSITIVE_INFINITY,
+        },
         signUpsMock([
-          signUp('dev@example.com', { userId: 'u-2', origin: 'INVITE', inviteCode: CODE, campaign: 'launch' }),
-          signUp('admin@example.com', { userId: 'u-1', origin: 'BOOTSTRAP' }),
+          signUp({ email: 'dev@example.com', userId: 'u-2', origin: 'INVITE', inviteCode: CODE, campaign: 'launch' }),
+          signUp({ email: 'admin@example.com', userId: 'u-1', origin: 'BOOTSTRAP' }),
         ]),
         populationMock(),
       ],
@@ -544,6 +787,32 @@ describe('InvitationsScreen', () => {
   });
 });
 
+describe('the accounts list as the place an operator credits one (SUP-406)', () => {
+  it('shows each account’s balance and offers to credit it', async () => {
+    renderScreen({ mocks: [signUpsMock([signUp()])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    const table = await screen.findByRole('table', { name: 'Sign-ups' });
+    const row = within(table).getByRole('row', { name: /tester@example.com/ });
+
+    expect(row).toHaveTextContent('$40.00');
+    await userEvent.click(within(row).getByRole('button', { name: 'Credit' }));
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Credit tester@example.com');
+    expect(screen.getByRole('dialog')).toHaveTextContent('They hold $40.00 today');
+  });
+
+  it('has nothing to credit on an account with no workspace', async () => {
+    renderScreen({ mocks: [signUpsMock([signUp({ workspaceId: null, balanceMicros: null })])] });
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Sign-ups' }));
+    const table = await screen.findByRole('table', { name: 'Sign-ups' });
+    const row = within(table).getByRole('row', { name: /tester@example.com/ });
+
+    expect(within(row).getByRole('button', { name: 'Credit' })).toBeDisabled();
+  });
+});
+
 /**
  * The credential census on the account list (SUP-454) — the only supported answer
  * to "which accounts here hold a live key", because `apiKeys(workspaceId)`
@@ -554,10 +823,11 @@ describe('the Invitations section, on who holds an API key', () => {
     renderScreen({
       mocks: [
         signUpsMock([
-          signUp('holder@example.com', {
+          signUp({
+            email: 'holder@example.com',
             apiKeys: { total: 3, live: 2, lastUsedAt: '2026-10-18T09:00:00.000Z' },
           }),
-          signUp('keyless@example.com'),
+          signUp({ email: 'keyless@example.com' }),
         ]),
         populationMock({ keys: 3, liveKeys: 2, accountsHoldingLiveKey: 1 }),
       ],
@@ -578,7 +848,7 @@ describe('the Invitations section, on who holds an API key', () => {
   it('says deployment-wide how many accounts a key-affecting change would cut off', async () => {
     renderScreen({
       mocks: [
-        signUpsMock([signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } })]),
+        signUpsMock([signUp({ email: 'holder@example.com', apiKeys: { total: 1, live: 1, lastUsedAt: null } })]),
         populationMock({ keys: 9, liveKeys: 7, accountsHoldingLiveKey: 5 }),
       ],
     });
@@ -593,7 +863,7 @@ describe('the Invitations section, on who holds an API key', () => {
   it('names the live keys no account list can account for', async () => {
     renderScreen({
       mocks: [
-        signUpsMock([signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } })]),
+        signUpsMock([signUp({ email: 'holder@example.com', apiKeys: { total: 1, live: 1, lastUsedAt: null } })]),
         populationMock({ keys: 3, liveKeys: 3, accountsHoldingLiveKey: 1, liveKeysWithoutAccount: 2 }),
       ],
     });
@@ -609,10 +879,10 @@ describe('the Invitations section, on who holds an API key', () => {
     renderScreen({
       mocks: [
         signUpsMock([
-          signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } }),
-          signUp('keyless@example.com'),
+          signUp({ email: 'holder@example.com', apiKeys: { total: 1, live: 1, lastUsedAt: null } }),
+          signUp({ email: 'keyless@example.com' }),
         ]),
-        signUpsMock([signUp('holder@example.com', { apiKeys: { total: 1, live: 1, lastUsedAt: null } })], {
+        signUpsMock([signUp({ email: 'holder@example.com', apiKeys: { total: 1, live: 1, lastUsedAt: null } })], {
           holdsLiveApiKey: true,
         }),
         populationMock({ keys: 1, liveKeys: 1, accountsHoldingLiveKey: 1 }),
@@ -635,7 +905,7 @@ describe('the Invitations section, on who holds an API key', () => {
   it('says the filters matched nothing, and never that every account holds a key', async () => {
     renderScreen({
       mocks: [
-        signUpsMock([signUp('keyless@example.com')]),
+        signUpsMock([signUp({ email: 'keyless@example.com' })]),
         signUpsMock([], { holdsLiveApiKey: true }),
         populationMock(),
       ],

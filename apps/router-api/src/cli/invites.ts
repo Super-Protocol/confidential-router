@@ -139,10 +139,16 @@ async function stats(dataSource: DataSource, args: ParsedArgs): Promise<void> {
     return;
   }
   for (const entry of campaigns) {
+    // Face value and payout, each said to be what it is: `granted` alone read as
+    // the first and was the second (SUP-390).
+    const perCode =
+      entry.codeGrantMicrosMin === entry.codeGrantMicrosMax
+        ? `${entry.codeGrantMicrosMin}`
+        : `${entry.codeGrantMicrosMin}-${entry.codeGrantMicrosMax}`;
     console.log(
       `${entry.campaign}: issued ${entry.issued}, redeemed ${entry.redeemed} ` +
         `(${(entry.redemptionRate * 100).toFixed(1)}%), activated ${entry.activated}, ` +
-        `granted ${entry.grantedMicros} micro-USD`,
+        `${perCode} micro-USD per code, paid out ${entry.grantedMicros} micro-USD`,
     );
   }
 }

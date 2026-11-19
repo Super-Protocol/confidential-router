@@ -7,7 +7,10 @@ emitted from the resolvers, committed, and checked on every CI run against both 
 the schema the running application serves; `apps/router-ui` generates its Apollo client from that file
 (never edit generated client code by hand). The SDL below is the *design target* this document has carried
 since SUP-66 — where the two differ, the committed file wins and the difference is listed under "As
-shipped" at the end. Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
+shipped" at the end. Every SDL block under an "As shipped" heading is the opposite: a contract the
+committed schema must satisfy verbatim — every type, field, argument, enum value and nullability it names
+— and `tools/contract-conformance` fails the pull request that breaks it (SUP-237).
+Auth: session cookie (ADR-004); every field is scoped to `viewer`'s workspaces. Money is an integer number of micro-USD
 carried as a `String` (the shipped schema has no custom `Micros` scalar — a scalar that serialises to a
 string buys nothing a described `String` does not, and costs every client a codegen mapping); every money
 field is therefore named `…Micros`. A nullable money input sent as `null` means *no limit*, never zero,
@@ -104,9 +107,9 @@ type Generation {
   promptTokens: Int!, completionTokens: Int!, cost: Micros!
   latencyMs: Int!, timeToFirstTokenMs: Int, tokensPerSecond: Float, streamed: Boolean!, finishReason: String
   evidenceSnapshot: EvidenceSnapshot                                  # snapshot fresh at generation time, or null
-  status: GenerationStatus!                                           # OK | ERROR | ABORTED
+  status: GenerationStatus!                                  # PENDING | OK | ERROR | ABORTED
 }
-enum GenerationStatus { OK ERROR ABORTED }
+enum GenerationStatus { PENDING OK ERROR ABORTED }   # PENDING: admitted, not closed yet (SUP-423)
 input GenerationFilter { from: DateTime, to: DateTime, modelIds: [ID!], apiKeyIds: [ID!], status: GenerationStatus }
 extend type Query { generations(workspaceId: ID!, filter: GenerationFilter, first: Int = 50, after: String): GenerationConnection! }
 
@@ -135,6 +138,59 @@ extend type Mutation {
   setAutoTopUp(workspaceId: ID!, enabled: Boolean!, threshold: Micros, amount: Micros): Workspace!
 }
 
+# ---------- the operator credit grant (SUP-406) ----------
+
+enum AdminCreditGrantKind { GRANT ADJUSTMENT }
+type CreditGrant {
+  creditTransactionId: ID!              # the ledger row it wrote
+  workspaceId: ID!
+  accountEmail: String                  # set when the workspace was named by its account holder
+  kind: AdminCreditGrantKind!
+  amountMicros: Micros!                 # signed, as written
+  balanceMicros: Micros!                # the balance after the entry
+  note: String!                         # the reason recorded — the first call's, on a replay
+  replayed: Boolean!                    # this requestId was already recorded; nothing was written
+  createdAt: DateTime!
+}
+# Mutation.grantCredit(input: { accountEmail | workspaceId (exactly one), amountMicros (signed),
+#   kind = GRANT, note!, requestId! }): CreditGrant!   # auth.adminEmails only
+#
+# The only way credit reaches an account that already exists: before it, a balance
+# could be raised by a checkout the user paid for or by a code redeemed *at
+# sign-up*, and topping up a tester afterwards was impossible. One ledger entry,
+# `grant` or `adjustment`, through the same `LedgerService.record` the invitation
+# and sign-up grants use — so invariant 3 holds by the same construction.
+#
+# Three things a hand-written entry needs and an automatic one does not:
+#  - `credit_transactions.grantedByUserId` names the operator on the row, not only
+#    in a log line that rotates.
+#  - `billing.maxCreditGrantMicros` bounds the magnitude of one call the way
+#    `maxTopUpMicros` bounds one checkout ($10 000 by default).
+#  - A negative amount has to be an ADJUSTMENT, needs `billing.allowCreditDebits`
+#    (off by default) and a note; and `adjustment` may not overdraw, so no call
+#    can push a balance below zero.
+#
+# `note` is required in both directions: `grantedByUserId` says who and
+# `reference` says it was by hand, so `description` is the only field left that
+# says *why*, and an operator entry is the one ledger row with no outside event
+# to explain it.
+#
+# Idempotency is the caller's to name. `requestId` is a UUID the console mints
+# when the dialog opens and holds across retries, and the ledger key is
+# `operator:<operatorId>:<requestId>` — operator-scoped, so two callers cannot
+# collide on the same value. The same submission arriving twice replays the
+# first row and answers `replayed: true`; a second *deliberate* grant opens the
+# dialog again and sends a new id, so two decisions still make two entries. The
+# result is read off the stored row, so a retry carrying an edited amount is
+# shown what actually stands, and a replay names the workspace that row credited
+# rather than the one the retry pointed at.
+#
+# `grantedByUserId` is carried by the deployment export and remapped on import
+# the way `issuedByUserId` is, so a redeploy does not turn every operator row
+# into "nobody granted this". The note reaches the account holder verbatim: the
+# Credits screen applies the `description`-carries-the-receipt-link convention
+# only to rows a provider wrote, so an incident URL in a note is not a receipt.
+
 # ---------- invitations ----------
 
 type InviteGrant {                      # the viewer's credit, or null
@@ -150,7 +206,9 @@ type InviteCampaignStats {              # auth.adminEmails only
   redeemed: Int!
   redemptionRate: Float!
   activated: Int!                       # redeemers that went on to send a request
-  grantedMicros: String!
+  codeGrantMicrosMin: String!           # face value: what one redemption grants
+  codeGrantMicrosMax: String!           # the high end, when the tag mixes batches
+  grantedMicros: String!                # cumulative payout, not a face value
 }
 
 enum InviteRefusalReason { NOT_FOUND, EXPIRED, EXHAUSTED, DISABLED, ALREADY_REDEEMED, ERROR }
@@ -222,6 +280,10 @@ type AdminSignUp {
   userId: ID!  email: String!  createdAt: DateTime!  origin: SignUpOrigin!
   inviteCodeId: ID  inviteCode: String  campaign: String  redeemedAt: DateTime   # set exactly when origin = INVITE
   apiKeys: AccountApiKeys!              # SUP-454; person-created keys, over every workspace the account is in
+  workspaceId: ID  balanceMicros: Micros   # the workspace they own and what it holds; null when they own none.
+                                           # Here because this is the console's only account list, so it is also
+                                           # where `grantCredit` is reached for — "who has run out" has to be
+                                           # answerable without signing in as them (SUP-406)
 }
 type AccountApiKeys { total: Int!  live: Int!  lastUsedAt: DateTime }
 type InviteStatistics { totals: InviteTotals!  daily: [InviteDay!]!  campaigns: [InviteCampaignStats!]! }
@@ -636,8 +698,9 @@ router-ui's codegen reads. The overlay the console was built against while the r
 flight is gone with it; `apps/router-ui/src/components/admin/schema-contract.spec.ts` keeps the two
 guards that are about the schema rather than about the overlay — the external vocabulary never
 collapses into the own-endpoint one, and nothing readable can carry the upstream key (threat T15).
-A contract change still lands **here first**, and both sides follow; SUP-237 is the standing
-document-↔-schema conformance check that will hold that rule mechanically.
+A contract change still lands **here first**, and both sides follow — and since SUP-237 that rule is
+enforced rather than asked: CI fails any pull request whose `schema.graphql` does not satisfy this
+block.
 
 Three decisions in this block are worth reading before the SDL:
 
@@ -1303,3 +1366,50 @@ a live deployment to watch the mail go out is what cost 28 minutes once already.
 
 The unauthenticated half of the same answer is `GET /health`'s `alerts` block — a state and a count
 of recipients, never an address.
+
+## As shipped (SUP-462) — a withheld mail the operator can see
+
+```graphql
+enum MailProvider { NONE, CONSOLE, RESEND, SMTP }
+enum MailState { DISABLED, UNVERIFIED, OK, FAILING }   # the transport, and only the transport
+enum MailFailureReason { UNREACHABLE, AUTH_FAILED, ERROR }   # the mailer's own, never a refused recipient
+
+type MailWithheld {                     # aggregate only; never per address
+  noInvitation: Int!                    # invite-only, and the request carried no code the gate would admit
+  rateLimited: Int!                     # the recipient had already had their `mailsPerAddressPerHour`
+  unusedCodeType: Int!                  # a `type` this deployment does not mail — a client bug, not an outage
+  lastWithheldAt: DateTime!             # the most recent withheld send — a latest occurrence, not a `since`
+}
+
+type MailDelivery {                     # auth.adminEmails only
+  provider: MailProvider!
+  state: MailState!
+  reason: MailFailureReason             # only while FAILING
+  since: DateTime                       # when `state` was established
+  withheld: MailWithheld                # null until this replica has withheld something
+  inviteOnly: Boolean!                  # auth.requireInviteForSignUp
+}
+
+# Query.mailDelivery: MailDelivery!     # session + admin
+```
+
+"The sign-in mail is not arriving" has three answers with three different remedies — it was sent, it
+was deliberately withheld, or the transport is broken — and before this only the third was visible.
+A withheld send is invisible to the *caller* by design, because an observable refusal is an
+account-existence oracle ([the mail gate](../router.md#what-an-invite-only-deployment-will-not-mail)
+exists to deny exactly that), and on a published cluster space, where the log cannot be read, that
+made it invisible to everybody. It cost a false production incident: five `200 {"success": true}`
+with nothing reaching the mail provider, read as the deployment having stopped sending.
+
+**Why this is behind `AdminGuard` and not on `/health`.** `withheld` moves by one on each refused
+request. A caller who can read the count, post an address and read it again learns whether that
+address was mailed — on an invite-only deployment, whether it has an account. Aggregate counts are
+safe for an operator and are not safe for a stranger, so the surface is what keeps them apart.
+`/health` carries `mail.signUpGate` (`invite_only` | `open`) instead: the same fact the public
+`signInOptions.inviteRequired` already reports, enough to stop the misread, and configuration rather
+than an event, so it moves for nobody.
+
+Read-only and process-local: the counters start at zero on boot and are this replica's own, the same
+caveat `/health`'s `mail` block has always had. Nothing here changes the gate's admitting logic, the
+send route's status code, or its body — `email-code.e2e.spec.ts` pins the withheld and the sent
+response as byte-identical.

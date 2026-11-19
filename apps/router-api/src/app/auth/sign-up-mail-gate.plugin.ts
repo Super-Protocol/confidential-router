@@ -47,11 +47,17 @@ export type AdmitsSignUp = (invite: SignUpInvite) => Promise<boolean>;
  * every send of every type on both routes passes through, and the route answers
  * every request exactly as it always did.
  *
- * **A refusal is therefore indistinguishable from a send.** The route runs to
- * completion and returns its own body — `200 {"success": true}` for the code,
- * `{"status": true}` for the link — and the only difference is that nothing left
- * the process. The reason lives in the log (`SignUpGate.admits`) and nowhere
- * else.
+ * **A refusal is therefore indistinguishable from a send** — to the caller.
+ * The route runs to completion and returns its own body — `200 {"success":
+ * true}` for the code, `{"status": true}` for the link — and the only
+ * difference is that nothing left the process.
+ *
+ * To the **deployment's own operator** it is not, and must not be: that much
+ * silence read as a transport outage and cost a false production incident
+ * (SUP-460). The reason is in the log (`SignUpGate.admits`, with which refusal
+ * it was) and the event is counted on `mailDelivery` — `withheld.noInvitation`,
+ * behind `auth.adminEmails`, aggregate and never per address (SUP-462). Both
+ * are on this side of the response; neither changes a byte of it.
  *
  * Only consulted on an invite-only deployment: nowhere else is a sign-up refused
  * at all, so nowhere else is there a mail to withhold.

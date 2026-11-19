@@ -9,12 +9,14 @@ import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
 import { CatalogResolver } from './catalog/catalog.resolver.js';
 import { EvidenceResolver } from './catalog/evidence.resolver.js';
 import { ChatResolver } from './chat/chat.resolver.js';
+import { CreditGrantResolver } from './credits/credit-grant.resolver.js';
 import { CreditsResolver } from './credits/credits.resolver.js';
 import { ExternalEndpointsResolver } from './external-endpoints/external-endpoints.resolver.js';
 import { FeedbackResolver } from './feedback/feedback.resolver.js';
 import { GatekeeperResolver } from './gatekeeper/gatekeeper.resolver.js';
 import { InviteAdminResolver } from './invites/invite-admin.resolver.js';
 import { InvitesResolver } from './invites/invites.resolver.js';
+import { MailDeliveryResolver } from './mail/mail-delivery.resolver.js';
 import { PreferencesResolver } from './preferences/preferences.resolver.js';
 import { JsonScalar } from './scalars/json.scalar.js';
 import { ViewerResolver } from './viewer/viewer.resolver.js';
@@ -34,6 +36,7 @@ export const CONSOLE_RESOLVERS = [
   ApiKeysResolver,
   CatalogResolver,
   ChatResolver,
+  CreditGrantResolver,
   CreditsResolver,
   EvidenceResolver,
   ExternalEndpointsResolver,
@@ -41,6 +44,7 @@ export const CONSOLE_RESOLVERS = [
   GatekeeperResolver,
   InviteAdminResolver,
   InvitesResolver,
+  MailDeliveryResolver,
   PreferencesResolver,
   SignInMailStateResolver,
   SignInOptionsResolver,

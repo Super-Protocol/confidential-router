@@ -42,6 +42,14 @@ const CODES = `
     }
   }
 `;
+const STATISTICS = `
+  {
+    inviteStatistics(days: 7) {
+      totals { issued redeemed carried redemptionRate grantedMicros }
+      campaigns { campaign issued redeemed carried redemptionRate activated grantedMicros }
+    }
+  }
+`;
 const WITHDRAW = 'mutation Withdraw($id: ID!) { withdrawInviteCode(id: $id) { withdrawn } }';
 const GRANT = '{ inviteGrant { campaign grantMicros } }';
 
@@ -295,6 +303,53 @@ describe('importing into a fresh deployment', () => {
     ]);
     // Linked for the operator's benefit only: no credit was written for it here.
     expect((await expectData(returned, GRANT)).inviteGrant).toBeNull();
+  });
+
+  /**
+   * SUP-396. The Codes tab read the imported code as used while the Statistics
+   * tab read its campaign as `Redeemed 0 · Rate 0%`, because the campaign numbers
+   * counted `invite_redemptions` only. On a deployment rebuilt from an export —
+   * which is every code production holds — that is the whole launch reported as
+   * nobody having turned up.
+   */
+  it('counts a carried redemption in the statistics, not only on the Codes tab', async () => {
+    const { source } = await usedDeployment();
+    const file = (await exportCsv(source.operator).expect(200)).text;
+    const target = await deploy(NEW_LANDING);
+    const dryRun = (await importCsv(target.operator, file).expect(200)).body;
+    await importCsv(target.operator, file, { apply: 'true', expect: dryRun.sha256 }).expect(200);
+
+    const { inviteStatistics } = await expectData(target.operator, STATISTICS);
+
+    expect(inviteStatistics.totals).toMatchObject({
+      issued: 5,
+      redeemed: 2,
+      carried: 2,
+      redemptionRate: 0.4,
+      // Both were paid by the old deployment's ledger, and neither is owed here.
+      grantedMicros: '0',
+    });
+    const byCampaign: Record<string, unknown> = Object.fromEntries(
+      inviteStatistics.campaigns.map((entry: { campaign: string }) => [entry.campaign, entry]),
+    );
+    expect(byCampaign['launch-2026-10']).toMatchObject({
+      issued: 4,
+      redeemed: 1,
+      carried: 1,
+      redemptionRate: 0.25,
+      // Nobody has signed up here under that address yet, so there is no
+      // workspace that could have sent a request.
+      activated: 0,
+      grantedMicros: '0',
+    });
+    expect(byCampaign.partners).toMatchObject({
+      issued: 1,
+      redeemed: 1,
+      carried: 1,
+      redemptionRate: 1,
+      activated: 0,
+      grantedMicros: '0',
+    });
   });
 
   it('skips and reports codes that are already here, and never overwrites one', async () => {

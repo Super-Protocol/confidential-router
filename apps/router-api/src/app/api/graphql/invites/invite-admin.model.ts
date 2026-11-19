@@ -23,6 +23,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { MAX_OPERATOR_CREDIT_MICROS } from '../../../billing/money.js';
 import { INVITE_CAMPAIGN_PATTERN } from '../../../invites/invite-code.js';
 import { AccountApiKeysModel } from '../api-keys/api-key-census.model.js';
 import { InviteCampaignStatsModel } from './invites.model.js';
@@ -161,6 +162,19 @@ export class AdminSignUpModel {
     description: 'The account’s /v1 credentials, counted across every workspace it belongs to (SUP-454).',
   })
   apiKeys!: AccountApiKeysModel;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'The workspace this account owns — what `grantCredit` credits. Null when it owns none.',
+  })
+  workspaceId!: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      'That workspace’s balance in micro-USD, so the operator can see who has run out. Null with no workspace.',
+  })
+  balanceMicros!: string | null;
 }
 
 @ObjectType('AdminSignUpPage')
@@ -177,8 +191,11 @@ export class InviteTotalsModel {
   @Field(() => Int, { description: 'Codes ever issued.' })
   issued!: number;
 
-  @Field(() => Int, { description: 'Redemptions — one per invited account.' })
+  @Field(() => Int, { description: 'Redemptions — one per invited account, import-carried ones included.' })
   redeemed!: number;
+
+  @Field(() => Int, { description: 'How many of `redeemed` a codes CSV import carried over from another deployment.' })
+  carried!: number;
 
   @Field(() => Int, { description: 'Codes an operator withdrew.' })
   withdrawn!: number;
@@ -186,7 +203,9 @@ export class InviteTotalsModel {
   @Field(() => Float, { description: '`redeemed / issued`; 0 when nothing was issued.' })
   redemptionRate!: number;
 
-  @Field(() => String, { description: 'Micro-USD granted through invitations.' })
+  @Field(() => String, {
+    description: 'Micro-USD granted through invitations. This deployment’s ledger only.',
+  })
   grantedMicros!: string;
 
   @Field(() => Int, { description: 'Accounts on the deployment, however they arrived.' })
@@ -261,8 +280,12 @@ export const MAX_ISSUE_COUNT = 1000;
  *
  * Not a policy on what a code may be worth — the CLI has no ceiling — but a
  * fat-finger guard on a form where one extra zero mints real money in bulk.
+ *
+ * The same number bounds one operator credit grant
+ * (`billing.maxCreditGrantMicros`), so it is defined once beside the other money
+ * facts rather than typed here a second time (SUP-398).
  */
-export const MAX_ISSUE_GRANT_MICROS = 10_000_000_000;
+export const MAX_ISSUE_GRANT_MICROS = MAX_OPERATOR_CREDIT_MICROS;
 
 @InputType('IssueInviteCodesInput')
 export class IssueInviteCodesInputModel {

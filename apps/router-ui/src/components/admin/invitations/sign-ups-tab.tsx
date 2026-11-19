@@ -25,7 +25,8 @@ import {
 import { UsersRound } from 'lucide-react';
 import * as React from 'react';
 import type { SignUpOrigin } from '../../../generated/graphql';
-import { formatDate } from '../../../lib/format';
+import { formatDate, formatUsd } from '../../../lib/format';
+import { GrantCreditDialog, type GrantCreditTarget } from './grant-credit-dialog';
 import {
   accountsHolding,
   apiKeyCount,
@@ -50,15 +51,20 @@ const KEY_FILTERS = Object.keys(KEY_FILTER) as KeyFilter[];
  * keys it holds (SUP-454).
  *
  * This is the console's only list of accounts, so it is where the per-user facts
- * live: there is no separate admin user directory for them to join. The
- * credentials are counts and a last-used instant, never a key or a prefix: what
- * an operator needs before a key-affecting change is who must re-issue, and the
- * "Holds a live key" filter turns the pager's total into exactly that number.
+ * live: there is no separate admin user directory for them to join. That is why
+ * an operator credits an account from here (SUP-406) — the balance column makes
+ * the decision possible without signing in as the tester — and why the
+ * credentials sit here too.
+ *
+ * The credentials are counts and a last-used instant, never a key or a prefix:
+ * what an operator needs before a key-affecting change is who must re-issue, and
+ * the "Holds a live key" filter turns the pager's total into exactly that number.
  */
 export function SignUpsTab() {
   const [origin, setOrigin] = React.useState<SignUpOrigin | typeof ALL>(ALL);
   const [keys, setKeys] = React.useState<KeyFilter>('all');
   const [offset, setOffset] = React.useState(0);
+  const [crediting, setCrediting] = React.useState<GrantCreditTarget | null>(null);
 
   const { data, loading, error, refetch } = useQuery(ADMIN_SIGN_UPS_QUERY, {
     variables: {
@@ -160,6 +166,8 @@ export function SignUpsTab() {
                   <TableHead>Key last used</TableHead>
                   <TableHead>Invitation code</TableHead>
                   <TableHead>Campaign</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -185,6 +193,29 @@ export function SignUpsTab() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {signUp.campaign ?? <span className="font-sans text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums">
+                      {signUp.balanceMicros === null || signUp.balanceMicros === undefined ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        formatUsd(signUp.balanceMicros)
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!signUp.workspaceId}
+                        onClick={() =>
+                          setCrediting({
+                            email: signUp.email,
+                            workspaceId: signUp.workspaceId as string,
+                            balanceMicros: signUp.balanceMicros ?? null,
+                          })
+                        }
+                      >
+                        Credit
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -215,6 +246,14 @@ export function SignUpsTab() {
           </div>
         </>
       )}
+
+      <GrantCreditDialog
+        target={crediting}
+        onGranted={() => void refetch()}
+        onOpenChange={(open) => {
+          if (!open) setCrediting(null);
+        }}
+      />
     </>
   );
 }
