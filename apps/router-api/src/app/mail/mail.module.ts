@@ -18,7 +18,10 @@ import { MailWebhookController } from './mail-webhook.controller.js';
  * Imported by `AuthModule`, whose flows send the mail, by `HealthModule`, which
  * reports whether it is getting through, and by `GraphQLApiModule`, whose
  * `signInMailState` query is how the code-entry screen stops claiming a dropped
- * message is merely late.
+ * message is merely late — and whose `mailDelivery` reports what was
+ * deliberately not sent (SUP-462). One static module, so they all share one
+ * `MailService`, which is what makes a counter written by an auth callback
+ * readable from a resolver.
  *
  * `MAIL_TRANSPORT` is the only thing that leaves the process, so it is the one
  * provider the e2e harness replaces; rendering and the throttles run for real.

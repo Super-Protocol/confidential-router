@@ -279,6 +279,11 @@ func (s *Supervisor) Reattest(ctx context.Context, name string) (*status.Report,
 // completion that is halfway through streaming. Everything else is rebuilt, and
 // every endpoint is re-verified, because the pins and policies behind its
 // verdict may be exactly what changed.
+//
+// A verification already in flight is part of what the reload replaces: its
+// answer is formed against the trust store and the policy set being swapped
+// out, so it is discarded and asked again rather than installed after the
+// reload (SUP-442).
 func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
 	built, err := s.opts.Verifier(ctx, cfg)
 	if err != nil {
@@ -315,6 +320,21 @@ func (s *Supervisor) Reload(ctx context.Context, cfg *config.Config) error {
 	}
 	s.cfg, s.verifier, s.endpoints = cfg, built, kept
 	s.mu.Unlock()
+
+	// Before anything else, and in particular before the stops and starts
+	// below — which wait on goroutines and so take time: every verdict formed
+	// against the configuration just replaced is retired, including the one a
+	// check still in flight is about to produce. Without this such a check
+	// passes the generation guard, which a reload does not move, and installs a
+	// verdict computed against the superseded trust store *after* the reload
+	// (SUP-442). Bumping after the verifier swap rather than before is the
+	// conservative order: a check that starts in between is discarded and
+	// repeated, where the other order would install it.
+	for _, ep := range kept {
+		if surviving[ep.name] {
+			ep.supersede()
+		}
+	}
 
 	// Retiring comes first: an endpoint whose spec changed is retired and rebuilt
 	// under the same name, and the replacement cannot bind a listener the

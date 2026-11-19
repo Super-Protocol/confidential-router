@@ -40,6 +40,14 @@ export interface LocalState {
   ledger: readonly { id: string; idempotencyKey: string }[];
   inviteCodes: readonly { id: string; code: string }[];
   redemptions: readonly { id: string; userId: string }[];
+  /**
+   * Redemptions carried from another deployment; they have no account here to
+   * collide on. Matched against `redemptions` as well, and in both directions:
+   * a degraded redemption travels under the id of the `invite_redemptions` row
+   * it came from, so the same id in either table is the same redemption. See
+   * `planImport` for why one direction skips and the other refuses.
+   */
+  carriedRedemptions: readonly { id: string }[];
   /** Key id and the hash it authenticates by — the two things an API key can collide on. */
   apiKeys: readonly { id: string; keyHash: string }[];
   externalEndpoints: readonly { id: string; name: string }[];
@@ -59,6 +67,7 @@ export type SectionName =
   | 'creditLedger'
   | 'inviteCodes'
   | 'inviteRedemptions'
+  | 'inviteCarriedRedemptions'
   | 'apiKeys'
   | 'externalEndpoints'
   | 'externalModels'
@@ -146,6 +155,10 @@ export function bundleInconsistencies(data: ExportData): string[] {
   );
 
   missing(
+    'carried redemption(s) name a code the export does not carry.',
+    data.inviteCarriedRedemptions.filter((row) => !codes.has(row.inviteCodeId)).length,
+  );
+  missing(
     'API key(s) belong to a workspace the export does not carry.',
     data.apiKeys.filter((row) => !workspaces.has(row.workspaceId)).length,
   );
@@ -184,6 +197,14 @@ export function bundleInconsistencies(data: ExportData): string[] {
     'invitation code',
     data.inviteCodes.map((code) => code.id),
   );
+  // Live and carried ids in one set: a redemption is one or the other, never
+  // both — the export degrades it or keeps it, and both forms use its own id —
+  // so a repeat within either section, or across the two, is the same
+  // redemption told twice, and would import as two redeemers of one seat.
+  duplicated('redemption', [
+    ...data.inviteRedemptions.map((row) => row.id),
+    ...data.inviteCarriedRedemptions.map((row) => row.id),
+  ]);
   duplicated(
     'API key',
     data.apiKeys.map((key) => key.id),
@@ -392,12 +413,24 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
 
   const redemptions = new Section('inviteRedemptions', data.inviteRedemptions.length);
   const localRedemptionIds = new Set(local.redemptions.map((row) => row.id));
+  const localCarriedIds = new Set(local.carriedRedemptions.map((row) => row.id));
   const localRedeemers = new Set(local.redemptions.map((row) => row.userId));
   const redemptionWrites: ExportData['inviteRedemptions'] = [];
   for (const row of data.inviteRedemptions) {
     const userId = userIdOf(row.userId);
     if (localRedemptionIds.has(row.id)) {
       redemptions.alreadyPresent += 1;
+    } else if (localCarriedIds.has(row.id)) {
+      // The mirror of the carried section below, and a refusal rather than a
+      // skip. This deployment already holds this redemption as a carried row —
+      // it took an export of the same source that had lost the account — and
+      // writing the live one too would name two redeemers for one spent seat.
+      // Skipping it would be worse than refusing: the account comes across
+      // without the row that both attributes its code and *is* the
+      // one-grant-per-account index. Resolving it means deciding which of the
+      // two records to drop, which an import that only ever inserts cannot do,
+      // so it says so and writes nothing.
+      redemptions.conflicts.push(`Redemption ${row.id} is already recorded here as carried from another deployment.`);
     } else if (localRedeemers.has(userId)) {
       redemptions.conflicts.push(`Account ${userId} has already redeemed an invitation on this deployment.`);
     } else {
@@ -408,6 +441,34 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
         workspaceId: workspaceIdOf(row.workspaceId),
         creditTransactionId: ledgerIds.get(row.creditTransactionId) ?? row.creditTransactionId,
       });
+    }
+  }
+
+  /**
+   * Who spent a code elsewhere (SUP-403). Nothing here can collide: the row
+   * names no account and no ledger entry of this deployment's, and the code it
+   * belongs to has already been judged above — a value reissued here is a
+   * conflict that refuses the whole import. So a row is either new or a retry
+   * of one already written, recognised by its own id.
+   *
+   * That id is matched against the **live** redemptions too, not only the
+   * carried ones. A redemption the export could not carry travels as a carried
+   * row under the id it has in `invite_redemptions` (`DataExportService`), so a
+   * deployment that still holds that row already holds this redemption — in the
+   * other table. Matching only the carried ones would write the same redemption
+   * a second time, and the code would then name two redeemers for one spent
+   * seat. Here that is a skip, because a carried row carries nothing the live
+   * one does not; the mirror case, above, is a refusal for the opposite reason.
+   */
+  const carried = new Section('inviteCarriedRedemptions', data.inviteCarriedRedemptions.length);
+  const recordedIds = new Set([...localCarriedIds, ...localRedemptionIds]);
+  const carriedWrites: ExportData['inviteCarriedRedemptions'] = [];
+  for (const row of data.inviteCarriedRedemptions) {
+    if (recordedIds.has(row.id)) {
+      carried.alreadyPresent += 1;
+    } else {
+      carried.toCreate += 1;
+      carriedWrites.push(row);
     }
   }
 
@@ -503,9 +564,19 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   return {
     refusals,
     notes,
-    sections: [users, workspaces, members, ledger, codes, redemptions, keys, endpoints, models, measurements].map(
-      (section) => section.done(),
-    ),
+    sections: [
+      users,
+      workspaces,
+      members,
+      ledger,
+      codes,
+      redemptions,
+      carried,
+      keys,
+      endpoints,
+      models,
+      measurements,
+    ].map((section) => section.done()),
     writes: {
       users: userWrites,
       workspaces: workspaceWrites,
@@ -513,6 +584,7 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
       creditLedger: ledgerWrites,
       inviteCodes: codeWrites,
       inviteRedemptions: redemptionWrites,
+      inviteCarriedRedemptions: carriedWrites,
       apiKeys: keyWrites,
       externalEndpoints: endpointWrites,
       trustedMeasurements: measurementWrites,
