@@ -114,7 +114,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Invitations',
         href: '/admin/invitations',
         icon: Ticket,
-        summary: 'Invitation codes, who redeemed which, and how sign-ups are going.',
+        summary: 'Invitation codes, who redeemed which, which accounts hold an API key, and how sign-ups are going.',
         adminOnly: true,
       },
       {

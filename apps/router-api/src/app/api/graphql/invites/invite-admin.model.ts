@@ -10,6 +10,7 @@ import {
   registerEnumType,
 } from '@nestjs/graphql';
 import {
+  IsBoolean,
   IsDate,
   IsEnum,
   IsInt,
@@ -24,6 +25,7 @@ import {
 } from 'class-validator';
 import { MAX_OPERATOR_CREDIT_MICROS } from '../../../billing/money.js';
 import { INVITE_CAMPAIGN_PATTERN } from '../../../invites/invite-code.js';
+import { AccountApiKeysModel } from '../api-keys/api-key-census.model.js';
 import { InviteCampaignStatsModel } from './invites.model.js';
 
 /*
@@ -130,7 +132,7 @@ export class AdminInviteCodePageModel {
   nodes!: AdminInviteCodeModel[];
 }
 
-@ObjectType('AdminSignUp', { description: 'One account, and how it came to exist.' })
+@ObjectType('AdminSignUp', { description: 'One account, how it came to exist, and what it holds.' })
 export class AdminSignUpModel {
   @Field(() => ID)
   userId!: string;
@@ -155,6 +157,11 @@ export class AdminSignUpModel {
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   redeemedAt!: Date | null;
+
+  @Field(() => AccountApiKeysModel, {
+    description: 'The account’s /v1 credentials, counted across every workspace it belongs to (SUP-454).',
+  })
+  apiKeys!: AccountApiKeysModel;
 
   @Field(() => ID, {
     nullable: true,
@@ -346,6 +353,16 @@ export class AdminSignUpsArgs {
   @IsOptional()
   @IsEnum(SignUpOriginEnum)
   origin?: SignUpOriginEnum;
+
+  @Field(() => Boolean, {
+    nullable: true,
+    description:
+      'True: only accounts holding a key that still authenticates — `totalCount` is then what a key-affecting ' +
+      'change would cut off. False: only accounts holding none. Null: every account.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  holdsLiveApiKey?: boolean;
 
   @Field(() => Int, { defaultValue: 0 })
   @IsInt()

@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { GraphQLSchemaBuilderModule, GraphQLSchemaFactory } from '@nestjs/graphql';
 import { type GraphQLSchema, lexicographicSortSchema, printSchema } from 'graphql';
 import { ActivityResolver } from './activity/activity.resolver.js';
+import { ApiKeyCensusResolver } from './api-keys/api-key-census.resolver.js';
 import { ApiKeysResolver } from './api-keys/api-keys.resolver.js';
 import { SignInMailStateResolver } from './auth/sign-in-mail-state.resolver.js';
 import { SignInOptionsResolver } from './auth/sign-in-options.resolver.js';
@@ -31,6 +32,7 @@ import { ViewerResolver } from './viewer/viewer.resolver.js';
  */
 export const CONSOLE_RESOLVERS = [
   ActivityResolver,
+  ApiKeyCensusResolver,
   ApiKeysResolver,
   CatalogResolver,
   ChatResolver,
