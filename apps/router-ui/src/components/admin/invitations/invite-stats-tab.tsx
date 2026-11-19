@@ -132,6 +132,7 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
     label: dayLabel(day.date),
     values: { redeemed: day.codesRedeemed },
   }));
+  const imported = campaigns.reduce((total, entry) => total + entry.carried, 0);
   const byCampaign = campaigns.map((entry) => ({
     id: entry.campaign,
     label: entry.campaign,
@@ -150,7 +151,9 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
         <StatTile
           label="Redeemed"
           value={formatCount(totals.redeemed)}
-          hint="Accounts created with a code"
+          hint={
+            totals.carried > 0 ? `Includes ${formatCount(totals.carried)} imported` : 'Accounts created with a code'
+          }
           series={daily.map((day) => day.codesRedeemed)}
           accent="brand"
         />
@@ -239,6 +242,9 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
           <CardDescription>
             All time. Activated means the account went on to send a request. Per code is a code's face value; paid out
             is what its redemptions have granted so far.
+            {imported > 0
+              ? ' Imported redemptions happened on another deployment and arrived with a codes CSV import; the credit for them was granted there, not here.'
+              : ''}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -276,7 +282,14 @@ export function InviteStatsTab({ statistics, days }: { statistics: Statistics | 
                     <TableRow key={entry.campaign}>
                       <TableCell className="max-w-[18rem] truncate font-mono text-xs">{entry.campaign}</TableCell>
                       <TableCell className="text-right font-mono">{formatCount(entry.issued)}</TableCell>
-                      <TableCell className="text-right font-mono">{formatCount(entry.redeemed)}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCount(entry.redeemed)}
+                        {entry.carried > 0 ? (
+                          <span className="ml-1.5 font-sans text-muted-foreground text-xs">
+                            ({formatCount(entry.carried)} imported)
+                          </span>
+                        ) : null}
+                      </TableCell>
                       <TableCell className="text-right font-mono">{formatRatio(entry.redemptionRate)}</TableCell>
                       <TableCell className="text-right font-mono">{formatCount(entry.activated)}</TableCell>
                       <TableCell className="text-right font-mono">{formatCodeGrant(entry)}</TableCell>

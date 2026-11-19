@@ -1157,10 +1157,15 @@ input GrantCreditInput {
 """How one invitation campaign converted. Operators only."""
 type InviteCampaignStats {
   """
-  Redeeming accounts that went on to send at least one request — the number worth reading.
+  Redemptions whose redeemer went on to send at least one request — the number worth reading. One per redemption, so never greater than `redeemed`.
   """
   activated: Int!
   campaign: String!
+
+  """
+  How many of `redeemed` a codes CSV import carried over from another deployment.
+  """
+  carried: Int!
 
   """
   The high end of the same range; equal to `codeGrantMicrosMin` as a rule.
@@ -1173,14 +1178,14 @@ type InviteCampaignStats {
   codeGrantMicrosMin: String!
 
   """
-  Micro-USD handed out so far — a cumulative payout, not a code’s face value. A campaign whose codes are all unredeemed reads 0 however much each one grants.
+  Micro-USD handed out so far — a cumulative payout, not a code’s face value. A campaign whose codes are all unredeemed reads 0 however much each one grants. This deployment’s ledger only, so carried redemptions add nothing.
   """
   grantedMicros: String!
 
   """Codes generated."""
   issued: Int!
 
-  """Accounts that redeemed one."""
+  """People who used one, import-carried redemptions included."""
   redeemed: Int!
 
   """`redeemed / issued`; 0 when nothing was issued."""
@@ -1284,13 +1289,18 @@ type InviteStatistics {
 
 """Deployment-wide invitation numbers."""
 type InviteTotals {
-  """Micro-USD granted through invitations."""
+  """
+  How many of `redeemed` a codes CSV import carried over from another deployment.
+  """
+  carried: Int!
+
+  """Micro-USD granted through invitations. This deployment’s ledger only."""
   grantedMicros: String!
 
   """Codes ever issued."""
   issued: Int!
 
-  """Redemptions — one per invited account."""
+  """Redemptions — one per invited account, import-carried ones included."""
   redeemed: Int!
 
   """`redeemed / issued`; 0 when nothing was issued."""

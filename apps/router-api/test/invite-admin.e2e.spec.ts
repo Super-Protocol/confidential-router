@@ -50,9 +50,9 @@ const SIGN_UPS = `
 const STATISTICS = `
   query Statistics($days: Int) {
     inviteStatistics(days: $days) {
-      totals { issued redeemed withdrawn redemptionRate grantedMicros signUps }
+      totals { issued redeemed carried withdrawn redemptionRate grantedMicros signUps }
       daily { date codesIssued codesRedeemed signUpsInvited signUpsBootstrap signUpsOpen }
-      campaigns { campaign issued redeemed redemptionRate activated codeGrantMicrosMin codeGrantMicrosMax grantedMicros }
+      campaigns { campaign issued redeemed carried redemptionRate activated codeGrantMicrosMin codeGrantMicrosMax grantedMicros }
     }
   }
 `;
@@ -225,6 +225,7 @@ describe('who came from which code', () => {
     expect(stats.inviteStatistics.totals).toEqual({
       issued: 2,
       redeemed: 1,
+      carried: 0,
       withdrawn: 0,
       redemptionRate: 0.5,
       grantedMicros: GRANT_MICROS,
@@ -246,6 +247,7 @@ describe('who came from which code', () => {
         campaign: 'launch-2026-10',
         issued: 2,
         redeemed: 1,
+        carried: 0,
         redemptionRate: 0.5,
         activated: 0,
         codeGrantMicrosMin: GRANT_MICROS,
