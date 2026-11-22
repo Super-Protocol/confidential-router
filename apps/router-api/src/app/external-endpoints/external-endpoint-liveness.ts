@@ -71,6 +71,7 @@ export type LivenessRow = Pick<
   | 'notServingSince'
   | 'consecutiveFailures'
   | 'pinnedEvidenceDigest'
+  | 'apiKeyCiphertext'
 >;
 
 export function reachabilityOf(
@@ -201,10 +202,20 @@ export interface ExternalEndpointsStatus {
    *   this router cannot say. A boot, polling switched off, or a sidecar that has
    *   never answered.
    * - `ok` — every enabled upstream holds an admitting verdict.
-   * - `degraded` — at least one does not, and no run has passed a threshold yet.
+   * - `degraded` — at least one does not, and no run has passed a threshold yet;
+   *   or this deployment is dark and has not been for long enough to wake
+   *   somebody ({@link CatalogueDarkness}).
    * - `outage` — at least one run has, **or** `routable` has been behind
    *   `serving` for two consecutive passes: the rows admit an upstream and
-   *   admission refuses it (SUP-600). This is the value to alert on.
+   *   admission refuses it (SUP-600), **or** this deployment has advertised
+   *   models it can route to none of for longer than `outage.afterNoSuccess`
+   *   (SUP-879). This is the value to alert on.
+   *
+   * `none` is now what it says and nothing more: no external model is registered
+   * here, so there is nothing for an upstream to serve. A deployment holding
+   * models with every upstream switched off used to land on it, which is how a
+   * rebuilt production read `status: none` — inside a document reading `ok` —
+   * while `/v1/models` answered `[]`.
    */
   status: 'none' | 'unknown' | 'ok' | 'degraded' | 'outage';
   /** Enabled upstreams. A disabled one is out of service and counted nowhere. */
@@ -252,7 +263,52 @@ export interface ExternalEndpointsStatus {
   unreachable: number;
   /** Checked, not admitted, not denied: awaiting a first check or an admin's approval. */
   pending: number;
-  /** When the longest-running outstanding "not serving" began. Absent when all are serving. */
+  /**
+   * Registered endpoints an operator's switch is off on — the rows every count
+   * above is blind to, because {@link registered} is the enabled ones (SUP-879).
+   *
+   * Here because the one state this document used to report as `none` is a
+   * deployment whose every upstream is switched off: a rebuilt production holds
+   * exactly that, since an import lands every endpoint off and unkeyed, and
+   * `registered: 0` beside `status: none` reads as "nothing to be wrong" when
+   * the truth is "nothing can serve".
+   */
+  disabled: number;
+  /**
+   * Of the registered endpoints, those holding no upstream API key at all.
+   *
+   * The step an operator still owes, counted: the export bundle carries no
+   * secret of any kind, so every imported upstream arrives with an empty
+   * envelope and cannot be proxied to until the key is entered again. A
+   * registration somebody abandoned before entering a key lands here too, and
+   * the fix is the same one.
+   */
+  awaitingKey: number;
+  /**
+   * Enabled external models registered here, routable or not — **including**
+   * the ones whose endpoint is switched off, which no other count sees
+   * (SUP-879).
+   *
+   * The denominator the rest of this document was missing. Zero routable
+   * upstreams is nothing to report on a deployment that has no external models;
+   * on one that has them it means `/v1/models` is advertising nothing and every
+   * completion is refused.
+   */
+  models: number;
+  /**
+   * Of {@link models}, the ones `/v1/models` lists right now — the catalogue's
+   * answer in models rather than in endpoints.
+   *
+   * `routable` is the same fact in the unit `serving` is counted in, so that the
+   * rows and admission can be compared; this is the number a caller of the
+   * product actually meets.
+   */
+  routableModels: number;
+  /**
+   * When the longest-running outstanding "not serving" began: a row's own run,
+   * or — on a deployment with no enabled row at all — the moment this process
+   * first found nothing routable (SUP-879). Absent when everything is serving.
+   */
   since?: string;
   /**
    * When the sidecar's verdicts were last read back. Absent until the first pass.
@@ -273,33 +329,134 @@ export interface ExternalEndpointsStatus {
 export interface CatalogueReach {
   /** How many enabled upstreams the catalogue will route to, as this pass left it. */
   routable: number;
+  /** {@link ExternalEndpointsStatus.models}, as the same pass counted them. */
+  models: number;
+  /** {@link ExternalEndpointsStatus.routableModels}, from the same rebuild as `routable`. */
+  routableModels: number;
+  /** {@link ExternalEndpointsStatus.disabled}, from the rows this pass read. */
+  disabled: number;
+  /** {@link ExternalEndpointsStatus.awaitingKey}, from the same rows. */
+  awaitingKey: number;
+  /** Whether this deployment can serve anything at all, and for how long not. */
+  darkness: CatalogueDarkness;
+}
+
+/** {@link CatalogueReach} plus the one fact only `/health`'s own state carries. */
+export interface CatalogueView extends CatalogueReach {
   /** Whether the pass before this one was already short of `serving`. */
   behindBefore: boolean;
+}
+
+/**
+ * Whether this deployment advertises external models it will route to none of —
+ * the failure a rebuilt production wears while every surface reads healthy
+ * (SUP-879).
+ *
+ * This is the hole the per-endpoint outage rule cannot cover, and it is a hole
+ * by construction rather than by oversight. {@link expectedToServe} exempts a
+ * switched-off row and an unapproved one on purpose, and an import lands every
+ * upstream switched off with an empty key envelope because the bundle carries no
+ * secrets — so a rebuilt deployment holds no row anything is expected of,
+ * `alertOnOutages` has nobody to speak for, `/health` reports
+ * `externalEndpoints: none` and `/v1/models` answers `[]`. Four minutes of that
+ * passed unnoticed on production on 2026-11-22 with the deploy train reporting
+ * success throughout.
+ *
+ * So the subject here is the deployment rather than an endpoint: models are
+ * registered, and not one of them can be served. It is deliberately silent
+ * wherever the per-endpoint rule can speak — an enabled, approved upstream that
+ * went dark is that rule's run, and two messages for one outage is how an
+ * operator learns to filter both.
+ */
+export interface CatalogueDarkness {
+  /** Models are registered here and the catalogue will route to none of them. */
+  dark: boolean;
+  /** Since when this process has seen it dark; null while it is not. */
+  since: Date | null;
+  /**
+   * Dark for longer than `outage.afterNoSuccess` — the state worth waking
+   * somebody for.
+   *
+   * The delay is what keeps a boot quiet: every pod comes up with its rows held
+   * at `pending` and its catalogue empty, so a deployment that is about to be
+   * fine is dark for a poll or two, and alerting on that would teach an operator
+   * to ignore the message that matters. Measured from when *this process* first
+   * saw darkness, for the reason the per-run latch is in memory: the question is
+   * what this router can serve now, and a restart is entitled to answer it from
+   * scratch.
+   */
+  outage: boolean;
+}
+
+/** The clock {@link darknessOf} is given, since it keeps none of its own. */
+export interface DarknessClock {
+  thresholds: OutageThresholds;
+  /** When this process first saw this run of darkness; null when the last pass saw none. */
+  since: Date | null;
+  now: Date;
+}
+
+/**
+ * The darkness rule. Pure, like every other rule here, and given the clock
+ * rather than keeping one.
+ *
+ * @param rows every registered endpoint, enabled or not — the switched-off ones
+ *   are the whole point.
+ */
+export function darknessOf(
+  rows: readonly LivenessRow[],
+  reach: Pick<CatalogueReach, 'models' | 'routableModels'>,
+  { thresholds, since, now }: DarknessClock,
+): CatalogueDarkness {
+  // Nothing registered, something routable, or an upstream the per-endpoint rule
+  // is already watching: not this rule's business.
+  if (reach.models === 0 || reach.routableModels > 0 || rows.some(expectedToServe)) {
+    return { dark: false, since: null, outage: false };
+  }
+  const dark = since ?? now;
+  const elapsed = now.getTime() - dark.getTime();
+  return {
+    dark: true,
+    since: dark,
+    // `0` disables it, as it disables the per-endpoint thresholds. The other
+    // threshold, `afterFailures`, has nothing to count here: a deployment with no
+    // enabled upstream performs no checks at all, which is precisely why elapsed
+    // time is the only honest unit for this one.
+    outage: thresholds.afterNoSuccess > 0 && elapsed >= thresholds.afterNoSuccess,
+  };
 }
 
 export function summarise(
   livenesses: readonly EndpointLiveness[],
   verdictsReadAt: Date | null,
-  catalogue: CatalogueReach,
+  catalogue: CatalogueView,
 ): ExternalEndpointsStatus {
   const failing = livenesses.filter((liveness) => liveness.status === 'denied');
-  const since = livenesses
-    .filter((liveness) => liveness.status !== 'verified')
-    .map((liveness) => liveness.notServingSince)
+  const since = [
+    ...livenesses.filter((liveness) => liveness.status !== 'verified').map((liveness) => liveness.notServingSince),
+    // The deployment's own run belongs here rather than nowhere: with every
+    // endpoint switched off there is no row to carry it, and an `outage` with no
+    // `since` beside it is the half-answer this document was reporting already.
+    catalogue.darkness.since,
+  ]
     .filter((value): value is Date => value !== null)
     .reduce<Date | null>((oldest, value) => (oldest === null || value < oldest ? value : oldest), null);
 
   const serving = livenesses.filter((liveness) => liveness.status === 'verified').length;
-  const { routable, behindBefore } = catalogue;
+  const { routable, behindBefore, darkness } = catalogue;
 
   return {
-    status: statusOfSummary(livenesses, verdictsReadAt, routable < serving && behindBefore),
+    status: statusOfSummary(livenesses, verdictsReadAt, { unroutable: routable < serving && behindBefore, darkness }),
     registered: livenesses.length,
     serving,
     routable,
     failing: failing.length,
     unreachable: failing.filter((liveness) => liveness.reachability === 'unreachable').length,
     pending: livenesses.filter((liveness) => liveness.status === 'pending').length,
+    disabled: catalogue.disabled,
+    awaitingKey: catalogue.awaitingKey,
+    models: catalogue.models,
+    routableModels: catalogue.routableModels,
     ...(since ? { since: since.toISOString() } : {}),
     ...(verdictsReadAt ? { verdictsReadAt: verdictsReadAt.toISOString() } : {}),
   };
@@ -308,11 +465,28 @@ export function summarise(
 function statusOfSummary(
   livenesses: readonly EndpointLiveness[],
   verdictsReadAt: Date | null,
-  /** The catalogue has been short of the rows for two passes running. */
-  unroutable: boolean,
+  {
+    unroutable,
+    darkness,
+  }: {
+    /** The catalogue has been short of the rows for two passes running. */
+    unroutable: boolean;
+    darkness: CatalogueDarkness;
+  },
 ): ExternalEndpointsStatus['status'] {
+  // Before the `none` below, and for the same reason it is one word rather than
+  // a third enum value: a deployment that advertises models and serves none of
+  // them is an outage to everybody who meets it, whatever the rows say about
+  // whose fault it is, and a probe that watches this field has to catch it
+  // (SUP-879).
+  if (darkness.outage) {
+    return 'outage';
+  }
   if (livenesses.length === 0) {
-    return 'none';
+    // `none` only when there is genuinely nothing to serve. Dark with no enabled
+    // row is `degraded` until the threshold above: true, and quiet, through the
+    // poll or two a booting pod spends there.
+    return darkness.dark ? 'degraded' : 'none';
   }
   // Two causes, one word. A run that crossed a threshold is the upstream's
   // outage; a catalogue two passes short of the rows is this router's own — the
@@ -439,6 +613,92 @@ export function recoveryAlert(
       ['Was not serving for', durationSince(declaredAt, now)],
     ],
     action: 'No action needed. The endpoint’s timeline in the console holds the run that just closed.',
+  };
+}
+
+/**
+ * The deployment-level line, logged once a run of darkness crosses the
+ * threshold (SUP-879).
+ *
+ * Counts, a duration and what to do — the same contract as {@link outageLine},
+ * with no endpoint to name because the subject is the deployment.
+ */
+export function darkCatalogueLine(darkness: CatalogueDarkness, reach: CatalogueReach, now: Date): string {
+  return (
+    `This deployment has advertised ${reach.models} external model(s) and routed to none of them for ` +
+    `${durationSince(darkness.since, now)}: ${reach.disabled} registered endpoint(s) are switched off, ` +
+    `${reach.awaitingKey} hold no upstream API key. GET /v1/models answers [] and every completion on them is ` +
+    'refused.'
+  );
+}
+
+/** Its counterpart, logged once the catalogue routes to something again. */
+export function litCatalogueLine(declaredAt: Date, reach: CatalogueReach, now: Date): string {
+  return (
+    `This deployment is advertising ${reach.routableModels} routable external model(s) again after ` +
+    `${durationSince(declaredAt, now)} with none.`
+  );
+}
+
+/**
+ * The same darkness, as the message that leaves the deployment.
+ *
+ * Written for the one person who will read it: an operator who has just rebuilt
+ * production, checked the hostnames, the evidence, the sign-in and the imported
+ * data, found all of them good — and is therefore the least likely person in the
+ * world to notice a zero. So the action is the two mutations that end it, named,
+ * rather than an invitation to go and look at a dashboard.
+ *
+ * Counts only, no endpoint names or hostnames: mail gets forwarded, and the
+ * message does not need them. `awaitingKey` is what tells the two causes apart,
+ * and it is the one an import leaves.
+ */
+export function darkCatalogueAlert(
+  darkness: CatalogueDarkness,
+  reach: CatalogueReach,
+  now: Date,
+): { title: string; summary: string; facts: Array<[string, string]>; action: string } {
+  return {
+    title: 'This deployment is serving no models at all',
+    summary:
+      `${reach.models} external model(s) are registered here and none of them is routable, for ` +
+      `${durationSince(darkness.since, now)} now. GET /v1/models answers an empty list and every completion is ` +
+      'refused.',
+    facts: [
+      ['Registered external models', String(reach.models)],
+      ['Routable right now', String(reach.routableModels)],
+      ['Endpoints switched off', String(reach.disabled)],
+      ['Endpoints with no upstream API key', String(reach.awaitingKey)],
+      ['Serving nothing for', durationSince(darkness.since, now)],
+    ],
+    action:
+      reach.awaitingKey > 0
+        ? 'This is the shape a rebuilt deployment has until its upstream keys are entered again: a data import ' +
+          'lands every external endpoint switched off and without a key, because the export bundle carries no ' +
+          'secrets. Under Administration → External endpoints, rotate each endpoint’s upstream API key and ' +
+          'enable it; it attests and starts serving within about a minute.'
+        : 'No registered upstream is both enabled and approved. Under Administration → External endpoints, ' +
+          'enable the endpoint you expect to serve and approve its evidence digest; an endpoint that has never ' +
+          'had a digest approved stays pending by design and is not an upstream failure.',
+  };
+}
+
+/** The recovery, as the message that closes the deployment-level alert. */
+export function litCatalogueAlert(
+  declaredAt: Date,
+  reach: CatalogueReach,
+  now: Date,
+): { title: string; summary: string; facts: Array<[string, string]>; action: string } {
+  return {
+    title: 'This deployment is serving models again',
+    summary:
+      `${reach.routableModels} external model(s) are routable again after ${durationSince(declaredAt, now)} ` +
+      'with none.',
+    facts: [
+      ['Routable external models', String(reach.routableModels)],
+      ['Served nothing for', durationSince(declaredAt, now)],
+    ],
+    action: 'No action needed. GET /v1/models lists them again.',
   };
 }
 

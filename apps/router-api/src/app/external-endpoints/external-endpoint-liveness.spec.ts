@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import {
+  type CatalogueDarkness,
   type CatalogueReach,
+  type CatalogueView,
+  darkCatalogueAlert,
+  darkCatalogueLine,
+  darknessOf,
   durationSince,
   expectedToServe,
   isOutage,
   type LivenessRow,
+  litCatalogueAlert,
   livenessOf,
   type OutageThresholds,
   outageAlert,
@@ -36,9 +42,18 @@ function row(overrides: Partial<LivenessRow> = {}): LivenessRow {
     consecutiveFailures: 0,
     upstreamUnreachable: false,
     pinnedEvidenceDigest: DIGEST,
+    apiKeyCiphertext: 'v1.sealed-upstream-key',
     ...overrides,
   } as ExternalEndpoint;
 }
+
+/** The shape an import leaves: switched off, with an empty key envelope (SUP-879). */
+function imported(overrides: Partial<LivenessRow> = {}): LivenessRow {
+  return row({ enabled: false, status: 'disabled', lastCheckedAt: null, apiKeyCiphertext: '', ...overrides });
+}
+
+/** Nothing dark, nothing to be dark about — the default for a `summarise` case. */
+const LIT: CatalogueDarkness = { dark: false, since: null, outage: false };
 
 /** The incident this exists for: the gateway dropped the route, the fetch got EOF. */
 function dark(overrides: Partial<LivenessRow> = {}): LivenessRow {
@@ -173,7 +188,26 @@ describe('summarise', () => {
   const read = new Date(NOW.getTime() - 5_000);
 
   /** A catalogue that agrees with the rows, and a pass before it that did too. */
-  const reach = (routable: number, behindBefore = false): CatalogueReach => ({ routable, behindBefore });
+  const reach = (routable: number, behindBefore = false, darkness: CatalogueDarkness = LIT): CatalogueView => ({
+    routable,
+    models: routable,
+    routableModels: routable,
+    disabled: 0,
+    awaitingKey: 0,
+    darkness,
+    behindBefore,
+  });
+
+  /** The reach of a rebuilt deployment: one model registered, nothing routable. */
+  const rebuilt = (darkness: CatalogueDarkness): CatalogueView => ({
+    routable: 0,
+    models: 1,
+    routableModels: 0,
+    disabled: 1,
+    awaitingKey: 1,
+    darkness,
+    behindBefore: false,
+  });
 
   it('calls the catalogue falling behind an outage only once it has twice', () => {
     // SUP-600. A pass reads the rows at its start and rebuilds the catalogue at
@@ -187,7 +221,21 @@ describe('summarise', () => {
   });
 
   it('says none when nothing is registered, so there is nothing to be wrong', () => {
-    expect(summarise([], null, reach(0))).toMatchObject({ status: 'none', registered: 0 });
+    expect(summarise([], null, reach(0))).toMatchObject({ status: 'none', registered: 0, models: 0 });
+  });
+
+  it('does not say none for a deployment that holds models and routes to nothing', () => {
+    // SUP-879. Every endpoint is switched off, so there is no enabled row and no
+    // liveness at all — and `none` read as "nothing to be wrong" while
+    // `/v1/models` answered `[]`. Below the threshold it is `degraded`, which is
+    // where a booting pod sits for a poll or two.
+    const fresh = summarise([], null, rebuilt({ dark: true, since: NOW, outage: false }));
+    expect(fresh).toMatchObject({ status: 'degraded', registered: 0, disabled: 1, awaitingKey: 1, models: 1 });
+
+    const sustained = summarise([], null, rebuilt({ dark: true, since: NOW, outage: true }));
+    expect(sustained.status).toBe('outage');
+    // And it names no endpoint, like every other answer on this route.
+    expect(JSON.stringify(sustained)).not.toContain('upstream-a');
   });
 
   it('says unknown while no verdict has been read back', () => {
@@ -361,5 +409,123 @@ describe('durationSince', () => {
 
   it('refuses to invent a start it does not have', () => {
     expect(durationSince(null, NOW)).toBe('an unknown period');
+  });
+});
+
+describe('darknessOf', () => {
+  const clock = (since: Date | null, now: Date) => ({ thresholds: THRESHOLDS, since, now });
+  const later = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
+
+  it('is dark when models are registered and every upstream is switched off', () => {
+    // The state a rebuilt production holds: the import lands each endpoint off
+    // and unkeyed, because the bundle carries no secrets.
+    const dark = { models: 1, routableModels: 0 };
+    expect(darknessOf([imported()], dark, clock(null, NOW))).toEqual({ dark: true, since: NOW, outage: false });
+
+    // Still inside the threshold a minute later, and past it at sixteen.
+    expect(darknessOf([imported()], dark, clock(NOW, later(1))).outage).toBe(false);
+    expect(darknessOf([imported()], dark, clock(NOW, later(16))).outage).toBe(true);
+  });
+
+  it('is not dark when there is nothing to serve', () => {
+    // A deployment with no external model is not failing to serve one. `none` on
+    // `/health` is the honest answer and this rule must not promote it.
+    expect(darknessOf([], { models: 0, routableModels: 0 }, clock(null, NOW)).dark).toBe(false);
+  });
+
+  it('is not dark while one model is routable', () => {
+    expect(darknessOf([row()], { models: 1, routableModels: 1 }, clock(NOW, later(16))).dark).toBe(false);
+  });
+
+  it('stands down for an upstream the per-endpoint rule is already watching', () => {
+    // One outage, one message. An enabled, approved endpoint that stopped serving
+    // is `alertOnOutages`' run — and a second alert for the same failure is how an
+    // operator learns to filter both.
+    const watched = darknessOf([row({ status: 'denied' })], { models: 1, routableModels: 0 }, clock(NOW, later(16)));
+    expect(watched).toEqual({ dark: false, since: null, outage: false });
+  });
+
+  it('speaks for an endpoint nothing is expected of, which is the whole hole', () => {
+    // Enabled but never approved: `expectedToServe` exempts it by design
+    // (SUP-252), so no run exists and no per-endpoint alert ever fires — while
+    // the deployment serves nothing.
+    const unapproved = row({ enabled: true, status: 'pending', pinnedEvidenceDigest: null });
+    expect(darknessOf([unapproved], { models: 1, routableModels: 0 }, clock(NOW, later(16))).outage).toBe(true);
+  });
+
+  it('forgets the run as soon as it ends, so the next one is timed from its own start', () => {
+    const over = darknessOf([row()], { models: 1, routableModels: 1 }, clock(NOW, later(16)));
+    expect(over.since).toBeNull();
+  });
+
+  it('honours a disabled threshold, like the per-endpoint rule', () => {
+    const forever = darknessOf(
+      [imported()],
+      { models: 1, routableModels: 0 },
+      {
+        thresholds: { afterFailures: 3, afterNoSuccess: 0 },
+        since: NOW,
+        now: later(48 * 60),
+      },
+    );
+    expect(forever).toMatchObject({ dark: true, outage: false });
+  });
+});
+
+describe('darkCatalogueAlert', () => {
+  const darkness: CatalogueDarkness = { dark: true, since: NOW, outage: true };
+  const rebuilt: CatalogueReach = {
+    routable: 0,
+    models: 2,
+    routableModels: 0,
+    disabled: 1,
+    awaitingKey: 1,
+    darkness,
+  };
+  const facts = (reach: CatalogueReach) =>
+    Object.fromEntries(darkCatalogueAlert(darkness, reach, new Date(NOW.getTime() + 20 * 60_000)).facts);
+
+  it('tells the operator the two mutations that end it, when a key is what is missing', () => {
+    const alert = darkCatalogueAlert(darkness, rebuilt, new Date(NOW.getTime() + 20 * 60_000));
+
+    expect(alert.title).toContain('serving no models');
+    expect(alert.summary).toContain('/v1/models');
+    expect(facts(rebuilt)).toMatchObject({
+      'Registered external models': '2',
+      'Routable right now': '0',
+      'Endpoints with no upstream API key': '1',
+      'Serving nothing for': '20m',
+    });
+    expect(alert.action).toContain('rotate');
+    expect(alert.action).toContain('enable');
+  });
+
+  it('sends an operator to the approval instead when every key is in place', () => {
+    const approved = { ...rebuilt, awaitingKey: 0 };
+    expect(darkCatalogueAlert(darkness, approved, NOW).action).toContain('approve its evidence digest');
+  });
+
+  it('names no endpoint, hostname or key: mail gets forwarded', () => {
+    const alert = darkCatalogueAlert(darkness, rebuilt, NOW);
+    const text = JSON.stringify(alert);
+    expect(text).not.toContain('upstream-a');
+    expect(text).not.toContain('sealed');
+  });
+
+  it('closes the alert with what is routable again', () => {
+    const lit = litCatalogueAlert(NOW, { ...rebuilt, routableModels: 2 }, new Date(NOW.getTime() + 25 * 60_000));
+    expect(lit.title).toContain('serving models again');
+    expect(Object.fromEntries(lit.facts)).toMatchObject({
+      'Routable external models': '2',
+      'Served nothing for': '25m',
+    });
+  });
+
+  it('logs the same facts as the message, so the two cannot disagree', () => {
+    const line = darkCatalogueLine(darkness, rebuilt, new Date(NOW.getTime() + 20 * 60_000));
+    expect(line).toContain('2 external model(s)');
+    expect(line).toContain('20m');
+    expect(line).toContain('1 registered endpoint(s) are switched off');
+    expect(line).toContain('GET /v1/models answers []');
   });
 });
