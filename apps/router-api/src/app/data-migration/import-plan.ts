@@ -543,7 +543,10 @@ export function planImport(bundle: ExportBundle, local: LocalState, options: Pla
   if (endpointWrites.length > 0) {
     notes.push(
       `${endpointWrites.length} external endpoint(s) are imported switched off and without an upstream API key — ` +
-        'the export carries no secrets. Enter each key again under Administration → External endpoints, then enable it.',
+        'the export carries no secrets. Enter each key again under Administration → External endpoints, then enable ' +
+        'it. Until that is done this deployment serves no model at all: GET /v1/models answers an empty list and ' +
+        'every completion is refused, and the deployment reports it as externalEndpoints.status on /admin/health ' +
+        '(SUP-879).',
     );
   }
 
