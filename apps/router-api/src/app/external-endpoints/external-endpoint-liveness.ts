@@ -679,7 +679,9 @@ export function darkCatalogueAlert(
           'enable it; it attests and starts serving within about a minute.'
         : 'No registered upstream is both enabled and approved. Under Administration → External endpoints, ' +
           'enable the endpoint you expect to serve and approve its evidence digest; an endpoint that has never ' +
-          'had a digest approved stays pending by design and is not an upstream failure.',
+          'had a digest approved stays pending by design and is not an upstream failure. If an upstream is ' +
+          'switched off on purpose, disable its models too — a registered model nothing can serve is what this ' +
+          'message counts, and that is the one way to end it deliberately.',
   };
 }
 

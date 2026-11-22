@@ -502,7 +502,12 @@ describe('darkCatalogueAlert', () => {
 
   it('sends an operator to the approval instead when every key is in place', () => {
     const approved = { ...rebuilt, awaitingKey: 0 };
-    expect(darkCatalogueAlert(darkness, approved, NOW).action).toContain('approve its evidence digest');
+    const action = darkCatalogueAlert(darkness, approved, NOW).action;
+
+    expect(action).toContain('approve its evidence digest');
+    // And the deliberate way out, for the operator who switched an upstream off
+    // on purpose and left its models registered: this message counts those.
+    expect(action).toContain('disable its models');
   });
 
   it('names no endpoint, hostname or key: mail gets forwarded', () => {
