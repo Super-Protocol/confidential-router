@@ -33,7 +33,15 @@ export type SidecarBehaviour =
    * (SUP-448). Nothing about it is the gatekeeper's refusal, and nothing about it
    * gets better on a retry.
    */
-  | 'reject-request';
+  | 'reject-request'
+  /**
+   * A proxy between the sidecar and the model answering `502` the first time and
+   * nothing the second — the measured SUP-917 failure, where one node of the
+   * upstream's cloud could not deliver a `POST /v1/chat/completions` and minted
+   * its own HTML page after 60 s. Deliberately an HTML body with no `usage` and
+   * no error envelope, because that is what arrives.
+   */
+  | 'proxy-failure-once';
 
 export interface RecordedUpstreamRequest {
   endpoint: string;
@@ -59,6 +67,8 @@ export class MockEgressSidecar {
   readonly requests: RecordedUpstreamRequest[] = [];
   /** Per-endpoint data-plane behaviour, by endpoint name. */
   readonly behaviour = new Map<string, SidecarBehaviour>();
+  /** How many `proxy-failure-once` 502s each endpoint has already been given. */
+  private readonly proxyFailuresServed = new Set<string>();
   /** What `/verdicts` reports, by endpoint name. */
   readonly verdicts = new Map<string, MockVerdict>();
   /** What the upstream's `GET /v1/models` lists, by endpoint name (SUP-249 discovery). */
@@ -155,6 +165,7 @@ export class MockEgressSidecar {
 
   reset(): void {
     this.requests.length = 0;
+    this.proxyFailuresServed.clear();
   }
 
   async stop(): Promise<void> {
@@ -192,6 +203,15 @@ export class MockEgressSidecar {
           reason,
         }),
       );
+      return;
+    }
+
+    if (behaviour === 'proxy-failure-once' && !this.proxyFailuresServed.has(endpoint)) {
+      this.proxyFailuresServed.add(endpoint);
+      // No verdict header and no JSON: the sidecar relayed what the proxy wrote,
+      // and the proxy wrote a page.
+      response.writeHead(502, { 'content-type': 'text/html' });
+      response.end('<html><head><title>502 Bad Gateway</title></head><body>502 Bad Gateway</body></html>');
       return;
     }
 

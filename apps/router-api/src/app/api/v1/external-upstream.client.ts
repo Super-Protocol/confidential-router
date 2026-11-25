@@ -80,17 +80,25 @@ export class ExternalUpstreamClient {
       // is the whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
       responseTimeoutMs: this.config.externalEndpoints.connectTimeout + this.config.externalEndpoints.readTimeout,
       signal: request.signal,
+      // This leg, and only this leg (SUP-917): an external endpoint is reached
+      // through another deployment's gateway and ingress, and a 5xx those write
+      // is a statement about the path rather than about the model. See
+      // `UpstreamCall.retryProxyFailure`.
+      retryProxyFailure: true,
       onRetry: (attempt, attempts, cause) =>
         // The address, never the key: this line goes to the same log an operator
         // reads, and `url` is a loopback port.
         //
-        // The two causes are named apart on purpose (SUP-917). A `502` here did
-        // not come from the sidecar — it relayed one from a proxy in front of
-        // the upstream — so saying the listener refused the connection would
-        // send an operator to read the wrong hop's logs.
+        // The two causes are named apart on purpose, and the status is carried
+        // with the proxy one (SUP-917). A 5xx here did not come from the sidecar
+        // — it relayed one from a proxy in front of the upstream — so saying the
+        // listener refused the connection would send an operator to the wrong
+        // hop's logs. One request, one retry, one log line: the generation row is
+        // opened before this leg is called and settled after it, so an operator
+        // reading a single row can still see it took two attempts.
         this.logger.warn(
-          cause === 'bad-gateway'
-            ? `The upstream behind external endpoint "${endpoint.name}" answered 502 through the egress sidecar ` +
+          cause.kind === 'proxy-failure'
+            ? `A proxy in front of external endpoint "${endpoint.name}" answered ${cause.status} ` +
                 `(attempt ${attempt}/${attempts}); nothing was relayed, retrying.`
             : `The egress sidecar listener for "${endpoint.name}" (${url}) did not accept the connection ` +
                 `(attempt ${attempt}/${attempts}); retrying.`,

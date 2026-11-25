@@ -625,14 +625,21 @@ means the backend could not be reached — refused, reset, unresolvable — or a
 right now, it is simply slower than `connectTimeout + readTimeout` allowed. Retrying the second as-is once
 the queue drains is reasonable; reading it as a sick deployment is not.
 
-**One of them the router retries for the caller, once** (SUP-917). An upstream answer of `502` — on either
-leg — is a proxy in front of the model saying the thing behind it never answered, so there is no generation
-to run twice, and the request goes again before the caller is told anything. It is the only status that is:
-`500` is the model server failing on a request it did read, and the sidecar's fail-closed `503` is an
-attestation refusal that must never be retried. The retry is bounded by the same
-`connectTimeout + readTimeout` the first attempt was given, so a retried request cannot spend more than one
-deadline in total, and it is not started at all when less than ten seconds of that remain — a `502` the
-caller already has beats the same `502` later. A caller who still receives `502 backend_unavailable` has
+**A proxy's 5xx the router retries for the caller, once** (SUP-917). On the **external** leg only, an
+upstream answer of `502`, `503` or `504` in the status line is a proxy in front of the model saying it
+could not deliver the request, so the request goes again before the caller is told anything. Those three
+carry no `usage`, so no retry of them can bill a caller twice; the cost of being wrong is one duplicate
+generation on the serving GPU. `500` is excluded — the model server read the request and failed on it —
+and so is every 4xx (SUP-448). The sidecar's own fail-closed `503 gatekeeper_error` is excluded too: an
+attestation refusal is never retried. The LiteLLM leg is excluded entirely, because nothing proxies it
+and a 5xx there is its own answer about its own upstream.
+
+The retry is bounded. It shares the two-attempt budget with the connection-failure retry, it is armed
+with what remains of the first attempt's `connectTimeout + readTimeout` rather than a fresh one, and it
+is not started unless that remainder can fit another attempt as long as the one that just failed — so a
+retry can never convert a `502` the caller could act on into an `upstream_timeout` that says less. One
+client request still produces exactly one `Generation` row, with the usage counted once; the retry shows
+up in the deployment's log, not in the ledger. A caller who still receives `502 backend_unavailable` has
 therefore had it twice, which is worth knowing before blaming one bad node.
 
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
