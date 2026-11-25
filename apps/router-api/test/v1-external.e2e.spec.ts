@@ -535,6 +535,66 @@ describe('an admitted external endpoint whose upstream calls the request invalid
   });
 });
 
+describe('a proxy in front of an admitted upstream answering 502 (SUP-917)', () => {
+  /*
+   * The measured failure: one node of the upstream's cloud could not deliver the
+   * request and minted a 502 after 60 s, while the model server's own log shows
+   * it never received it. `postToUpstream` sends it once more — and the two
+   * things that must not change when it does are what this suite is for: the
+   * client sees one ordinary completion, and Logs sees **one** row with the usage
+   * counted once.
+   */
+  let endpoint: Registered;
+
+  beforeAll(async () => {
+    endpoint = await register('proxy-flaky-cloud');
+  });
+
+  beforeEach(() => {
+    sidecar.behaviour.set(endpoint.name, 'proxy-failure-once');
+  });
+
+  it('serves the completion the second attempt produced, in the ordinary shape', async () => {
+    const response = await chat(endpoint.modelId).expect(200);
+
+    expect(response.body.model).toBe(endpoint.modelId);
+    expect(response.body.choices).toEqual(COMPLETION_BODY.choices);
+    // Two requests reached the upstream, which is the retry, and both carried the
+    // injected credential rather than only the first.
+    const forwarded = sidecar.requests.filter((entry) => entry.endpoint === endpoint.name);
+    expect(forwarded).toHaveLength(2);
+    expect(forwarded.map((entry) => entry.authorization)).toEqual([`Bearer ${UPSTREAM_KEY}`, `Bearer ${UPSTREAM_KEY}`]);
+  });
+
+  it('leaves one generation row, with the usage counted once', async () => {
+    const before = await dataSource().getRepository(Generation).count();
+
+    const response = await chat(endpoint.modelId).expect(200);
+
+    // One row for one client request: the retry happens below the recorder, which
+    // opens at admission and settles once (SUP-423).
+    expect(await dataSource().getRepository(Generation).count()).toBe(before + 1);
+    const generation = await generationOf(response.body.id);
+    expect(generation).toMatchObject({ status: 'ok', externalEndpointId: endpoint.id, errorCode: null });
+    // The discarded 502 carried no usage, so there is nothing of it to add: the
+    // cost is exactly one generation's, which is what stops a caller being
+    // billed for a failure that never produced tokens.
+    expect(generation.costMicros).toBe(STREAM_USAGE.prompt_tokens + STREAM_USAGE.completion_tokens);
+    expect(response.body.usage.cost_micros).toBe(STREAM_USAGE.prompt_tokens + STREAM_USAGE.completion_tokens);
+  });
+
+  it('does the same on a streamed request, where the status line is already gone', async () => {
+    const { response, chunks } = await streamed(endpoint.modelId);
+
+    expect(response.status).toBe(200);
+    // Shaped the way the leg always shapes a relayed stream: the retry is
+    // invisible above the seam.
+    expect(chunks.filter((chunk) => 'choices' in chunk)).toHaveLength(STREAM_CHUNKS.length);
+    expect(chunks.some((chunk) => 'error' in chunk)).toBe(false);
+    expect(sidecar.requests.filter((entry) => entry.endpoint === endpoint.name)).toHaveLength(2);
+  });
+});
+
 describe('a verdict the sidecar withdrew before router-api saw it', () => {
   it('is refused by the sidecar, and the 503 keeps the router’s own vocabulary', async () => {
     // The window between a verdict flip and the status poll that projects it. The
