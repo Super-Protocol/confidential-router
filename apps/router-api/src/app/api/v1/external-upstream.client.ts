@@ -80,12 +80,20 @@ export class ExternalUpstreamClient {
       // is the whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
       responseTimeoutMs: this.config.externalEndpoints.connectTimeout + this.config.externalEndpoints.readTimeout,
       signal: request.signal,
-      onRetry: (attempt, attempts) =>
+      onRetry: (attempt, attempts, cause) =>
         // The address, never the key: this line goes to the same log an operator
         // reads, and `url` is a loopback port.
+        //
+        // The two causes are named apart on purpose (SUP-917). A `502` here did
+        // not come from the sidecar — it relayed one from a proxy in front of
+        // the upstream — so saying the listener refused the connection would
+        // send an operator to read the wrong hop's logs.
         this.logger.warn(
-          `The egress sidecar listener for "${endpoint.name}" (${url}) did not accept the connection ` +
-            `(attempt ${attempt}/${attempts}); retrying.`,
+          cause === 'bad-gateway'
+            ? `The upstream behind external endpoint "${endpoint.name}" answered 502 through the egress sidecar ` +
+                `(attempt ${attempt}/${attempts}); nothing was relayed, retrying.`
+            : `The egress sidecar listener for "${endpoint.name}" (${url}) did not accept the connection ` +
+                `(attempt ${attempt}/${attempts}); retrying.`,
         ),
     });
   }

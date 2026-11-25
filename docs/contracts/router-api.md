@@ -625,6 +625,16 @@ means the backend could not be reached — refused, reset, unresolvable — or a
 right now, it is simply slower than `connectTimeout + readTimeout` allowed. Retrying the second as-is once
 the queue drains is reasonable; reading it as a sick deployment is not.
 
+**One of them the router retries for the caller, once** (SUP-917). An upstream answer of `502` — on either
+leg — is a proxy in front of the model saying the thing behind it never answered, so there is no generation
+to run twice, and the request goes again before the caller is told anything. It is the only status that is:
+`500` is the model server failing on a request it did read, and the sidecar's fail-closed `503` is an
+attestation refusal that must never be retried. The retry is bounded by the same
+`connectTimeout + readTimeout` the first attempt was given, so a retried request cannot spend more than one
+deadline in total, and it is not started at all when less than ten seconds of that remain — a `502` the
+caller already has beats the same `502` later. A caller who still receives `502 backend_unavailable` has
+therefore had it twice, which is worth knowing before blaming one bad node.
+
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
 ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at
 runtime — the router *is* a gatekeeper, and says so in the same vocabulary a client already branches on.
