@@ -4,8 +4,16 @@
  * Extracted when the external egress leg arrived (ADR-008 §4): LiteLLM and the
  * egress sidecar are different backends with different trust stories, but the
  * transport decision — how long to wait for an answer, and when a failure is
- * safe to retry — is a property of *having sent nothing yet*, which is the same
- * on both. Two copies of it would be two chances to make a non-idempotent retry.
+ * safe to retry — is a property of *having relayed nothing yet*, which is the
+ * same on both. Two copies of it would be two chances to make a non-idempotent
+ * retry.
+ *
+ * Two failures are retried, and they have the same justification rather than
+ * two: at the moment this function decides, **not one byte of the upstream's
+ * body has been read**, so whatever it does next the caller has received
+ * nothing. A connection that never established (below) is the original case. A
+ * `502` is the one added on SUP-917, and `RETRYABLE_STATUS` is where the
+ * evidence for it lives.
  */
 
 /** The upstream could not be reached at all — as opposed to answering badly. */
@@ -42,13 +50,55 @@ function secondsOf(ms: number): string {
 }
 
 /**
- * One connection attempt is retried, and only when the first never established.
+ * Total attempts for one upstream POST — the original plus at most one retry,
+ * whichever of the two retryable failures caused it.
  *
- * Retrying anything else would re-run a generation the model may already have
- * started — expensive, non-idempotent and, for a streaming request, impossible
- * once a byte has left.
+ * Deliberately not per-cause: two causes with one attempt each would let a
+ * refused connection and a gateway `502` compound into three round trips on a
+ * request the caller is already waiting on.
  */
 export const MAX_ATTEMPTS = 2;
+
+/**
+ * The one status that is retried, and why it is safe when `500` is not.
+ *
+ * `502` is what a proxy writes when it could not get a usable response out of
+ * the thing behind it. It is therefore a statement about the *path*, not about
+ * the model: the upstream that would have generated never answered, so there is
+ * no generation to run twice. `500` is the opposite — the model server
+ * considered the request and failed on it — and retrying that buys a second
+ * identical failure at the caller's expense. `503` is excluded for a sharper
+ * reason: the egress sidecar's fail-closed denial is a `503`, and retrying an
+ * attestation refusal is the one thing this helper must never do (ADR-008 §4).
+ *
+ * Measured rather than assumed (SUP-917, 2026-11-25). Over 48 hours every `5xx`
+ * the model cloud's gateway rendered for the production model endpoint was a
+ * `502` on `POST /v1/chat/completions`, all of them through one of its three
+ * nodes, all at `upstreamTime` 60.003–60.005 s — and vLLM's own log shows it
+ * never received those requests: no non-200, no abort, the engine idle through
+ * the whole minute. The gateway does not retry them itself, by design, because
+ * from where it stands a `5xx` from the ingress is the application's own answer
+ * (SUP-366). With three candidate peers and one of them bad, one retry here
+ * takes a measured ~1 % per-call failure rate to ~0.01 %.
+ *
+ * This also closes the user-visible half of SUP-455 wherever the 60 s hop turns
+ * out to be, because it is keyed on what the caller received and not on which
+ * cloud produced it.
+ */
+const RETRYABLE_STATUS = 502;
+
+/**
+ * Least time a `502` retry may be given before it is not worth starting.
+ *
+ * A dead target refuses inside the connect timeout, and a healthy one answers a
+ * normal completion in a couple of seconds, so ten seconds is room for the
+ * retry to succeed. Below it the retry can only turn a `502` the caller already
+ * has into the same `502` later, which is worse than handing over the first one.
+ */
+export const MIN_RETRY_BUDGET_MS = 10_000;
+
+/** Which of the two retryable failures is being retried, for the leg's log line. */
+export type RetryCause = 'unreachable' | 'bad-gateway';
 
 const CONNECTION_ERROR_CODES = new Set([
   'ECONNREFUSED',
@@ -90,15 +140,37 @@ export interface UpstreamCall {
   responseTimeoutMs: number;
   /** Aborted when the client hangs up or the read goes idle; owned by the caller. */
   signal: AbortSignal;
-  /** Called before a retry, so each leg can log in its own words. */
-  onRetry?: (attempt: number, attempts: number) => void;
+  /**
+   * Called before a retry, so each leg can log in its own words.
+   *
+   * `cause` is passed because the two failures need different sentences: "the
+   * listener did not accept the connection" is a lie about a `502`, and an
+   * operator reading it would go and look at the wrong hop.
+   */
+  onRetry?: (attempt: number, attempts: number, cause: RetryCause) => void;
 }
 
 export async function postToUpstream(call: UpstreamCall): Promise<Response> {
   const payload = JSON.stringify(call.body);
+  const startedAt = Date.now();
 
   let lastError: unknown;
+  /**
+   * Set once a `502` has been retried, and it changes what the next attempt is
+   * allowed to spend.
+   *
+   * A connection failure costs nothing before it is known, so its retry keeps
+   * the full deadline — that is the behaviour SUP-339 settled and this does not
+   * touch it. A `502` can arrive a minute in, and giving its retry a second full
+   * deadline would let one request spend twice what the deployment configured.
+   * So that retry is bounded by what is left of the original budget instead,
+   * which `MIN_RETRY_BUDGET_MS` has already proved is enough to be worth having.
+   */
+  let boundedByBudget = false;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const attemptTimeoutMs = boundedByBudget
+      ? Math.max(MIN_RETRY_BUDGET_MS, call.responseTimeoutMs - elapsedMs(startedAt))
+      : call.responseTimeoutMs;
     // A fresh controller per attempt: the response deadline belongs to the
     // attempt, the caller's signal to the whole request.
     const deadline = new AbortController();
@@ -106,14 +178,23 @@ export async function postToUpstream(call: UpstreamCall): Promise<Response> {
     const timer = setTimeout(() => {
       expired = true;
       deadline.abort(new Error('Upstream did not send its response headers in time.'));
-    }, call.responseTimeoutMs);
+    }, attemptTimeoutMs);
     try {
-      return await fetch(call.url, {
+      const response = await fetch(call.url, {
         method: 'POST',
         headers: call.headers,
         body: payload,
         signal: AbortSignal.any([call.signal, deadline.signal]),
       });
+      if (!shouldRetryStatus({ status: response.status, attempt, call, startedAt })) {
+        return response;
+      }
+      // The discarded attempt's body is released rather than left to the garbage
+      // collector: undici holds the connection until it is read or cancelled,
+      // and this path runs on a backend that is already struggling.
+      await response.body?.cancel().catch(() => undefined);
+      boundedByBudget = true;
+      call.onRetry?.(attempt, MAX_ATTEMPTS, 'bad-gateway');
     } catch (error) {
       // The caller's abort wins over our own: a client that hung up is the
       // authoritative reason this request ended, whichever signal fired first.
@@ -122,19 +203,47 @@ export async function postToUpstream(call: UpstreamCall): Promise<Response> {
         break;
       }
       if (expired) {
-        lastError = new UpstreamTimeoutError(call.responseTimeoutMs);
+        // `attemptTimeoutMs`, not the configured value: on a budget-bounded
+        // retry they differ, and the sentence this becomes is shown to the
+        // caller. It should say how long we actually waited.
+        lastError = new UpstreamTimeoutError(attemptTimeoutMs);
         break;
       }
       lastError = new UpstreamUnavailableError(error);
       if (!isConnectionError(error) || attempt === MAX_ATTEMPTS) {
         break;
       }
-      call.onRetry?.(attempt, MAX_ATTEMPTS);
+      call.onRetry?.(attempt, MAX_ATTEMPTS, 'unreachable');
     } finally {
       clearTimeout(timer);
     }
   }
   throw lastError;
+}
+
+function elapsedMs(startedAt: number): number {
+  return Date.now() - startedAt;
+}
+
+/**
+ * Whether this answer is a `502` worth sending the request once more.
+ *
+ * Four reasons not to, and each of them hands the caller the `502` it already
+ * has rather than a later one: the status is anything else, the attempts are
+ * spent, the caller has hung up so there is nobody to answer, or too little of
+ * the budget is left for a retry to plausibly finish.
+ */
+function shouldRetryStatus(answer: {
+  status: number;
+  attempt: number;
+  call: Pick<UpstreamCall, 'responseTimeoutMs' | 'signal'>;
+  startedAt: number;
+}): boolean {
+  const { status, attempt, call, startedAt } = answer;
+  if (status !== RETRYABLE_STATUS || attempt >= MAX_ATTEMPTS || call.signal.aborted) {
+    return false;
+  }
+  return call.responseTimeoutMs - elapsedMs(startedAt) >= MIN_RETRY_BUDGET_MS;
 }
 
 /**

@@ -62,8 +62,12 @@ export class LiteLlmClient {
       // whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
       responseTimeoutMs: connectTimeout + readTimeout,
       signal: request.signal,
-      onRetry: (attempt, attempts) =>
-        this.logger.warn(`LiteLLM ${url} unreachable (attempt ${attempt}/${attempts}); retrying.`),
+      onRetry: (attempt, attempts, cause) =>
+        this.logger.warn(
+          cause === 'bad-gateway'
+            ? `LiteLLM ${url} answered 502 (attempt ${attempt}/${attempts}); nothing was relayed, retrying.`
+            : `LiteLLM ${url} unreachable (attempt ${attempt}/${attempts}); retrying.`,
+        ),
     });
   }
 }
