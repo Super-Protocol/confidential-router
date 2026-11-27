@@ -7,7 +7,7 @@ const USER: SessionUser = { id: 'user-1', email: 'dev@example.test', name: null,
 
 function build(overrides: { defaultForUser?: unknown; requireMembership?: unknown; modelViews?: unknown } = {}) {
   const modelViews = overrides.modelViews ?? vi.fn().mockResolvedValue([{ id: 'meta/llama:tdx' }]);
-  const view = { modelViews, endpointViews: vi.fn().mockResolvedValue([]) } as unknown as CatalogViewService;
+  const view = { modelViews, endpointTable: vi.fn().mockResolvedValue([]) } as unknown as CatalogViewService;
   const workspaces = {
     defaultForUser: overrides.defaultForUser ?? vi.fn().mockResolvedValue({ id: 'ws-1' }),
     requireMembership: overrides.requireMembership ?? vi.fn().mockResolvedValue({ id: 'ws-1' }),
@@ -61,7 +61,7 @@ describe('CatalogResolver.endpoints', () => {
     await resolver.endpoints(USER, 'ws-9');
 
     expect(requireMembership).toHaveBeenCalledWith('user-1', 'ws-9');
-    expect(view.endpointViews).toHaveBeenCalledWith('ws-9');
+    expect(view.endpointTable).toHaveBeenCalledWith('ws-9');
   });
 
   it('reads the workspace the membership check resolved, not the id the client sent', async () => {
@@ -72,6 +72,6 @@ describe('CatalogResolver.endpoints', () => {
 
     await resolver.endpoints(USER, 'ws-sent');
 
-    expect(view.endpointViews).toHaveBeenCalledWith('ws-resolved');
+    expect(view.endpointTable).toHaveBeenCalledWith('ws-resolved');
   });
 });
