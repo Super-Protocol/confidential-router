@@ -1,12 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { OperatorAlertsService } from '../../alerts/operator-alerts.service.js';
 import { AnalyticsHealth } from '../../analytics/analytics-health.js';
-import { serviceVersion } from '../../config.js';
+import { routerConfig, serviceVersion } from '../../config.js';
 import { ExternalEndpointHealth } from '../../external-endpoints/external-endpoint-health.js';
 import { MailService } from '../../mail/mail.service.js';
 import { MailDeliveryService } from '../../mail/mail-delivery.service.js';
+import { EvidenceRetentionHealth } from '../../preferences/evidence-retention-health.js';
 import type { HealthResponseDto } from './health.dto.js';
 
 @Injectable()
@@ -21,6 +23,8 @@ export class HealthService {
     private readonly analytics: AnalyticsHealth,
     private readonly externalEndpoints: ExternalEndpointHealth,
     private readonly alerts: OperatorAlertsService,
+    private readonly evidenceRetention: EvidenceRetentionHealth,
+    @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
   ) {}
 
   /**
@@ -64,6 +68,21 @@ export class HealthService {
    *
    * Counts only, no endpoint names: `/health` is unauthenticated, and ruling 3 on
    * SUP-221 keeps upstream identity and verdict detail behind a session.
+   *
+   * `evidenceRetention` is the same rule again, for the one subsystem here whose
+   * failure is a disclosure problem rather than an availability one (SUP-498). A
+   * deployment whose retention sweep is not running serves every model perfectly
+   * well; it just keeps archived evidence bundles past the period `/privacy`
+   * publishes. That was unobservable for a whole preview — the setting was
+   * stored, offered and read by nothing — so it is a field rather than a log line.
+   *
+   * `mail.signUpGate` is the one line that keeps the rest of the block from
+   * being read wrong on an invite-only deployment, where a `200` from the send
+   * route and a healthy `state` are both compatible with nothing having been
+   * sent (SUP-462). It is configuration, not an event — the *counts* move per
+   * request and so live behind the admin guard, on `mailDelivery`, because a
+   * number a stranger can read before and after naming an address tells them
+   * by subtraction whether that address was mailed.
    */
   async check(): Promise<HealthResponseDto> {
     const database = await this.checkDatabase();
@@ -72,10 +91,15 @@ export class HealthService {
       version: serviceVersion(),
       uptimeSeconds: Math.round(process.uptime()),
       database,
-      mail: { ...this.mail.status(), undeliverable: await this.undeliverable(database) },
+      mail: {
+        ...this.mail.status(),
+        signUpGate: this.config.auth.requireInviteForSignUp ? 'invite_only' : 'open',
+        undeliverable: await this.undeliverable(database),
+      },
       analytics: this.analytics.status(),
       externalEndpoints: this.externalEndpoints.status(),
       alerts: this.alerts.status(),
+      evidenceRetention: this.evidenceRetention.status(),
     };
   }
 

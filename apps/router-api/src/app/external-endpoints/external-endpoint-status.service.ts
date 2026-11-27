@@ -13,8 +13,14 @@ import {
 import { ExternalCatalogService } from './external-catalog.service.js';
 import { ExternalEndpointHealth } from './external-endpoint-health.js';
 import {
+  type CatalogueReach,
+  darkCatalogueAlert,
+  darkCatalogueLine,
+  darknessOf,
   durationSince,
   type EndpointLiveness,
+  litCatalogueAlert,
+  litCatalogueLine,
   livenessOf,
   type OutageThresholds,
   outageAlert,
@@ -106,6 +112,27 @@ export class ExternalEndpointStatusService {
    */
   private readonly confirmedAt = new Map<string, number>();
 
+  /**
+   * When this process first saw the deployment dark — models registered and not
+   * one of them routable — or null while it is not (SUP-879).
+   *
+   * In memory and process-scoped, like every clock above it. A restart starting
+   * this run again is the right behaviour: the question is what *this* router can
+   * serve, and a pod that comes up still unable to serve anything says so again
+   * once it has been up past the threshold.
+   */
+  private darkSince: Date | null = null;
+
+  /**
+   * When the darkness above was declared to an operator, or null while it has
+   * not been — the deployment-level counterpart of {@link alerted}.
+   *
+   * One latch rather than a map because the subject is one deployment. It is
+   * cleared by the catalogue routing to something again, which is the only thing
+   * that ends the state.
+   */
+  private darkAlertedAt: Date | null = null;
+
   // biome-ignore lint/complexity/useMaxParams: a Nest DI constructor has no call site to keep readable.
   constructor(
     @Inject(routerConfig.KEY) private readonly config: ConfigType<typeof routerConfig>,
@@ -135,7 +162,10 @@ export class ExternalEndpointStatusService {
    */
   async resetToPending(now: Date = new Date()): Promise<number> {
     const repository = this.dataSource.getRepository(ExternalEndpoint);
-    const enabled = await repository.find({ where: { enabled: true } });
+    // Every row, because the counts `/health` publishes describe the
+    // switched-off ones too (SUP-879); only the enabled ones are written.
+    const rows = await repository.find();
+    const enabled = rows.filter((row) => row.enabled);
     const reset = {
       status: 'pending',
       lastStage: null,
@@ -161,15 +191,25 @@ export class ExternalEndpointStatusService {
       );
     }
     await this.catalog.refresh();
+    const registered = rows.map((row) => (row.enabled ? { ...row, ...reset } : row));
+    this.alerted.clear();
+    this.confirmedAt.clear();
+    // The darkness clock starts here rather than at the first poll, and nothing
+    // is alerted from a boot: a deployment that is about to be fine is dark for
+    // the poll or two before its first verdict lands, and the threshold on
+    // `darkness.outage` is what keeps that quiet.
+    this.darkSince = null;
+    this.darkAlertedAt = null;
     // No verdict has been read back, so the summary is honest about that rather
     // than about the rows it just wrote.
     this.publish(
-      enabled.map((row) => ({ ...row, ...reset })),
-      null,
-      now,
+      registered.filter((row) => row.enabled),
+      this.reachOf(registered, now),
+      {
+        verdictsReadAt: null,
+        now,
+      },
     );
-    this.alerted.clear();
-    this.confirmedAt.clear();
     return enabled.length;
   }
 
@@ -188,7 +228,12 @@ export class ExternalEndpointStatusService {
   async sync(now: Date = new Date()): Promise<SyncReport> {
     const verdicts = await fetchSidecarVerdicts(this.config.externalEndpoints.adminListen);
     const byName = new Map(verdicts.map((verdict) => [verdict.endpoint, verdict]));
-    const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true } });
+    const rows = await this.dataSource.getRepository(ExternalEndpoint).find();
+    const endpoints = rows.filter((row) => row.enabled);
+    // The rows nothing is projected onto, carried so that the pass can still
+    // count them: a switched-off endpoint is invisible to every verdict and is
+    // exactly what a rebuilt deployment holds (SUP-879).
+    const offline = rows.filter((row) => !row.enabled);
 
     const report: SyncReport = { seen: 0, flipped: 0, events: 0, outages: 0, expired: 0 };
     // The rows as this pass leaves them. Collected rather than re-read: the
@@ -248,10 +293,15 @@ export class ExternalEndpointStatusService {
     // exists, and a rolling update makes one exist (SUP-600, and
     // {@link ExternalCatalogService.refresh} for what it cost).
     await this.catalog.refresh();
+    // One reach per pass: it advances the darkness clock, and the alert and the
+    // `/health` summary have to be two readings of the same pass rather than two
+    // passes' worth of readings.
+    const reach = this.reachOf([...expired.projected, ...offline], now);
     const alerts = await this.alertOnOutages(expired.projected, now);
     report.outages = alerts.declared;
     report.events += alerts.declared + alerts.recovered;
-    this.publish(expired.projected, now, now);
+    await this.alertOnDarkness(reach, now);
+    this.publish(expired.projected, reach, { verdictsReadAt: now, now });
     return report;
   }
 
@@ -273,15 +323,19 @@ export class ExternalEndpointStatusService {
    * they stopped being news.
    */
   async refreshFromRows(now: Date = new Date()): Promise<void> {
-    const endpoints = await this.dataSource.getRepository(ExternalEndpoint).find({ where: { enabled: true } });
+    const rows = await this.dataSource.getRepository(ExternalEndpoint).find();
+    const endpoints = rows.filter((row) => row.enabled);
+    const offline = rows.filter((row) => !row.enabled);
     // This is the path a wedged sidecar leaves the router on, so it is the path
     // that has to let go of the verdicts it can no longer re-read (SUP-583).
     const expired = await this.expireStaleVerdicts(endpoints, now);
     // Unconditional for the reason {@link sync} states: the rows are what the
     // catalogue is a projection of, and this pass has just read them (SUP-600).
     await this.catalog.refresh();
+    const reach = this.reachOf([...expired.projected, ...offline], now);
     await this.alertOnOutages(expired.projected, now);
-    this.publish(expired.projected, null, now);
+    await this.alertOnDarkness(reach, now);
+    this.publish(expired.projected, reach, { verdictsReadAt: null, now });
   }
 
   /**
@@ -460,14 +514,94 @@ export class ExternalEndpointStatusService {
     return alerts;
   }
 
+  /**
+   * Says, once, that this deployment is advertising models and serving none of
+   * them (SUP-879).
+   *
+   * The gap this closes is not a missing detector but a missing *subject*.
+   * {@link alertOnOutages} reports an endpoint whose run of failures crossed a
+   * threshold, and it is right to exempt a switched-off row and an unapproved
+   * one — nothing is expected of either. A rebuilt deployment holds nothing but
+   * those: the import lands every upstream off and unkeyed because the bundle
+   * carries no secrets, so there is no run, no endpoint to name, no log line and
+   * no mail, while `/v1/models` answers `[]`. The only signal was a zero in a
+   * subsection of a document whose own `status` read `ok`, on a route an operator
+   * has to know to ask for — and the operator who has just rebuilt production is
+   * the least likely person to notice a quiet zero, because everything they are
+   * actively checking passes.
+   *
+   * Quiet wherever {@link alertOnOutages} can speak: {@link darknessOf} stands
+   * down as soon as one enabled, approved upstream exists, so one outage never
+   * sends two messages.
+   *
+   * Never throws, for the reason `OperatorAlertsService.raise` does not: this is
+   * a background pass, and the counts it is reporting are already on `/health`.
+   */
+  private async alertOnDarkness(reach: CatalogueReach, now: Date): Promise<void> {
+    const { darkness } = reach;
+    if (darkness.outage && this.darkAlertedAt === null) {
+      this.darkAlertedAt = darkness.since ?? now;
+      this.logger.error(darkCatalogueLine(darkness, reach, now));
+      await this.alerts.raise(darkCatalogueAlert(darkness, reach, now), now);
+      return;
+    }
+    // Keyed on darkness being over rather than on `outage` going false, which it
+    // also does when the thresholds are reconfigured. Only the catalogue routing
+    // to something again ends this state.
+    if (this.darkAlertedAt !== null && !darkness.dark) {
+      const declaredAt = this.darkAlertedAt;
+      this.darkAlertedAt = null;
+      this.logger.log(litCatalogueLine(declaredAt, reach, now));
+      // Urgent for the reason a recovery always is: an operator who was woken is
+      // owed the line that says it is over.
+      await this.alerts.raise(litCatalogueAlert(declaredAt, reach, now), now, { urgent: true });
+    }
+  }
+
+  /**
+   * What the catalogue will serve, as this pass left it — and the one place the
+   * darkness clock advances.
+   *
+   * Called exactly once per pass, after `catalog.refresh()`, so that the alert
+   * and the `/health` summary are two readings of one pass rather than one
+   * reading each of two.
+   *
+   * @param rows every registered endpoint as this pass leaves it, switched-off
+   *   ones included.
+   */
+  private reachOf(rows: readonly ExternalEndpoint[], now: Date): CatalogueReach {
+    const models = this.catalog.registeredModels();
+    const routableModels = this.catalog.routableModels();
+    const darkness = darknessOf(
+      rows,
+      { models, routableModels },
+      { thresholds: this.thresholds(), since: this.darkSince, now },
+    );
+    this.darkSince = darkness.since;
+    return {
+      routable: this.catalog.routableEndpoints(),
+      models,
+      routableModels,
+      disabled: rows.filter((row) => !row.enabled).length,
+      // An empty envelope rather than a wrong key: this is what an import writes,
+      // and nothing else writes it — a registration sets a key or is refused.
+      awaitingKey: rows.filter((row) => row.apiKeyCiphertext === '').length,
+      darkness,
+    };
+  }
+
   /** The same view three readers share: the alert above, the timeline, and `/health`. */
-  private publish(rows: readonly ExternalEndpoint[], verdictsReadAt: Date | null, now: Date): void {
+  private publish(
+    rows: readonly ExternalEndpoint[],
+    reach: CatalogueReach,
+    { verdictsReadAt, now }: { verdictsReadAt: Date | null; now: Date },
+  ): void {
     const thresholds = this.thresholds();
     const livenesses: EndpointLiveness[] = rows.map((row) => livenessOf(row, thresholds, now));
     // The catalogue's own count travels with the rows' — the two answer
     // different questions, and publishing only the rows' is what let a dark
     // `/v1` read as `serving: 1` (SUP-600).
-    this.health.report(livenesses, verdictsReadAt, this.catalog.routableEndpoints());
+    this.health.report(livenesses, verdictsReadAt, reach);
   }
 
   private thresholds(): OutageThresholds {

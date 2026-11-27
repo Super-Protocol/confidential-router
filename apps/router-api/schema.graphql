@@ -1,3 +1,19 @@
+"""
+How many /v1 credentials one account holds. Counts only — no key material of any kind.
+"""
+type AccountApiKeys {
+  """Most recent use across those keys; null if none was ever used."""
+  lastUsedAt: DateTime
+
+  """Of those, the ones that would authenticate right now."""
+  live: Int!
+
+  """
+  Person-created keys in the account’s workspaces, revoked and expired ones included. The console’s own chat credential is not counted.
+  """
+  total: Int!
+}
+
 """One bucket of an activity series. Quiet buckets are zeroes, not gaps."""
 type ActivityPoint {
   """Start of the bucket."""
@@ -69,6 +85,14 @@ input AddTrustedMeasurementInput {
   note: String
 }
 
+"""
+How an operator credit movement is recorded in the ledger. GRANT is credit nobody paid for; ADJUSTMENT is a correction and the only kind that may remove credit.
+"""
+enum AdminCreditGrantKind {
+  ADJUSTMENT
+  GRANT
+}
+
 """One invitation code, as an operator sees it."""
 type AdminInviteCode {
   campaign: String!
@@ -106,8 +130,17 @@ type AdminInviteCodePage {
   totalCount: Int!
 }
 
-"""One account, and how it came to exist."""
+"""One account, how it came to exist, and what it holds."""
 type AdminSignUp {
+  """
+  The account’s /v1 credentials, counted across every workspace it belongs to (SUP-454).
+  """
+  apiKeys: AccountApiKeys!
+
+  """
+  That workspace’s balance in micro-USD, so the operator can see who has run out. Null with no workspace.
+  """
+  balanceMicros: String
   campaign: String
   createdAt: DateTime!
   email: String!
@@ -120,6 +153,11 @@ type AdminSignUp {
   origin: SignUpOrigin!
   redeemedAt: DateTime
   userId: ID!
+
+  """
+  The workspace this account owns — what `grantCredit` credits. Null when it owns none.
+  """
+  workspaceId: ID
 }
 
 type AdminSignUpPage {
@@ -162,6 +200,29 @@ type ApiKeyCreated {
 
   """The full key. It is not stored and cannot be shown again."""
   secret: String!
+}
+
+"""
+Deployment-wide credential counts, for sizing and announcing a key-affecting change.
+"""
+type ApiKeyPopulation {
+  """
+  Accounts holding at least one live key — who would have to re-issue. Exactly `adminSignUps(holdsLiveApiKey: true).totalCount` with no other filter applied, so the number and the page agree.
+  """
+  accountsHoldingLiveKey: Int!
+
+  """
+  Every person-created key on the deployment, whatever its state. Not the row count of `api_keys`: the console’s own chat credential is left out.
+  """
+  keys: Int!
+
+  """Of those, the ones that would authenticate right now."""
+  liveKeys: Int!
+
+  """
+  Live keys whose workspace has no member this deployment can name — the remainder no account list can show, and the one number here an operator cannot act on. Normally 0.
+  """
+  liveKeysWithoutAccount: Int!
 }
 
 """
@@ -371,6 +432,32 @@ type CreditBalance {
   workspaceId: ID!
 }
 
+"""The ledger entry an operator grant wrote, and the balance it produced."""
+type CreditGrant {
+  """Set when the workspace was named by its account holder."""
+  accountEmail: String
+
+  """Signed micro-USD, as written."""
+  amountMicros: String!
+
+  """The workspace balance after the entry, in micro-USD."""
+  balanceMicros: String!
+  createdAt: DateTime!
+
+  """The `credit_transactions` row."""
+  creditTransactionId: ID!
+  kind: AdminCreditGrantKind!
+
+  """The reason recorded on the row — the first call’s, on a replay."""
+  note: String!
+
+  """
+  True when this requestId had already been recorded: nothing was written and the balance is unchanged. The console says “already recorded” rather than reporting a second success.
+  """
+  replayed: Boolean!
+  workspaceId: ID!
+}
+
 """One entry of the append-only credits ledger."""
 type CreditTransaction {
   """Signed micro-USD: credits positive, usage negative."""
@@ -522,8 +609,10 @@ type EvidenceExport {
 
 """What an endpoint published, and when. Never whether it was valid."""
 type EvidenceSnapshot {
-  """The raw bundle, for export and offline verification."""
-  bundle: JSON!
+  """
+  The raw bundle, for export and offline verification. Null once the retention sweep has removed it.
+  """
+  bundle: JSON
 
   """sha256/<base64url> of the TLS leaf the bundle asserts."""
   certFingerprint: String!
@@ -551,11 +640,18 @@ type EvidenceSnapshot {
   """When the platform signed it."""
   issuedAt: DateTime!
 
-  """The compact JWS as published — "Copy evidence JWS"."""
-  jws: String!
+  """
+  The compact JWS as published — "Copy evidence JWS". Null once the retention sweep has removed the document: the `evidenceSnapshots` connection reaches an endpoint’s whole history, and a publication past the retention window of every account that held it keeps its digests and nothing else.
+  """
+  jws: String
 
   """Empty when the producer published none."""
   measurements: [Measurement!]!
+
+  """
+  When the retention sweep removed `jws` and `bundle`, or null while this row still carries them.
+  """
+  payloadStrippedAt: DateTime
 
   """Quote age in seconds — "issued 4 min ago" in the evidence modal."""
   quoteAgeSeconds: Int!
@@ -1073,23 +1169,67 @@ enum GenerationStatus {
   ABORTED
   ERROR
   OK
+  PENDING
+}
+
+input GrantCreditInput {
+  """The account holder to credit. Exactly one of this and `workspaceId`."""
+  accountEmail: String
+
+  """
+  Signed micro-USD as an integer string, bounded by `billing.maxCreditGrantMicros`. A negative amount removes credit and needs kind ADJUSTMENT and `billing.allowCreditDebits`.
+  """
+  amountMicros: String!
+  kind: AdminCreditGrantKind! = GRANT
+
+  """
+  Why the credit is moving, kept on the ledger row and shown to the account holder. Required: it is the only field that explains an entry nobody paid for.
+  """
+  note: String!
+
+  """
+  The caller's name for this decision — a UUID the console mints when the dialog opens. The same value replays the first call instead of crediting twice; a second deliberate grant sends a new one.
+  """
+  requestId: String!
+
+  """
+  The workspace to credit, when the caller already has its id. Exactly one of this and `accountEmail`.
+  """
+  workspaceId: ID
 }
 
 """How one invitation campaign converted. Operators only."""
 type InviteCampaignStats {
   """
-  Redeeming accounts that went on to send at least one request — the number worth reading.
+  Redemptions whose redeemer went on to send at least one request — the number worth reading. One per redemption, so never greater than `redeemed`.
   """
   activated: Int!
   campaign: String!
 
-  """Micro-USD handed out so far."""
+  """
+  How many of `redeemed` a codes CSV import carried over from another deployment.
+  """
+  carried: Int!
+
+  """
+  The high end of the same range; equal to `codeGrantMicrosMin` as a rule.
+  """
+  codeGrantMicrosMax: String!
+
+  """
+  Micro-USD one redemption of this campaign grants — its face value. Equal to `codeGrantMicrosMax` unless the tag collects batches issued at different grants. Spans every code of the campaign, withdrawn ones included, as `issued` does.
+  """
+  codeGrantMicrosMin: String!
+
+  """
+  Micro-USD handed out so far — a cumulative payout, not a code’s face value. A campaign whose codes are all unredeemed reads 0 however much each one grants. This deployment’s ledger only, so carried redemptions add nothing.
+  """
   grantedMicros: String!
 
   """Codes generated."""
   issued: Int!
 
-  """Accounts that redeemed one."""
+  """People who used one, import-carried redemptions included."""
   redeemed: Int!
 
   """`redeemed / issued`; 0 when nothing was issued."""
@@ -1193,13 +1333,18 @@ type InviteStatistics {
 
 """Deployment-wide invitation numbers."""
 type InviteTotals {
-  """Micro-USD granted through invitations."""
+  """
+  How many of `redeemed` a codes CSV import carried over from another deployment.
+  """
+  carried: Int!
+
+  """Micro-USD granted through invitations. This deployment’s ledger only."""
   grantedMicros: String!
 
   """Codes ever issued."""
   issued: Int!
 
-  """Redemptions — one per invited account."""
+  """Redemptions — one per invited account, import-carried ones included."""
   redeemed: Int!
 
   """`redeemed / issued`; 0 when nothing was issued."""
@@ -1299,6 +1444,79 @@ type KeyUsage {
 
   """Spend in micro-USD."""
   spendMicros: String!
+}
+
+"""
+Where outbound mail stands and what was withheld — the operator’s answer to “the sign-in mail is not arriving”, which has three answers with three different remedies: sent, withheld, or the transport is broken. Restricted to auth.adminEmails: every field moves in response to one request, so a caller who could read it before and after naming an address would learn by subtraction whether that address was mailed. The public half is `/health`’s `mail` block.
+"""
+type MailDelivery {
+  """
+  This deployment is invite-only, so sign-up mail to an address with no invitation is withheld and the send route answers it exactly as it answers a send. While this is false, `withheld.noInvitation` can only stay at zero.
+  """
+  inviteOnly: Boolean!
+  provider: MailProvider!
+
+  """Present only while `state` is `FAILING`."""
+  reason: MailFailureReason
+
+  """When `state` was last established."""
+  since: DateTime
+  state: MailState!
+
+  """Null until this process has withheld something."""
+  withheld: MailWithheld
+}
+
+"""
+Why the last attempt failed. `UNREACHABLE`: the connection never reached a mail server at all — DNS, a refused or timed-out connect, a dropped socket. These are the mailer’s own failures and nothing else: a recipient the server would not take is about one message, leaves `state` alone, and so never appears here (`MailerFailureReason`, SUP-460).
+"""
+enum MailFailureReason {
+  AUTH_FAILED
+  ERROR
+  UNREACHABLE
+}
+
+"""Which mailer this deployment is configured with."""
+enum MailProvider {
+  CONSOLE
+  NONE
+  RESEND
+  SMTP
+}
+
+"""
+Where the transport stands, from the boot-time check or the most recent send, whichever is later. About the transport only: a send the deployment chose not to make leaves this alone.
+"""
+enum MailState {
+  DISABLED
+  FAILING
+  OK
+  UNVERIFIED
+}
+
+"""
+Mail this deployment was asked for and deliberately did not send, counted since the process started. Aggregate only and never per address: a queryable list of withheld addresses would rebuild the account-existence oracle the sign-up mail gate exists to deny.
+"""
+type MailWithheld {
+  """
+  When the most recent send was withheld. A latest occurrence, not a `since`: `MailDelivery.since` is the start of a state that still holds, and this is not one.
+  """
+  lastWithheldAt: DateTime!
+
+  """
+  Sign-up mail withheld because this deployment is invite-only and the request carried no invitation it would admit (SUP-410). A non-zero count beside a healthy `state` is the signature of “uninvited addresses asked for a code”, not of an outage.
+  """
+  noInvitation: Int!
+
+  """
+  Sign-in codes withheld because that recipient had already had their hourly allowance.
+  """
+  rateLimited: Int!
+
+  """
+  Code requests for a `type` this deployment does not mail — only `sign-in` is, and the flows the other two belong to have their routes disabled. A non-zero count here is a client bug, and it looks exactly like mail that stopped arriving.
+  """
+  unusedCodeType: Int!
 }
 
 """A measurement register the producer published (MRTD, RTMR0-2, GPU…)."""
@@ -1439,6 +1657,11 @@ type Mutation {
   """An expiring link to the evidence for a period."""
   exportEvidence(from: DateTime!, to: DateTime!, workspaceId: ID!): EvidenceExport!
 
+  """
+  Puts credit on an existing account, or corrects a balance, as one audited ledger entry naming the operator and the reason. Idempotent on `requestId`, so a retried submission replays rather than credits twice. Bounded by billing.maxCreditGrantMicros. Restricted to auth.adminEmails.
+  """
+  grantCredit(input: GrantCreditInput!): CreditGrant!
+
   """Issues invitation codes. Restricted to auth.adminEmails."""
   issueInviteCodes(input: IssueInviteCodesInput!): IssuedInviteCodes!
 
@@ -1467,7 +1690,7 @@ type Mutation {
   revokeApiKey(id: ID!): ApiKey!
 
   """
-  Replaces the stored upstream API key. There is no read path for the old one. Restricted to auth.adminEmails.
+  Replaces the stored upstream API key. There is no read path for the old one. Takes effect on the next request this router proxies to the endpoint. Restricted to auth.adminEmails.
   """
   rotateExternalEndpointKey(id: ID!, input: RotateExternalEndpointKeyInput!): ExternalEndpoint!
 
@@ -1576,14 +1799,27 @@ type Query {
   ): ActivitySummary!
 
   """
+  Deployment-wide API-key counts. No key material. Restricted to auth.adminEmails.
+  """
+  adminApiKeyPopulation: ApiKeyPopulation!
+
+  """
   Invitation codes, newest first, with who redeemed each. Restricted to auth.adminEmails.
   """
   adminInviteCodes(campaign: String, limit: Int! = 50, offset: Int! = 0, status: InviteCodeStatus): AdminInviteCodePage!
 
   """
-  Accounts, newest first, with how each came to exist. Restricted to auth.adminEmails.
+  Accounts, newest first, with how each came to exist and how many API keys it holds. Restricted to auth.adminEmails.
   """
-  adminSignUps(limit: Int! = 50, offset: Int! = 0, origin: SignUpOrigin): AdminSignUpPage!
+  adminSignUps(
+    """
+    True: only accounts holding a key that still authenticates — `totalCount` is then what a key-affecting change would cut off. False: only accounts holding none. Null: every account.
+    """
+    holdsLiveApiKey: Boolean
+    limit: Int! = 50
+    offset: Int! = 0
+    origin: SignUpOrigin
+  ): AdminSignUpPage!
 
   """Every key in the workspace, newest first."""
   apiKeys(workspaceId: ID!): [ApiKey!]!
@@ -1676,6 +1912,11 @@ type Query {
     """Days of daily series, ending today (UTC)."""
     days: Int! = 30
   ): InviteStatistics!
+
+  """
+  Outbound mail: where the transport stands and how much mail was deliberately withheld, by reason. Counted since this replica started. Restricted to auth.adminEmails.
+  """
+  mailDelivery: MailDelivery!
 
   """The signed-in user, or an error when anonymous."""
   me: User!
@@ -1957,12 +2198,16 @@ type User {
 
 """Console settings, including the Evidence group."""
 type UserPreferences {
-  """Keep the published bundle and JWS, not just the digests."""
+  """
+  Whether this account holds the published bundle and JWS, not just the digests. Off, it holds nothing and contributes nothing to a publication’s retention window, so a publication only such accounts hold is stripped on the next retention pass; one an opted-in account also holds stays until that window closes. It does not stop the poller fetching bundles, which the live-evidence endpoints serve from.
+  """
   archiveEvidence: Boolean!
   desktopNotifications: Boolean!
   emailReceipts: Boolean!
 
-  """How long archived bundles are kept, in days. Digests are kept forever."""
+  """
+  How long archived bundles are kept, in days. Digests are kept forever. Ignored while archiveEvidence is off, and still settable, so the window is already right when it goes back on.
+  """
   evidenceRetentionDays: Int!
 
   """Notify when an endpoint publishes different measurements."""

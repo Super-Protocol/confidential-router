@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import * as z from 'zod';
+import { GENERATION_LEDGER_KEY_PREFIX } from '../billing/ledger.keys.js';
 
 /**
  * The deployment export: one versioned JSON document, gzipped (SUP-271).
@@ -22,6 +23,12 @@ import * as z from 'zod';
  * redeploy; leaving it behind revoked every such key silently, which is the bug
  * this section exists to close. Nothing else about a key is recoverable from the
  * bundle, and `CREDENTIAL_KEY_PATTERN` still refuses every other shape.
+ *
+ * Because the generation log stays behind, the ledger cannot cross the boundary
+ * as it stands: a per-request `usage` debit names the generation it charged for,
+ * and on the other side that row does not exist. {@link carryUsageForward} is
+ * what reconciles the two — one carried-forward debit per workspace per month,
+ * for exactly the same money (SUP-446).
  *
  * Ids are the rows' own, so every reference survives as written; instants are
  * ISO-8601 UTC; money is integer micro-USD as a decimal string, the ledger's
@@ -87,9 +94,27 @@ export const CARRIED_NON_CREDENTIAL_PATHS: readonly string[] = [
   'counts.apiKeysLive',
 ];
 
+/**
+ * The id and idempotency key of the `usage` entry a workspace's per-request
+ * debits of one month are carried over as: `carried-usage:<yyyy-mm>:<workspaceId>`.
+ * See {@link carryUsageForward}.
+ */
+export const CARRIED_USAGE_LEDGER_KEY_PREFIX = 'carried-usage:';
+
+/**
+ * What a row id may be, in the bundle and in `credit_transactions.id` alike.
+ *
+ * Named because {@link carryUsageForward} is the one place that *composes* an id
+ * rather than copying one, and a composed id is the one that can outgrow the
+ * column. 64 leaves 42 characters for a workspace id after the prefix and the
+ * month — a UUID is 36 — and `buildBundle` says so in words rather than letting
+ * it surface as a zod error from the import of a file the export just wrote.
+ */
+export const MAX_ID_LENGTH = 64;
+
 const iso = z.iso.datetime({ offset: true });
 const micros = z.string().regex(/^-?\d+$/, 'must be an integer amount of micro-USD');
-const id = z.string().min(1).max(64);
+const id = z.string().min(1).max(MAX_ID_LENGTH);
 
 const UserSchema = z.object({
   id,
@@ -139,6 +164,16 @@ const CreditEntrySchema = z.object({
   reference: z.string().max(128).nullable(),
   description: z.string().max(512).nullable(),
   idempotencyKey: z.string().min(1).max(128),
+  /**
+   * The operator who wrote the entry by hand, when one did (SUP-406). Carried so
+   * "who granted this" survives the redeploy the bundle *is* — without it the
+   * ledger answers until the next restore and `null` for ever after (SUP-398).
+   *
+   * Optional with a null default, so a bundle written before the column existed
+   * still reads: that is what the paragraph on {@link EXPORT_SCHEMA_VERSION}
+   * means by an additive field.
+   */
+  grantedByUserId: id.nullable().default(null),
   createdAt: iso,
 });
 
@@ -165,6 +200,31 @@ const InviteRedemptionSchema = z.object({
   workspaceId: id,
   creditTransactionId: id,
   redeemedAt: iso,
+});
+
+/**
+ * A redemption that happened on another deployment and was carried here by a
+ * codes CSV import (SUP-272) — the record of *who* spent a code whose
+ * `redemptionCount` the bundle already carries (SUP-403).
+ *
+ * Optional, with an empty default, so a bundle written before this section
+ * existed still reads: that is what the paragraph on {@link
+ * EXPORT_SCHEMA_VERSION} means by an additive field. A build that does not know
+ * the section drops it, exactly as it does today.
+ */
+const InviteCarriedRedemptionSchema = z.object({
+  id,
+  inviteCodeId: id,
+  /** Lower case. Null when the deployment the record came from had already lost the account. */
+  email: z.string().min(3).max(320).nullable(),
+  /** When it was redeemed on the deployment it happened on. */
+  redeemedAt: iso,
+  /**
+   * When it first arrived on a deployment that is not the one it happened on.
+   * Equal to `redeemedAt` for a row that never travelled — a redemption the
+   * export degraded because its account was gone (`DataExportService`).
+   */
+  importedAt: iso,
 });
 
 /**
@@ -248,6 +308,7 @@ const DataSchema = z.object({
   creditLedger: z.array(CreditEntrySchema),
   inviteCodes: z.array(InviteCodeSchema),
   inviteRedemptions: z.array(InviteRedemptionSchema),
+  inviteCarriedRedemptions: z.array(InviteCarriedRedemptionSchema).default([]),
   // Defaulted, not optional: a bundle written before this section existed reads
   // as "no keys" rather than as a malformed file. See EXPORT_SCHEMA_VERSION.
   apiKeys: z.array(ApiKeySchema).default([]),
@@ -267,6 +328,7 @@ const CountsSchema = z.object({
   inviteCodes: z.number().int(),
   inviteCodesUnredeemed: z.number().int(),
   inviteRedemptions: z.number().int(),
+  inviteCarriedRedemptions: z.number().int().default(0),
   /** Defaulted for the same reason the section is, so an older file still adds up. */
   apiKeys: z.number().int().default(0),
   apiKeysLive: z.number().int().default(0),
@@ -303,6 +365,7 @@ export type ExportData = ExportBundle['data'];
 export type ExportCounts = ExportBundle['counts'];
 export type ExportSource = ExportBundle['source'];
 export type ExportedUser = ExportData['users'][number];
+export type ExportedCreditEntry = ExportData['creditLedger'][number];
 export type ExportedWorkspace = ExportData['workspaces'][number];
 export type ExportedInviteCode = ExportData['inviteCodes'][number];
 export type ExportedApiKey = ExportData['apiKeys'][number];
@@ -344,6 +407,7 @@ export function countsOf(data: ExportData): ExportCounts {
     inviteCodes: data.inviteCodes.length,
     inviteCodesUnredeemed: data.inviteCodes.filter((code) => code.status === 'unredeemed').length,
     inviteRedemptions: data.inviteRedemptions.length,
+    inviteCarriedRedemptions: data.inviteCarriedRedemptions.length,
     apiKeys: data.apiKeys.length,
     // The number that matters to a reader: a revoked key is carried for the
     // generations metered against it, not for anyone to authenticate with.
@@ -356,6 +420,164 @@ export function countsOf(data: ExportData): ExportCounts {
 
 export function totalBalanceMicros(data: ExportData): string {
   return String(data.workspaces.reduce((sum, workspace) => sum + BigInt(workspace.balanceMicros), 0n));
+}
+
+/** Whether an entry is the usage debit of one metered request (`LedgerService.debitGeneration`). */
+export function isPerGenerationUsage(entry: ExportedCreditEntry): boolean {
+  return entry.kind === 'usage' && entry.idempotencyKey.startsWith(GENERATION_LEDGER_KEY_PREFIX);
+}
+
+/** Whether an entry is itself the result of an earlier {@link carryUsageForward}. */
+export function isCarriedUsage(entry: ExportedCreditEntry): boolean {
+  return entry.kind === 'usage' && entry.idempotencyKey.startsWith(CARRIED_USAGE_LEDGER_KEY_PREFIX);
+}
+
+/**
+ * Replaces a workspace's per-request usage debits with one carried-forward debit
+ * per calendar month, for exactly the same total (SUP-446).
+ *
+ * A `usage` entry is written per metered request and names that request:
+ * `reference` is the generation id and `idempotencyKey` is `generation:<id>`.
+ * `generations` is not in the bundle and cannot be: `Generation.modelId` is
+ * `NOT NULL` and names a row in `models`, which this deployment projects from
+ * its own `router.yaml` and the bundle does not carry at all — only an external
+ * endpoint's models travel. An imported generation would need the destination's
+ * config to already declare every model id the source ever served, or a broken
+ * foreign key; `endpointId` and `evidenceSnapshotId` are in the same position,
+ * and nulling `endpointId` would break `generationEndpointIsExclusive` and leave
+ * a row no screen can reach. So the debit cannot be carried as written either:
+ * on the far side it is a charge pointing at a request the console has no row
+ * for, which is how a workspace comes to be billed $0.24 for 87 requests while
+ * its log shows 22 (SUP-446). Collapsing also *shrinks* the file, which carried
+ * one ledger row per metered request before this.
+ *
+ * Collapsing keeps the money exact — the sum is unchanged, so invariant 3 and
+ * the bundle's own balance check hold either way — and makes the Credits screen
+ * agree with the generation log on the one deployment the reader is looking at:
+ * every request it lists is one this deployment served, and what was spent
+ * before the migration is a row per month that says so.
+ *
+ * **Why a month and not one row.** One row per workspace would date a year of
+ * spend at its last charge, and "what did I spend in September" would have no
+ * answer after a migration. A month is the coarsest bucket a bill is ever read
+ * in, it is bounded at twelve rows a year however busy the workspace, and it
+ * leaves the fold below unchanged — a bucket is keyed on its own month, so an
+ * earlier migration's entry belongs to exactly one.
+ *
+ * Applied on both sides: the export writes no per-request debit, and the import
+ * collapses any it is given, so a bundle written by an older build is repaired
+ * rather than refused.
+ *
+ * At most one carried entry per workspace per month, ever: a deployment that was
+ * itself imported into already has one for each month it inherited, and a month
+ * that gets new traffic here folds the inherited entry into the new one rather
+ * than emitting a second row under the same id. A month with nothing new is
+ * passed through exactly as it stands — rewriting it would re-date that spend to
+ * a deployment which never served a request of it.
+ *
+ * `sourceLabel` names the deployment the spend happened on, as a bare host —
+ * never a URL, which the Credits screen would render as a receipt link
+ * (`amounts.ts`).
+ */
+export function carryUsageForward(entries: readonly ExportedCreditEntry[], sourceLabel: string): ExportedCreditEntry[] {
+  const bucketOf = (entry: ExportedCreditEntry): string => `${entry.workspaceId}\n${monthOf(entry.createdAt)}`;
+
+  // Only a bucket with something new to collapse is rewritten at all.
+  const collapsing = new Set(entries.filter(isPerGenerationUsage).map(bucketOf));
+
+  const kept: ExportedCreditEntry[] = [];
+  const collapsed = new Map<string, { totalMicros: bigint; requests: number; absorbed: number; lastAt: string }>();
+
+  for (const entry of entries) {
+    const bucket = bucketOf(entry);
+    const mine = collapsing.has(bucket) && (isPerGenerationUsage(entry) || isCarriedUsage(entry));
+    if (!mine) {
+      kept.push(entry);
+      continue;
+    }
+    const request = isPerGenerationUsage(entry) ? 1 : 0;
+    const seen = collapsed.get(bucket);
+    if (!seen) {
+      collapsed.set(bucket, {
+        totalMicros: BigInt(entry.amountMicros),
+        requests: request,
+        absorbed: 1 - request,
+        lastAt: entry.createdAt,
+      });
+      continue;
+    }
+    seen.totalMicros += BigInt(entry.amountMicros);
+    seen.requests += request;
+    seen.absorbed += 1 - request;
+    // By instant, not by string: an ISO-8601 timestamp may carry an offset.
+    if (Date.parse(entry.createdAt) > Date.parse(seen.lastAt)) {
+      seen.lastAt = entry.createdAt;
+    }
+  }
+
+  // Sorted by bucket, so one dataset exports to one byte string whatever order
+  // the rows came back in — the same reason `canonicalJson` exists.
+  const carried = [...collapsed.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([bucket, { totalMicros, requests, absorbed, lastAt }]) => {
+      const [workspaceId = '', month = ''] = bucket.split('\n');
+      const key = carriedUsageKey(workspaceId, month);
+      return {
+        id: key,
+        workspaceId,
+        kind: 'usage' as const,
+        amountMicros: String(totalMicros),
+        // Deliberately null: the generations these debits named stayed behind,
+        // and a reference to a row that does not exist is the defect, not the
+        // record.
+        reference: null,
+        description:
+          `Metered usage carried over from ${sourceLabel}: ${plural(requests, 'request')} served in ${month}` +
+          (absorbed > 0 ? ', plus usage carried from an earlier migration' : '') +
+          '. The per-request log stayed on the deployment that served it.',
+        idempotencyKey: key,
+        // Null, because this row is the export's own arithmetic rather than
+        // anybody's decision — which is exactly what the column means by null
+        // (SUP-406). The debits it collapses were metered, never hand-written.
+        grantedByUserId: null,
+        createdAt: lastAt,
+      };
+    });
+
+  return [...kept, ...carried];
+}
+
+/** The id and idempotency key of one carried bucket. See {@link MAX_ID_LENGTH}. */
+export function carriedUsageKey(workspaceId: string, month: string): string {
+  return `${CARRIED_USAGE_LEDGER_KEY_PREFIX}${month}:${workspaceId}`;
+}
+
+/**
+ * The UTC calendar month an instant falls in, `yyyy-mm`.
+ *
+ * Through `Date` rather than by slicing the string: an ISO-8601 timestamp may
+ * carry an offset, and `2026-10-01T00:30:00+02:00` is September in UTC — which
+ * is the month every other total on these screens would put it in.
+ */
+function monthOf(instant: string): string {
+  return new Date(instant).toISOString().slice(0, 7);
+}
+
+/** `1 request` / `42 requests` — a count on a money screen that reads as English. */
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * The deployment a bundle's spend happened on, for {@link carryUsageForward}'s
+ * description. The host alone — see that function on why not the URL.
+ */
+export function sourceLabelOf(publicBaseUrl: string): string {
+  try {
+    return new URL(publicBaseUrl).host;
+  } catch {
+    return publicBaseUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  }
 }
 
 /** True when `path` is one of the {@link CARRIED_NON_CREDENTIAL_PATHS}, at either root. */
@@ -387,6 +609,27 @@ export function buildBundle(input: { data: ExportData; source: ExportSource; exp
   const leaked = credentialShapedKeys(input.data);
   if (leaked.length > 0) {
     throw new Error(`The export would carry credential-shaped fields (${leaked.join(', ')}); refusing to write it.`);
+  }
+  // The same kind of tripwire, for the same kind of mistake: a per-request debit
+  // in an assembled bundle means somebody added a ledger section without
+  // {@link carryUsageForward}, and the file would charge for requests the
+  // importing deployment has no log of (SUP-446).
+  const dangling = input.data.creditLedger.filter(isPerGenerationUsage).length;
+  if (dangling > 0) {
+    throw new Error(
+      `The export would carry ${dangling} usage debit(s) naming a generation it does not carry; refusing to write it.`,
+    );
+  }
+  // `carryUsageForward` is the one place an id is composed rather than copied,
+  // so it is the one that can outgrow `MAX_ID_LENGTH`. Said here, where the
+  // workspace id that caused it can be named, rather than left to surface as
+  // `malformed at data.creditLedger.N.id` on importing a file this build wrote.
+  const overlong = input.data.creditLedger.filter((entry) => entry.id.length > MAX_ID_LENGTH);
+  if (overlong.length > 0) {
+    throw new Error(
+      `The export would carry ${overlong.length} ledger entr(y/ies) whose id exceeds ${MAX_ID_LENGTH} characters ` +
+        `(workspace ${overlong[0]?.workspaceId}); refusing to write it.`,
+    );
   }
   return {
     format: EXPORT_FORMAT,

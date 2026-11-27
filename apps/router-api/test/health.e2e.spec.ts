@@ -23,6 +23,18 @@ describe('GET /health', () => {
     expect(response.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  /**
+   * The line that keeps the rest of the `mail` block from being read wrong
+   * (SUP-462): on an invite-only deployment a `200` from the send route and a
+   * healthy `state` are both compatible with nothing having been sent.
+   */
+  it('says whether sign-up mail can be withheld, and publishes no count that could be', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    expect(response.body.mail).toMatchObject({ signUpGate: 'open' });
+    expect(response.body.mail).not.toHaveProperty('withheld');
+  });
+
   it('says whether product analytics is configured, without deciding the status', async () => {
     const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
 
@@ -63,6 +75,12 @@ describe('GET /health', () => {
         failing: 0,
         unreachable: 0,
         pending: 0,
+        // Nothing registered at all, so `none` is the honest answer rather than
+        // the one a dark deployment used to hide behind (SUP-879).
+        disabled: 0,
+        awaitingKey: 0,
+        models: 0,
+        routableModels: 0,
       },
     });
   });
@@ -74,14 +92,31 @@ describe('GET /health', () => {
     // identity and verdict detail behind a session, so this block is counts, two
     // optional timestamps and a word — never a name, hostname, stage or reason.
     expect(Object.keys(response.body.externalEndpoints).sort()).toEqual([
+      'awaitingKey',
+      'disabled',
       'failing',
+      'models',
       'pending',
       'registered',
       'routable',
+      'routableModels',
       'serving',
       'status',
       'unreachable',
     ]);
+  });
+
+  it('says whether the evidence retention sweep is running, without deciding the status', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    // `disabled` because the harness switches the timer off (fixtures carry
+    // fixed dates), which is also the shape of a deployment that set
+    // `evidence.retentionSweepInterval` to 0 — publishing a retention period it
+    // does not keep, and still serving every model, so still `ok` (SUP-498).
+    expect(response.body).toMatchObject({
+      status: 'ok',
+      evidenceRetention: { status: 'disabled', lastSweepAt: null, stripped: 0, failed: 0 },
+    });
   });
 
   it('echoes the request id back so a client can correlate a failure', async () => {
@@ -104,6 +139,38 @@ describe('GET /health', () => {
     expect(response.headers['x-content-type-options']).toBe('nosniff');
     expect(response.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(response.headers['x-powered-by']).toBeUndefined();
+  });
+});
+
+describe('GET /health with the retention sweep on', () => {
+  let swept: Harness;
+
+  beforeAll(async () => {
+    // The field is only worth anything if it moves. The sweep runs its first
+    // pass on the tick after bootstrap, so this asserts the wiring an operator
+    // actually reads: a timer exists, a pass finished, and the count is there.
+    swept = await createHarness({ env: { CR_API_EVIDENCE__RETENTION_SWEEP_INTERVAL: '6h' } });
+  }, 60_000);
+
+  afterAll(async () => {
+    await swept?.close();
+  });
+
+  it('reports the sweep as enabled', async () => {
+    const response = await request(swept.app.getHttpServer()).get('/health').expect(200);
+
+    expect(response.body.evidenceRetention).toMatchObject({ status: 'enabled', stripped: 0, failed: 0 });
+  });
+
+  it('fills in `lastSweepAt` once the first pass has finished', async () => {
+    // Polled rather than read once: the first pass is started on the tick after
+    // bootstrap and deliberately not awaited there, so boot never waits on a
+    // table scan.
+    await expect
+      .poll(async () => (await request(swept.app.getHttpServer()).get('/health')).body.evidenceRetention.lastSweepAt, {
+        timeout: 5_000,
+      })
+      .toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 });
 

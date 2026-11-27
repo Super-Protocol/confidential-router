@@ -329,12 +329,18 @@ document from anyone but that upstream was never filed; a real but superseded pu
 upstream is never handed out. The upstream may well be publishing something newer — that is what the
 `503` below covers until the next verdict catches up.
 
-Two refusals, told apart on purpose:
+Refusals, told apart on purpose:
 
 | HTTP | Body | Means |
 | --- | --- | --- |
 | `404` | Nest's shape, `{"statusCode":404,"message":…}` | no such endpoint — or, on the bare path, this router cannot tell which is its own |
 | `503` | `{"statusCode":503,"reason":"evidence_not_fetched","message":…}` | the endpoint exists and nothing has been retrieved for it yet |
+| `503` | `{"statusCode":503,"reason":"evidence_expired","message":…}` | the document was removed by the retention sweep; this router keeps only its digests |
+
+`evidence_expired` is a different instruction to a caller than `evidence_not_fetched` — "ask the
+publisher" rather than "wait a few seconds" — and in a healthy deployment it does not occur here at all:
+the sweep exempts the publication every live surface relays (SUP-498). It is a named reason rather than a
+`500` because this is the surface the whole product rests on.
 
 They used to be one `404`, which read on the chat's locked composer as the router denying an endpoint it
 in fact has (SUP-191). Never an empty `200`: a caller that verifies what it is handed must not have to
@@ -375,6 +381,14 @@ signature whichever copy it got.
 Returns the `Generation` record (tokens, cost, model, endpoint, timings, `evidence_digest`) for a
 generation owned by the key's workspace. Never any content.
 
+**`status` may be `pending`, and then the record is not final.** A row exists from the moment the
+request is admitted (see *Metering*), so a client that polls this route while the generation is still
+running — or in the window between the last byte of a stream and the close, which is exactly when a
+client polls — gets `200` with `status: "pending"`, `cost_micros: 0`, `total_tokens: 0`, `latency_ms: 0`.
+Those zeros are "not known yet", not "free". **Reconcile only on `ok`, `error` or `aborted`**; on
+`pending`, poll again. Before SUP-423 this route answered `404` until the meter had settled, so a client
+written against the old behaviour must treat `pending` the way it used to treat that `404`.
+
 ### `GET /health`
 
 Liveness, a real database round-trip, and the state of the three subsystems that can fail without anyone
@@ -405,15 +419,22 @@ the status code is what a probe reads.
     "since": "2026-10-23T06:11:12.000Z",
     "verdictsReadAt": "2026-10-24T12:41:03.000Z"
   },
-  "alerts": { "state": "ok", "recipients": 2, "lastAttemptAt": "2026-10-23T06:41:30.000Z" }
+  "alerts": { "state": "ok", "recipients": 2, "lastAttemptAt": "2026-10-23T06:41:30.000Z" },
+  "evidenceRetention": {
+    "status": "enabled",
+    "lastSweepAt": "2026-10-24T06:00:11.000Z",
+    "stripped": 134,
+    "failed": 0
+  }
 }
 ```
 
 **Only `database` decides `status`.** A process that cannot reach PostgreSQL cannot meter a single
-generation and must leave the rotation. `mail` (SUP-269), `analytics` (SUP-464) and `externalEndpoints`
-(SUP-517) are reported and never promoted: a deployment whose mail server is down, whose analytics key went
-missing or whose external upstream is dark still serves every built-in model and the whole console, and
-taking it out of rotation over any of those would be the worse bug.
+generation and must leave the rotation. `mail` (SUP-269), `analytics` (SUP-464), `externalEndpoints`
+(SUP-517) and `evidenceRetention` (SUP-498) are reported and never promoted: a deployment whose mail server
+is down, whose analytics key went missing, whose external upstream is dark or whose retention sweep is
+switched off still serves every built-in model and the whole console, and taking it out of rotation over any
+of those would be the worse bug.
 
 - `mail`: `provider` (`none` | `console` | `resend` | `smtp`), `state` (`disabled` | `unverified` | `ok` |
   `failing`), `reason` while failing (`unreachable` | `auth_failed` | `rejected` | `error`), `since`. From
@@ -429,6 +450,14 @@ taking it out of rotation over any of those would be the worse bug.
   (`docs/contracts/analytics-events.md`). It is read from the sink the process actually built, not from
   configuration. `dropped` counts events lost since boot — discarded by the disabled sink, refused by
   PostHog, or undeliverable — and is monotonic: read it twice and subtract.
+- `evidenceRetention`: `status` is `enabled` while this process has a sweep timer, `disabled` when
+  `evidence.retentionSweepInterval` is `0ms` — which means archived evidence bundles are kept past the
+  period `/privacy` publishes, so it is a disclosure problem rather than an availability one.
+  `lastSweepAt` is when the last pass finished (null until the first one does, which is within seconds of
+  boot), `stripped` counts snapshots whose `bundle` and `jws` this process removed since boot — digests
+  are kept — and `failed` counts passes that threw. Both counters are monotonic: read them twice and
+  subtract. All four are process-lifetime values and no query, so a public probe cannot turn `/health`
+  into a table scan; the durable record is `evidence_snapshots.payloadStrippedAt`.
 
 **`configured` is not `verified`.** It says a key was present and a sink was built, not that events land in
 a project: PostHog's `/capture/` answers `200` for an `api_key` that belongs to nothing, so a mistyped key
@@ -530,7 +559,7 @@ OpenAI shape, always JSON, always `Content-Type: application/json`:
 | --- | --- | --- |
 | 400 | `invalid_request_error` | `invalid_json`, `missing_field`, `unsupported_parameter`, `context_length_exceeded` |
 | the upstream's own 4xx (`400`, `422`, …) | `invalid_request_error` | `upstream_invalid_request` — see below |
-| 401 | `authentication_error` | `invalid_api_key`, `api_key_revoked`, `api_key_expired` |
+| 401 | `authentication_error` | `invalid_api_key`, `api_key_placeholder`, `api_key_revoked`, `api_key_expired` |
 | 402 | `insufficient_credits` | `insufficient_credits`, `key_spend_limit_reached` |
 | 403 | `permission_error` | `model_not_in_key_scope` |
 | 404 | `invalid_request_error` | `model_not_found`, `not_found` |
@@ -569,11 +598,49 @@ history, so each retry rebuilt the identical invalid request. One truncated
 `tool_calls[].function.arguments` from a client killed the session permanently and the user read it as
 the platform being down.
 
+Every `message` is written to stand on its own, because the status does not always reach the user. An
+IDE that reaches the router through a local bridge can lose it: VS Code's agent host forwards a BYOK
+model failure as a bare message and re-stamps it `502 api_error`, which reads as a model outage and
+earns a client-side retry storm on a request that can never succeed (SUP-326). So every 401 message
+says that nothing was sent to a model, and names the fix; the causes read differently, and none of
+them quotes `sk-tee-v1-…` as the example of a key — that literal is the placeholder the console and
+the docs put in a config file, and quoting it back makes a wrong value look right.
+
+`invalid_api_key` therefore covers two sentences rather than one. **No credential arrived** — no
+header, another scheme, or `Bearer` with nothing after it — is the one a config file produces, and
+it is told as itself: *"No API key was provided"*, naming a secret reference that resolved to
+nothing as the usual reason. A client that holds a key it cannot find sends an empty bearer rather
+than failing locally, so this is what the user sees while being certain they configured a key. **A
+credential arrived and matches nothing** keeps the *"Incorrect API key provided"* wording. The code
+is shared because a caller branching on it is asking one question.
+
+**`api_key_placeholder`** is a credential that was never a key: `sk-tee-v1-…` as it stands in a
+pasted command, or a `${…}` reference forwarded verbatim by a client with no substitution of its
+own. It is *not* the config-file case — the two IDEs these docs wire up both resolve an unknown
+reference to an empty string, and land on `invalid_api_key` above.
+
 The two 5xx upstream codes name different parties, and the difference is the point. **`backend_unavailable`**
 means the backend could not be reached — refused, reset, unresolvable — or answered 5xx itself.
 **`upstream_timeout`** means the router stopped waiting: the upstream took the request and may be generating
 right now, it is simply slower than `connectTimeout + readTimeout` allowed. Retrying the second as-is once
 the queue drains is reasonable; reading it as a sick deployment is not.
+
+**A proxy's 5xx the router retries for the caller, once** (SUP-917). On the **external** leg only, an
+upstream answer of `502`, `503` or `504` in the status line is a proxy in front of the model saying it
+could not deliver the request, so the request goes again before the caller is told anything. Those three
+carry no `usage`, so no retry of them can bill a caller twice; the cost of being wrong is one duplicate
+generation on the serving GPU. `500` is excluded — the model server read the request and failed on it —
+and so is every 4xx (SUP-448). The sidecar's own fail-closed `503 gatekeeper_error` is excluded too: an
+attestation refusal is never retried. The LiteLLM leg is excluded entirely, because nothing proxies it
+and a 5xx there is its own answer about its own upstream.
+
+The retry is bounded. It shares the two-attempt budget with the connection-failure retry, it is armed
+with what remains of the first attempt's `connectTimeout + readTimeout` rather than a fresh one, and it
+is not started unless that remainder can fit another attempt as long as the one that just failed — so a
+retry can never convert a `502` the caller could act on into an `upstream_timeout` that says less. One
+client request still produces exactly one `Generation` row, with the usage counted once; the retry shows
+up in the deployment's log, not in the ledger. A caller who still receives `502 backend_unavailable` has
+therefore had it twice, which is worth knowing before blaming one bad node.
 
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
 ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at
@@ -611,10 +678,30 @@ request may overshoot by its own size, never by more.
 
 ## Metering
 
-Every accepted request creates a `Generation` (see `data-model.md`) at completion (or at abort, with
-what was counted). Debit = `prompt_tokens × pricing.prompt_per_1m_micros / 1e6 + completion_tokens ×
+Every accepted request creates a `Generation` (see `data-model.md`), in two writes:
+
+1. **At admission**, before anything is forwarded: `status: pending`, zero tokens, zero cost.
+2. **At completion** (or at abort, with what was counted): the row is replaced with the outcome, and the
+   debit is written.
+
+Debit = `prompt_tokens × pricing.prompt_per_1m_micros / 1e6 + completion_tokens ×
 pricing.completion_per_1m_micros / 1e6`, rounded up to 1 micro-USD, written as one `CreditTransaction`
-(`kind: usage`, `reference: generationId`).
+(`kind: usage`, `reference: generationId`). Only the second write bills; a `pending` row is never charged.
+
+A request refused *before* admission — bad key, no credit, unknown model, rate limit, a body over the
+ceiling — creates no row at all. The client was told synchronously and nothing was forwarded.
+
+The first write is why a request the router does not live to finish is still visible. Before SUP-423 the
+row was written only at completion, so a restart, an eviction, or an edge that answered the client 502 and
+tore the connection down left no trace whatsoever: on prod, a stream that burned 60 s and failed was
+absent from Logs, from the ledger and from the Activity counters, and the account that paid for the agent
+time had nothing to point at. A row left `pending` longer than `metering.incompleteAfter` (default 15 m)
+is closed by the sweeper as `status: error`, `errorCode: no_response` — the one `errorCode` that is
+metering-only and never appears in an HTTP body, because by definition no response was written.
+
+`no_response` is still not a complete answer to "the platform answered me 502". A 502 raised by a proxy
+*in front of* router-api — an ingress with no healthy endpoint behind it — never reaches this process and
+so cannot be metered by it; that gap is an infrastructure one and lives with SUP-366.
 
 ## Router ↔ LiteLLM
 

@@ -38,9 +38,22 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
   User: { section: 'users', note: 'Read through Better Auth, which owns the table; the entity is a projection.' },
   Workspace: { section: 'workspaces' },
   WorkspaceMember: { section: 'workspaceMembers' },
-  CreditTransaction: { section: 'creditLedger' },
+  CreditTransaction: {
+    section: 'creditLedger',
+    note:
+      'The one section not copied row for row: a per-request `usage` debit names the generation it charged for, ' +
+      'and that row stays behind, so those debits travel as one carried entry per workspace per month instead ' +
+      '(`carryUsageForward`, SUP-446). The total is unchanged; nothing else about an entry is.',
+  },
   InviteCode: { section: 'inviteCodes' },
   InviteRedemption: { section: 'inviteRedemptions', note: 'The salted IP and user-agent digests stay behind.' },
+  InviteCarriedRedemption: {
+    section: 'inviteCarriedRedemptions',
+    note:
+      'Who spent a code on a deployment this one is not (SUP-272), carried on from here so a rebuild does not read ' +
+      'a spent code as spent by nobody — and a redemption whose account this deployment has lost travels as one of ' +
+      'these rather than being dropped (SUP-403).',
+  },
   ApiKey: {
     section: 'apiKeys',
     note: 'Hash included — the key keeps working after the redeploy. See the paragraph in export-bundle.ts.',
@@ -73,8 +86,10 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
   },
   Generation: {
     notCarried:
-      'Metering rows, the one table that grows without bound. Every debit they caused is a `usage` entry in the ' +
-      'credit ledger, which does travel, so balances survive — per-request history does not, and Activity starts empty.',
+      'Metering rows, the one table that grows without bound. Also the one table that *cannot* travel: `modelId` is ' +
+      'NOT NULL against `models`, which each deployment projects from its own `router.yaml` and no bundle carries. ' +
+      'The spend they caused survives as a monthly carried `usage` entry rather than as the per-request debits that ' +
+      'named them (SUP-446), so balances are exact — per-request history is not, and Activity starts empty.',
   },
   ActivityRollup: {
     notCarried:
@@ -105,12 +120,6 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
       'Self-healing state, in other words, and carrying it would carry one deployment’s `failures` counts into ' +
       'another deployment’s timeline. What is lost is the operator’s record of who was unreachable before the ' +
       'cutover; the process log of the old deployment still has it.',
-  },
-  InviteCarriedRedemption: {
-    notCarried:
-      'A redemption that happened on another deployment, recorded here by a codes CSV import (SUP-272). Not carried ' +
-      'yet, and this one is a known gap rather than a decision: SUP-403 adds the section. Until it lands, a rebuild ' +
-      'forgets that a carried code was already spent, and the same code can be redeemed here again.',
   },
 };
 

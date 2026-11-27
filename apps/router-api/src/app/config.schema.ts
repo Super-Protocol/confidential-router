@@ -1,5 +1,6 @@
 import { booleanish, durationMs, integerish, stringArrayish } from '@confidential-router/server-common';
 import { z } from 'zod';
+import { MAX_OPERATOR_CREDIT_MICROS } from './billing/money.js';
 
 /**
  * Runtime shape of `conf/router.yaml`. It is the Zod mirror of
@@ -203,6 +204,34 @@ const EvidenceSchema = z
   .strictObject({
     pollInterval: durationMs('5m'),
     freshnessWindow: durationMs('24h'),
+    /**
+     * How often the retention sweep removes the bundle and JWS of publications
+     * past their holders' `evidenceRetentionDays` (SUP-498).
+     *
+     * Six hours rather than daily: the window is measured in days, so the pass
+     * only has to be frequent enough that a deployment restarted at an awkward
+     * hour still runs one, and often enough that a first-ever pass drains its
+     * backlog in a day rather than a week. `0ms` switches the sweep off, which
+     * makes the deployment publish a period it does not keep — the service says
+     * so at `warn` on every boot.
+     */
+    retentionSweepInterval: durationMs('6h'),
+  })
+  .prefault({});
+
+/**
+ * The meter's one tunable: how long a generation may stay `pending` before
+ * `IncompleteGenerationSweeper` calls it `no_response`.
+ *
+ * Fifteen minutes is deliberately far longer than any generation this router
+ * serves. The cost of being late is that a request the process died under takes
+ * that long to turn from `pending` into an error row; the cost of being early is
+ * marking a live stream failed, which is the mistake SUP-339 was about in a
+ * different place. Set it to `0` to disable the sweep.
+ */
+const MeteringSchema = z
+  .strictObject({
+    incompleteAfter: durationMs('15m'),
   })
   .prefault({});
 
@@ -481,6 +510,27 @@ const BillingSchema = z
      * account gets it at most once (idempotency key `signup:<userId>`).
      */
     signupGrantMicros: integerish().pipe(z.number().int().nonnegative()).prefault(0),
+    /**
+     * Ceiling on the magnitude of one operator credit grant or adjustment
+     * (SUP-406), the same kind of bound `maxTopUpMicros` puts on a checkout:
+     * not a policy on what an operator may grant in total, but the blast radius
+     * of a single call — from a fat finger, or from a stolen operator session.
+     * Defaults to {@link MAX_OPERATOR_CREDIT_MICROS}, the one definition of that
+     * bound, which the console's invitation-issuing guard reads too (SUP-398).
+     */
+    maxCreditGrantMicros: integerish().pipe(z.number().int().positive()).prefault(MAX_OPERATOR_CREDIT_MICROS),
+    /**
+     * Whether `grantCredit` may also *remove* credit — a negative `adjustment`
+     * (SUP-406).
+     *
+     * Off, so the operation a deployment gets by default can only ever add. A
+     * grant that is too large is visible and reversible by the account holder
+     * spending it; a debit is the one direction that takes something away, and a
+     * deployment that wants that available says so rather than arriving at it by
+     * omission. It stays bounded by `maxCreditGrantMicros` and, because
+     * `adjustment` may not overdraw, can never push a balance below zero.
+     */
+    allowCreditDebits: booleanish().prefault(false),
     /** Where Stripe (or the manual provider) sends the browser back after a checkout. */
     checkoutReturnUrl: z.url().prefault('http://localhost:4200/credits'),
     /**
@@ -982,6 +1032,7 @@ export const RouterConfigSchema = z.strictObject({
   models: z.array(ModelSchema).prefault([]),
   evidence: EvidenceSchema,
   externalEndpoints: ExternalEndpointsSchema,
+  metering: MeteringSchema,
   rateLimits: RateLimitsSchema,
   auth: AuthSchema,
   mail: MailSchema,

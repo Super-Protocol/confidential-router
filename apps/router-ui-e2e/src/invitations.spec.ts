@@ -1,5 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, type TestInfo, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { signIn, viewerIsAdmin } from './fixtures';
 import { API_ORIGIN } from './origins';
 
@@ -9,19 +9,6 @@ import { API_ORIGIN } from './origins';
  * the other admin screens to. The live round trip (issue → redeem → see it) is
  * `cross-app.spec.ts`; this one is the screen against fixtures.
  */
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
-
-async function blockingViolations(page: Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-  return results.violations
-    .filter((violation) => BLOCKING_IMPACTS.has(violation.impact ?? ''))
-    .map((violation) => ({
-      id: violation.id,
-      help: violation.help,
-      nodes: violation.nodes.map((node) => node.target.join(' ')),
-    }));
-}
-
 /** A screenshot kept with the run's output — what a PR for this screen shows a reviewer. */
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const path = testInfo.outputPath(`${name}.png`);
@@ -52,6 +39,7 @@ const INVITATION_OPERATIONS = {
         __typename: 'InviteTotals',
         issued: 51,
         redeemed: 3,
+        carried: 1,
         withdrawn: 1,
         redemptionRate: 3 / 51,
         grantedMicros: '300000000',
@@ -73,8 +61,13 @@ const INVITATION_OPERATIONS = {
           campaign: 'launch-2026-10',
           issued: 50,
           redeemed: 3,
+          // One of the three arrived with a codes CSV import (SUP-396), so the
+          // screenshot shows the imported share the way an operator sees it.
+          carried: 1,
           redemptionRate: 0.06,
           activated: 2,
+          codeGrantMicrosMin: '100000000',
+          codeGrantMicrosMax: '100000000',
           grantedMicros: '300000000',
         },
         {
@@ -82,8 +75,11 @@ const INVITATION_OPERATIONS = {
           campaign: 'vip',
           issued: 1,
           redeemed: 0,
+          carried: 0,
           redemptionRate: 0,
           activated: 0,
+          codeGrantMicrosMin: '500000000',
+          codeGrantMicrosMax: '500000000',
           grantedMicros: '0',
         },
       ],
@@ -139,6 +135,20 @@ const INVITATION_OPERATIONS = {
       ],
     },
   },
+  GrantCredit: (variables: Record<string, unknown>) => ({
+    grantCredit: {
+      __typename: 'CreditGrant',
+      creditTransactionId: 'tx-1',
+      workspaceId: 'ws-2',
+      accountEmail: null,
+      kind: (variables.input as Record<string, unknown>).kind ?? 'GRANT',
+      amountMicros: (variables.input as Record<string, unknown>).amountMicros,
+      balanceMicros: '140000000',
+      note: (variables.input as Record<string, unknown>).note ?? null,
+      replayed: false,
+      createdAt: '2026-10-19T12:00:00.000Z',
+    },
+  }),
   AdminSignUps: {
     adminSignUps: {
       __typename: 'AdminSignUpPage',
@@ -154,6 +164,9 @@ const INVITATION_OPERATIONS = {
           inviteCode: CODE,
           campaign: 'launch-2026-10',
           redeemedAt: '2026-10-09T09:00:00.000Z',
+          apiKeys: { __typename: 'AccountApiKeys', total: 3, live: 2, lastUsedAt: '2026-10-18T09:00:00.000Z' },
+          workspaceId: 'ws-2',
+          balanceMicros: '40000000',
         },
         {
           __typename: 'AdminSignUp',
@@ -165,8 +178,20 @@ const INVITATION_OPERATIONS = {
           inviteCode: null,
           campaign: null,
           redeemedAt: null,
+          apiKeys: { __typename: 'AccountApiKeys', total: 0, live: 0, lastUsedAt: null },
+          workspaceId: 'ws-1',
+          balanceMicros: '0',
         },
       ],
+    },
+  },
+  AdminApiKeyPopulation: {
+    adminApiKeyPopulation: {
+      __typename: 'ApiKeyPopulation',
+      keys: 9,
+      liveKeys: 7,
+      accountsHoldingLiveKey: 5,
+      liveKeysWithoutAccount: 1,
     },
   },
 };
@@ -194,6 +219,44 @@ test.describe('the Invitations section', () => {
     await expect(page.getByRole('button', { name: 'Issue codes' })).toHaveCount(0);
   });
 
+  /**
+   * SUP-396. The Statistics tab used to read `Redeemed 0 · Rate 0%` for a campaign
+   * whose redemptions had arrived with a codes CSV import, while the Codes tab
+   * showed the same codes as used — the one screen an owner judges a launch on.
+   */
+  test('reads an imported redemption as redeemed, and names the imported share', async ({
+    page,
+    baseURL,
+  }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+
+    const row = page.getByRole('table', { name: 'Campaigns' }).getByRole('row', { name: /launch-2026-10/ });
+    await expect(row).toContainText('(1 imported)');
+    await expect(row).not.toContainText('0%');
+    await expect(page.getByText('Includes 1 imported')).toBeVisible();
+    await shot(page, testInfo, 'invitations-statistics-imported');
+  });
+
+  test('reads a code\u2019s face value beside what the campaign has paid out', async ({ page, baseURL }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+
+    // The tile over a cumulative figure says cumulative (SUP-390).
+    await expect(page.getByText('Credit paid out')).toBeVisible();
+    await expect(page.getByText('Credit granted', { exact: true })).toHaveCount(0);
+    await shot(page, testInfo, 'statistics-credit-tile');
+
+    const campaigns = page.getByRole('table', { name: 'Campaigns' });
+    await expect(campaigns.getByRole('columnheader', { name: 'Per code' })).toBeVisible();
+    await expect(campaigns.getByRole('columnheader', { name: 'Paid out' })).toBeVisible();
+    // One code issued under `vip`, nobody has redeemed it: $0 paid out, $500 of
+    // face value — which is what the operator in SUP-389 could not see.
+    const vip = campaigns.getByRole('row', { name: /vip/ });
+    await expect(vip.getByRole('cell').nth(5)).toHaveText('$500');
+    await expect(vip.getByRole('cell').nth(6)).toHaveText('$0');
+    await campaigns.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, 'statistics-campaign-credit');
+  });
+
   test('masks every code until an operator reveals one', async ({ page, baseURL }) => {
     await openAsAdmin(page, baseURL as string);
     await page.getByRole('tab', { name: 'Codes' }).click();
@@ -203,6 +266,30 @@ test.describe('the Invitations section', () => {
     await expect(table).not.toContainText(CODE);
     await table.getByRole('button', { name: 'Reveal code ABCD-••••-••••' }).click();
     await expect(table).toContainText(CODE);
+  });
+
+  /**
+   * SUP-454: before this, no supported surface told an operator which accounts
+   * hold a key, so a rebuild's blast radius could only be inferred from the
+   * credit ledger. What the screen must show is counts — and nothing a
+   * screenshot of it could be used to authenticate with.
+   */
+  test('says which accounts hold a live key, and how many the deployment has', async ({ page, baseURL }, testInfo) => {
+    await openAsAdmin(page, baseURL as string);
+    await page.getByRole('tab', { name: 'Sign-ups' }).click();
+
+    await expect(page.getByTestId('api-key-population')).toContainText(
+      '5 accounts hold a live API key — 7 live of 9 ever issued.',
+    );
+    await expect(page.getByTestId('api-key-population')).toContainText(
+      '1 live key is held by no account this deployment can name',
+    );
+
+    const table = page.getByRole('table', { name: 'Sign-ups' });
+    await expect(table.getByRole('row').filter({ hasText: 'dev@example.com' })).toContainText('2 live of 3');
+    await expect(table.getByRole('row').filter({ hasText: 'admin@example.com' })).not.toContainText('live');
+    await expect(table).not.toContainText('sk-tee');
+    await shot(page, testInfo, 'sign-ups-credentials');
   });
 
   test('exports what the Codes tab shows, and imports a CSV only after its dry run is confirmed', async ({
@@ -281,6 +368,54 @@ test.describe('the Invitations section', () => {
     await shot(page, testInfo, 'import-applied');
   });
 
+  test('credits an account from the accounts list, and says what the balance became', async ({
+    page,
+    baseURL,
+  }, testInfo) => {
+    // Observed rather than intercepted: `signIn` installs its own `**/graphql`
+    // route, and a second route registered before it would never run.
+    const calls: Record<string, unknown>[] = [];
+    page.on('request', (request) => {
+      if (!request.url().startsWith(`${API_ORIGIN}/graphql`)) return;
+      const body = request.postDataJSON() as { operationName?: string; variables?: Record<string, unknown> };
+      if (body?.operationName === 'GrantCredit') {
+        calls.push(body.variables?.input as Record<string, unknown>);
+      }
+    });
+
+    await openAsAdmin(page, baseURL as string);
+    await page.getByRole('tab', { name: 'Sign-ups' }).click();
+
+    const table = page.getByRole('table', { name: 'Sign-ups' });
+    const row = table.getByRole('row', { name: /dev@example\.com/ });
+    await expect(row).toContainText('$40.00');
+    await shot(page, testInfo, 'sign-ups-tab-balances');
+
+    await row.getByRole('button', { name: 'Credit' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('They hold $40.00 today');
+    await dialog.getByLabel('Amount (USD)').fill('100');
+    await dialog.getByLabel('Reason').fill('Internal tester top-up');
+    await shot(page, testInfo, 'grant-credit-dialog');
+
+    await dialog.getByRole('button', { name: 'Grant credit' }).click();
+
+    await expect(dialog.getByTestId('grant-credit-done')).toContainText(
+      '$100 added to dev@example.com. Their balance is now $140.00.',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      workspaceId: 'ws-2',
+      kind: 'GRANT',
+      amountMicros: '100000000',
+      note: 'Internal tester top-up',
+    });
+    // Minted in the browser when the dialog opened, so the value is the
+    // console's rather than the test's; what matters is that one was sent.
+    expect(calls[0]?.requestId).toMatch(/^[A-Za-z0-9_.-]+$/);
+    await shot(page, testInfo, 'grant-credit-done');
+  });
+
   for (const theme of ['dark', 'light'] as const) {
     test(`has no serious axe violations on any tab, or in the issue dialog, in ${theme} mode`, async ({
       page,
@@ -296,16 +431,26 @@ test.describe('the Invitations section', () => {
 
       await page.getByRole('tab', { name: 'Sign-ups' }).click();
       await expect(page.getByRole('table', { name: 'Sign-ups' })).toBeVisible();
+      await expect(page.getByTestId('api-key-population')).toBeVisible();
       expect(await blockingViolations(page)).toEqual([]);
+
+      await page
+        .getByRole('table', { name: 'Sign-ups' })
+        .getByRole('row', { name: /dev@example\.com/ })
+        .getByRole('button', { name: 'Credit' })
+        .click();
+      const credit = page.getByRole('dialog');
+      await expect(credit).toBeVisible();
+      await credit.evaluate((element) =>
+        Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
+      );
+      expect(await blockingViolations(page)).toEqual([]);
+      await page.keyboard.press('Escape');
+      await expect(credit).toBeHidden();
 
       await page.getByRole('button', { name: 'Issue codes' }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      // Audited once the open animation has finished: mid-fade, every colour in
-      // the dialog is a blend with the overlay and fails contrast for a frame.
-      await dialog.evaluate((element) =>
-        Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
-      );
       expect(await blockingViolations(page)).toEqual([]);
     });
   }

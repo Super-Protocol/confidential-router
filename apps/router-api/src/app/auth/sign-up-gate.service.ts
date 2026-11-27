@@ -100,7 +100,14 @@ export class SignUpGate {
     if (!reason) {
       return true;
     }
-    this.logger.log(`Sign-up mail withheld: ${signUpRefusalCodeOf(reason)} (${reason}).`);
+    // The only line this event gets, and the only one that says *which*
+    // refusal it was. `MailService.recordWithheld('no_invitation')` counts the
+    // same event for `mailDelivery` and deliberately logs nothing, so grepping
+    // this phrase counts each withheld send once (SUP-462).
+    this.logger.log(
+      `Sign-up mail withheld: ${signUpRefusalCodeOf(reason)} (${reason}). The route answered as if it had ` +
+        'sent, by design; the count is on `mailDelivery`.',
+    );
     return false;
   }
 

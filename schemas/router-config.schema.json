@@ -280,6 +280,11 @@
           "$ref": "#/$defs/duration",
           "default": "24h",
           "description": "Snapshots older than this render as STALE."
+        },
+        "retentionSweepInterval": {
+          "$ref": "#/$defs/duration",
+          "default": "6h",
+          "description": "How often archived evidence bundles past UserPreferences.evidenceRetentionDays are removed, keeping their digests. 0ms switches the sweep off, which makes the deployment keep bundles past the period /privacy publishes."
         }
       }
     },
@@ -352,6 +357,17 @@
           "$ref": "#/$defs/duration",
           "default": "120s",
           "description": "Longest gap between chunks from an external upstream before the stream is abandoned. Separate from backends.litellm.readTimeout: the patience an external model deserves is a property of that model and of the network between two clouds, not of this deployment's own workers."
+        }
+      }
+    },
+    "metering": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "incompleteAfter": {
+          "$ref": "#/$defs/duration",
+          "default": "15m",
+          "description": "How long a generation may stay pending before it is closed as error / no_response. A generations row is written when a request is admitted and replaced when it ends; a request the router does not survive (restart, eviction, an edge that answered the client 502) never gets that second write, and this is how long the sweeper waits before calling it. Must stay longer than the longest generation this deployment serves. 0 disables the sweep."
         }
       }
     },
@@ -612,6 +628,17 @@
           "minimum": 0,
           "default": 0,
           "description": "Credit every new account receives at registration, in micro-USD, as a ledger grant referenced 'signup' (once per account). Stacks with an invitation grant. 0 disables."
+        },
+        "maxCreditGrantMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000000000,
+          "description": "Ceiling on the magnitude of one operator credit grant or adjustment (grantCredit), in micro-USD. The blast radius of a single call, the way maxTopUpMicros bounds one checkout."
+        },
+        "allowCreditDebits": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether grantCredit may also remove credit — a negative adjustment. Off, so the operation a deployment gets by default can only ever add. Even when on, an adjustment may not overdraw, so a balance cannot go below zero."
         },
         "checkoutReturnUrl": {
           "type": "string",

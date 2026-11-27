@@ -32,6 +32,10 @@ type verdict struct {
 	// Leaf is the TLS certificate the verification observed. Every proxied
 	// connection is held to it.
 	Leaf string
+	// epoch is the configuration this verdict was formed against — see
+	// [endpoint.verifierEpoch]. A verdict whose epoch a reload has left behind
+	// is neither installed nor reused (SUP-442).
+	epoch int
 }
 
 // denial renders the verdict as the `stage: reason` pair the 503 body and the
@@ -120,7 +124,18 @@ type endpoint struct {
 	// verification that completes after its listener was stopped belongs to the
 	// previous generation and is discarded rather than installed.
 	generation int
-	bindErr    string
+	// verifierEpoch counts the configurations this endpoint has been verified
+	// under: [Supervisor.Reload] bumps it for every endpoint that survives the
+	// reload. A verification that completes after it was bumped was formed
+	// against the trust store and the policy set the reload replaced, so its
+	// answer is discarded and asked again rather than installed (SUP-442).
+	//
+	// It is deliberately not `generation`, whose documented meaning is "the
+	// times this endpoint has been started" — a reload that keeps a listener
+	// running starts nothing, and overloading the field would make every
+	// generation guard say something it does not mean.
+	verifierEpoch int
+	bindErr       string
 	// serveErr is why the listener died on its own: Serve returned something
 	// other than the shutdown sentinel. Separate from bindErr because the two
 	// say different things to an operator — "the address was taken" against
@@ -150,6 +165,10 @@ type endpoint struct {
 	// join the verification already running instead of starting another.
 	attesting  bool
 	attestDone chan struct{}
+	// attestEpoch is the epoch the verification in flight was formed against,
+	// so a caller joining it can tell in advance that its answer is already
+	// destined to be discarded and ask the question itself instead.
+	attestEpoch int
 }
 
 func newEndpoint(sup *Supervisor, spec config.Endpoint, tuning config.Tuning) (*endpoint, error) {
@@ -165,7 +184,7 @@ func newEndpoint(sup *Supervisor, spec config.Endpoint, tuning config.Tuning) (*
 		hostname:     hostname,
 		port:         port,
 		tuning:       tuning,
-		admittedPool: newPool(hostname, port, sup.opts.Dial),
+		admittedPool: newAdmittedPool(hostname, port, sup.opts.Dial),
 		openPool:     newPool(hostname, port, sup.opts.Dial),
 		firstVerdict: make(chan struct{}),
 		wanted:       true,
@@ -502,54 +521,119 @@ func (e *endpoint) armNext(delay time.Duration) {
 // a burst of handshakes against the upstream — `verdictCacheTtl` for a
 // connection whose certificate did not match, [onDemandRetry] for a request
 // that met a denial.
+//
+// It loops because a reload can land while the check is in flight: the answer
+// that came back describes a trust store and a policy set that are no longer in
+// force, so it is dropped and the question asked again against the ones that
+// are (SUP-442). Each pass is driven by a reload that actually happened, so the
+// loop terminates as soon as the configuration stops moving.
 func (e *endpoint) attest(ctx context.Context, reuse time.Duration) *verdict {
-	e.mu.Lock()
-	if reuse > 0 && e.verdict != nil && e.sup.now().Sub(e.verdict.At) < reuse {
-		current := e.verdict
-		e.mu.Unlock()
-		return current
-	}
-	if e.attesting {
-		// Someone else is already asking the same question of the same host.
-		waiting := e.attestDone
-		e.mu.Unlock()
-		select {
-		case <-waiting:
-		case <-ctx.Done():
+	for {
+		e.mu.Lock()
+		// A verdict the reload left behind is not young, however recently it
+		// was formed: reuse is about sparing the upstream a handshake, and the
+		// question this one answered is not the question being asked.
+		if reuse > 0 && e.verdict != nil && e.verdict.epoch == e.verifierEpoch &&
+			e.sup.now().Sub(e.verdict.At) < reuse {
+			current := e.verdict
+			e.mu.Unlock()
+			return current
 		}
-		return e.current()
-	}
-	e.attesting = true
-	e.attestDone = make(chan struct{})
-	done, generation := e.attestDone, e.generation
-	e.mu.Unlock()
+		if e.attesting {
+			// Someone else is already asking the same question of the same host
+			// — unless a reload has moved on since that check began, in which
+			// case its answer will be discarded and joining it would hand back
+			// a verdict the reload invalidated. Wait for it either way, so two
+			// checks never run against one upstream at once, and then ask
+			// again.
+			waiting, superseded := e.attestDone, e.attestEpoch != e.verifierEpoch
+			e.mu.Unlock()
+			select {
+			case <-waiting:
+			case <-ctx.Done():
+				return e.current()
+			}
+			if superseded && ctx.Err() == nil {
+				continue
+			}
+			return e.current()
+		}
+		e.attesting = true
+		e.attestDone = make(chan struct{})
+		e.attestEpoch = e.verifierEpoch
+		done, generation, epoch := e.attestDone, e.generation, e.verifierEpoch
+		e.mu.Unlock()
 
-	result := e.verify(ctx)
+		result := e.verify(ctx)
+		result.epoch = epoch
 
-	e.mu.Lock()
-	if e.generation != generation {
-		// The listener was stopped while this verification was in flight. Its
-		// answer describes an endpoint that no longer exists.
+		e.mu.Lock()
+		if e.generation != generation {
+			// The listener was stopped while this verification was in flight. Its
+			// answer describes an endpoint that no longer exists.
+			e.attesting = false
+			e.mu.Unlock()
+			close(done)
+			return result
+		}
+		if e.verifierEpoch != epoch {
+			// A reload replaced the trust store and the policy set under this
+			// check. Installing its verdict now would enforce the superseded
+			// configuration — a withdrawn root still trusted, or a freshly
+			// granted one still refused — for as long as the verdict stood,
+			// and leave the endpoint reporting a reason naming a trust list
+			// that no longer exists (SUP-442).
+			e.attesting = false
+			e.mu.Unlock()
+			close(done)
+			if ctx.Err() != nil {
+				// Nobody is waiting for a better answer any more.
+				return result
+			}
+			continue
+		}
+		previous := e.verdict
+		// The data plane moves first, under the same hold of e.mu that publishes
+		// the verdict. Otherwise there is a window in which a reader of e.current()
+		// — a single-flight waiter returning from here, a first-request waiter
+		// released by firstVerdict, or any concurrent request — sees an admitted
+		// verdict while the admitted pool is still pinned to whatever the previous
+		// denial left it at. Such a request would be forwarded over a connection
+		// the pool was never holding to the attested leaf, and recorded as `allow`;
+		// and the re-pin that followed would sweep that connection out from under
+		// it mid-response (SUP-428). Publishing after the pin leaves no such
+		// window: by the time a verdict is visible, the pool already matches it.
+		e.movePool(result)
+		e.verdict = result
+		e.lastAttestAt = result.At
 		e.attesting = false
+		first := e.firstVerdict
+		select {
+		case <-first: // already closed
+		default:
+			close(first)
+		}
 		e.mu.Unlock()
 		close(done)
+
+		e.reportVerdict(previous, result)
 		return result
 	}
-	previous := e.verdict
-	e.verdict = result
-	e.lastAttestAt = result.At
-	e.attesting = false
-	first := e.firstVerdict
-	select {
-	case <-first: // already closed
-	default:
-		close(first)
-	}
-	e.mu.Unlock()
-	close(done)
+}
 
-	e.applyVerdict(previous, result)
-	return result
+// supersede retires every verdict formed against the configuration this
+// endpoint was verified under until now, including one whose check is still in
+// flight: [endpoint.attest] drops such an answer on its way back in and asks
+// the question again (SUP-442).
+//
+// It does not clear the verdict in force. A reload that added a trusted root
+// must not drop the traffic a verdict already admits — the endpoint keeps
+// serving on it until the re-verification [Supervisor.Reload] forces lands,
+// which is the whole reason the listener survives a reload at all.
+func (e *endpoint) supersede() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.verifierEpoch++
 }
 
 // verify runs the verification seam and turns whatever came back into a
@@ -625,23 +709,43 @@ func (e *endpoint) retryDenied(ctx context.Context, current *verdict) *verdict {
 	return current
 }
 
-// applyVerdict moves the data plane to a new verdict: it re-pins the connection
-// pool, closes what the new verdict no longer covers, and reports the change.
-func (e *endpoint) applyVerdict(previous, current *verdict) {
+// movePool moves the data plane onto a new verdict: it re-pins the admitted
+// connection pool and closes what the new verdict no longer covers.
+//
+// Called with e.mu held, so that the move and the verdict it belongs to become
+// visible together — see the comment at the call site in [endpoint.attest] for
+// why the order matters. Taking pool.mu under endpoint.mu is the lock order
+// [endpoint.release] already establishes, and nothing the pool does reaches back
+// into the endpoint: [pool.forget], which a Close calls into, takes pool.mu
+// alone, and setPin closes outside its own hold for exactly that reason.
+//
+// It has to stay quick, because every reader of the verdict is waiting on the
+// same lock. The sweep is what could have been slow, and [discardAll] is why it
+// is not: a revoked connection's socket is dropped rather than shut down
+// politely. The sweep cannot be deferred past the publish instead — the
+// transport's idle pool is not pin-aware, so a connection left in it is one a
+// newly admitted request could ride under the pin it was just revoked from.
+func (e *endpoint) movePool(current *verdict) {
 	if current.Admitted {
 		// Pinning to the observed leaf is what makes the verdict a statement
 		// about a channel rather than about a hostname. setPin closes every
 		// connection opened under the previous leaf.
 		e.admittedPool.setPin(current.Leaf)
-	} else {
-		e.admittedPool.setPin("")
-		if e.tuning.FailMode == config.FailClosed {
-			// ADR-003 §7: a flip to deny under fail-closed takes down the
-			// connections already carrying traffic, not just the next request.
-			e.admittedPool.closeAll()
-		}
+		return
 	}
+	e.admittedPool.setPin("")
+	if e.tuning.FailMode == config.FailClosed {
+		// ADR-003 §7: a flip to deny under fail-closed takes down the
+		// connections already carrying traffic, not just the next request.
+		e.admittedPool.closeAll()
+	}
+}
 
+// reportVerdict records a new verdict everywhere an operator reads one:
+// metrics, the log, the audit log and the status snapshot. It runs after
+// [endpoint.movePool] has moved the data plane and the verdict is published,
+// because none of it is on the admission path and all of it takes other locks.
+func (e *endpoint) reportVerdict(previous, current *verdict) {
 	result := "admitted"
 	if !current.Admitted {
 		result = current.Stage

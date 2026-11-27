@@ -80,12 +80,28 @@ export class ExternalUpstreamClient {
       // is the whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
       responseTimeoutMs: this.config.externalEndpoints.connectTimeout + this.config.externalEndpoints.readTimeout,
       signal: request.signal,
-      onRetry: (attempt, attempts) =>
+      // This leg, and only this leg (SUP-917): an external endpoint is reached
+      // through another deployment's gateway and ingress, and a 5xx those write
+      // is a statement about the path rather than about the model. See
+      // `UpstreamCall.retryProxyFailure`.
+      retryProxyFailure: true,
+      onRetry: (attempt, attempts, cause) =>
         // The address, never the key: this line goes to the same log an operator
         // reads, and `url` is a loopback port.
+        //
+        // The two causes are named apart on purpose, and the status is carried
+        // with the proxy one (SUP-917). A 5xx here did not come from the sidecar
+        // — it relayed one from a proxy in front of the upstream — so saying the
+        // listener refused the connection would send an operator to the wrong
+        // hop's logs. One request, one retry, one log line: the generation row is
+        // opened before this leg is called and settled after it, so an operator
+        // reading a single row can still see it took two attempts.
         this.logger.warn(
-          `The egress sidecar listener for "${endpoint.name}" (${url}) did not accept the connection ` +
-            `(attempt ${attempt}/${attempts}); retrying.`,
+          cause.kind === 'proxy-failure'
+            ? `A proxy in front of external endpoint "${endpoint.name}" answered ${cause.status} ` +
+                `(attempt ${attempt}/${attempts}); nothing was relayed, retrying.`
+            : `The egress sidecar listener for "${endpoint.name}" (${url}) did not accept the connection ` +
+                `(attempt ${attempt}/${attempts}); retrying.`,
         ),
     });
   }
@@ -154,7 +170,7 @@ export class ExternalUpstreamClient {
    * Why an external stream died mid-flight, by asking the only party that knows.
    *
    * A withdrawn verdict takes the connection down under fail-closed
-   * (`applyVerdict` → `closeAll` in `pkg/proxy/endpoint.go`), and on the wire that
+   * (`movePool` → `closeAll` in `pkg/proxy/endpoint.go`), and on the wire that
    * is indistinguishable from an upstream crash: the response was a 200 long ago,
    * so there is no status code left to carry the reason. The sidecar's `/verdicts`
    * is where the reason still exists, and this is the one place that reads it

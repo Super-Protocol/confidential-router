@@ -84,8 +84,8 @@ async function countOversized(queryRunner: QueryRunner, table: string, column: s
  * `ExternalGenerationEndpoint1759500000000` refuses rather than inventing or
  * deleting a metered request.
  */
-export class ExternalEndpointReasonText1760600000000 implements MigrationInterface {
-  name = 'ExternalEndpointReasonText1760600000000';
+export class ExternalEndpointReasonText1761200000000 implements MigrationInterface {
+  name = 'ExternalEndpointReasonText1761200000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await retype(queryRunner, 'external_endpoints', 'lastReason', true);

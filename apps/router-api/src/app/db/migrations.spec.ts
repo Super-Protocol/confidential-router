@@ -46,6 +46,21 @@ afterEach(() => {
 });
 
 /**
+ * Whether one named index exists, read back from the live schema.
+ *
+ * Through TypeORM's table introspection for the same reason {@link isNullable}
+ * is: the migration is written against the dialect-neutral `Table` API, so the
+ * assertion has to read the same on both dialects.
+ */
+async function hasIndex(queryRunner: QueryRunner, table: string, name: string): Promise<boolean> {
+  const found = await queryRunner.getTable(table);
+  if (!found) {
+    throw new Error(`${table} does not exist, so nothing can be concluded about its indices.`);
+  }
+  return found.indices.some((index) => index.name === name);
+}
+
+/**
  * One column, read back from the live schema.
  *
  * Through TypeORM's own table introspection rather than `PRAGMA` or
@@ -245,7 +260,8 @@ describe('SQLite', () => {
 
       // SUP-243 widened the two verdict-reason columns to `text`; the first undo
       // narrows both back and touches nothing else. First because this migration
-      // is numbered last — a migration is appended, never inserted.
+      // is numbered last — it was renumbered past the four `main` took during
+      // review, because a migration is appended, never inserted.
       expect(await columnType(queryRunner, 'external_endpoints', 'lastReason')).toBe('text');
       expect(await columnType(queryRunner, 'external_endpoint_events', 'reason')).toBe('text');
       await dataSource.undoLastMigration();
@@ -257,8 +273,55 @@ describe('SQLite', () => {
       expect(await queryRunner.hasColumn('external_endpoints', 'lastStage')).toBe(true);
       expect(await queryRunner.hasColumn('external_endpoint_events', 'evidenceDigest')).toBe(true);
 
-      // SUP-517's failure-run columns are five additive columns on one table; the
-      // next undo drops only those.
+      // SUP-298 adds one index and nothing else; the next undo drops it and
+      // leaves the indices that were already on the table.
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        true,
+      );
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        false,
+      );
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId')).toBe(true);
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_identity')).toBe(true);
+
+      // SUP-423's partial index over the pending generations is next; the undo
+      // drops that one index and leaves the two the Logs and Activity queries
+      // run on.
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(false);
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_workspaceId_createdAt')).toBe(true);
+
+      // SUP-406's operator column is one additive column; the next undo drops
+      // only that and leaves the ledger it hangs off.
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(false);
+      expect(await queryRunner.hasColumn('credit_transactions', 'idempotencyKey')).toBe(true);
+
+      // SUP-498 makes the evidence retention window enforceable: the two
+      // documents it governs come off NOT NULL, `payloadStrippedAt` records when
+      // the sweep took them, and the holder lookup gets its two indexes on
+      // `generations`. Fifth now that SUP-406's column, SUP-423's index,
+      // SUP-298's index and SUP-243's two `text` columns are appended after it.
+      // The undo can only restore the NOT NULLs on a database the sweep has not
+      // run on yet, which is this one.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(false);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(false);
+      expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(false);
+      // The identity indices survive the SQLite column rebuild, which is the
+      // half of this migration that could have taken them with it.
+      expect(await queryRunner.hasColumn('evidence_snapshots', 'evidenceDigest')).toBe(true);
+      // And the holder indexes go with it, off a table the rebuild never touched.
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_evidenceSnapshotId')).toBe(false);
+
+      // SUP-517's failure-run columns are five additive columns on one table;
+      // the next undo drops only those.
       expect(await queryRunner.hasColumn('external_endpoints', 'consecutiveFailures')).toBe(true);
       await dataSource.undoLastMigration();
       for (const column of [
