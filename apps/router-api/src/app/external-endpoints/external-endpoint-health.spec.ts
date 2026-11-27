@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ExternalEndpointHealth } from './external-endpoint-health.js';
-import type { EndpointLiveness } from './external-endpoint-liveness.js';
+import type { CatalogueDarkness, CatalogueReach, EndpointLiveness } from './external-endpoint-liveness.js';
 
 const READ = new Date('2026-10-24T12:00:00.000Z');
 
@@ -19,6 +19,24 @@ function serving(name: string): EndpointLiveness {
   };
 }
 
+/** What a pass publishes about the catalogue, with one upstream's worth of models. */
+function reach(routable: number, overrides: Partial<CatalogueReach> = {}): CatalogueReach {
+  return {
+    routable,
+    models: 1,
+    routableModels: routable,
+    disabled: 0,
+    awaitingKey: 0,
+    darkness: { dark: false, since: null, outage: false },
+    ...overrides,
+  };
+}
+
+/** A deployment holding a model it routes to nothing, as `darknessOf` reports it. */
+function dark(since: Date, outage: boolean): CatalogueDarkness {
+  return { dark: true, since, outage };
+}
+
 describe('ExternalEndpointHealth', () => {
   it('answers none before anything has been published', () => {
     // A process that has not reached the first reset yet. `none` with a zero
@@ -28,7 +46,7 @@ describe('ExternalEndpointHealth', () => {
 
   it('reports the count from the rows and the timestamp from the sidecar read', () => {
     const health = new ExternalEndpointHealth();
-    health.report([serving('a')], READ, 1);
+    health.report([serving('a')], READ, reach(1));
 
     expect(health.status()).toMatchObject({
       status: 'ok',
@@ -46,8 +64,8 @@ describe('ExternalEndpointHealth', () => {
     // stays, because the two readers disagreeing has to be visible — and one
     // word, not two numbers — in the document an operator opens during an outage.
     const health = new ExternalEndpointHealth();
-    health.report([serving('a')], READ, 0);
-    health.report([serving('a')], READ, 0);
+    health.report([serving('a')], READ, reach(0));
+    health.report([serving('a')], READ, reach(0));
 
     expect(health.status()).toMatchObject({ status: 'outage', serving: 1, routable: 0 });
   });
@@ -59,13 +77,13 @@ describe('ExternalEndpointHealth', () => {
     // Reporting that as `outage` would fire on exactly the window an operator
     // watches `routable == serving` to confirm this fix worked.
     const health = new ExternalEndpointHealth();
-    health.report([serving('a')], READ, 1);
+    health.report([serving('a')], READ, reach(1));
 
-    health.report([serving('a')], READ, 0);
+    health.report([serving('a')], READ, reach(0));
     expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 0 });
 
     // …and the next pass finds the two agreeing again, so nothing was ever said.
-    health.report([serving('a')], READ, 1);
+    health.report([serving('a')], READ, reach(1));
     expect(health.status()).toMatchObject({ status: 'ok', serving: 1, routable: 1 });
   });
 
@@ -75,10 +93,27 @@ describe('ExternalEndpointHealth', () => {
     // it would answer "when did we last hear from the sidecar" with "never",
     // which is false and strictly less useful.
     const health = new ExternalEndpointHealth();
-    health.report([serving('a')], READ, 1);
+    health.report([serving('a')], READ, reach(1));
 
-    health.report([serving('a')], null, 1);
+    health.report([serving('a')], null, reach(1));
 
     expect(health.status().verdictsReadAt).toBe(READ.toISOString());
+  });
+
+  it('publishes the switched-off rows no liveness can carry', () => {
+    // SUP-879. Every endpoint is off, so `livenesses` is empty and `registered`
+    // is 0 — and this document used to stop there, reporting `none` for a
+    // deployment that advertises a model and serves nothing.
+    const health = new ExternalEndpointHealth();
+    health.report([], READ, reach(0, { disabled: 1, awaitingKey: 1, darkness: dark(READ, true) }));
+
+    expect(health.status()).toMatchObject({
+      status: 'outage',
+      registered: 0,
+      disabled: 1,
+      awaitingKey: 1,
+      models: 1,
+      routableModels: 0,
+    });
   });
 });

@@ -17,6 +17,9 @@ import { GenerationClient1760200000000 } from './1760200000000-GenerationClient.
 import { MailAddressStates1760400000000 } from './1760400000000-MailAddressStates.js';
 import { ExternalEndpointLiveness1760500000000 } from './1760500000000-ExternalEndpointLiveness.js';
 import { EvidenceRetentionSweep1760600000000 } from './1760600000000-EvidenceRetentionSweep.js';
+import { CreditGrantOperator1760700000000 } from './1760700000000-CreditGrantOperator.js';
+import { PendingGenerationIndex1760800000000 } from './1760800000000-PendingGenerationIndex.js';
+import { EvidenceSnapshotsByIssuedAt1761000000000 } from './1761000000000-EvidenceSnapshotsByIssuedAt.js';
 import { DataImports1761100000000 } from './1761100000000-DataImports.js';
 
 /**
@@ -45,5 +48,8 @@ export const MIGRATIONS = [
   MailAddressStates1760400000000,
   ExternalEndpointLiveness1760500000000,
   EvidenceRetentionSweep1760600000000,
+  CreditGrantOperator1760700000000,
+  PendingGenerationIndex1760800000000,
+  EvidenceSnapshotsByIssuedAt1761000000000,
   DataImports1761100000000,
 ];

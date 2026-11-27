@@ -234,7 +234,7 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
     detail(`trusted     measurement ${STAND_MEASUREMENT}`);
     await pinExternalEndpointDigest(stand.admin, registered.id, seen.evidenceDigestSeen ?? '');
     detail(`pinned      deployment ${seen.evidenceDigestSeen}`);
-    const verified = await waitForExternalStatus(stand.admin, registered.id, [EXTERNAL_VERIFIED]);
+    const verified = await waitForExternalStatus(stand.admin, registered.id, { status: [EXTERNAL_VERIFIED] });
     detail(`verdict     ${verified.status} — measurement seen ${verified.measurementSeen}`);
     expect(await listsModel(stack, EXTERNAL_MODEL), 'a verified external endpoint should put its model in /v1/models');
 
@@ -256,7 +256,7 @@ export async function runStory(options: StoryOptions = {}): Promise<StoryResult>
     const rotatedMeasurement = stand.sidecar.rotateMeasurement();
     detail(`was  ${before}`);
     detail(`now  ${rotatedMeasurement}`);
-    const externalDenied = await waitForExternalStatus(stand.admin, registered.id, [EXTERNAL_DENIED]);
+    const externalDenied = await waitForExternalStatus(stand.admin, registered.id, { status: [EXTERNAL_DENIED] });
     // `lastReason` already opens with the stage that reached it.
     detail(`verdict     ${externalDenied.status} — ${externalDenied.lastReason}`);
     expect(

@@ -691,15 +691,24 @@ export async function waitForRelayedBundle(apiBaseUrl: string, endpointName: str
  * projection of the sidecar's `/verdicts` into the database, and that projection
  * — not the gatekeeper's own log line — is what every screen and `/v1/models`
  * read (ADR-008 §6).
+ *
+ * A status alone is the whole row's current state and says nothing about which
+ * check produced it, so a wait placed after a change can be satisfied by the
+ * verdict that change invalidated. Pass `since` — `Date.now()` taken right
+ * after the change — whenever the status being waited for is one the previous
+ * beat could also have shown: a regression then fails on the wait, loudly,
+ * rather than on an expectation three lines later that reads as a defect
+ * somewhere else (SUP-442).
  */
 export async function waitForExternalStatus(
   session: ConsoleSession,
   id: string,
-  wanted: readonly string[],
+  { status, since }: { status: readonly string[]; since?: number },
 ): Promise<RegisteredExternalEndpoint> {
   return waitForExternal(session, id, {
-    until: (endpoint) => wanted.includes(endpoint.status),
-    wanted: `one of ${wanted.join(' / ')}`,
+    until: (endpoint) => status.includes(endpoint.status),
+    wanted: `one of ${status.join(' / ')}`,
+    since,
   });
 }
 

@@ -7,6 +7,7 @@ import { routerConfig, serviceVersion } from '../config.js';
 import { ApiKey } from '../db/entities/api-key.entity.js';
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
+import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { Model } from '../db/entities/model.entity.js';
@@ -28,6 +29,7 @@ const isoOf = (value: Date): string => value.toISOString();
 const isoOrNull = (value: Date | null): string | null => (value ? value.toISOString() : null);
 const microsOf = (value: number): string => String(value);
 const microsOrNull = (value: number | null): string | null => (value === null ? null : String(value));
+const compare = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
 
 /**
  * Writes the deployment export (SUP-271).
@@ -77,14 +79,16 @@ export class DataExportService {
 
   private async read(now: Date): Promise<ExportData> {
     const order = { createdAt: 'ASC', id: 'ASC' } as const;
-    const [users, workspaces, members, ledger, codes, redemptions, keys, endpoints, models, measurements] =
+    const redeemedOrder = { redeemedAt: 'ASC', id: 'ASC' } as const;
+    const [users, workspaces, members, ledger, codes, redemptions, carried, keys, endpoints, models, measurements] =
       await Promise.all([
         this.auth.listUsers(),
         this.dataSource.getRepository(Workspace).find({ order }),
         this.dataSource.getRepository(WorkspaceMember).find({ order: { createdAt: 'ASC', workspaceId: 'ASC' } }),
         this.dataSource.getRepository(CreditTransaction).find({ order }),
         this.dataSource.getRepository(InviteCode).find({ order }),
-        this.dataSource.getRepository(InviteRedemption).find({ order: { redeemedAt: 'ASC', id: 'ASC' } }),
+        this.dataSource.getRepository(InviteRedemption).find({ order: redeemedOrder }),
+        this.dataSource.getRepository(InviteCarriedRedemption).find({ order: redeemedOrder }),
         this.dataSource.getRepository(ApiKey).find({ order }),
         this.dataSource.getRepository(ExternalEndpoint).find({ order }),
         this.dataSource.getRepository(Model).find({ where: { origin: 'external' }, order: { id: 'ASC' } }),
@@ -99,8 +103,11 @@ export class DataExportService {
     // re-derives for it (SUP-309).
     const bootstrapId = users.find((user) => user.email.trim().toLowerCase() === bootstrapEmail)?.id ?? null;
     // A membership or redemption whose account is gone points at nothing; the
-    // import would refuse a bundle that carried one.
+    // import would refuse a bundle that carried one. `invite_redemptions` takes
+    // no foreign key on `user` (ADR-004 §3), so such a row can really be here.
     const known = new Set(users.map((user) => user.id));
+    const live = redemptions.filter((row) => known.has(row.userId));
+    const accountless = redemptions.filter((row) => !known.has(row.userId));
 
     return {
       users: users.map((user) => ({
@@ -148,6 +155,7 @@ export class DataExportService {
           reference: entry.reference,
           description: entry.description,
           idempotencyKey: entry.idempotencyKey,
+          grantedByUserId: entry.grantedByUserId,
           createdAt: isoOf(entry.createdAt),
         })),
         sourceLabelOf(this.config.server.publicBaseUrl),
@@ -168,16 +176,49 @@ export class DataExportService {
       })),
       // The salted IP and user-agent digests stay behind: they are abuse-review
       // data keyed to this deployment's salt, and mean nothing under another.
-      inviteRedemptions: redemptions
-        .filter((row) => known.has(row.userId))
-        .map((row) => ({
+      inviteRedemptions: live.map((row) => ({
+        id: row.id,
+        inviteCodeId: row.inviteCodeId,
+        userId: row.userId,
+        workspaceId: row.workspaceId,
+        creditTransactionId: row.creditTransactionId,
+        redeemedAt: isoOf(row.redeemedAt),
+      })),
+      // Who spent a code somewhere else, carried here by a codes CSV import and
+      // carried on from here (SUP-403). Without this section `redemptionCount`
+      // travels and the redeemers do not, so every carried code on the restored
+      // deployment reads as spent by nobody — and the loss compounds with each
+      // rebuild, because this is the only record there is of them.
+      //
+      // A redemption whose account this export cannot carry degrades into one
+      // rather than being dropped: no credit can follow an account that is gone,
+      // but that the seat was taken is still true, and it is what makes
+      // `redemptionCount` add up on the other side. Its own id comes with it, so
+      // a second export of the same row is the same row — and an import into a
+      // deployment that still holds the live row recognises it by that id
+      // instead of recording the redemption twice (`planImport`).
+      inviteCarriedRedemptions: [
+        ...carried.map((row) => ({
           id: row.id,
           inviteCodeId: row.inviteCodeId,
-          userId: row.userId,
-          workspaceId: row.workspaceId,
-          creditTransactionId: row.creditTransactionId,
+          email: row.email,
           redeemedAt: isoOf(row.redeemedAt),
+          importedAt: isoOf(row.importedAt),
         })),
+        ...accountless.map((row) => ({
+          id: row.id,
+          inviteCodeId: row.inviteCodeId,
+          // The account is gone from this deployment; there is no address left to name.
+          email: null,
+          redeemedAt: isoOf(row.redeemedAt),
+          // Nowhere to read an arrival from: this row was never imported, it has
+          // been here since it was redeemed. Not the export instant — every
+          // other field in `data` comes from the database, and one that did not
+          // would give an unchanged deployment a different `contentSha256` on
+          // every export.
+          importedAt: isoOf(row.redeemedAt),
+        })),
+      ].sort((left, right) => compare(left.redeemedAt, right.redeemedAt) || compare(left.id, right.id)),
       // The credential, as stored: a hash nobody can read a key out of, and the
       // limit, counter and revocation that say what the key may still do. Every
       // column of the table is here on purpose (`bundle-coverage.ts`).

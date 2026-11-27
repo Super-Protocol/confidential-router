@@ -138,6 +138,17 @@ export class ExternalCatalogService {
    */
   private admitting = new Set<string>();
   /**
+   * Enabled external models registered here, routable or not — **including** the
+   * ones on a switched-off endpoint, which the maps above all drop (SUP-879).
+   *
+   * Kept because it is the denominator of the one question none of them can
+   * answer: whether this deployment has models it is failing to serve. `0`
+   * routable models is nothing to report on a router with no external models and
+   * a dark `/v1` on a router that has them, and the rebuild below is already
+   * holding the rows that tell the two apart.
+   */
+  private registered = 0;
+  /**
    * The refreshes in flight, serialised.
    *
    * {@link refresh} reads the rows and then assigns the maps, so two overlapping
@@ -241,6 +252,16 @@ export class ExternalCatalogService {
     return this.admitting.size;
   }
 
+  /** {@link registered} — every enabled external model row, whatever its endpoint's switch. */
+  registeredModels(): number {
+    return this.registered;
+  }
+
+  /** How many of those `/v1/models` lists right now. `list().length` without the copy. */
+  routableModels(): number {
+    return this.models.size;
+  }
+
   /** One rebuild. Call {@link refresh}; this is the body it serialises. */
   private async rebuild(): Promise<number> {
     const rows = await this.dataSource.getRepository(Model).find({
@@ -303,6 +324,9 @@ export class ExternalCatalogService {
     this.models = models;
     this.unadmitted = unadmitted;
     this.catalogue = catalogue;
+    // The rows as read, before the endpoint filter above drops the ones whose
+    // upstream is switched off: `/health` needs to know they exist (SUP-879).
+    this.registered = rows.length;
     this.admitting = new Set(
       [...endpoints.values()].filter((endpoint) => endpoint.status === 'verified').map((endpoint) => endpoint.id),
     );

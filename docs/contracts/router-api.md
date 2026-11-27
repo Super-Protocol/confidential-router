@@ -381,6 +381,14 @@ signature whichever copy it got.
 Returns the `Generation` record (tokens, cost, model, endpoint, timings, `evidence_digest`) for a
 generation owned by the key's workspace. Never any content.
 
+**`status` may be `pending`, and then the record is not final.** A row exists from the moment the
+request is admitted (see *Metering*), so a client that polls this route while the generation is still
+running — or in the window between the last byte of a stream and the close, which is exactly when a
+client polls — gets `200` with `status: "pending"`, `cost_micros: 0`, `total_tokens: 0`, `latency_ms: 0`.
+Those zeros are "not known yet", not "free". **Reconcile only on `ok`, `error` or `aborted`**; on
+`pending`, poll again. Before SUP-423 this route answered `404` until the meter had settled, so a client
+written against the old behaviour must treat `pending` the way it used to treat that `404`.
+
 ### `GET /health`
 
 Liveness, a real database round-trip, and the state of the three subsystems that can fail without anyone
@@ -617,6 +625,23 @@ means the backend could not be reached — refused, reset, unresolvable — or a
 right now, it is simply slower than `connectTimeout + readTimeout` allowed. Retrying the second as-is once
 the queue drains is reasonable; reading it as a sick deployment is not.
 
+**A proxy's 5xx the router retries for the caller, once** (SUP-917). On the **external** leg only, an
+upstream answer of `502`, `503` or `504` in the status line is a proxy in front of the model saying it
+could not deliver the request, so the request goes again before the caller is told anything. Those three
+carry no `usage`, so no retry of them can bill a caller twice; the cost of being wrong is one duplicate
+generation on the serving GPU. `500` is excluded — the model server read the request and failed on it —
+and so is every 4xx (SUP-448). The sidecar's own fail-closed `503 gatekeeper_error` is excluded too: an
+attestation refusal is never retried. The LiteLLM leg is excluded entirely, because nothing proxies it
+and a 5xx there is its own answer about its own upstream.
+
+The retry is bounded. It shares the two-attempt budget with the connection-failure retry, it is armed
+with what remains of the first attempt's `connectTimeout + readTimeout` rather than a fresh one, and it
+is not started unless that remainder can fit another attempt as long as the one that just failed — so a
+retry can never convert a `502` the caller could act on into an `upstream_timeout` that says less. One
+client request still produces exactly one `Generation` row, with the usage counted once; the retry shows
+up in the deployment's log, not in the ledger. A caller who still receives `502 backend_unavailable` has
+therefore had it twice, which is worth knowing before blaming one bad node.
+
 `gatekeeper_error` used to be emitted by the **gatekeeper** and never by the router. That changed with
 ADR-008: for a model on an **external endpoint** — one in another deployment, registered by an admin at
 runtime — the router *is* a gatekeeper, and says so in the same vocabulary a client already branches on.
@@ -653,10 +678,30 @@ request may overshoot by its own size, never by more.
 
 ## Metering
 
-Every accepted request creates a `Generation` (see `data-model.md`) at completion (or at abort, with
-what was counted). Debit = `prompt_tokens × pricing.prompt_per_1m_micros / 1e6 + completion_tokens ×
+Every accepted request creates a `Generation` (see `data-model.md`), in two writes:
+
+1. **At admission**, before anything is forwarded: `status: pending`, zero tokens, zero cost.
+2. **At completion** (or at abort, with what was counted): the row is replaced with the outcome, and the
+   debit is written.
+
+Debit = `prompt_tokens × pricing.prompt_per_1m_micros / 1e6 + completion_tokens ×
 pricing.completion_per_1m_micros / 1e6`, rounded up to 1 micro-USD, written as one `CreditTransaction`
-(`kind: usage`, `reference: generationId`).
+(`kind: usage`, `reference: generationId`). Only the second write bills; a `pending` row is never charged.
+
+A request refused *before* admission — bad key, no credit, unknown model, rate limit, a body over the
+ceiling — creates no row at all. The client was told synchronously and nothing was forwarded.
+
+The first write is why a request the router does not live to finish is still visible. Before SUP-423 the
+row was written only at completion, so a restart, an eviction, or an edge that answered the client 502 and
+tore the connection down left no trace whatsoever: on prod, a stream that burned 60 s and failed was
+absent from Logs, from the ledger and from the Activity counters, and the account that paid for the agent
+time had nothing to point at. A row left `pending` longer than `metering.incompleteAfter` (default 15 m)
+is closed by the sweeper as `status: error`, `errorCode: no_response` — the one `errorCode` that is
+metering-only and never appears in an HTTP body, because by definition no response was written.
+
+`no_response` is still not a complete answer to "the platform answered me 502". A 502 raised by a proxy
+*in front of* router-api — an ingress with no healthy endpoint behind it — never reaches this process and
+so cannot be metered by it; that gap is an infrastructure one and lives with SUP-366.
 
 ## Router ↔ LiteLLM
 

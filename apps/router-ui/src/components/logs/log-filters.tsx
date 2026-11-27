@@ -30,7 +30,7 @@ export interface LogFiltersProps {
 }
 
 const SORT_FIELDS: GenerationSortField[] = ['CREATED_AT', 'COST', 'LATENCY', 'TOTAL_TOKENS'];
-const STATUSES: GenerationStatus[] = ['OK', 'ERROR', 'ABORTED'];
+const STATUSES: GenerationStatus[] = ['OK', 'ERROR', 'ABORTED', 'PENDING'];
 
 /**
  * `id` is the control the caption labels. It is omitted for the range toggle,

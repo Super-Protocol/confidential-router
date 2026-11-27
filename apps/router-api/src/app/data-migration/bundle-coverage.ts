@@ -47,6 +47,13 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
   },
   InviteCode: { section: 'inviteCodes' },
   InviteRedemption: { section: 'inviteRedemptions', note: 'The salted IP and user-agent digests stay behind.' },
+  InviteCarriedRedemption: {
+    section: 'inviteCarriedRedemptions',
+    note:
+      'Who spent a code on a deployment this one is not (SUP-272), carried on from here so a rebuild does not read ' +
+      'a spent code as spent by nobody — and a redemption whose account this deployment has lost travels as one of ' +
+      'these rather than being dropped (SUP-403).',
+  },
   ApiKey: {
     section: 'apiKeys',
     note: 'Hash included — the key keeps working after the redeploy. See the paragraph in export-bundle.ts.',
@@ -120,12 +127,6 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
       'not data of anyone\u2019s: carrying it would tell a new deployment it had already imported a file it has ' +
       'never seen, and that record is exactly what decides whether a second import may keep local rows. It starts ' +
       'empty on every deployment, and the first import writes its first row.',
-  },
-  InviteCarriedRedemption: {
-    notCarried:
-      'A redemption that happened on another deployment, recorded here by a codes CSV import (SUP-272). Not carried ' +
-      'yet, and this one is a known gap rather than a decision: SUP-403 adds the section. Until it lands, a rebuild ' +
-      'forgets that a carried code was already spent, and the same code can be redeemed here again.',
   },
 };
 

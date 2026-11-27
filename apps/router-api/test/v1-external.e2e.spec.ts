@@ -11,7 +11,11 @@ import { EvidenceSnapshot } from '../src/app/db/entities/evidence-snapshot.entit
 import { ExternalEndpoint, type ExternalEndpointStatus } from '../src/app/db/entities/external-endpoint.entity.js';
 import { Generation } from '../src/app/db/entities/generation.entity.js';
 import { Model } from '../src/app/db/entities/model.entity.js';
-import { ExternalCatalogService, ExternalEndpointStatusService } from '../src/app/external-endpoints/index.js';
+import {
+  ExternalCatalogService,
+  ExternalEndpointAdminService,
+  ExternalEndpointStatusService,
+} from '../src/app/external-endpoints/index.js';
 import { EvidenceExportService } from '../src/app/preferences/evidence-export.service.js';
 import { SecretEnvelopeService } from '../src/app/secrets/index.js';
 import { createHarness, type Harness, listen } from './app-harness.js';
@@ -396,6 +400,63 @@ describe('a verified external endpoint', () => {
   });
 });
 
+/**
+ * Rotation, judged on the wire rather than in the row (SUP-527).
+ *
+ * The row was never the question: the admin service sealed the new key correctly
+ * all along. What the production incident cost twenty minutes of was the
+ * credential the *next request* carried — the egress leg builds its header from
+ * `ExternalCatalogService`'s cached ciphertext, so a rotation that did not
+ * republish left the router presenting the old key to the upstream on every
+ * completion, with the endpoint still reporting `verified` and the mutation still
+ * reporting success. Hence a test the only honest place for: against the mock
+ * sidecar's recorded `Authorization`.
+ */
+describe('rotating a verified endpoint’s upstream key (SUP-527)', () => {
+  const ROTATED_KEY = 'sk-partner-upstream-rotated-9876';
+
+  it('the next completion carries the new credential', async () => {
+    const endpoint = await register('rotating-cloud');
+    await chat(endpoint.modelId).expect(200);
+    expect(sidecar.requests.at(-1)?.authorization).toBe(`Bearer ${UPSTREAM_KEY}`);
+
+    await harness.app.get(ExternalEndpointAdminService).rotateKey(endpoint.id, ROTATED_KEY);
+
+    await chat(endpoint.modelId).expect(200);
+    expect(sidecar.requests.at(-1)?.authorization).toBe(`Bearer ${ROTATED_KEY}`);
+    // And the old one is not still in reach of a later request.
+    const sent = sidecar.requests
+      .filter((entry) => entry.endpoint === endpoint.name)
+      .map((entry) => entry.authorization);
+    expect(sent).toEqual([`Bearer ${UPSTREAM_KEY}`, `Bearer ${ROTATED_KEY}`]);
+  });
+
+  it('re-pinning the digest it already holds rebuilds the catalogue too', async () => {
+    const endpoint = await register('refresh-lever-cloud');
+    const admin = harness.app.get(ExternalEndpointAdminService);
+    const pin = `sha256/${Buffer.alloc(32, 5).toString('base64url')}`;
+    await admin.pinDigest(endpoint.id, pin);
+    // A key that moved without the catalogue hearing about it — the state the
+    // bug left behind. The operator's natural "force a refresh" lever has to be
+    // the thing that fixes it, which it was not: the no-op pin returned the row
+    // and did nothing.
+    await rotateCiphertextOnly(endpoint.id, ROTATED_KEY);
+
+    await admin.pinDigest(endpoint.id, pin);
+
+    await chat(endpoint.modelId).expect(200);
+    expect(sidecar.requests.at(-1)?.authorization).toBe(`Bearer ${ROTATED_KEY}`);
+  });
+});
+
+/** Re-seals the row's upstream key without publishing — what the catalogue cannot see on its own. */
+async function rotateCiphertextOnly(id: string, apiKey: string): Promise<void> {
+  const sealed = harness.app.get(SecretEnvelopeService).seal(apiKey, id);
+  await dataSource()
+    .getRepository(ExternalEndpoint)
+    .update({ id }, { apiKeyCiphertext: sealed.ciphertext, apiKeyPrefix: sealed.prefix });
+}
+
 describe('an external endpoint with no verdict admitting it', () => {
   it('refuses with 503 attestation_failed and sends nothing upstream', async () => {
     const endpoint = await register('pending-cloud', { status: 'pending', admitted: false });
@@ -471,6 +532,66 @@ describe('an admitted external endpoint whose upstream calls the request invalid
       .getRepository(Generation)
       .findOneOrFail({ where: { modelId: endpoint.modelId }, order: { createdAt: 'DESC' } });
     expect(row).toMatchObject({ status: 'error', errorCode: 'upstream_invalid_request', costMicros: 0 });
+  });
+});
+
+describe('a proxy in front of an admitted upstream answering 502 (SUP-917)', () => {
+  /*
+   * The measured failure: one node of the upstream's cloud could not deliver the
+   * request and minted a 502 after 60 s, while the model server's own log shows
+   * it never received it. `postToUpstream` sends it once more — and the two
+   * things that must not change when it does are what this suite is for: the
+   * client sees one ordinary completion, and Logs sees **one** row with the usage
+   * counted once.
+   */
+  let endpoint: Registered;
+
+  beforeAll(async () => {
+    endpoint = await register('proxy-flaky-cloud');
+  });
+
+  beforeEach(() => {
+    sidecar.behaviour.set(endpoint.name, 'proxy-failure-once');
+  });
+
+  it('serves the completion the second attempt produced, in the ordinary shape', async () => {
+    const response = await chat(endpoint.modelId).expect(200);
+
+    expect(response.body.model).toBe(endpoint.modelId);
+    expect(response.body.choices).toEqual(COMPLETION_BODY.choices);
+    // Two requests reached the upstream, which is the retry, and both carried the
+    // injected credential rather than only the first.
+    const forwarded = sidecar.requests.filter((entry) => entry.endpoint === endpoint.name);
+    expect(forwarded).toHaveLength(2);
+    expect(forwarded.map((entry) => entry.authorization)).toEqual([`Bearer ${UPSTREAM_KEY}`, `Bearer ${UPSTREAM_KEY}`]);
+  });
+
+  it('leaves one generation row, with the usage counted once', async () => {
+    const before = await dataSource().getRepository(Generation).count();
+
+    const response = await chat(endpoint.modelId).expect(200);
+
+    // One row for one client request: the retry happens below the recorder, which
+    // opens at admission and settles once (SUP-423).
+    expect(await dataSource().getRepository(Generation).count()).toBe(before + 1);
+    const generation = await generationOf(response.body.id);
+    expect(generation).toMatchObject({ status: 'ok', externalEndpointId: endpoint.id, errorCode: null });
+    // The discarded 502 carried no usage, so there is nothing of it to add: the
+    // cost is exactly one generation's, which is what stops a caller being
+    // billed for a failure that never produced tokens.
+    expect(generation.costMicros).toBe(STREAM_USAGE.prompt_tokens + STREAM_USAGE.completion_tokens);
+    expect(response.body.usage.cost_micros).toBe(STREAM_USAGE.prompt_tokens + STREAM_USAGE.completion_tokens);
+  });
+
+  it('does the same on a streamed request, where the status line is already gone', async () => {
+    const { response, chunks } = await streamed(endpoint.modelId);
+
+    expect(response.status).toBe(200);
+    // Shaped the way the leg always shapes a relayed stream: the retry is
+    // invisible above the seam.
+    expect(chunks.filter((chunk) => 'choices' in chunk)).toHaveLength(STREAM_CHUNKS.length);
+    expect(chunks.some((chunk) => 'error' in chunk)).toBe(false);
+    expect(sidecar.requests.filter((entry) => entry.endpoint === endpoint.name)).toHaveLength(2);
   });
 });
 

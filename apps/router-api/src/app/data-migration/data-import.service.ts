@@ -9,6 +9,7 @@ import { ApiKey } from '../db/entities/api-key.entity.js';
 import { CreditTransaction } from '../db/entities/credit-transaction.entity.js';
 import { DataImport } from '../db/entities/data-import.entity.js';
 import { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
+import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { Model } from '../db/entities/model.entity.js';
@@ -180,6 +181,7 @@ export class DataImportService {
       ledger,
       inviteCodes,
       redemptions,
+      carriedRedemptions,
       apiKeys,
       externalEndpoints,
       models,
@@ -222,6 +224,7 @@ export class DataImportService {
         },
       }),
       repository(InviteRedemption).find({ select: { id: true, userId: true } }),
+      repository(InviteCarriedRedemption).find({ select: { id: true } }),
       repository(ApiKey).find({
         select: {
           id: true,
@@ -285,6 +288,7 @@ export class DataImportService {
         note: row.note,
       })),
       redemptions,
+      carriedRedemptions,
       apiKeys: apiKeys.map((row) => ({
         id: row.id,
         keyHash: row.keyHash,
@@ -367,6 +371,7 @@ export class DataImportService {
         reference: entry.reference,
         description: entry.description,
         idempotencyKey: entry.idempotencyKey,
+        grantedByUserId: entry.grantedByUserId,
         createdAt: dateOf(entry.createdAt),
       })),
     );
@@ -401,6 +406,21 @@ export class DataImportService {
         ipHash: null,
         userAgentHash: null,
         redeemedAt: dateOf(row.redeemedAt),
+      })),
+    );
+
+    // After the codes they belong to: the row's only foreign key is to one.
+    await insert(
+      manager,
+      InviteCarriedRedemption,
+      writes.inviteCarriedRedemptions.map((row) => ({
+        id: row.id,
+        inviteCodeId: row.inviteCodeId,
+        email: row.email,
+        redeemedAt: dateOf(row.redeemedAt),
+        // The instant it first left the deployment it was redeemed on, not this
+        // import's: it is part of the record, like `redeemedAt`.
+        importedAt: dateOf(row.importedAt),
       })),
     );
 

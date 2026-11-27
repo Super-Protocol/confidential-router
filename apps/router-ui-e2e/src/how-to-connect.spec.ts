@@ -1,5 +1,5 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { blockingViolations } from './axe';
 import { DEPLOYMENT_DIGEST_HEX, type GraphQLFixtures, mockClipboard, signIn } from './fixtures';
 import { API_ORIGIN } from './origins';
 
@@ -34,13 +34,6 @@ const OPERATIONS: GraphQLFixtures = {
     models: [{ __typename: 'Model', id: 'meta/llama-3.3-70b-instruct:tdx', name: 'Llama 3.3 70B', available: true }],
   },
 };
-
-async function seriousViolations(page: import('@playwright/test').Page) {
-  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-  return results.violations
-    .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
-    .map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`);
-}
 
 test.describe('How to connect', () => {
   test('is where the old Gatekeeper route lands', async ({ page, baseURL }) => {
@@ -118,6 +111,12 @@ test.describe('How to connect', () => {
     await card.getByRole('tab', { name: 'VS Code' }).click();
     const vscode = card.getByTestId('wiring-snippet-vscode');
     await expect(vscode).toContainText('"vendor": "customendpoint"');
+    // SUP-326: VS Code resolves this file's `apiKey` against its own secret
+    // storage, so a key written here authenticates nothing. The entry carries
+    // the reference Update API Key writes, and never the key itself — not even
+    // the prefix the other four tabs show.
+    await expect(vscode).toContainText('chat.lm.secret');
+    await expect(vscode).not.toContainText('sk-tee-v1');
     await expect(vscode).toContainText('http://127.0.0.1:8787/v1/chat/completions');
     await expect(vscode).toContainText('meta/llama-3.3-70b-instruct:tdx');
 
@@ -140,6 +139,6 @@ test.describe('How to connect', () => {
     await expect(page.getByRole('row', { name: /production-agent/ })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'How to connect' })).toBeVisible();
 
-    expect(await seriousViolations(page)).toEqual([]);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 });

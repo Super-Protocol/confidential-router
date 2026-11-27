@@ -164,6 +164,16 @@ const CreditEntrySchema = z.object({
   reference: z.string().max(128).nullable(),
   description: z.string().max(512).nullable(),
   idempotencyKey: z.string().min(1).max(128),
+  /**
+   * The operator who wrote the entry by hand, when one did (SUP-406). Carried so
+   * "who granted this" survives the redeploy the bundle *is* — without it the
+   * ledger answers until the next restore and `null` for ever after (SUP-398).
+   *
+   * Optional with a null default, so a bundle written before the column existed
+   * still reads: that is what the paragraph on {@link EXPORT_SCHEMA_VERSION}
+   * means by an additive field.
+   */
+  grantedByUserId: id.nullable().default(null),
   createdAt: iso,
 });
 
@@ -190,6 +200,31 @@ const InviteRedemptionSchema = z.object({
   workspaceId: id,
   creditTransactionId: id,
   redeemedAt: iso,
+});
+
+/**
+ * A redemption that happened on another deployment and was carried here by a
+ * codes CSV import (SUP-272) — the record of *who* spent a code whose
+ * `redemptionCount` the bundle already carries (SUP-403).
+ *
+ * Optional, with an empty default, so a bundle written before this section
+ * existed still reads: that is what the paragraph on {@link
+ * EXPORT_SCHEMA_VERSION} means by an additive field. A build that does not know
+ * the section drops it, exactly as it does today.
+ */
+const InviteCarriedRedemptionSchema = z.object({
+  id,
+  inviteCodeId: id,
+  /** Lower case. Null when the deployment the record came from had already lost the account. */
+  email: z.string().min(3).max(320).nullable(),
+  /** When it was redeemed on the deployment it happened on. */
+  redeemedAt: iso,
+  /**
+   * When it first arrived on a deployment that is not the one it happened on.
+   * Equal to `redeemedAt` for a row that never travelled — a redemption the
+   * export degraded because its account was gone (`DataExportService`).
+   */
+  importedAt: iso,
 });
 
 /**
@@ -273,6 +308,7 @@ const DataSchema = z.object({
   creditLedger: z.array(CreditEntrySchema),
   inviteCodes: z.array(InviteCodeSchema),
   inviteRedemptions: z.array(InviteRedemptionSchema),
+  inviteCarriedRedemptions: z.array(InviteCarriedRedemptionSchema).default([]),
   // Defaulted, not optional: a bundle written before this section existed reads
   // as "no keys" rather than as a malformed file. See EXPORT_SCHEMA_VERSION.
   apiKeys: z.array(ApiKeySchema).default([]),
@@ -292,6 +328,7 @@ const CountsSchema = z.object({
   inviteCodes: z.number().int(),
   inviteCodesUnredeemed: z.number().int(),
   inviteRedemptions: z.number().int(),
+  inviteCarriedRedemptions: z.number().int().default(0),
   /** Defaulted for the same reason the section is, so an older file still adds up. */
   apiKeys: z.number().int().default(0),
   apiKeysLive: z.number().int().default(0),
@@ -370,6 +407,7 @@ export function countsOf(data: ExportData): ExportCounts {
     inviteCodes: data.inviteCodes.length,
     inviteCodesUnredeemed: data.inviteCodes.filter((code) => code.status === 'unredeemed').length,
     inviteRedemptions: data.inviteRedemptions.length,
+    inviteCarriedRedemptions: data.inviteCarriedRedemptions.length,
     apiKeys: data.apiKeys.length,
     // The number that matters to a reader: a revoked key is carried for the
     // generations metered against it, not for anyone to authenticate with.
@@ -498,6 +536,10 @@ export function carryUsageForward(entries: readonly ExportedCreditEntry[], sourc
           (absorbed > 0 ? ', plus usage carried from an earlier migration' : '') +
           '. The per-request log stayed on the deployment that served it.',
         idempotencyKey: key,
+        // Null, because this row is the export's own arithmetic rather than
+        // anybody's decision — which is exactly what the column means by null
+        // (SUP-406). The debits it collapses were metered, never hand-written.
+        grantedByUserId: null,
         createdAt: lastAt,
       };
     });

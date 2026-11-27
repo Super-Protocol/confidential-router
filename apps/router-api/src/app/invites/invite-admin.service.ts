@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, type SelectQueryBuilder } from 'typeorm';
+import { type ApiKeyCensus, ApiKeyCensusService, NO_API_KEYS, whereHoldsLiveApiKey } from '../api-keys/index.js';
 import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
 import { InviteCode } from '../db/entities/invite-code.entity.js';
 import { InviteRedemption } from '../db/entities/invite-redemption.entity.js';
 import { User } from '../db/entities/user.entity.js';
+import { Workspace } from '../db/entities/workspace.entity.js';
+import { WorkspaceMember } from '../db/entities/workspace-member.entity.js';
 import { InviteAttributionService, type UserInviteAttribution } from './invite-attribution.service.js';
 import { type GeneratedInvite, type GenerateInvitesRequest, generateInvites } from './invite-generator.js';
 
@@ -56,6 +59,22 @@ export interface AdminSignUp {
   origin: SignUpOrigin;
   /** Present exactly when `origin` is `invite`. */
   invite: UserInviteAttribution | null;
+  /**
+   * The account's `/v1` credentials, as counts (SUP-454). Zeros for an account
+   * that has never made one.
+   */
+  apiKeys: ApiKeyCensus;
+  /**
+   * The balance of the workspace this account owns, in micro-USD — null when it
+   * owns none.
+   *
+   * On the account list because this is where an operator decides whether to
+   * credit somebody (SUP-406): "who has run out" is the question that sends them
+   * here, and answering it from the Credits screen would mean signing in as the
+   * tester.
+   */
+  workspaceId: string | null;
+  balanceMicros: number | null;
 }
 
 export interface Page<T> {
@@ -72,6 +91,12 @@ export interface InviteCodeFilter {
 
 export interface SignUpFilter {
   origin?: SignUpOrigin | null;
+  /**
+   * `true`: only accounts holding a key that still authenticates; `false`: only
+   * accounts holding none; `null`/absent: every account. With `true`, the page's
+   * `totalCount` is what a key-affecting change would cut off (SUP-454).
+   */
+  holdsLiveApiKey?: boolean | null;
   offset: number;
   limit: number;
 }
@@ -94,6 +119,7 @@ export class InviteAdminService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly attribution: InviteAttributionService,
+    private readonly apiKeys: ApiKeyCensusService,
   ) {}
 
   /**
@@ -166,12 +192,17 @@ export class InviteAdminService {
   }
 
   /**
-   * Every account, newest first, with how it came to exist.
+   * Every account, newest first, with how it came to exist and what it holds.
    *
    * `bootstrapEmail` is `auth.bootstrapEmail`; see {@link bootstrapAccountId} for
    * why that address is what identifies the operator's own account.
+   *
+   * This is the deployment's only list of accounts, which is why the credential
+   * census rides along (SUP-454): "which accounts here hold a live key" has no
+   * other supported answer, and the console's own `apiKeys(workspaceId)` refuses
+   * an operator who is not a member of the workspace being asked about.
    */
-  async signUps(filter: SignUpFilter, bootstrapEmail: string): Promise<Page<AdminSignUp>> {
+  async signUps(filter: SignUpFilter, bootstrapEmail: string, now: Date = new Date()): Promise<Page<AdminSignUp>> {
     const bootstrapId = await this.bootstrapAccountId(bootstrapEmail);
     const query = this.dataSource
       .getRepository(User)
@@ -194,6 +225,9 @@ export class InviteAdminService {
         query.andWhere('account.id <> :bootstrapId', { bootstrapId });
       }
     }
+    if (filter.holdsLiveApiKey !== undefined && filter.holdsLiveApiKey !== null) {
+      whereHoldsLiveApiKey(query, { accountAlias: 'account', holds: filter.holdsLiveApiKey, now });
+    }
 
     const [accounts, totalCount] = await query
       .orderBy('account.createdAt', 'DESC')
@@ -202,20 +236,75 @@ export class InviteAdminService {
       .take(filter.limit)
       .getManyAndCount();
 
-    const invites = await this.attribution.forUsers(accounts.map((account) => account.id));
+    const ids = accounts.map((account) => account.id);
+    const invites = await this.attribution.forUsers(ids);
+    const apiKeys = await this.apiKeys.forUsers(ids, now);
+    const balances = await this.balancesOf(ids);
     return {
       totalCount,
       nodes: accounts.map((account) => {
         const invite = invites.get(account.id) ?? null;
+        const balance = balances.get(account.id) ?? null;
         return {
           userId: account.id,
           email: account.email,
           createdAt: account.createdAt,
           origin: signUpOrigin(account.id, invite !== null, bootstrapId),
           invite,
+          apiKeys: apiKeys.get(account.id) ?? NO_API_KEYS,
+          workspaceId: balance?.workspaceId ?? null,
+          balanceMicros: balance?.balanceMicros ?? null,
         };
       }),
     };
+  }
+
+  /**
+   * The workspace each of these accounts owns, with its balance, keyed by user.
+   *
+   * The *oldest* owned workspace, which is the one the console opens on
+   * (`WorkspaceScopeService.defaultForUser`) and the only one a personal account
+   * has — so the two surfaces name the same balance. One query per page rather
+   * than per row, like every other enrichment here.
+   */
+  private async balancesOf(
+    userIds: readonly string[],
+  ): Promise<Map<string, { workspaceId: string; balanceMicros: number }>> {
+    const unique = [...new Set(userIds)];
+    /** userId → their oldest owned workspace. A later membership never replaces it. */
+    const owned = new Map<string, string>();
+    for (let at = 0; at < unique.length; at += ID_CHUNK) {
+      const memberships = await this.dataSource.getRepository(WorkspaceMember).find({
+        where: { userId: In(unique.slice(at, at + ID_CHUNK)), role: 'owner' },
+        order: { createdAt: 'ASC' },
+      });
+      for (const membership of memberships) {
+        if (!owned.has(membership.userId)) {
+          owned.set(membership.userId, membership.workspaceId);
+        }
+      }
+    }
+
+    const workspaceIds = [...new Set(owned.values())];
+    const byId = new Map<string, number>();
+    for (let at = 0; at < workspaceIds.length; at += ID_CHUNK) {
+      const workspaces = await this.dataSource.getRepository(Workspace).find({
+        where: { id: In(workspaceIds.slice(at, at + ID_CHUNK)) },
+        select: { id: true, balanceMicros: true },
+      });
+      for (const workspace of workspaces) {
+        byId.set(workspace.id, workspace.balanceMicros);
+      }
+    }
+
+    const balances = new Map<string, { workspaceId: string; balanceMicros: number }>();
+    for (const [userId, workspaceId] of owned) {
+      const balanceMicros = byId.get(workspaceId);
+      if (balanceMicros !== undefined) {
+        balances.set(userId, { workspaceId, balanceMicros });
+      }
+    }
+    return balances;
   }
 
   /**
