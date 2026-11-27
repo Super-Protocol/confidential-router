@@ -16,8 +16,8 @@ import { type MigrationInterface, type QueryRunner, TableColumn } from 'typeorm'
  * endpoint's evidence off the console until the next poll; the poller stamps a
  * row as soon as it re-observes the publication behind it.
  */
-export class EvidenceSnapshotHostname1760900000000 implements MigrationInterface {
-  name = 'EvidenceSnapshotHostname1760900000000';
+export class EvidenceSnapshotHostname1761300000000 implements MigrationInterface {
+  name = 'EvidenceSnapshotHostname1761300000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.addColumn(

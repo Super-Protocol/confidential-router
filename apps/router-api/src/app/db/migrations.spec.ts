@@ -44,14 +44,6 @@ afterEach(() => {
 });
 
 /**
- * Whether one column admits NULL, read back from the live schema.
- *
- * Through TypeORM's own table introspection rather than `PRAGMA` or
- * `information_schema`, so the assertion reads the same on both dialects — which
- * is the point of writing the migration against the `Table` API in the first
- * place.
- */
-/**
  * Whether one named index exists, read back from the live schema.
  *
  * Through TypeORM's table introspection for the same reason {@link isNullable}
@@ -66,6 +58,14 @@ async function hasIndex(queryRunner: QueryRunner, table: string, name: string): 
   return found.indices.some((index) => index.name === name);
 }
 
+/**
+ * Whether one column admits NULL, read back from the live schema.
+ *
+ * Through TypeORM's own table introspection rather than `PRAGMA` or
+ * `information_schema`, so the assertion reads the same on both dialects — which
+ * is the point of writing the migration against the `Table` API in the first
+ * place.
+ */
 async function isNullable(queryRunner: QueryRunner, table: string, column: string): Promise<boolean> {
   const found = (await queryRunner.getTable(table))?.findColumnByName(column);
   if (!found) {
@@ -128,19 +128,52 @@ describe('SQLite', () => {
 
       // SUP-437 records which hostname a stored publication was served under;
       // the first undo drops that column and nothing else. First because this
-      // migration is numbered last — three of main's landed while this branch
-      // was in review, and a migration is appended rather than inserted.
+      // migration is numbered last — it was renumbered past the five `main` took
+      // during review, because a migration is appended, never inserted.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'hostname')).toBe(true);
       await dataSource.undoLastMigration();
       expect(await queryRunner.hasColumn('evidence_snapshots', 'hostname')).toBe(false);
       expect(await queryRunner.hasColumn('evidence_snapshots', 'workloads')).toBe(true);
+      // SUP-481's record of the exports this deployment has taken is one additive
+      // table; the next undo drops only that.
+      expect(await queryRunner.hasTable('data_imports')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('data_imports')).toBe(false);
+
+      // SUP-298 adds one index and nothing else; the next undo drops it and
+      // leaves the indices that were already on the table.
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        true,
+      );
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
+        false,
+      );
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId')).toBe(true);
+      expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_identity')).toBe(true);
+
+      // SUP-423's partial index over the pending generations is next; the undo
+      // drops that one index and leaves the two the Logs and Activity queries
+      // run on.
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_pending')).toBe(false);
+      expect(await hasIndex(queryRunner, 'generations', 'IDX_generations_workspaceId_createdAt')).toBe(true);
+
+      // SUP-406's operator column is one additive column; the next undo drops
+      // only that and leaves the ledger it hangs off.
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasColumn('credit_transactions', 'grantedByUserId')).toBe(false);
+      expect(await queryRunner.hasColumn('credit_transactions', 'idempotencyKey')).toBe(true);
 
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. The next undo takes all of that back; it can only restore
-      // the NOT NULLs on a database the sweep has not run on yet, which is this
-      // one.
+      // `generations`. Sixth now that SUP-406's column, SUP-423's index,
+      // SUP-298's index, SUP-481's table and SUP-437's column are appended after
+      // it. The undo can only restore the NOT NULLs on a database the sweep has
+      // not run on yet, which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);

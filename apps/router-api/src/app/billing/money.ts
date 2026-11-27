@@ -9,6 +9,22 @@ export const MICROS_PER_USD = 1_000_000;
 /** Stripe charges whole cents; a micro amount that is not a whole cent cannot be billed. */
 export const MICROS_PER_CENT = 10_000;
 
+/**
+ * The most credit an operator may commit in one hand-entered amount — $10 000.
+ *
+ * Two surfaces bound themselves by it and they have to agree: the credit per
+ * invitation code (`MAX_ISSUE_GRANT_MICROS`, `issueInviteCodes`) and one
+ * operator grant or correction (`billing.maxCreditGrantMicros`'s default,
+ * SUP-406). Neither is a policy on how much credit may exist; both are the blast
+ * radius of a single fat finger, or of a single stolen operator session, and a
+ * deployment that revises its appetite for that revises one number (SUP-398).
+ *
+ * It lives here, with the other money facts, rather than beside either caller:
+ * `config.schema.ts` cannot import from `app/api/graphql` without inverting the
+ * layering, and this module imports nothing.
+ */
+export const MAX_OPERATOR_CREDIT_MICROS = 10_000 * MICROS_PER_USD;
+
 export class InvalidMicroAmountError extends Error {
   constructor(message: string) {
     super(message);

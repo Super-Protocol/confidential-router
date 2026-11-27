@@ -3,6 +3,8 @@ import { IsArray, IsDate, IsEnum, IsOptional, IsString } from 'class-validator';
 import { PageInfoModel } from '../common/page-info.model.js';
 
 export enum GenerationStatusEnum {
+  /** Admitted, forwarded, and not yet closed by the gateway. */
+  PENDING = 'pending',
   OK = 'ok',
   ERROR = 'error',
   ABORTED = 'aborted',

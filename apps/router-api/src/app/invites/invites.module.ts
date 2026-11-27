@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InMemoryTokenBucketRateLimiter, RATE_LIMITER } from '../api/v1/rate-limiter.js';
+import { ApiKeysModule } from '../api-keys/index.js';
 import { BillingModule } from '../billing/index.js';
 import { Generation } from '../db/entities/generation.entity.js';
 import { InviteCarriedRedemption } from '../db/entities/invite-carried-redemption.entity.js';
@@ -24,6 +25,11 @@ import { SignUpGrantService } from './signup-grant.service.js';
  * — the grant goes through it like every other entry. The dependency runs one way
  * only: nothing in billing knows invitations exist.
  *
+ * `ApiKeysModule` for `ApiKeyCensusService`: the admin account list is the only
+ * surface that answers which accounts hold a live credential (SUP-454), so it
+ * reads the census alongside the invitation attribution. One way only, like
+ * billing — nothing in api-keys knows invitations exist.
+ *
  * `RATE_LIMITER` is bound here to its own bucket instance rather than shared with
  * `V1Module`. Two surfaces, two budgets: a busy tenant's `/v1` traffic must not
  * spend the landing page's lookups, and vice versa.
@@ -31,6 +37,7 @@ import { SignUpGrantService } from './signup-grant.service.js';
 @Module({
   imports: [
     TypeOrmModule.forFeature([InviteCode, InviteRedemption, InviteCarriedRedemption, Generation]),
+    ApiKeysModule,
     BillingModule,
   ],
   controllers: [InvitesController],

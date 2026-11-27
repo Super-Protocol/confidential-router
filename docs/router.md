@@ -165,6 +165,18 @@ rateLimits:
   tokensPerMinute: 2000000
 ```
 
+A `generations` row is written when a request is admitted and replaced when it
+ends. `metering.incompleteAfter` is how long a row may stay `pending` before it
+is closed as `error` / `no_response` — the case where the second write never
+happened because the process did not survive the request (SUP-423). It has to
+stay longer than the longest generation the deployment serves; `0` disables the
+sweep and leaves such rows pending:
+
+```yaml
+metering:
+  incompleteAfter: 15m
+```
+
 ## Evidence
 
 ```yaml
@@ -484,11 +496,25 @@ if that domain publishes SPF and DKIM records that cover the provider sending it
 
 **Reachability is reported, not assumed.** With `smtp`, the API connects and
 authenticates once at boot without sending anything, and `/health` carries the
-outcome as `mail: { provider, state, reason }` — `ok`, or `failing` with
-`unreachable` (no connection at all), `auth_failed` or `rejected`. Every later
-send updates it. It never makes `/health` itself fail: a lost welcome mail is
-not an outage. On a deployment, read it through `GET /admin/health` — `/health`
-itself is the kubelet's and is not published (SUP-479). The log line says which host and port, and never the password.
+outcome as `mail: { provider, state, reason, signUpGate }` — `ok`, or `failing`
+with `unreachable` (no connection at all), `auth_failed` or `rejected`. Every
+later send updates it. It never makes `/health` itself fail: a lost welcome mail
+is not an outage. On a deployment, read it through `GET /admin/health` —
+`/health` itself is the kubelet's and is not published (SUP-479). The log line
+says which host and port, and never the password.
+
+`signUpGate` is `invite_only` or `open`, and it is there so the rest of the
+block is not read wrong: on an invite-only deployment a healthy `state` and a
+`200` from the send route are both compatible with nothing having been sent, so
+"mail is not arriving" has three answers — sent, withheld, or the transport is
+broken — with three different remedies. `state` only ever describes the
+transport. The *counts* are on the console API's `mailDelivery`, behind
+`auth.adminEmails`, and deliberately not on `/health`: a number a stranger could
+read before and after naming an address would tell them by subtraction whether
+that address was mailed, which is the account-existence oracle
+[the mail gate](#what-an-invite-only-deployment-will-not-mail) exists to deny.
+`signUpGate` is configuration, so it moves for nobody.
+
 On a Swarm cluster space, outbound connections to public addresses are open and
 private ranges are not, so the SMTP host has to resolve to a public address;
 some clouds also block outbound port 25, which is what 587 and 465 are for.
@@ -643,7 +669,14 @@ address and is rate-limited per source (429). One recipient is mailed at most
 `mailsPerAddressPerHour` codes — past that the answer is the same 200 and
 nothing is sent, so the limit cannot be used to learn or to silence anything. A
 send an invite-only deployment withheld is the same 200 again, for the same
-reason.
+reason. So is a request for a code `type` this deployment does not mail.
+
+**What it tells the operator.** Each of those is a `200` with nothing sent, and
+they have different remedies, so each is counted on `mailDelivery`
+(`auth.adminEmails`, per replica, since it started): `withheld.noInvitation`,
+`withheld.rateLimited`, `withheld.unusedCodeType`, and a failing transport as
+`state`/`reason`. Counts only — never which address — because a queryable list
+would say which addresses have accounts (SUP-462).
 
 **A send that failed is not a 200.** While the mailer is down — `/health`
 reports `mail.state: failing` — both mail routes answer
@@ -777,6 +810,8 @@ billing:
   maxTopUpMicros: 10000000000          # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0              # how far a generation may push a balance negative
   signupGrantMicros: 0                 # credit granted to every new account (ledger `grant`, reference `signup`); 0 disables
+  maxCreditGrantMicros: 10000000000    # $10 000, the ceiling on one operator grantCredit call
+  allowCreditDebits: false             # whether grantCredit may also remove credit (a negative adjustment)
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h                # floor between two automatic top-ups of one workspace
   stripe:
@@ -818,7 +853,7 @@ threshold, no more often than `autoTopUpCooldown`.
 POST /v1/chat/completions      streaming and not
 POST /v1/completions           legacy; forwarded, or translated into a chat call
 GET  /v1/models
-GET  /v1/generation?id=…       what one request cost, after the fact
+GET  /v1/generation?id=…       what one request cost, after the fact (`status: pending` = not yet)
 ```
 
 Full contract: `docs/contracts/router-api.md`, and Swagger at `/docs` when
@@ -850,6 +885,78 @@ the grant is once per *account*, not per person. Pair a non-zero value with
 invite-only registration (`auth.requireInviteForSignUp`) where that matters, or
 keep it small enough to be an evaluation allowance rather than a prize.
 
+## Crediting an account that already exists
+
+Everything above puts credit on an account *as it is created*, or sells it. The
+one thing missing was the ordinary request: top up the testers who already signed
+up. `grantCredit` is that operation (SUP-406) — an admin mutation restricted to
+`auth.adminEmails`, with a button beside every account on the console's
+**Invitations → Sign-ups** tab, where each row now also shows what that account
+holds.
+
+```graphql
+mutation {
+  grantCredit(
+    input: {
+      accountEmail: "tester@example.com"
+      amountMicros: "100000000"
+      note: "SUP-389: topped up after the verification grant"
+      requestId: "3f1c8c6e-6f1a-4a2f-9a0e-0d6a9f2b7c41"
+    }
+  ) {
+    amountMicros
+    balanceMicros
+    replayed
+  }
+}
+```
+
+Name the account by `accountEmail` or by `workspaceId` — exactly one. The call
+writes **one** ledger entry through the same path as every other grant, so the
+Credits screen renders it and the balance moves by exactly that amount. Four
+things make it an operator's operation rather than a back door:
+
+- `credit_transactions.grantedByUserId` carries the operator, and the reason goes
+  on the row, so the ledger says who granted it and why without a log search.
+  Both survive a redeploy: the export bundle carries the operator and remaps it
+  to the id that account has on the new deployment.
+- The reason is **required**, in both directions. It is the only field that says
+  why an entry nobody paid for exists.
+- `billing.maxCreditGrantMicros` ($10 000) is the ceiling on **one** call — the
+  same kind of blast-radius bound `billing.maxTopUpMicros` puts on a checkout,
+  and the same number that bounds the credit per invitation code.
+- Taking credit *away* is a separate decision. It has to be `kind: ADJUSTMENT`
+  and it needs `billing.allowCreditDebits`, which is **off** by default. Even
+  switched on it cannot push a balance below zero: `adjustment` may not overdraw.
+
+`requestId` names the decision and is required. The ledger entry is keyed on
+`operator:<operator>:<requestId>`, so the same submission arriving twice — a
+proxy timeout, then the obvious retry — replays the first row and answers
+`replayed: true` instead of crediting again; the console says *already recorded*
+rather than reporting a second success. A second deliberate grant is a second
+decision and carries a new `requestId`, so it lands as a second row. The console
+mints one UUID when the dialog opens and keeps it across retries.
+
+One decision moves credit on **one** account: the same `requestId` sent against a
+different account is refused rather than answered, because the alternative is
+telling an operator that somebody was credited who was not. That is the mistake a
+hand-written mutation makes — copy the call for the next person, change the
+address, forget the `requestId`. The composed key has to fit
+`credit_transactions.idempotencyKey` (`varchar(128)`), so a `requestId` and an
+operator id that together overflow it are refused too; PostgreSQL would answer
+`22001` where SQLite would not, and the refusal makes the two agree.
+
+A correction is a new row, never an edit — the ledger has no update path at all
+(`docs/contracts/data-model.md` invariant 3).
+
+The reason reaches the account holder **as the operator wrote it**. That needs
+saying because `description` is not free text anywhere else in the ledger: it
+"carries the receipt link when there is one", and the Credits screen pulls the
+first `https://…` out of it to render a **Receipt** link. A goodwill note citing
+an incident would otherwise arrive as a truncated sentence next to a Receipt
+pointing at a status page, so the screen scopes that convention by `reference`
+and leaves an operator's row alone (`credits/amounts.ts`).
+
 ## Invitation codes
 
 A mailed campaign hands out credit without the recipient ever typing a code
@@ -879,6 +986,14 @@ with its origin (invitation / bootstrap / open sign-up), and charts sign-ups and
 redemptions from this database. No code value is ever logged: the audit lines name
 the operator, the campaign and the row id.
 
+The statistics tab keeps a campaign's **face value** and its **payout** apart
+(SUP-390): *Per code* is what one redemption grants — a span when the tag collects
+batches issued at different grants — and *Paid out* (the *Credit paid out* tile) is
+the cumulative total redemptions have actually written. A mailed campaign nobody has
+redeemed yet has paid out $0 and is still worth every dollar it was issued for; the
+column that used to say "Credit granted" reported only the second and was read as the
+first.
+
 **Moving codes between deployments** (SUP-272). A redeploy starts from an empty
 database, and codes that were already mailed have to keep working on it. The Codes
 tab has **Export CSV** and **Import CSV** for that — both behind
@@ -901,6 +1016,12 @@ ever logging a code. The file holds live codes: handle it like the mailing itsel
   redeemed on the new deployment — and who redeemed it is kept on the code,
   matched to an account by email whenever that address exists here. No credit is
   granted for a carried redemption, and nobody's balance moves.
+- The **Statistics** tab counts a carried redemption as a redemption (SUP-396):
+  `redeemed`, `redemptionRate` and `activated` include it, and a campaign row names
+  the imported share — `3 (1 imported)` — so the two tabs cannot disagree about
+  whether a code was used. `activated` picks up a carried redeemer once their
+  address has an account here that sent a request. `grantedMicros` stays this
+  deployment's ledger only, because the credit was paid on the other one.
 - A code already present is skipped and reported, never overwritten.
 - `url` is rebuilt from this deployment's `invites.landingBaseUrl` on every
   export; the import does not read it. Who issued a code does not travel — the
@@ -1053,7 +1174,14 @@ A withheld send is therefore **indistinguishable from a sent one**: the route
 runs to completion and answers exactly as it always did — `200 {"success":
 true}`, or `{"status": true}` for the link, or whatever 400 the body earned —
 and the only difference is that nothing left the process. The reason is in the
-log (`Sign-up mail withheld: …`) and nowhere else. A sign-in code is still
+log (`Sign-up mail withheld: …`) and, since SUP-462, in `mailDelivery` on the
+console API — `withheld { noInvitation, rateLimited, unusedCodeType,
+lastWithheldAt }`, counted since this replica started, behind
+`auth.adminEmails`. That is the whole of what changed:
+the caller still cannot tell a refusal from a send, and the deployment's own
+operator no longer has to read a log inside a cluster space they cannot enter to
+tell a withheld send from a dead mail server. Aggregate counts only — a
+queryable list of withheld addresses would rebuild the oracle. A sign-in code is still
 *generated* and stored hashed for a withheld send, as it is for every other type
 the route accepts; it was never delivered, and the sign-up it would belong to is
 refused by the gate in any case.
@@ -1293,6 +1421,7 @@ built for the request that asked for it and kept nowhere on the server:
 | `workspaces`, `workspaceMembers` | every workspace with its balance, Stripe customer id and auto top-up settings, and who belongs to it |
 | `creditLedger` | the whole append-only ledger — grants and usage debits alike — with its idempotency keys. Per-request debits are the one thing not copied row for row: each names the generation it charged for, the generation log stays behind, and a charge for a request the new deployment has no row for is a bill nobody can check (SUP-446). They are carried as **one usage entry per workspace per calendar month** for exactly the same total, described as carried over and naming no generation |
 | `inviteCodes`, `inviteRedemptions` | **every** code, the unredeemed ones included, and which account spent which |
+| `inviteCarriedRedemptions` | who spent a code on a deployment this one is not — carried in by a codes CSV import (SUP-272) and carried on from here, so a code that arrives already spent still names its redeemers. A redemption whose account this deployment no longer has travels as one of these rather than being dropped |
 | `apiKeys` | every `/v1` credential as it is stored — `sha256(key)`, display prefix, name, model scope, spend limit and the spend counted against it, rate limits, expiry, last use and revocation |
 | `externalEndpoints`, `trustedMeasurements` | the registered upstreams with their models and pinned digest, and the trust list |
 
@@ -1335,8 +1464,17 @@ will not read one; the exact paths excused are listed, with their reasons, in
 `CARRIED_NON_CREDENTIAL_PATHS`. An older build handed a file that carries the new
 section refuses it on that guard rather than importing it without the keys.
 
-The import takes the file **only into a fresh deployment**, and always in two
-steps:
+**Import into a build at least as new as the one that wrote the file.** A
+version this build does not know is refused outright, but a *section* it does
+not know is dropped in silence — that is what makes a new section additive, and
+it is also how an older build would read a newer file: everything it knows, and
+nothing of what it does not. Across a redeploy that direction never comes up;
+if you have to take an export into an older build, check the section list above
+against that build first.
+
+The import takes the file into a deployment that holds **nobody else's data** —
+a fresh one, or one this same source was already imported into (SUP-481) — and
+always in two steps:
 
 1. **Check file** — a dry run. It shows where and when the file was exported, its
    SHA-256 (compare it with the value the export screen showed), the total credit
@@ -1346,8 +1484,9 @@ steps:
    checked (the request carries the hash the check reported).
 
 It refuses, writing nothing, when: an account exists here that is neither in the
-file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`); the
-file's schema version is not this build's; its contents do not match its own
+file nor an operator's own (`auth.bootstrapEmail`, `auth.adminEmails`) **and**
+nothing here came from this file's deployment; the file's schema version is not
+this build's; its contents do not match its own
 hash, counts or total; a workspace balance does not equal the sum of its ledger
 entries; or a row collides with a different one here (a taken slug, an invitation
 code already issued here under another id, an API key whose credential is already
@@ -1390,6 +1529,63 @@ Importing the same file twice is safe. Accounts are written through Better Auth'
 connection and everything else in one transaction, so an import interrupted
 between the two is completed by running it again: rows already present are
 counted as such and skipped.
+
+**Importing a *later* export of the same deployment is the normal last step of a
+cutover** (SUP-481). The old deployment keeps serving while the new one is
+imported and verified, so by the time the hostname moves the new one is a few
+rows behind — and the only way to close that gap is to export again and import
+again. That second import is allowed on a deployment that has been signed up to
+in the meantime, because the deployment remembers where its data came from: a
+`data_imports` row from the same `source.publicBaseUrl`, or a row here under an
+exported row's own id (which is the evidence left on a deployment imported by an
+older build, or when the source was renamed between the two exports).
+
+A later export says two kinds of new thing, and the import does both:
+
+- **Rows this deployment does not have** are created, as always.
+- **Rows it does have are brought up to date**, because a row of the bundle is
+  that row one export later. Without this a seat spent on the old deployment
+  arrived unspent — the gate is `invite_codes.redemptionCount`, so a single-use
+  launch code could be redeemed a second time here — and a key revoked there
+  arrived live. Three rules bound it: never through a mapping (the operator's own
+  account and workspace are folded into the ones they have here, and those keep
+  this deployment's name); never a column another row could already hold (a
+  workspace slug, an endpoint name, a sidecar port — a rename must not be able to
+  refuse the catch-up import); and never backwards, so a key's spend counter and
+  last use take the larger of the two values, a revocation or a withdrawal the
+  earlier, and a code's seat count the seats actually spent on *both*
+  deployments. The ledger and the redemptions are never rewritten — they are
+  records of things that happened — and neither are accounts: Better Auth owns
+  that table, and an address held here by a different account is a conflict, not
+  an update.
+
+What the file is *not* the authority on, even for a row it carries, is anything
+this deployment's operator set by hand. An imported external endpoint arrives
+switched off and keyless, and runbook step 6 is where somebody enters the key,
+enables it and approves a deployment of that upstream — so `enabled`, the sealed
+key, a model's own switch and the **pinned evidence digest** stay as they are
+here. The pin travels in exactly one case: a `baseUrl` that has moved, because
+that is the shape SUP-435 requires of an edit which re-points an endpoint — one
+that states an approval of its own, or withdraws the pin by stating none. What
+does follow the file is what the source's catalogue says a model *is*: its name,
+its upstream name, its context length, its capabilities and its prices.
+
+Anything here that the file does not carry is left exactly as it is: the account
+that verified the deployment, its workspace, its balance and its keys. The report
+counts both halves per section — **updated** and **kept here** —
+and names the export already taken; the dry run shows all of it before anything
+is written. One thing an import never does is *remove*: a trust-list entry
+withdrawn on the source has to be withdrawn here by hand, and the report says so
+when there is a local-only entry to think about.
+
+Two things still refuse: an exported address that a *different* account here
+holds (merging two identities is not something an import may guess at), and a
+deployment whose own accounts came from some other source. And one thing it
+allows that is worth knowing: two deployments imported from one export share its
+ids, so a bundle from a *sibling* rebuild reads as "this dataset" too. Nothing
+can stumble into that — every id elsewhere is a fresh UUID — but merging two
+siblings that have diverged is guesswork of the kind the refusal above exists to
+prevent, so do it deliberately or not at all.
 
 Both actions leave an audit line (`warn`) naming the operator, the bundle's hash
 and its row counts, and never an address or a code:
@@ -1454,7 +1650,9 @@ console. If not, stop — nothing has been touched and nobody has noticed.
    before the export still authenticating**,
    `curl -H "Authorization: Bearer sk-tee-v1-…" https://<temp-host>/v1/models`,
    with API Keys listing the same keys and the same spend used against them.
-   Chat history is empty; that is expected.
+   Chat history is empty; that is expected. The real sign-up this step asks for
+   is part of it and does **not** spoil the second import in Phase 3: a row this
+   deployment grew on its own is kept rather than overwritten.
 
 **Go / no-go:** every check in step 8 matches Phase 1. If not, stop and delete
 the new install — the old deployment is still serving its own hostnames and
@@ -1462,11 +1660,16 @@ nothing has changed for anyone.
 
 #### Phase 3 — cutover
 
-9. **Announce the window and freeze use.** Anything that happens on the old
-   deployment after the Phase 1 export is not in the file, and a second import
-   into the install built in Phase 2 **adds rows it does not have and does not
-   update rows it already holds**. If the data moved in between, delete that
-   install and redo Phase 2 from a fresh export rather than importing twice.
+9. **Announce the window and freeze use, then catch up the drift.** Anything
+   that happens on the old deployment after the Phase 1 export is not in that
+   file, so export it again now, **Check file**, and import it into the install
+   built in Phase 2. The check reports what the first import already brought as
+   *already here*, the rows whose state has moved since — a seat spent, a key
+   revoked — as *updated*, whatever this deployment grew during Phase 2 as *kept
+   here*, and only the rows served in between as new (SUP-481). Before that, a
+   second import added rows it did not have and did not update the ones it did,
+   so the only safe answer was to delete the install and redo Phase 2 from a
+   fresh export.
 10. **Park the old deployment** on spare hostnames: unpublish → reconfigure the
     hostnames → publish. A published deployment refuses to be reconfigured, which
     is why every rename is that three-step; the real hostnames go dark here.
@@ -1506,6 +1709,48 @@ serving; a hand-written zone is slower.
   Users' own `/v1` keys *do* survive (SUP-445).
 - The deployment's own evidence digest changes, as on any redeploy: anyone who
   pinned the old one — a gatekeeper, a tenant — has to approve the new one.
+
+### Taking the export on a schedule
+
+The export step above is the one that is not there when it matters: production
+lost its data on 2026-10-13 because the only copy lived inside the deployment
+that died, and nobody had run an export (SUP-308, SUP-313). An export taken when
+somebody remembers is not a backup.
+
+[`tools/scheduled-export/`](../tools/scheduled-export/README.md) is a systemd
+timer for an operator's own machine that takes the bundle and the codes CSV once
+a day, verifies both against what the deployment declared, copies them to object
+storage, and says so loudly when a run fails or comes back empty. It signs in
+with `auth.bootstrapToken` — the only credential that works unattended, since
+every other sign-in path is a code mailed to a mailbox — so each run leaves a
+`Break-glass sign-in` line in the log.
+
+It is operator tooling and not part of the router: nothing in it deploys, and the
+deployment does not know it exists. Because that credential belongs to one
+deployment and a redeploy mints a new one, the timer reads it off the current
+deployment at run time — from the marketplace that made it, the same value its
+credentials dialog shows — rather than keeping a copy that a redeploy turns into
+a 401 (SUP-438). A stored `ROUTER_BOOTSTRAP_TOKEN` is still honoured, as the
+fallback for a marketplace that cannot be reached and as the whole credential
+for a deployment that was not made by one; a run that falls back says so on the
+alert issue, because a backup quietly back on a deployment-scoped secret is the
+defect re-arming itself.
+
+**A redeploy re-arms it or kills it.** The credential is one deployment's, so
+the old deployment's token is a 401 the moment the new one serves. With
+`MARKETPLACE_ORIGIN` configured the timer host finds the new token by itself and
+there is nothing to do — confirm it with one manual run. Without it, paste the
+new token into `ROUTER_BOOTSTRAP_TOKEN` in `~/.config/router-export/env` on the
+timer host and run `router-export.sh --local-only` to prove it. **A redeploy that
+skips this leaves the backup dead until the next failed run is noticed**, which
+is how the 2026-10-20 export came to 401 (SUP-438). Do it in the same window as
+the cutover, not afterwards.
+
+The right version of this is the router
+pushing its own bundle to an export target given as a deployment parameter, the
+way the SMTP password is given, so the file never transits an operator's machine
+at all. Until that exists, the timer is what stands between an incident and a
+rebuild from an empty database.
 
 ### A parked rollback is not finished until it serves a completion
 
@@ -1593,6 +1838,15 @@ SQLite applies migrations at boot (`database.migrationsRun: true`, the
 development default). PostgreSQL deployments run the migration CLI **once**,
 from a job or an init container, and leave `migrationsRun` off — otherwise
 every replica races the others at startup.
+
+**The migration runs before the new image serves, not after.** TypeORM writes
+every column the entities declare, so an image started against a schema it is
+newer than fails on *writes it did not change*. The current example is
+`credit_transactions.grantedByUserId` (SUP-406): a router booted before that
+migration lands rejects every ledger write — purchases and usage debits
+included, not merely the operator grants the column was added for. Order the
+rollout `router-api-migrate` → router, and treat any release that adds a column
+to a hot table as one that cannot go image-first.
 
 Container image: `router-api.dockerfile`, published to ghcr by the release
 workflow. `docker/docker-compose.yml` runs the API, the console and PostgreSQL

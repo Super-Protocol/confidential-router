@@ -76,6 +76,7 @@ describe('BUNDLE_COVERAGE', () => {
       creditLedger: [],
       inviteCodes: [],
       inviteRedemptions: [],
+      inviteCarriedRedemptions: [],
       apiKeys: [],
       externalEndpoints: [],
       trustedMeasurements: [],
@@ -87,10 +88,12 @@ describe('BUNDLE_COVERAGE', () => {
       ledger: [],
       inviteCodes: [],
       redemptions: [],
+      carriedRedemptions: [],
       apiKeys: [],
       externalEndpoints: [],
       models: [],
       trustedMeasurements: [],
+      priorImports: [],
     };
     const bundle = buildBundle({
       data: empty,

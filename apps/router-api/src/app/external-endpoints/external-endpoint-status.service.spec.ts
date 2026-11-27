@@ -571,10 +571,15 @@ describe('the sustained-failure alert', () => {
 
     await failFor(endpoint.name, 6);
 
-    expect(errors).toEqual([]);
+    expect(errors.filter((line) => line.includes(`"${endpoint.name}"`))).toEqual([]);
     expect((await eventsOf(endpoint.id)).some((event) => event.kind === 'outage')).toBe(false);
     // Still visible: not serving is not the same as not worth reporting.
-    expect(health.status()).toMatchObject({ status: 'degraded', failing: 1 });
+    expect(health.status()).toMatchObject({ failing: 1 });
+    // What *does* speak for it is the deployment-level message, once (SUP-879):
+    // this endpoint holds the only model registered here, so the router is
+    // advertising a model it will not serve. The run is the deployment's, not the
+    // endpoint's — no name, and no timeline row on a row nothing is expected of.
+    expect(alerts.raised.map((entry) => entry.alert.title)).toEqual(['This deployment is serving no models at all']);
   });
 
   it('does not page for an upstream an operator switched off', async () => {
@@ -587,8 +592,12 @@ describe('the sustained-failure alert', () => {
 
     await failFor(endpoint.name, 6);
 
-    expect(errors).toEqual([]);
-    expect(health.status()).toMatchObject({ status: 'none', registered: 0 });
+    expect(errors.filter((line) => line.includes(`"${endpoint.name}"`))).toEqual([]);
+    // `none` was the answer here until SUP-879, and it is what a rebuilt
+    // production wore for four minutes: the endpoint is out of service and its
+    // model is still registered, so this deployment advertises a model and
+    // serves nothing. `registered` still counts the enabled rows only.
+    expect(health.status()).toMatchObject({ status: 'outage', registered: 0, disabled: 1, models: 1 });
   });
 
   it('pages on elapsed time when the sidecar reports no verdict for a registered endpoint', async () => {
@@ -936,5 +945,159 @@ describe('a verdict the sidecar stops confirming (SUP-583)', () => {
 
     expect((await rowOf(endpoint.id)).status).toBe('verified');
     expect(catalog.list()).toHaveLength(1);
+  });
+});
+
+/**
+ * The deployment-level alert: models registered, nothing routable (SUP-879).
+ *
+ * The state a rebuilt production holds until an operator re-keys every upstream.
+ * `DataImportService` lands each endpoint switched off and with an empty key
+ * envelope — correctly, the bundle carries no secrets — and nothing downstream
+ * treated that as a step still owed: no run, so no per-endpoint alert; no enabled
+ * row, so `/health` read `externalEndpoints: none` inside a document reading
+ * `ok`; `/v1/models` answered `[]`. Four minutes of it passed unnoticed on
+ * production on 2026-11-22 with the deploy train reporting success.
+ */
+describe('a deployment that advertises models and routes to none of them', () => {
+  const IMPORTED = new Date('2026-11-22T16:27:00.000Z');
+  /** Past `outage.afterNoSuccess`, which production leaves at fifteen minutes. */
+  const SUSTAINED = new Date(IMPORTED.getTime() + 16 * 60_000);
+
+  function capture(level: 'log' | 'error'): string[] {
+    const lines: string[] = [];
+    const logger = (service as unknown as { logger: { [key: string]: unknown } }).logger;
+    vi.spyOn(logger as never, level).mockImplementation(((message: unknown) => {
+      lines.push(String(message));
+    }) as never);
+    return lines;
+  }
+
+  /** The row an import writes: off, approved once, and with no key to open. */
+  async function imported() {
+    const endpoint = await seedExternalEndpoint(dataSource, {
+      enabled: false,
+      status: 'disabled',
+      pinnedEvidenceDigest: DIGEST,
+    });
+    await dataSource
+      .getRepository(ExternalEndpoint)
+      .update({ id: endpoint.id }, { apiKeyCiphertext: '', apiKeyPrefix: '' });
+    return endpoint;
+  }
+
+  it('is quiet on the pass that finds it, and pages once it has lasted', async () => {
+    await imported();
+    const errors = capture('error');
+
+    await service.refreshFromRows(IMPORTED);
+    // A booting pod is dark for a poll or two with nothing wrong, so the first
+    // pass only starts the clock.
+    expect(alerts.raised).toEqual([]);
+    expect(health.status()).toMatchObject({ status: 'degraded', registered: 0, models: 1, routableModels: 0 });
+
+    await service.refreshFromRows(SUSTAINED);
+
+    expect(alerts.raised).toHaveLength(1);
+    const alert = alerts.one('serving no models');
+    expect(RecordingOperatorAlerts.factsOf(alert)).toMatchObject({
+      'Registered external models': '1',
+      'Routable right now': '0',
+      'Endpoints with no upstream API key': '1',
+      'Serving nothing for': '16m',
+    });
+    // The repair, named: the two mutations that ended the real incident.
+    expect(alert.action).toContain('rotate');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('GET /v1/models answers []');
+  });
+
+  it('reports it on /health as an outage, with the counts that explain it', async () => {
+    await imported();
+    capture('error');
+
+    await service.refreshFromRows(IMPORTED);
+    await service.refreshFromRows(SUSTAINED);
+
+    expect(health.status()).toMatchObject({
+      status: 'outage',
+      // The counts that used to be the only signal, and the three that were
+      // missing: a reader can now tell "nothing registered" from "nothing on".
+      registered: 0,
+      serving: 0,
+      routable: 0,
+      disabled: 1,
+      awaitingKey: 1,
+      models: 1,
+      routableModels: 0,
+    });
+  });
+
+  it('says it once, not on every poll', async () => {
+    await imported();
+    capture('error');
+
+    await service.refreshFromRows(IMPORTED);
+    for (let nth = 1; nth <= 5; nth += 1) {
+      await service.refreshFromRows(new Date(SUSTAINED.getTime() + nth * 5_000));
+    }
+
+    expect(alerts.raised).toHaveLength(1);
+  });
+
+  it('closes the alert when a re-keyed upstream starts serving', async () => {
+    const endpoint = await imported();
+    capture('error');
+    await service.refreshFromRows(IMPORTED);
+    await service.refreshFromRows(SUSTAINED);
+    capture('log');
+
+    // The repair the alert asks for: the key is entered again, the endpoint is
+    // switched on, and the sidecar attests it.
+    const repaired = new Date(SUSTAINED.getTime() + 70_000);
+    await dataSource
+      .getRepository(ExternalEndpoint)
+      .update(
+        { id: endpoint.id },
+        { enabled: true, status: 'pending', apiKeyCiphertext: 'v1.sealed-again', apiKeyPrefix: 'sk-up' },
+      );
+    sidecarReports(verified(endpoint.name, { checkedAt: repaired.toISOString() }));
+    await service.sync(repaired);
+
+    const closed = alerts.raised.filter((entry) => entry.alert.title.includes('serving models again'));
+    expect(closed).toHaveLength(1);
+    // Urgent for the reason every recovery is: an operator who was woken is owed
+    // the line that says it is over.
+    expect(closed[0].urgent).toBe(true);
+    expect(health.status()).toMatchObject({ status: 'ok', registered: 1, routableModels: 1, awaitingKey: 0 });
+  });
+
+  it('stays quiet on a deployment that has no external model to serve', async () => {
+    // `none` is the honest answer there, and this alert must not promote it:
+    // a router serving only its built-in models is not failing at anything.
+    capture('error');
+
+    await service.refreshFromRows(IMPORTED);
+    await service.refreshFromRows(SUSTAINED);
+
+    expect(alerts.raised).toEqual([]);
+    expect(health.status()).toMatchObject({ status: 'none', models: 0 });
+  });
+
+  it('leaves an enabled, approved upstream to the per-endpoint alert', async () => {
+    // One outage, one message. The endpoint below is a run `alertOnOutages` owns,
+    // and two messages for one failure is how an operator learns to filter both.
+    await seedExternalEndpoint(dataSource, {
+      pinnedEvidenceDigest: DIGEST,
+      liveness: { notServingSince: IMPORTED, consecutiveFailures: 3 },
+    });
+    capture('error');
+
+    await service.refreshFromRows(IMPORTED);
+    await service.refreshFromRows(SUSTAINED);
+
+    expect(alerts.raised.filter((entry) => entry.alert.title.includes('serving no models'))).toEqual([]);
+    expect(alerts.raised).toHaveLength(1);
+    expect(alerts.one('upstream-')).toBeDefined();
   });
 });

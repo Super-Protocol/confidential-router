@@ -9,6 +9,7 @@ import type { routerConfig } from '../config.js';
 import { type RouterConfig, RouterConfigSchema } from '../config.schema.js';
 import { Endpoint } from '../db/entities/endpoint.entity.js';
 import { EvidenceSnapshot } from '../db/entities/evidence-snapshot.entity.js';
+import { snapshotsOnCurrentHostname } from './current-hostname.js';
 import { EvidenceService } from './evidence.service.js';
 import { type ParsedEvidenceBundle, parseEvidenceBundle } from './evidence-bundle.js';
 
@@ -192,6 +193,55 @@ describe('reading snapshots', () => {
 
     const third = await service.snapshots(endpointId, 2, second.endCursor);
     expect(third.hasNextPage).toBe(false);
+  });
+
+  /*
+   * The claim `latestFor`'s comment makes, checked against the planner rather
+   * than asserted. An earlier draft of SUP-298 said the single-row read was
+   * answered by `IDX_evidence_snapshots_endpointId`, which was not true: that
+   * index is one column, the ordering is `issuedAt DESC, fetchedAt DESC`, and
+   * SQLite answered it with `SEARCH … USING INDEX IDX_evidence_snapshots_endpointId`
+   * followed by `USE TEMP B-TREE FOR ORDER BY` — the endpoint's whole history
+   * sorted to return one row, on a table that only grows.
+   *
+   * So the index this pins is load-bearing, and so is the absence of the sort.
+   * SQLite-only because the fixture is; the PostgreSQL leg of `migrations.spec.ts`
+   * is what proves the same index exists there.
+   */
+  it('is answered by the index, without sorting the endpoint history', async () => {
+    const plan = async (sql: string, parameters: unknown[]): Promise<string> =>
+      ((await fixture.dataSource.query(`EXPLAIN QUERY PLAN ${sql}`, parameters)) as { detail: string }[])
+        .map((row) => row.detail)
+        .join(' | ');
+
+    const latest = await plan(
+      'SELECT * FROM evidence_snapshots WHERE endpointId = ? ORDER BY issuedAt DESC, fetchedAt DESC LIMIT 1',
+      [endpointId],
+    );
+    expect(latest).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(latest).not.toContain('TEMP B-TREE');
+
+    // `snapshots()` pages on the same key, so the same index has to carry it.
+    const page = await plan(
+      'SELECT * FROM evidence_snapshots WHERE endpointId = ? AND issuedAt < ? ORDER BY issuedAt DESC, fetchedAt DESC LIMIT 21',
+      [endpointId, 0],
+    );
+    expect(page).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(page).not.toContain('TEMP B-TREE');
+
+    // And the query `latestFor` actually issues, which is not the literal above
+    // any more: SUP-437 scopes it to the hostname the endpoint answers on now,
+    // so it joins `endpoints`. Planned from the builder rather than from a
+    // hand-written copy, because a copy is what stops matching the service.
+    // The hostname predicate narrows rows the index has already ordered, so the
+    // seek survives the join and nothing sorts the endpoint's history.
+    const builder = snapshotsOnCurrentHostname(fixture.dataSource, [endpointId])
+      .orderBy('snapshot.issuedAt', 'DESC')
+      .addOrderBy('snapshot.fetchedAt', 'DESC')
+      .limit(1);
+    const scoped = await plan(builder.getSql(), Object.values(builder.getParameters()).flat());
+    expect(scoped).toContain('IDX_evidence_snapshots_endpointId_issuedAt');
+    expect(scoped).not.toContain('TEMP B-TREE');
   });
 
   it('treats an unreadable cursor as the first page', async () => {

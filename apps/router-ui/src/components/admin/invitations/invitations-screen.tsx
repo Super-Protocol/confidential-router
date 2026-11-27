@@ -13,12 +13,14 @@ import { useViewerAdminState } from '../../session/use-viewer-is-admin';
 import { InviteCodesTab } from './invite-codes-tab';
 import { InviteStatsTab, type WindowDays, WindowPicker } from './invite-stats-tab';
 import { IssueCodesDialog } from './issue-codes-dialog';
+import { MailDeliveryCard } from './mail-delivery-card';
 import { INVITE_STATISTICS_QUERY } from './operations';
 import { SignUpsTab } from './sign-ups-tab';
 
 const TITLE = 'Invitations';
 const DESCRIPTION =
-  'Issue invitation codes, see which account came from which code, and how sign-ups are going. Numbers come from this deployment’s own database.';
+  'Issue invitation codes, see which account came from which code and which accounts hold an API key, and how sign-ups are ' +
+  'going. Numbers come from this deployment’s own database.';
 
 /**
  * The global admin's Invitations section (SUP-268).
@@ -114,6 +116,16 @@ function AdminInvitations() {
           ) : (
             <InviteStatsTab statistics={statistics.data?.inviteStatistics} days={days} />
           )}
+          {/*
+           * Outside `InviteStatsTab` and outside its window picker, because it
+           * is not the same kind of number: the invitation statistics come from
+           * this deployment's database and span whatever window is chosen, and
+           * this comes from the API replica answering right now and starts at
+           * zero when it restarts (SUP-462).
+           */}
+          <div className="mt-6">
+            <MailDeliveryCard />
+          </div>
         </TabsContent>
         <TabsContent value="codes">
           <InviteCodesTab campaigns={campaigns} />

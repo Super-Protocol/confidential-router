@@ -29,7 +29,7 @@ import {
   SignUpOriginEnum,
   WithdrawInviteCodeArgs,
 } from './invite-admin.model.js';
-import { InviteWithdrawalModel } from './invites.model.js';
+import { campaignStatsOf, InviteWithdrawalModel } from './invites.model.js';
 
 /**
  * The admin console's Invitations section: issue codes, see who redeemed which,
@@ -67,13 +67,21 @@ export class InviteAdminResolver {
     return { totalCount: page.totalCount, nodes: page.nodes.map((code) => this.codeOf(code)) };
   }
 
+  /**
+   * Also the deployment's only answer to "which accounts here hold a live key"
+   * (SUP-454) — see `AdminSignUp.apiKeys` and the `holdsLiveApiKey` filter, whose
+   * `totalCount` sizes a rebuild. Counts only; nothing here can disclose a key.
+   */
   @Query(() => AdminSignUpPageModel, {
-    description: 'Accounts, newest first, with how each came to exist. Restricted to auth.adminEmails.',
+    description:
+      'Accounts, newest first, with how each came to exist and how many API keys it holds. ' +
+      'Restricted to auth.adminEmails.',
   })
   async adminSignUps(@Args() args: AdminSignUpsArgs): Promise<AdminSignUpPageModel> {
     const page = await this.admin.signUps(
       {
         origin: args.origin ? (args.origin.toLowerCase() as SignUpOrigin) : null,
+        holdsLiveApiKey: args.holdsLiveApiKey ?? null,
         offset: args.offset,
         limit: args.limit,
       },
@@ -95,7 +103,7 @@ export class InviteAdminResolver {
     return {
       totals: { ...totals, grantedMicros: String(totals.grantedMicros) },
       daily,
-      campaigns: campaigns.map((entry) => ({ ...entry, grantedMicros: String(entry.grantedMicros) })),
+      campaigns: campaigns.map(campaignStatsOf),
     };
   }
 
@@ -185,5 +193,8 @@ function signUpOf(signUp: AdminSignUp): AdminSignUpModel {
     inviteCode: signUp.invite ? formatInviteCode(signUp.invite.code) : null,
     campaign: signUp.invite?.campaign ?? null,
     redeemedAt: signUp.invite?.redeemedAt ?? null,
+    apiKeys: signUp.apiKeys,
+    workspaceId: signUp.workspaceId,
+    balanceMicros: signUp.balanceMicros === null ? null : String(signUp.balanceMicros),
   };
 }

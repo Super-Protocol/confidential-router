@@ -62,6 +62,10 @@ export class LiteLlmClient {
       // whole generation. See `UpstreamCall.responseTimeoutMs` (SUP-339).
       responseTimeoutMs: connectTimeout + readTimeout,
       signal: request.signal,
+      // No `retryProxyFailure` here, deliberately (SUP-917): LiteLLM is in this
+      // cluster space with nothing in front of it, so a 5xx from it is its own
+      // answer about its upstream — which may have generated — and not a proxy
+      // reporting that it could not deliver the request.
       onRetry: (attempt, attempts) =>
         this.logger.warn(`LiteLLM ${url} unreachable (attempt ${attempt}/${attempts}); retrying.`),
     });

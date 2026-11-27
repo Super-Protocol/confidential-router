@@ -124,6 +124,13 @@ externalEndpoints:
   connectTimeout: 5s                            # loopback: a refusal means the listener is not up yet
   readTimeout: 120s                             # patience for an upstream in another cloud
 
+# A generations row is opened when a request is admitted and closed when it ends.
+# incompleteAfter is how long a row may stay `pending` before the sweeper calls it
+# `no_response` — the case where the second write never happened because the router
+# did not survive the request. Longer than the longest generation served here.
+metering:
+  incompleteAfter: 15m
+
 rateLimits:
   requestsPerMinute: 600
   tokensPerMinute: 2000000
@@ -190,6 +197,8 @@ billing:
   maxTopUpMicros: 10000000000    # $10 000, the ceiling on one checkout
   allowOverdraftMicros: 0
   signupGrantMicros: 0           # credit every new account gets at registration; stacks with an invitation grant
+  maxCreditGrantMicros: 10000000000  # $10 000, the ceiling on one operator grantCredit call
+  allowCreditDebits: false       # whether grantCredit may also remove credit (a negative adjustment)
   checkoutReturnUrl: https://console.example.com/credits
   autoTopUpCooldown: 1h          # floor between two automatic top-ups of one workspace
   stripe:

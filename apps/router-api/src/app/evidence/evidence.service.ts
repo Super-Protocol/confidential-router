@@ -237,6 +237,13 @@ export class EvidenceService {
    * is written down. "Not published yet" is the honest answer until the hostname
    * this endpoint answers on has published something (SUP-437).
    *
+   * The ordering is still `IDX_evidence_snapshots_endpointId_issuedAt`'s, the
+   * composite over `(endpointId, issuedAt, fetchedAt)` that SUP-298 added: the
+   * hostname predicate narrows rows the index has already ordered, so the plan
+   * is the same index seek and not a sort over the endpoint's whole history.
+   * `evidence.service.spec.ts` pins that against the planner rather than
+   * asserting it here.
+   *
    * The history surfaces are deliberately not scoped: `snapshots` and
    * `digestHistory` are logs, each entry dated, and what a name published before
    * it was renamed is part of this endpoint's past rather than a claim about its
@@ -259,7 +266,9 @@ export class EvidenceService {
    * — bundles and certificates included — to keep the last one made `models`
    * slower every day until the console timed out on it (SUP-598). A window
    * function would do it in one round trip but is not portable to SQLite, and
-   * a deployment has a handful of endpoints, so this is a handful of LIMIT 1s.
+   * a deployment has a handful of endpoints, so this is a handful of LIMIT 1s —
+   * each one an index seek rather than a sort over the endpoint's history, see
+   * {@link latestFor}.
    *
    * Going through {@link latestFor} is also what keeps the hostname scope of
    * SUP-437 in one place: a second query here would have to repeat it, and a

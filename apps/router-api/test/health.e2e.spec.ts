@@ -23,6 +23,18 @@ describe('GET /health', () => {
     expect(response.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  /**
+   * The line that keeps the rest of the `mail` block from being read wrong
+   * (SUP-462): on an invite-only deployment a `200` from the send route and a
+   * healthy `state` are both compatible with nothing having been sent.
+   */
+  it('says whether sign-up mail can be withheld, and publishes no count that could be', async () => {
+    const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
+
+    expect(response.body.mail).toMatchObject({ signUpGate: 'open' });
+    expect(response.body.mail).not.toHaveProperty('withheld');
+  });
+
   it('says whether product analytics is configured, without deciding the status', async () => {
     const response = await request(harness.app.getHttpServer()).get('/health').expect(200);
 
@@ -63,6 +75,12 @@ describe('GET /health', () => {
         failing: 0,
         unreachable: 0,
         pending: 0,
+        // Nothing registered at all, so `none` is the honest answer rather than
+        // the one a dark deployment used to hide behind (SUP-879).
+        disabled: 0,
+        awaitingKey: 0,
+        models: 0,
+        routableModels: 0,
       },
     });
   });
@@ -74,10 +92,14 @@ describe('GET /health', () => {
     // identity and verdict detail behind a session, so this block is counts, two
     // optional timestamps and a word — never a name, hostname, stage or reason.
     expect(Object.keys(response.body.externalEndpoints).sort()).toEqual([
+      'awaitingKey',
+      'disabled',
       'failing',
+      'models',
       'pending',
       'registered',
       'routable',
+      'routableModels',
       'serving',
       'status',
       'unreachable',
