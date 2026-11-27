@@ -80,7 +80,26 @@ export class ExternalEndpoint {
   @Column({ type: 'varchar', length: 32, nullable: true })
   lastStage!: string | null;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  /**
+   * The sidecar's sentence about why, in full — `text`, not a clipped column
+   * (SUP-243).
+   *
+   * It was `varchar(255)`, and the denial an operator most needs to read is the
+   * longest one the verifier writes: a measurement the Super Protocol registry
+   * *does* sign, refused because this endpoint's admission is the admin trust
+   * list's to give. That sentence runs 332 characters, so the console showed the
+   * misreading — "but Super Protocol signed it" — and clipped the correction
+   * SUP-221 ruling 2 put there to pre-empt it. A trust explanation half-told is
+   * worse than none: it leaves the reader with the half they already believed.
+   *
+   * Still bounded, by `MAX_REASON_LENGTH` in `status-projection.ts` rather than
+   * by the column: the reason is network-derived — a stage failure quotes the
+   * upstream's own error — and a row rewritten on every poll is no place for an
+   * unbounded payload. The bound is several times the verifier's longest
+   * wording, so clipping is now a guard against a hostile upstream rather than
+   * a thing that happens.
+   */
+  @Column({ type: 'text', nullable: true })
   lastReason!: string | null;
 
   /**

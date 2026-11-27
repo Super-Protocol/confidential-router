@@ -553,8 +553,9 @@ export function recoveryLine(liveness: EndpointLiveness, declaredAt: Date, now: 
  * in the console, behind a session (SUP-221 ruling 3) — mail gets forwarded.
  *
  * **{@link EndpointLiveness.reason} is deliberately not here**, which is the one
- * place this was got wrong first. It is the sidecar's own sentence, up to 255
- * characters of free text, and it routinely embeds exactly what the paragraph
+ * place this was got wrong first. It is the sidecar's own sentence — free text,
+ * bounded only by `MAX_REASON_LENGTH` since SUP-243 widened the column — and it
+ * routinely embeds exactly what the paragraph
  * above says stays behind a session: `external-endpoints.e2e.spec.ts` asserts a
  * denial's reason *contains the measurement hex*, and a `fetch` refusal names the
  * URL it could not read. The stage is the same information in a bounded form —

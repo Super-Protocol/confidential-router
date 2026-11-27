@@ -70,7 +70,13 @@ export class ExternalEndpointEvent {
   @Column({ type: 'varchar', length: 32, nullable: true })
   stage!: string | null;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  /**
+   * Why, in the verdict's own words — `text`, for the reason
+   * {@link ExternalEndpoint.lastReason} states: this column had the same
+   * `varchar(255)` ceiling and carries the same sentences, so the timeline
+   * clipped exactly the denial it was most needed for (SUP-243).
+   */
+  @Column({ type: 'text', nullable: true })
   reason!: string | null;
 
   @Column({ type: 'varchar', length: 64, nullable: true })

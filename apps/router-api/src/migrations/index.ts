@@ -22,6 +22,7 @@ import { PendingGenerationIndex1760800000000 } from './1760800000000-PendingGene
 import { EvidenceSnapshotsByIssuedAt1761000000000 } from './1761000000000-EvidenceSnapshotsByIssuedAt.js';
 import { DataImports1761100000000 } from './1761100000000-DataImports.js';
 import { EvidenceSnapshotHostname1761300000000 } from './1761300000000-EvidenceSnapshotHostname.js';
+import { ExternalEndpointReasonText1761400000000 } from './1761400000000-ExternalEndpointReasonText.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -54,4 +55,5 @@ export const MIGRATIONS = [
   EvidenceSnapshotsByIssuedAt1761000000000,
   DataImports1761100000000,
   EvidenceSnapshotHostname1761300000000,
+  ExternalEndpointReasonText1761400000000,
 ];

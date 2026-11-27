@@ -372,11 +372,12 @@ name is the one identifier, and it is the operator's own label. The full verdict
 is in the console.
 
 **The sidecar's own sentence is the sharp edge of that rule**, and the first
-version of this mail got it wrong. `lastReason` is up to 255 characters of free
-text written by the sidecar, and it routinely embeds the very things the
-paragraph above keeps behind a session: a denial names the measurement hex (the
-router-api e2e suite asserts that it does), and a `fetch` refusal names the URL
-it could not read. So the mail carries the **stage** — `policy`, `fetch`,
+version of this mail got it wrong. `lastReason` is free text written by the
+sidecar — `text` since SUP-243, because the denial worth reading runs 332
+characters and `varchar(255)` cut it mid-sentence — and it routinely embeds the
+very things the paragraph above keeps behind a session: a denial names the
+measurement hex (the router-api e2e suite asserts the whole sentence, clause for
+clause), and a `fetch` refusal names the URL it could not read. So the mail carries the **stage** — `policy`, `fetch`,
 `untrusted-root` — which is the same fact bounded, and which is what decides
 whether the operator goes to the upstream's cloud or to the console. The sentence
 itself stays in the `ERROR` log line and on the endpoint's timeline, both of

@@ -155,12 +155,14 @@ export function projectVerdict(
     // Null for an expired admission: no stage refused it, the clock did, and a
     // stage here would send an operator looking for a refusal that never happened.
     lastStage: expired ? null : (report?.refusal ?? report?.stage ?? null),
-    // The sidecar's one-line denial, or nothing when it admitted. Clipped to the
-    // column: a reason is for a human to read, not a payload to carry.
+    // The sidecar's denial, whole, or nothing when it admitted (SUP-243). It was
+    // clipped to a 255-character column, which cut the one sentence an operator
+    // most needs intact — see {@link ExternalEndpoint.lastReason}. What is left
+    // is a bound on a network-derived string, not a column ceiling.
     //
     // The expiry sentence names `checkedAt` and not `now`, so a pass that reads
     // the same frozen verdict again produces the same row and writes nothing.
-    lastReason: expired ?? clip(verdict.reason ?? report?.reason ?? null, 255),
+    lastReason: expired ?? clip(verdict.reason ?? report?.reason ?? null, MAX_REASON_LENGTH),
     measurementSeen: measurement,
     measurementSource: report?.attestedRoot?.measurementSource ?? null,
     // Only meaningful about a measurement: with none derived, "not in the
@@ -340,7 +342,10 @@ export function expireVerdict(endpoint: ExternalEndpoint, clock: VerdictClock): 
     'the egress sidecar has not confirmed it since ' +
     `${confirmedAt ? confirmedAt.toISOString() : 'this router started'}.`;
 
-  const reason = clip(`Verdict expired: ${why} Every model on this endpoint is refused until it does.`, 255);
+  const reason = clip(
+    `Verdict expired: ${why} Every model on this endpoint is refused until it does.`,
+    MAX_REASON_LENGTH,
+  );
   const patch: ExternalEndpointStatusPatch = {
     status: 'pending',
     lastStage: null,
@@ -432,7 +437,7 @@ function expiredAdmission(verdict: SidecarVerdict, check: ReportedCheck | null, 
     'Verdict expired: the egress sidecar is answering, but the verdict it keeps repeating was formed at ' +
       `${check.at.toISOString()} and has not been re-attested since. ` +
       'Every model on this endpoint is refused until it is.',
-    255,
+    MAX_REASON_LENGTH,
   );
 }
 
@@ -509,9 +514,28 @@ function differs(endpoint: ExternalEndpoint, patch: ExternalEndpointStatusPatch)
 }
 
 /**
- * Keeps a reason inside `external_endpoint_events.reason` / `lastReason`, both
- * varchar(255). Exported because the reasons a mutation writes are as long as the
- * base URLs they quote, and one column should not have two guards.
+ * How long a verdict's reason may be before it is clipped (SUP-243).
+ *
+ * `external_endpoint_events.reason` and `lastReason` are both `text` now, so
+ * this is no longer the shape of a column — it is the bound on what the router
+ * will store of a sentence it did not write. The reason reaches us from the
+ * sidecar, and a stage failure quotes the upstream's own error, so an upstream
+ * an admin registered decides part of its length; a row rewritten every five
+ * seconds and an append-only timeline are both poor places for an unbounded
+ * payload.
+ *
+ * More than three times the verifier's longest wording, which is 600 characters
+ * — a 64-byte measurement, a maximal endpoint name and both trust factors
+ * refused at once (`cloudFactorDetail` and `twoFactorRefusal` in `pkg/verifier`).
+ * So no denial this product composes is clipped, and the guard only ever fires on
+ * something nobody meant to read.
+ */
+export const MAX_REASON_LENGTH = 2048;
+
+/**
+ * Keeps a reason inside {@link MAX_REASON_LENGTH}. Exported because the reasons a
+ * mutation writes are as long as the base URLs they quote, and one column should
+ * not have two guards.
  */
 export function clip(value: string | null, length: number): string | null {
   if (!value) {

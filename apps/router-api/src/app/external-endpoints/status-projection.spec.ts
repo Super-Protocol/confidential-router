@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ExternalEndpoint } from '../db/entities/external-endpoint.entity.js';
 import type { SidecarVerdict } from './sidecar-admin.client.js';
-import { projectVerdict, statusOf, VERDICT_GRACE_FLOOR_MS, verdictGraceMs } from './status-projection.js';
+import {
+  MAX_REASON_LENGTH,
+  projectVerdict,
+  statusOf,
+  VERDICT_GRACE_FLOOR_MS,
+  verdictGraceMs,
+} from './status-projection.js';
 
 const NOW = new Date('2026-10-06T12:00:00.000Z');
 
@@ -19,6 +25,19 @@ const OTHER_MEASUREMENT = 'b'.repeat(64);
 const DIGEST = 'sha256/BvG0Yy3Ir0QKPtC1TrSPuyZZD1sdKq7Gq_a1Mv1Hs0A';
 const OTHER_DIGEST = 'sha256/CwH1Zz4Js1RLQudD2UsTQvzaaE2teLr8Hr_b2Nw2It1B';
 const FINGERPRINT = 'sha256/leafleafleafleafleafleafleafleafleafleafle0';
+
+/**
+ * The denial SUP-243 is about, exactly as the gatekeeper composes it
+ * (`cloudFactorDetail` in `pkg/verifier`, with the `policy: ` prefix
+ * `pkg/proxy/endpoint.go` puts on it).
+ *
+ * Written out rather than abbreviated because its *length* is the point: 332
+ * characters, where the column held 255.
+ */
+const FULL_DENIAL =
+  'policy: the built-in pin policy (gatekeeper.default) denied (measurement ' +
+  `${'7'.repeat(64)} is not listed in attestedRoots.trustedMeasurements — the Super Protocol registry does ` +
+  'sign it, but in this mode the list is the sole authority and a registry signature admits nothing on its own)';
 
 /**
  * A freshly registered row, as the driver hands one back: every verdict column
@@ -249,12 +268,29 @@ describe('projectVerdict', () => {
     expect(seen.patch.lastCheckedAt).toEqual(previously);
   });
 
-  it('clips a reason to the column rather than letting an insert fail', () => {
-    const long = 'x'.repeat(400);
+  it('carries a cloud-measurement denial whole, ruling-2 clause included', () => {
+    // SUP-243, and the exact sentence the console used to cut. The half that was
+    // lost is the half that matters: a 255-character column left the reader with
+    // "the Super Protocol registry does sign it, but in this mode the …" — the
+    // misreading SUP-221 ruling 2 was written to pre-empt, with the correction
+    // clipped off.
+    const { patch } = projectVerdict(endpoint(), denied({ reason: FULL_DENIAL }), AT);
+
+    expect(patch.lastReason).toBe(FULL_DENIAL);
+    expect(patch.lastReason).toContain('the list is the sole authority and a registry signature admits nothing');
+  });
+
+  it('still bounds a reason, so an upstream cannot make the row an arbitrary payload', () => {
+    // The guard is no longer the column's shape — both are `text` — but a stage
+    // failure quotes the upstream's own error, and this row is rewritten on every
+    // poll.
+    const long = 'x'.repeat(MAX_REASON_LENGTH * 2);
     const { patch } = projectVerdict(endpoint(), denied({ reason: long }), AT);
 
-    expect(patch.lastReason).toHaveLength(255);
+    expect(patch.lastReason).toHaveLength(MAX_REASON_LENGTH);
     expect(patch.lastReason?.endsWith('…')).toBe(true);
+    // Far above anything the verifier writes, so no real denial reaches it.
+    expect(MAX_REASON_LENGTH).toBeGreaterThan(FULL_DENIAL.length * 2);
   });
 
   it('writes one event on a flip, and reports the flip', () => {
