@@ -121,6 +121,13 @@ export const BUNDLE_COVERAGE: Record<string, BundleCoverage> = {
       'another deployment’s timeline. What is lost is the operator’s record of who was unreachable before the ' +
       'cutover; the process log of the old deployment still has it.',
   },
+  DataImport: {
+    notCarried:
+      'Which deployment exports *this* deployment has taken, and when (SUP-481). A record of what happened here, ' +
+      'not data of anyone\u2019s: carrying it would tell a new deployment it had already imported a file it has ' +
+      'never seen, and that record is exactly what decides whether a second import may keep local rows. It starts ' +
+      'empty on every deployment, and the first import writes its first row.',
+  },
 };
 
 /** The entity names {@link BUNDLE_COVERAGE} has to account for, read off the one registry. */

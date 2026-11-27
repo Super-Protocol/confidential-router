@@ -126,9 +126,17 @@ describe('SQLite', () => {
       await dataSource.runMigrations();
       const queryRunner = dataSource.createQueryRunner();
 
-      // SUP-298 adds one index and nothing else; the first undo drops it and
-      // leaves the indices that were already on the table. First because this
-      // migration is numbered last — a migration is appended, never inserted.
+      // SUP-481's record of the exports this deployment has taken is one additive
+      // table; the first undo drops only that. First because this migration is
+      // numbered last — it stayed ahead of the four `main` took during review
+      // (SUP-498, SUP-406, SUP-423, SUP-298), because a migration is appended,
+      // never inserted.
+      expect(await queryRunner.hasTable('data_imports')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('data_imports')).toBe(false);
+
+      // SUP-298 adds one index and nothing else; the next undo drops it and
+      // leaves the indices that were already on the table.
       expect(await hasIndex(queryRunner, 'evidence_snapshots', 'IDX_evidence_snapshots_endpointId_issuedAt')).toBe(
         true,
       );
@@ -157,9 +165,10 @@ describe('SQLite', () => {
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. Fourth now that SUP-406's column, SUP-423's index and
-      // SUP-298's index are appended after it. The undo can only restore the
-      // NOT NULLs on a database the sweep has not run on yet, which is this one.
+      // `generations`. Fifth now that SUP-406's column, SUP-423's index,
+      // SUP-298's index and SUP-481's table are appended after it. The undo can
+      // only restore the NOT NULLs on a database the sweep has not run on yet,
+      // which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);

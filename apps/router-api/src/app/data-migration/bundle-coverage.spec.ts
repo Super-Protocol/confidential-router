@@ -93,6 +93,7 @@ describe('BUNDLE_COVERAGE', () => {
       externalEndpoints: [],
       models: [],
       trustedMeasurements: [],
+      priorImports: [],
     };
     const bundle = buildBundle({
       data: empty,

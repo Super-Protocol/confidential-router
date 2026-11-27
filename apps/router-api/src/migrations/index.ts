@@ -20,6 +20,7 @@ import { EvidenceRetentionSweep1760600000000 } from './1760600000000-EvidenceRet
 import { CreditGrantOperator1760700000000 } from './1760700000000-CreditGrantOperator.js';
 import { PendingGenerationIndex1760800000000 } from './1760800000000-PendingGenerationIndex.js';
 import { EvidenceSnapshotsByIssuedAt1761000000000 } from './1761000000000-EvidenceSnapshotsByIssuedAt.js';
+import { DataImports1761100000000 } from './1761100000000-DataImports.js';
 
 /**
  * Migrations are imported rather than globbed: the production build is a single
@@ -50,4 +51,5 @@ export const MIGRATIONS = [
   CreditGrantOperator1760700000000,
   PendingGenerationIndex1760800000000,
   EvidenceSnapshotsByIssuedAt1761000000000,
+  DataImports1761100000000,
 ];
