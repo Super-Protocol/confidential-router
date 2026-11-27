@@ -260,7 +260,7 @@ describe('SQLite', () => {
 
       // SUP-243 widened the two verdict-reason columns to `text`; the first undo
       // narrows both back and touches nothing else. First because this migration
-      // is numbered last — it was renumbered past the four `main` took during
+      // is numbered last — it was renumbered past the five `main` took during
       // review, because a migration is appended, never inserted.
       expect(await columnType(queryRunner, 'external_endpoints', 'lastReason')).toBe('text');
       expect(await columnType(queryRunner, 'external_endpoint_events', 'reason')).toBe('text');
@@ -272,6 +272,12 @@ describe('SQLite', () => {
       // sibling column would look exactly like a clean revert from here.
       expect(await queryRunner.hasColumn('external_endpoints', 'lastStage')).toBe(true);
       expect(await queryRunner.hasColumn('external_endpoint_events', 'evidenceDigest')).toBe(true);
+
+      // SUP-481's record of the exports this deployment has taken is one additive
+      // table; the next undo drops only that.
+      expect(await queryRunner.hasTable('data_imports')).toBe(true);
+      await dataSource.undoLastMigration();
+      expect(await queryRunner.hasTable('data_imports')).toBe(false);
 
       // SUP-298 adds one index and nothing else; the next undo drops it and
       // leaves the indices that were already on the table.
@@ -303,10 +309,10 @@ describe('SQLite', () => {
       // SUP-498 makes the evidence retention window enforceable: the two
       // documents it governs come off NOT NULL, `payloadStrippedAt` records when
       // the sweep took them, and the holder lookup gets its two indexes on
-      // `generations`. Fifth now that SUP-406's column, SUP-423's index,
-      // SUP-298's index and SUP-243's two `text` columns are appended after it.
-      // The undo can only restore the NOT NULLs on a database the sweep has not
-      // run on yet, which is this one.
+      // `generations`. Sixth now that SUP-406's column, SUP-423's index,
+      // SUP-298's index, SUP-481's table and SUP-243's two `text` columns are
+      // appended after it. The undo can only restore the NOT NULLs on a database
+      // the sweep has not run on yet, which is this one.
       expect(await queryRunner.hasColumn('evidence_snapshots', 'payloadStrippedAt')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'jws')).toBe(true);
       expect(await isNullable(queryRunner, 'evidence_snapshots', 'bundle')).toBe(true);

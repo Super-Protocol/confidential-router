@@ -27,6 +27,7 @@ Auth tables (`user`, `session`, `account`, `verification`) are owned by Better A
 | `ExternalEndpointEvent` | `external_endpoint_events` | append-only timeline: `externalEndpointId` (idx with `at`, FK CASCADE), `at`, `kind: registered\|verified\|denied\|digest_changed\|digest_pinned\|digest_unpinned\|measurement_changed\|disabled\|key_rotated\|outage\|recovered`, `stage?`, `reason?` (`text`, for the same reason as `ExternalEndpoint.lastReason` and carrying the same sentences — SUP-243), `measurement?`, `evidenceDigest?`. A *transition* is an event and a repetition is not, so a ten-minute re-attestation does not write 144 rows a day; `digest_changed` and `measurement_changed` are reported on every change, and under two-factor trust a `digest_changed` is gating — on an admitted endpoint it arrives with the `denied` (`stage: digest-mismatch`) it caused. `digest_pinned` is an admin's approval and carries the digest approved, and `digest_unpinned` is one an edit withdrew — carrying the digest that is no longer approved and why (SUP-435). `outage` / `recovered` are the sustained-failure pair (SUP-517) and are not `denied` / `verified` under another name: a `denied` is one check that refused, an `outage` is this router declaring that the run of them crossed `externalEndpoints.outage.*` and alerting on it. One per run in each direction. No `updatedAt` |
 | `MailAddressState` | `mail_address_states` | what the mail provider reported about one address after it accepted a message (SUP-551): `id`, `email` (lower case, **unique** — a state, not a log), `state: rejecting\|delayed\|delivering` (idx), `reason?` (`bounced\|complained\|suppressed\|failed\|delayed`), `detail?` (the provider's own words, 512), `lastDeliveryId?` (the provider's delivery id — the idempotency key, so a redelivery does not count a second failure), `failures` (messages dropped since the last one that arrived), `firstEventAt`, `lastEventAt`, `rejectingSince?`, `updatedAt`. **Only bad news creates a row**: a delivery that worked clears one that exists and inserts nothing, so this is a list of addresses with a problem and not a list of everyone the deployment has mailed. No `userId` and no FK — the address that bounces usually has no account, and Better Auth owns `user` (ADR-004 §3) |
 | `UserPreferences` | `user_preferences` | 1:1 with user: `userId` (PK), `archiveEvidence` (default true; off, the account holds no archived bundles and contributes nothing to a publication's retention maximum — SUP-525), `evidenceRetentionDays` (default 90, bounded 1–3650, enforced by the retention sweep; ignored while `archiveEvidence` is off, and still settable), `notifyOnMeasurementChange` (default true), `desktopNotifications`, `emailReceipts`, `updatedAt` |
+| `DataImport` | `data_imports` | one deployment export **this** deployment has taken (SUP-481): `id`, `sourcePublicBaseUrl`, `sourceRouterVersion`, `bundleExportedAt`, `contentSha256`, `importedByUserId?` (no FK — Better Auth owns `user`, ADR-004 §3), `importedAt` (idx). Append-only, written by `DataImportService.apply` in the same transaction as the rows. It answers one question — whether a *second* import of the same dataset may run here — which is what lets a cutover catch up the drift after the new deployment has been verified by a real sign-up. Not carried in the bundle: it is a record of what happened here |
 | `ActivityRollup` | `activity_rollups` | **derived**, hourly `(workspaceId, modelId, apiKeyId, bucket)` → `requests`, `promptTokens`, `completionTokens`, `costMicros`, `coveredRequests`; rebuildable. **Not written yet** (SUP-75): Activity aggregates in SQL over `generations`, which one indexed range scan answers, and a cache no screen needs is a second source of truth to keep correct. The table stays for the day a log outgrows the scan |
 
 Relations: `InviteCode 1—* InviteRedemption`, `Workspace 1—* FeedbackSubmission`, `Workspace 1—* ApiKey`, `Workspace 1—* Generation`, `Workspace 1—* CreditTransaction`,
@@ -142,3 +143,22 @@ Invariants enforced in code and tests:
    ledger it has just inserted, inside the same transaction — and the one path that creates a `user`
    row without `databaseHooks`, so an imported account is not gated, re-provisioned, re-granted or
    reported as a sign-up.
+10. An export is imported into a deployment holding **nobody else's data** — not only into an empty
+   one (SUP-481). A local account the bundle does not carry refuses the import, unless it is an
+   operator's own or this deployment has already taken this dataset (a `data_imports` row from the
+   same `source.publicBaseUrl`, or a row here under an exported row's own id). That second case is
+   the rebuild's own shape: the cutover verifies the new deployment with a real sign-up and the old
+   one serves until the handover, so the last step is a repeat import to catch up the rows written in
+   between. A *later* export of the same deployment therefore has three outcomes per row, not two:
+   created when it is missing, **brought up to date** when it is here under its own id, and left
+   untouched when this deployment has it and the bundle does not (`localOnly`). The refresh is
+   bounded by three rules — never through an operator mapping, never a column another row could hold
+   (slug, endpoint name, listen port), and never backwards: `ApiKey.spentTotalMicros` and `lastUsedAt`
+   take the larger value, `revokedAt` and `InviteCode.disabledAt` the earlier, and
+   `InviteCode.redemptionCount` the seats spent on both deployments, because that counter *is* the
+   seat gate (`invites.service.ts`). `creditLedger`, `inviteRedemptions` and the Better Auth `user`
+   table are never rewritten; nothing is ever deleted; and nothing this deployment's own operator
+   set is overwritten — `ExternalEndpoint.enabled`/`apiKeyCiphertext`, `Model.enabled` and
+   `pinnedEvidenceDigest` stay as they are, the pin travelling only with a moved `baseUrl`, which is
+   what SUP-435 asks of an edit that re-points an endpoint. Both counts are in the plan per section
+   (`import-plan.spec.ts`, `data-migration.e2e.spec.ts`).
