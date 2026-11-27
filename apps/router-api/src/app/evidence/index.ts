@@ -1,4 +1,5 @@
 export { type Coverage, type CoverageWindow, coverageOf, EvidenceCoverageStatsService } from './coverage.service.js';
+export { snapshotsOnCurrentHostname } from './current-hostname.js';
 export { EvidenceModule } from './evidence.module.js';
 export { type DigestChange, EvidenceService, type SnapshotPage, snapshotCursor } from './evidence.service.js';
 export {
